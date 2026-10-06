@@ -375,9 +375,10 @@ try:
         QLabel, QPushButton, QProgressBar, QTextEdit, QWidget, QFrame,
         QSizePolicy, QScrollArea, QLineEdit, QSlider, QComboBox, QCheckBox,
         QDoubleSpinBox, QMessageBox,
-        QRadioButton, QButtonGroup, QStackedWidget, QLayout, QBoxLayout
+        QRadioButton, QButtonGroup, QStackedWidget, QLayout, QBoxLayout,
+        QStyle, QStyleOptionSlider
     )
-    from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject
+    from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject, QEvent, QSize
     from PyQt6.QtGui import QFont, QColor, QPalette, QPixmap, QPainter
 
     from desktop_app.qt_worker import KeepAliveWorker
@@ -2610,6 +2611,99 @@ def _get_effective_whisper_backend(
     return "mlx" if mlx_available else "faster-whisper"
 
 
+class _SliderScale(QWidget):
+    """A row of labels, each centred on one stop of a horizontal slider.
+
+    Labels are kept inside the row (the first and last align to its edges) and
+    the row's minimum width is the narrowest that keeps neighbours apart, so a
+    narrow window scrolls rather than drawing labels over each other.
+    """
+
+    _GAP = 8
+
+    def __init__(self, slider, label_role: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("clear")
+        self._slider = slider
+        self._role = label_role
+        self._labels: List[QLabel] = []
+        self._count = 0
+        slider.installEventFilter(self)
+
+    def set_texts(self, texts: List[str]):
+        while len(self._labels) < len(texts):
+            label = QLabel(self)
+            label.setObjectName(self._role)
+            self._labels.append(label)
+        self._count = len(texts)
+        for index, label in enumerate(self._labels):
+            label.setVisible(index < self._count)
+            if index < self._count:
+                label.setText(texts[index])
+                if index == 0:
+                    label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                elif index == self._count - 1:
+                    label.setAlignment(Qt.AlignmentFlag.AlignRight)
+                else:
+                    label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.updateGeometry()
+        self._place()
+
+    def _shown(self) -> List[QLabel]:
+        return self._labels[:self._count]
+
+    def _handle_length(self) -> int:
+        option = QStyleOptionSlider()
+        self._slider.initStyleOption(option)
+        return self._slider.style().subControlRect(
+            QStyle.ComplexControl.CC_Slider, option, QStyle.SubControl.SC_SliderHandle, self._slider
+        ).width()
+
+    def _stop_x(self, value: int) -> int:
+        option = QStyleOptionSlider()
+        self._slider.initStyleOption(option)
+        option.sliderPosition = option.sliderValue = value
+        handle = self._slider.style().subControlRect(
+            QStyle.ComplexControl.CC_Slider, option, QStyle.SubControl.SC_SliderHandle, self._slider
+        )
+        return self.mapFromGlobal(self._slider.mapToGlobal(handle.center())).x()
+
+    def minimumSizeHint(self) -> QSize:
+        labels = self._shown()
+        height = max((label.sizeHint().height() for label in labels), default=0)
+        if len(labels) < 2:
+            return QSize(max((l.sizeHint().width() for l in labels), default=0), height)
+        widths = [label.sizeHint().width() for label in labels]
+        half_handle = self._handle_length() / 2
+        # Smallest distance between stops that keeps every pair apart; the end
+        # labels are pinned to the row's edges rather than centred on their stop.
+        spacing = max((widths[i] + widths[i + 1]) / 2 for i in range(len(widths) - 1))
+        spacing = max(spacing,
+                      widths[0] + widths[1] / 2 - half_handle,
+                      widths[-1] + widths[-2] / 2 - half_handle)
+        width = 2 * half_handle + (len(widths) - 1) * (spacing + self._GAP)
+        return QSize(int(width + 1), height)
+
+    def sizeHint(self) -> QSize:
+        return self.minimumSizeHint()
+
+    def eventFilter(self, watched, event):
+        if watched is self._slider and event.type() in (QEvent.Type.Resize, QEvent.Type.Move):
+            self._place()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place()
+
+    def _place(self):
+        for value, label in enumerate(self._shown()):
+            hint = label.sizeHint()
+            left = self._stop_x(value) - hint.width() // 2
+            left = max(0, min(left, self.width() - hint.width()))
+            label.setGeometry(left, 0, hint.width(), self.height())
+
+
 class WhisperSetupPage(ScrollableWizardPage):
     """Page for setting up Whisper speech recognition (all platforms)."""
 
@@ -2742,35 +2836,20 @@ class WhisperSetupPage(ScrollableWizardPage):
         selection_title.setObjectName("section_title")
         selection_layout.addWidget(selection_title)
 
-        # Container for slider labels (will be rebuilt on language change)
-        self._labels_container = QWidget()
-        self._labels_container.setObjectName("clear")
-        self._labels_layout = QHBoxLayout(self._labels_container)
-        self._labels_layout.setContentsMargins(0, 4, 0, 0)
-        self._labels_layout.setSpacing(0)
-        selection_layout.addWidget(self._labels_container)
-
-        # Slider with proper padding for handle visibility
-        slider_container = QWidget()
-        slider_container.setObjectName("clear")
-        slider_container.setFixedHeight(36)
-        slider_inner = QHBoxLayout(slider_container)
-        slider_inner.setContentsMargins(0, 0, 0, 0)
-
         self._model_slider = QSlider(Qt.Orientation.Horizontal)
         self._model_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self._model_slider.setTickInterval(1)
+        self._model_slider.setFixedHeight(36)
         self._model_slider.valueChanged.connect(self._on_slider_changed)
-        slider_inner.addWidget(self._model_slider)
-        selection_layout.addWidget(slider_container)
 
-        # Container for size labels (will be rebuilt on language change)
-        self._size_container = QWidget()
-        self._size_container.setObjectName("clear")
-        self._size_layout = QHBoxLayout(self._size_container)
-        self._size_layout.setContentsMargins(0, 0, 0, 4)
-        self._size_layout.setSpacing(0)
-        selection_layout.addWidget(self._size_container)
+        # Names above the slider's stops, sizes below them (refilled on language change)
+        self._name_scale = _SliderScale(self._model_slider, "model_name")
+        self._size_scale = _SliderScale(self._model_slider, "model_size")
+        selection_layout.addSpacing(4)
+        selection_layout.addWidget(self._name_scale)
+        selection_layout.addWidget(self._model_slider)
+        selection_layout.addWidget(self._size_scale)
+        selection_layout.addSpacing(8)
 
         # Selected model info
         self._model_info_label = QLabel()
@@ -2884,7 +2963,7 @@ class WhisperSetupPage(ScrollableWizardPage):
         """Update the language info label based on current selection."""
         if self._is_english_only:
             self._lang_info_label.setText(
-                "English-only models are optimized for English and may have slightly better accuracy."
+                "English-only models are optimised for English and may have slightly better accuracy."
             )
         else:
             self._lang_info_label.setText(
@@ -2895,67 +2974,14 @@ class WhisperSetupPage(ScrollableWizardPage):
     def _rebuild_slider_ui(self):
         """Rebuild the slider labels based on current language mode."""
         options = self._get_current_model_options()
-        n = len(options)
 
-        # Clear existing labels.  The labels are already properly parented
-        # to their container widget, and takeAt() removes the layout's
-        # reference — scheduling deleteLater() is enough.  Do NOT call
-        # setParent(None) here: on macOS that promotes each QLabel to a
-        # top-level widget mid-transition, which triggers a native
-        # NSWindow creation and can SIGABRT inside QWizard.exec().  On
-        # Windows the same reparent creates a native HWND and fast-fails
-        # (0xc0000409) inside Qt6Core.dll — see dictation_history.py
-        # where the same mistake crashed the history window.
-        while self._labels_layout.count():
-            item = self._labels_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-            # Spacers are automatically cleaned up when the item goes out of scope.
-
-        while self._size_layout.count():
-            item = self._size_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-
-        # Add labels aligned with slider tick positions
-        # Slider ticks are at 0, 1/(n-1), 2/(n-1), ..., 1 of the groove width
-        # We achieve this by: label[0], stretch, label[1], stretch, ..., label[n-1]
-        # First label left-aligned, last label right-aligned, middle labels centered
-        for i, (model_id, name, file_size, vram, desc) in enumerate(options):
-            # Model name label
-            label = QLabel(name)
-            if i == 0:
-                label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            elif i == n - 1:
-                label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            else:
-                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setObjectName("model_name")
-            label.setFixedHeight(18)
-            self._labels_layout.addWidget(label)
-
-            # Size/VRAM label - single line to save space
-            size_label = QLabel(f"{file_size} / {vram}")
-            if i == 0:
-                size_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            elif i == n - 1:
-                size_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            else:
-                size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            size_label.setObjectName("model_size")
-            size_label.setFixedHeight(16)
-            self._size_layout.addWidget(size_label)
-
-            # Add stretch after each label except the last
-            if i < n - 1:
-                self._labels_layout.addStretch(1)
-                self._size_layout.addStretch(1)
-
-        # Update slider range
+        # The scales reuse their labels: deleting them here would leave the old
+        # ones on screen, because the wizard opens inside the app's running event
+        # loop and Qt holds deferred deletions until the dialog closes.
         self._model_slider.setMinimum(0)
         self._model_slider.setMaximum(len(options) - 1)
+        self._name_scale.set_texts([name for _, name, _, _, _ in options])
+        self._size_scale.set_texts([f"{size}\n{vram}" for _, _, size, vram, _ in options])
 
         # Find best matching position for current selection. If a stale turbo
         # selection was filtered out, use the same medium fallback as startup.

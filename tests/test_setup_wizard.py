@@ -1766,78 +1766,37 @@ class TestWhisperSetupPageSliderRebuild:
     setParent(None)) during a QWizard page transition could trigger
     a SIGABRT ('Fatal Python error: Aborted') while the next page
     was being shown.  These tests guarantee that the slider labels
-    stay parented to their containers throughout rebuilds — the
-    safe pattern for clearing items out of a layout.
+    stay inside the page throughout rebuilds.
     """
 
-    def test_slider_labels_keep_container_parent_after_rebuild(self, qapp):
-        """Newly-built slider labels must remain children of their containers.
+    @staticmethod
+    def _assert_no_top_level_labels(qapp, page):
+        from PyQt6.QtWidgets import QLabel
 
-        If any label ends up reparented to None it becomes a top-level
-        widget, which on macOS triggers a native window creation that
-        can abort during wizard page transitions.
-        """
+        labels = [l for l in page.findChildren(QLabel) if l.objectName() in ("model_name", "model_size")]
+        assert labels
+        assert not any(label.isWindow() for label in labels)
+        assert not any(isinstance(w, QLabel) for w in qapp.topLevelWidgets()), (
+            "A slider label became a top-level widget, which crashes QWizard transitions on macOS."
+        )
+
+    def test_slider_labels_stay_inside_the_page_after_rebuild(self, qapp):
+        """Toggling the language refills the slider labels without promoting any to a window."""
         from desktop_app.setup_wizard import WhisperSetupPage
 
         page = WhisperSetupPage()
-
-        # Toggle language mode — this fires _rebuild_slider_ui which
-        # clears the old labels and inserts a new set.
         page._on_language_changed(True)
         page._on_language_changed(False)
-
-        labels_container = page._labels_container
-        size_container = page._size_container
-
-        for i in range(page._labels_layout.count()):
-            item = page._labels_layout.itemAt(i)
-            w = item.widget()
-            if w is not None:
-                assert w.parent() is labels_container, (
-                    "Slider name labels must stay parented to their "
-                    "container — a None parent promotes them to top-level "
-                    "widgets, which crashes QWizard transitions on macOS."
-                )
-
-        for i in range(page._size_layout.count()):
-            item = page._size_layout.itemAt(i)
-            w = item.widget()
-            if w is not None:
-                assert w.parent() is size_container, (
-                    "Slider size labels must stay parented to their "
-                    "container — a None parent promotes them to top-level "
-                    "widgets, which crashes QWizard transitions on macOS."
-                )
+        self._assert_no_top_level_labels(qapp, page)
 
     def test_initialize_page_can_be_called_multiple_times(self, qapp):
-        """initializePage must be safely re-callable.
-
-        QWizard calls initializePage each time a page is shown.  The
-        first call (right after construction) has to clear the initial
-        labels that __init__ built, and subsequent calls must not
-        crash or leak top-level widgets.
-        """
+        """QWizard calls initializePage each time the page is shown; repeating it is safe."""
         from desktop_app.setup_wizard import WhisperSetupPage
 
         page = WhisperSetupPage()
-
-        # Re-initialise a few times — this mirrors back/forward
-        # navigation between wizard pages.
         for _ in range(3):
             page.initializePage()
-
-        # All remaining labels in the layouts are still properly
-        # parented (not promoted to top-level).
-        for layout, container in [
-            (page._labels_layout, page._labels_container),
-            (page._size_layout, page._size_container),
-        ]:
-            for i in range(layout.count()):
-                item = layout.itemAt(i)
-                w = item.widget()
-                if w is not None:
-                    assert w.parent() is container
-
+        self._assert_no_top_level_labels(qapp, page)
 
 class TestMCPPage:
     """Tests for the MCP servers wizard page."""
