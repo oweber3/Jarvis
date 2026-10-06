@@ -1,0 +1,82 @@
+{"gpt-oss:20b": {"passed": "23/28", "first_tool_median": 1.41}}
+   FAIL pdf_goto_page: expected one pdfNavigate goto page 42, got []
+   FAIL pdf_find_chapter: expected one pdfNavigate find for soil preparation, got []
+   FAIL everyday_now_playing: expected mediaControl with {'action': 'now_playing'}, got []
+   FAIL everyday_headphones: expected systemSettings with {'action': 'audio_output'}, got []
+   FAIL everyday_find_file: took 2 calls where 1 suffice: ['localFiles', 'openPath']
+{"hf.co/unsloth/gpt-oss-20b-GGUF:Q4_K_M": {"passed": "20/28", "first_tool_median": 0.88}}
+   FAIL pdf_goto_page: expected one pdfNavigate goto page 42, got [('localFiles', {'operation': 'find', 'path': 'Documents', 'name': 'textbook', 'type': 'pdf', 'li
+   FAIL pdf_find_chapter: expected one pdfNavigate find for soil preparation, got []
+   FAIL pdf_none_open: with no PDF open, nothing else may be opened or driven: ['openPath']
+   FAIL everyday_now_playing: expected mediaControl with {'action': 'now_playing'}, got []
+   FAIL everyday_find_file: took 2 calls where 1 suffice: ['localFiles', 'openPath']
+   FAIL everyday_open_app: expected appControl with {'action': 'open', 'target': <predicate>.<lambda> at 0x000002639B3E39C0>}, got [('openWebsite', {'
+   FAIL everyday_reopen_tab: expected inputControl with {'keys': <predicate>.<lambda> at 0x000002639B3E3CE0>}, got []
+   FAIL everyday_search_youtube: expected openWebsite with {'url': <predicate>.<lambda> at 0x000002639B3E3EC0>}, got [('openWebsite', {'url': 'youtube.com'}
+{"granite4.2:8b": {"passed": "16/28", "first_tool_median": 0.53}}
+   FAIL website_open_in_zone: no display was named, so the main display applies: {'url': 'youtube.com', 'monitor': 'right', 'zone': 'right', 'state': 'restore'}
+   FAIL website_open_plain: a website opens with openWebsite alone, not ['appControl']
+   FAIL everyday_skip_song: expected mediaControl with {'action': 'next'}, got [('mediaControl', {'action': 'previous'})]
+   FAIL everyday_now_playing: expected mediaControl with {'action': 'now_playing'}, got []
+   FAIL everyday_gpu_temp: took 2 calls where 1 suffice: ['systemInfo', 'systemInfo']
+   FAIL everyday_find_file: expected openPath with {'target': <predicate>.<lambda> at 0x000002639B3E3420>}, got [('localFiles', {'operation': 'find', '
+   FAIL everyday_next_desktop: expected windowControl with {'action': 'desktop_switch', 'desktop': 'next'}, got [('windowControl', {'action': 'desktop_switch', 'target': '
+   FAIL everyday_reopen_tab: expected inputControl with {'keys': <predicate>.<lambda> at 0x000002639B3E3CE0>}, got [('appControl', {'action': 'focus', '
+   FAIL everyday_search_youtube: took 2 calls where 1 suffice: ['webSearch', 'openWebsite']
+   FAIL everyday_gmail_second_monitor: expected openWebsite with {'url': <predicate> at 0x000002639B3E40E0>, 'monitor': <predicate> at 0x000002639B3E4180>}, got [('a
+   FAIL everyday_web_search: took 2 calls where 1 suffice: ['webSearch', 'fetchWebPage']
+   FAIL everyday_click_save: took 2 calls where 1 suffice: ['uiControl', 'uiControl']
+{"granite4.2:8b@think": {"passed": "21/28", "first_tool_median": 2.91}}
+   FAIL website_open_plain: a website opens with openWebsite alone, not ['appControl']
+   FAIL everyday_now_playing: expected mediaControl with {'action': 'now_playing'}, got [('screenshot', {'target': 'screen'})]
+   FAIL everyday_find_file: expected openPath with {'target': <predicate>.<lambda> at 0x000002639B3E3420>}, got [('localFiles', {'operation': 'find', '
+   FAIL everyday_next_desktop: expected windowControl with {'action': 'desktop_switch', 'desktop': 'next'}, got [('windowControl', {'action': 'desktop_switch', 'target': '
+   FAIL everyday_reopen_tab: took 2 calls where 1 suffice: ['screenshot', 'inputControl']
+   FAIL everyday_web_search: took 3 calls where 1 suffice: ['webSearch', 'openWebsite', 'fetchWebPage']
+   FAIL everyday_click_save: expected uiControl with {'action': 'click', 'element': <predicate>.<lambda> at 0x000002639B3E47C0>}, got [('uiControl', {'a
+{"qwen3.5:4b": {"passed": "22/28", "first_tool_median": 0.44}}
+   FAIL website_open_in_zone: should place it in the right zone: {'url': 'youtube.com', 'monitor': 'right'}
+   FAIL everyday_top_ram: expected systemInfo with {'action': 'top_memory'}, got [('systemInfo', {'action': 'ram'})]
+   FAIL everyday_gpu_temp: took 3 calls where 1 suffice: ['systemInfo', 'systemInfo', 'systemInfo']
+   FAIL everyday_find_file: expected openPath with {'target': <predicate>.<lambda> at 0x000002639B3E3420>}, got [('localFiles', {'name': 'proposal', 't
+   FAIL everyday_focus_app: expected appControl with {'action': 'focus', 'target': <predicate>.<lambda> at 0x000002639B3E37E0>}, got [('mediaControl', 
+   FAIL everyday_window_left: expected windowControl with {'action': 'place', 'target': <predicate>.<lambda> at 0x000002639B3E4360>, 'zone': {'1', 'left'
+{"qwen3.5:9b": {"passed": "25/28", "first_tool_median": 0.74}}
+   FAIL everyday_now_playing: expected mediaControl with {'action': 'now_playing'}, got []
+   FAIL everyday_gpu_temp: took 3 calls where 1 suffice: ['systemInfo', 'systemInfo', 'systemInfo']
+   FAIL everyday_search_youtube: expected openWebsite with {'url': <predicate>.<lambda> at 0x000002639B3E3EC0>}, got [('openWebsite', {'url': 'youtube.com'}
+{"qwen3.5:9b@think": {"passed": "22/28", "first_tool_median": 1.28}}
+   FAIL everyday_now_playing: took 2 calls where 1 suffice: ['screenshot', 'mediaControl']
+   FAIL everyday_gpu_temp: took 3 calls where 1 suffice: ['systemInfo', 'systemInfo', 'systemInfo']
+   FAIL everyday_find_file: took 3 calls where 1 suffice: ['localFiles', 'localFiles', 'openPath']
+   FAIL everyday_next_desktop: expected windowControl with {'action': 'desktop_switch', 'desktop': 'next'}, got [('windowControl', {'action': 'desktop_switch', 'target': '
+   FAIL everyday_search_youtube: expected openWebsite with {'url': <predicate>.<lambda> at 0x000002639B3E3EC0>}, got [('openWebsite', {'url': 'youtube.com'}
+   FAIL everyday_web_search: took 3 calls where 1 suffice: ['webSearch', 'fetchWebPage', 'webSearch']
+{"ministral-3:14b": {"passed": "14/28", "first_tool_median": 0.32}}
+   FAIL website_open_plain: a website opens with openWebsite alone, not ['appControl']
+   FAIL pdf_goto_page: expected one pdfNavigate goto page 42, got []
+   FAIL pdf_find_chapter: expected one pdfNavigate find for soil preparation, got []
+   FAIL pdf_none_open: should say no PDF is open or ask which one: 'pdfNavigate[ARGS]{"action": "goto", "page": 42}'
+   FAIL everyday_volume_set: expected systemVolume with {'percent': <predicate> at 0x000002639B3E2480>}, got []
+   FAIL everyday_mute: expected systemVolume with {'action': 'mute'}, got []
+   FAIL everyday_dim_screen: expected systemSettings with {'action': 'brightness'}, got []
+   FAIL everyday_headphones: expected systemSettings with {'action': 'audio_output'}, got []
+   FAIL everyday_reopen_tab: expected inputControl with {'keys': <predicate>.<lambda> at 0x000002639B3E3CE0>}, got []
+   FAIL everyday_search_youtube: expected openWebsite with {'url': <predicate>.<lambda> at 0x000002639B3E3EC0>}, got []
+   FAIL everyday_gmail_second_monitor: expected openWebsite with {'url': <predicate> at 0x000002639B3E40E0>, 'monitor': <predicate> at 0x000002639B3E4180>}, got []
+   FAIL everyday_window_left: expected windowControl with {'action': 'place', 'target': <predicate>.<lambda> at 0x000002639B3E4360>, 'zone': {'1', 'left'
+   FAIL everyday_weather: expected getWeather with {}, got []
+   FAIL everyday_web_search: expected webSearch with {}, got []
+{"qwen3:4b": {"passed": "23/28", "first_tool_median": 2.54}}
+   FAIL pdf_goto_page: expected one pdfNavigate goto page 42, got []
+   FAIL pdf_find_chapter: expected one pdfNavigate find for soil preparation, got []
+   FAIL everyday_focus_app: expected appControl with {'action': 'focus', 'target': <predicate>.<lambda> at 0x000002639B3E37E0>}, got [('appControl', {'
+   FAIL everyday_reopen_tab: expected inputControl with {'keys': <predicate>.<lambda> at 0x000002639B3E3CE0>}, got []
+   FAIL everyday_search_youtube: expected openWebsite with {'url': <predicate>.<lambda> at 0x000002639B3E3EC0>}, got [('openWebsite', {'url': 'youtube.com'}
+{"gemma4:12b": {"passed": "28/28", "first_tool_median": 0.51}}
+{"qwen3.6:35b": {"passed": "23/28", "first_tool_median": 1.43}}
+   FAIL pdf_goto_page: expected one pdfNavigate goto page 42, got [('localFiles', {'operation': 'find', 'path': 'Documents', 'type': 'pdf'}), ('localFiles', {'oper
+   FAIL everyday_gpu_temp: took 2 calls where 1 suffice: ['systemInfo', 'systemInfo']
+   FAIL everyday_find_file: expected openPath with {'target': <predicate>.<lambda> at 0x000002639B3E3420>}, got [('localFiles', {'glob': '*proposal*', 
+   FAIL everyday_focus_app: expected appControl with {'action': 'focus', 'target': <predicate>.<lambda> at 0x000002639B3E37E0>}, got [('appControl', {'
+   FAIL everyday_click_save: expected uiControl with {'action': 'click', 'element': <predicate>.<lambda> at 0x000002639B3E47C0>}, got [('uiControl', {'a

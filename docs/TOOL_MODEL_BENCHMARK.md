@@ -40,7 +40,8 @@ about 15,000) and drives its own debugging Chrome. It was left out of the config
 
 Full reply engine in local mode, the 28 cases run three times each (84 requests per setup), one setup at a
 time, on 6 October. "Made up" counts the three web-search runs whose reply named race results: the scripted
-search result contains none, so any driver or winner was invented. The checks do not score this.
+search result contains none, so any driver or winner was invented. The checks do not score this. Every run's
+calls, verdict and timing are in [`benchmarks/local-models-2026-10-06/`](benchmarks/local-models-2026-10-06/README.md).
 
 | Setup (tool / chat / fast) | Download | Correct | Median | p90 | First tool | Made up |
 |----------------------------|----------|---------|--------|-----|------------|---------|
