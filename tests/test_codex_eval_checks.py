@@ -125,3 +125,15 @@ class TestInertDestructiveDetection:
     def test_reads_and_listings_are_not_treated_as_destructive(self):
         result = dr.InertTools({})(None, None, "localFiles", {"operation": "list", "path": "."})
         assert result.success is True
+
+    @pytest.mark.parametrize("name, calls", [
+        ("everyday_mute", [("systemVolume", {"action": "mute"})]),
+        ("website_open_plain", [("openWebsite", {"url": "https://www.youtube.com"})]),
+        ("pdf_goto_page", [("pdfNavigate", {"action": "goto", "page": 42})]),
+    ])
+    def test_a_follow_up_question_after_the_right_action_still_passes(self, name, calls):
+        c = case(name)
+        assert c.check(run(text="Done.", calls=calls)) is None, "the plain confirmation must pass"
+        assert c.check(run(kind="question", text="Done. Anything else?", calls=calls)) is None
+        assert c.check(run(kind="awaiting_confirmation", text="Shall I?", calls=calls)) is not None
+        assert c.check(run(kind="question", text="", calls=calls)) is not None
