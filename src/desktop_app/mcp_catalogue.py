@@ -9,12 +9,17 @@ Selection criteria:
   memory/recall, weather, screenshot/OCR, meals).
 - Wizard-featured entries must be zero-config (no API keys).
 - All entries must be from the official @modelcontextprotocol org or widely trusted.
+- An entry that only works on some platforms lists them, so it is offered only there.
 """
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+# Launchers that run on Node.js.
+_NODE_COMMANDS = ("npx", "node", "npm")
 
 
 @dataclass
@@ -31,6 +36,16 @@ class MCPEntry:
     api_key_hint: Optional[str] = None     # Help text for obtaining the key
     wizard_featured: bool = False      # Show in setup wizard quick picks
     category: str = "general"          # Grouping for display
+    platforms: Tuple[str, ...] = ()    # sys.platform prefixes it works on; empty means every platform
+
+    def supports(self, platform: str) -> bool:
+        """Whether the server works on ``platform`` (a ``sys.platform`` value)."""
+        return not self.platforms or any(platform.startswith(p) for p in self.platforms)
+
+    @property
+    def needs_node(self) -> bool:
+        """Whether the server is started through Node.js."""
+        return self.command in _NODE_COMMANDS
 
     def to_config(self, extra_env: Optional[Dict[str, str]] = None) -> Dict:
         """Convert to the config.json MCP entry format.
@@ -85,6 +100,7 @@ CATALOGUE: List[MCPEntry] = [
         args=["-y", "@steipete/macos-automator-mcp"],
         wizard_featured=True,
         category="automation",
+        platforms=("darwin",),
     ),
 
     # -- Available in settings (may need API keys or extra config) --
@@ -175,12 +191,15 @@ CATALOGUE: List[MCPEntry] = [
         command="npx",
         args=["-y", "@modelcontextprotocol/server-everything"],
         category="files",
+        platforms=("win32",),
     ),
 ]
 
 CATALOGUE_BY_NAME: Dict[str, MCPEntry] = {e.name: e for e in CATALOGUE}
 
 
-def get_wizard_entries() -> List[MCPEntry]:
-    """Return only entries suitable for the setup wizard (no API key needed)."""
-    return [e for e in CATALOGUE if e.wizard_featured]
+def get_wizard_entries(platform: Optional[str] = None) -> List[MCPEntry]:
+    """Entries for the setup wizard (no API key needed) that work on ``platform``
+    (this platform when omitted)."""
+    platform = platform or sys.platform
+    return [e for e in CATALOGUE if e.wizard_featured and e.supports(platform)]

@@ -29,10 +29,9 @@ from ..debug import debug_log
 from ..tools.schema_validation import validate_arguments
 from ..tools.types import ToolImage
 from ..utils.redact import redact
-from .cli import ClaudeCliError, session_args
+from .cli import ClaudeCliError, session_args, sign_in_failure
 from .prompts import INSTRUCTIONS_VERSION, assistant_instructions
 
-SUBSCRIPTION_AUTH = "claude.ai"
 _POLL_SEC = 0.2
 _START_TIMEOUT_SEC = 20.0
 _CLOSE_TIMEOUT_SEC = 2.0
@@ -277,11 +276,10 @@ class ClaudeBridgeService:
         except ClaudeCliError as exc:
             debug_log(f"claude auth status failed ({exc.reason})", "claude")
             return "not_found" if exc.reason == "not_found" else "start_failed"
-        if not auth.get("loggedIn"):
-            return "signed_out"
-        if auth.get("authMethod") != SUBSCRIPTION_AUTH:
-            debug_log("claude is not signed in with a subscription; refusing", "claude")
-            return "api_key_auth"
+        failure = sign_in_failure(auth)
+        if failure is not None:
+            debug_log(f"claude sign-in refused ({failure})", "claude")
+            return failure
         try:
             probe, init = self._start_session({}, effort=None)
         except ClaudeCliError as exc:

@@ -37,7 +37,7 @@ from ..debug import debug_log
 from ..tools.schema_validation import validate_arguments
 from ..tools.types import ToolImage
 from ..utils.redact import redact
-from .app_server import AppServerError, thread_isolation_config
+from .app_server import AppServerError, account_failure, thread_isolation_config
 from .prompts import assistant_instructions
 
 BRIDGE_TOOLS = (EXECUTE_TOOL,)
@@ -300,7 +300,7 @@ class BridgeService:
         except AppServerError as exc:
             debug_log(f"app-server preflight failed ({exc.reason})", "codex")
             return "unsupported" if exc.reason == "rpc_error" else "start_failed"
-        failure = self._check_account(account) or self._check_model(models)
+        failure = account_failure(account) or self._check_model(models)
         if failure is not None:
             debug_log(f"app-server preflight refused ({failure})", "codex")
             return failure
@@ -321,13 +321,6 @@ class BridgeService:
             if not cursor:
                 break
         return models
-
-    @staticmethod
-    def _check_account(response: Dict[str, Any]) -> Optional[str]:
-        account = response.get("account")
-        if not isinstance(account, dict):
-            return "signed_out" if response.get("requiresOpenaiAuth", True) else "api_key_auth"
-        return None if account.get("type") == "chatgpt" else "api_key_auth"
 
     def _check_model(self, models: List[Dict[str, Any]]) -> Optional[str]:
         wanted = str(getattr(self._cfg, "codex_model", "") or "")

@@ -6,7 +6,7 @@ A bridge is not an `LLMBackend`. Jarvis keeps speech recognition, speech output,
 
 ## Boundaries
 
-- A bridge is explicitly configured cloud inference. The redacted request, permitted context and returned tool data are sent to the bridge's provider using the user's own sign-in. This is stated where the mode is enabled, when it starts and in the README.
+- A bridge is explicitly configured cloud inference. The redacted request, permitted context and returned tool data are sent to the bridge's provider using the user's own sign-in. This is stated where the mode is enabled (Settings and the setup wizard's optional Cloud reply modes page, `desktop_app/setup_wizard.spec.md`), when it starts and in the README.
 - In `local` reply mode no bridge implementation (`codex_bridge`, `claude_bridge`) runs or is imported, no process starts and no cloud dependency exists. Only the small mode switchboard (`bridge/modes.py`) is loaded.
 - Core Jarvis (`src/jarvis/`) never imports `desktop_app`. Bridges report status through daemon output and the existing confirmation dialog presenter.
 - Each bridge talks only to the child process it started, over that process's pipes. No network listener, socket or token is created.
@@ -33,7 +33,7 @@ A bridge is not an `LLMBackend`. Jarvis keeps speech recognition, speech output,
 | `codex` | ChatGPT through Codex | `codex_enabled` |
 | `claude` | Claude through Claude Code | `claude_enabled` |
 
-- `reply_mode` (default `local`) is the mode Jarvis starts in. A cloud mode is entered only when its `<mode>_enabled` is true (both default false); otherwise Jarvis starts local and says so. Configuration version 6 sets `codex_enabled` for a configuration already in Codex mode, so an existing Codex user keeps it; nobody else is opted into anything.
+- `reply_mode` (default `local`) is the mode Jarvis starts in. A cloud mode is entered only when its `<mode>_enabled` is true (both default false, set in Settings or by the setup wizard, which never sets `reply_mode`); otherwise Jarvis starts local and says so. Configuration version 6 sets `codex_enabled` for a configuration already in Codex mode, so an existing Codex user keeps it; nobody else is opted into anything.
 - The active mode is runtime state in `bridge/modes.py`, initialised from `reply_mode` at daemon start. The reply engine routes on it, so a switch takes effect on the next request with no restart.
 - A switch can come from voice or text (the `replyMode` tool, normally reached through the fast-path phrases "use Claude", "use ChatGPT", "go local" in `fastpath/phrases/<language>.json`) or from the tray (bundled mode calls `daemon.set_reply_mode`; subprocess mode sends `__REPLY_MODE__:{"mode": ...}` on the daemon's stdin). Every route goes through `modes.switch`, which accepts only `local` and the allowed cloud modes: a cloud mode that is not allowed is refused with nothing changed, so a misheard command never sends anything to the cloud.
 - Switching cancels a request in flight (reason `mode_switch`), stops the previous bridge's processes (a closed service refuses later requests and warm-up as cancelled, so a request the engine handed to it just before the switch sends nothing and starts no process), starts the new bridge (its warm-up checks run in the background and print their result) and persists `reply_mode` through `config.update_config_values` (only non-default values written, unknown keys kept, atomic). A bridge that cannot be built leaves Jarvis in local mode and persists nothing. Switching to the active mode changes nothing.

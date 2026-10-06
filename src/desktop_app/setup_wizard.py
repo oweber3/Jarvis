@@ -363,6 +363,19 @@ def should_show_setup_wizard(force_server_check: bool = False) -> bool:
     return False
 
 
+def check_cloud_mode(mode: str) -> Optional[str]:
+    """Whether the CLI behind a cloud reply mode ("claude" or "codex") is installed and signed in.
+
+    Runs the bridge's own sign-in check (``check_sign_in`` in its ``lifecycle`` module): None when
+    ready, else its failure reason. No session or turn starts and no request content is sent.
+    """
+    if mode == "claude":
+        from jarvis.claude_bridge.lifecycle import check_sign_in
+    else:
+        from jarvis.codex_bridge.lifecycle import check_sign_in
+    return check_sign_in(load_settings())
+
+
 # --- PyQt6 UI components below ---
 # These imports are wrapped to avoid import errors when only detection functions are needed
 # (e.g., on headless CI systems where system Qt libraries may be missing)
@@ -375,14 +388,16 @@ try:
         QLabel, QPushButton, QProgressBar, QTextEdit, QWidget, QFrame,
         QSizePolicy, QScrollArea, QLineEdit, QSlider, QComboBox, QCheckBox,
         QDoubleSpinBox, QMessageBox,
-        QRadioButton, QButtonGroup, QStackedWidget, QLayout, QBoxLayout
+        QRadioButton, QButtonGroup, QStackedWidget, QLayout, QBoxLayout,
+        QStyle, QStyleOptionSlider
     )
-    from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject
+    from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject, QEvent, QSize
     from PyQt6.QtGui import QFont, QColor, QPalette, QPixmap, QPainter
 
     from desktop_app.qt_worker import KeepAliveWorker
     from desktop_app.themes import line_icon, link, set_role, set_state, themed_stylesheet
     from desktop_app.mcp_catalogue import get_wizard_entries, MCPEntry
+    from desktop_app import node_setup
 
     # Import location utilities with crash protection for Windows native modules
     try:
@@ -507,6 +522,7 @@ class ScrollableWizardPage(QWizardPage):
             "WhisperSetupPage": 0, "ProviderChoicePage": 1,
             "WelcomePage": 1, "OpenAICompatiblePage": 1,
             "OllamaInstallPage": 1, "OllamaServerPage": 1, "ModelsPage": 1,
+            "CloudModesPage": 1,
             "DictationPage": 2, "MCPPage": 2, "SearchProvidersPage": 2,
             "LocationPage": 2, "CompletePage": 3,
         }[type(self).__name__]
@@ -563,6 +579,7 @@ class SetupWizard(QWizard):
         self.ollama_install_page = OllamaInstallPage(self)
         self.ollama_server_page = OllamaServerPage(self)
         self.models_page = ModelsPage(self)
+        self.cloud_modes_page = CloudModesPage(self)
         self.mlx_whisper_page = WhisperSetupPage(self)
         self.dictation_page = DictationPage(self)
         self.mcp_page = MCPPage(self)
@@ -577,6 +594,7 @@ class SetupWizard(QWizard):
         self.ollama_install_page_id = self.addPage(self.ollama_install_page)
         self.ollama_server_page_id = self.addPage(self.ollama_server_page)
         self.models_page_id = self.addPage(self.models_page)
+        self.cloud_modes_page_id = self.addPage(self.cloud_modes_page)
         self.dictation_page_id = self.addPage(self.dictation_page)
         self.mcp_page_id = self.addPage(self.mcp_page)
         self.search_providers_page_id = self.addPage(self.search_providers_page)
@@ -655,14 +673,16 @@ class WelcomePage(ScrollableWizardPage):
         # Header
         header_layout = QVBoxLayout()
 
-        title = QLabel("Welcome to your Jarvis")
+        title = QLabel("Check Ollama on this PC")
         title.setObjectName("title")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_layout.addWidget(title)
 
-        subtitle = QLabel("Your AI-powered voice assistant")
+        subtitle = QLabel(
+            "Jarvis looks for Ollama, its server and the models it needs. "
+            "The next steps fix anything missing."
+        )
         subtitle.setObjectName("subtitle")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setWordWrap(True)
         header_layout.addWidget(subtitle)
 
         layout.addLayout(header_layout)
@@ -675,7 +695,7 @@ class WelcomePage(ScrollableWizardPage):
         status_layout.setContentsMargins(18, 16, 18, 16)
         status_layout.setSpacing(12)
 
-        status_title = QLabel("System Status")
+        status_title = QLabel("What Jarvis found")
         status_title.setObjectName("section_title")
         status_layout.addWidget(status_title)
         status_layout.addSpacing(8)
@@ -717,7 +737,7 @@ class WelcomePage(ScrollableWizardPage):
         layout.addStretch()
 
         # Info label
-        info = QLabel("Click 'Next' to continue with the setup process.")
+        info = QLabel("Next takes you to the first step that needs attention.")
         info.setWordWrap(True)
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         set_role(info, "muted")
@@ -872,12 +892,14 @@ class ProviderChoicePage(ScrollableWizardPage):
         layout.setSpacing(16)
         layout.setContentsMargins(28, 20, 28, 20)
 
-        title = QLabel("Choose your local intelligence")
+        title = QLabel("Choose how your models run")
         title.setObjectName("title")
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "Two ways to run Jarvis. Your models stay on hardware you control."
+            "Pick what runs Jarvis's language models: Ollama on this PC, or a "
+            "model server you already use. Either way they stay on hardware you "
+            "control. You choose the models themselves on a later step."
         )
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
@@ -1751,7 +1773,7 @@ class OpenAICompatiblePage(ScrollableWizardPage):
     def nextId(self) -> int:
         wizard = self.wizard()
         if isinstance(wizard, SetupWizard):
-            return wizard.dictation_page_id
+            return wizard.cloud_modes_page_id
         return super().nextId()
 
 
@@ -2133,14 +2155,14 @@ class ModelsPage(ScrollableWizardPage):
         layout.setSpacing(16)
         layout.setContentsMargins(28, 20, 28, 20)
 
-        title = QLabel("Choose your AI models")
+        title = QLabel("Choose which models to download")
         title.setObjectName("title")
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "Jarvis needs a chat model (conversations) and a fast model "
-            "(voice intent, tool routing). Pick them separately for "
-            "best VRAM usage."
+            "Pick which models Ollama downloads and Jarvis uses: a chat model "
+            "for conversations and a fast model for quick commands. Separate "
+            "models make the best use of graphics memory."
         )
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
@@ -2566,7 +2588,7 @@ class ModelsPage(ScrollableWizardPage):
     def nextId(self):
         w = self.wizard()
         if isinstance(w, SetupWizard):
-            return w.dictation_page_id
+            return w.cloud_modes_page_id
         return super().nextId()
 
 
@@ -2608,6 +2630,99 @@ def _get_effective_whisper_backend(
 
     mlx_available = apple_silicon and check_mlx_whisper_installed()
     return "mlx" if mlx_available else "faster-whisper"
+
+
+class _SliderScale(QWidget):
+    """A row of labels, each centred on one stop of a horizontal slider.
+
+    Labels are kept inside the row (the first and last align to its edges) and
+    the row's minimum width is the narrowest that keeps neighbours apart, so a
+    narrow window scrolls rather than drawing labels over each other.
+    """
+
+    _GAP = 8
+
+    def __init__(self, slider, label_role: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("clear")
+        self._slider = slider
+        self._role = label_role
+        self._labels: List[QLabel] = []
+        self._count = 0
+        slider.installEventFilter(self)
+
+    def set_texts(self, texts: List[str]):
+        while len(self._labels) < len(texts):
+            label = QLabel(self)
+            label.setObjectName(self._role)
+            self._labels.append(label)
+        self._count = len(texts)
+        for index, label in enumerate(self._labels):
+            label.setVisible(index < self._count)
+            if index < self._count:
+                label.setText(texts[index])
+                if index == 0:
+                    label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                elif index == self._count - 1:
+                    label.setAlignment(Qt.AlignmentFlag.AlignRight)
+                else:
+                    label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.updateGeometry()
+        self._place()
+
+    def _shown(self) -> List[QLabel]:
+        return self._labels[:self._count]
+
+    def _handle_length(self) -> int:
+        option = QStyleOptionSlider()
+        self._slider.initStyleOption(option)
+        return self._slider.style().subControlRect(
+            QStyle.ComplexControl.CC_Slider, option, QStyle.SubControl.SC_SliderHandle, self._slider
+        ).width()
+
+    def _stop_x(self, value: int) -> int:
+        option = QStyleOptionSlider()
+        self._slider.initStyleOption(option)
+        option.sliderPosition = option.sliderValue = value
+        handle = self._slider.style().subControlRect(
+            QStyle.ComplexControl.CC_Slider, option, QStyle.SubControl.SC_SliderHandle, self._slider
+        )
+        return self.mapFromGlobal(self._slider.mapToGlobal(handle.center())).x()
+
+    def minimumSizeHint(self) -> QSize:
+        labels = self._shown()
+        height = max((label.sizeHint().height() for label in labels), default=0)
+        if len(labels) < 2:
+            return QSize(max((l.sizeHint().width() for l in labels), default=0), height)
+        widths = [label.sizeHint().width() for label in labels]
+        half_handle = self._handle_length() / 2
+        # Smallest distance between stops that keeps every pair apart; the end
+        # labels are pinned to the row's edges rather than centred on their stop.
+        spacing = max((widths[i] + widths[i + 1]) / 2 for i in range(len(widths) - 1))
+        spacing = max(spacing,
+                      widths[0] + widths[1] / 2 - half_handle,
+                      widths[-1] + widths[-2] / 2 - half_handle)
+        width = 2 * half_handle + (len(widths) - 1) * (spacing + self._GAP)
+        return QSize(int(width + 1), height)
+
+    def sizeHint(self) -> QSize:
+        return self.minimumSizeHint()
+
+    def eventFilter(self, watched, event):
+        if watched is self._slider and event.type() in (QEvent.Type.Resize, QEvent.Type.Move):
+            self._place()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place()
+
+    def _place(self):
+        for value, label in enumerate(self._shown()):
+            hint = label.sizeHint()
+            left = self._stop_x(value) - hint.width() // 2
+            left = max(0, min(left, self.width() - hint.width()))
+            label.setGeometry(left, 0, hint.width(), self.height())
 
 
 class WhisperSetupPage(ScrollableWizardPage):
@@ -2742,35 +2857,20 @@ class WhisperSetupPage(ScrollableWizardPage):
         selection_title.setObjectName("section_title")
         selection_layout.addWidget(selection_title)
 
-        # Container for slider labels (will be rebuilt on language change)
-        self._labels_container = QWidget()
-        self._labels_container.setObjectName("clear")
-        self._labels_layout = QHBoxLayout(self._labels_container)
-        self._labels_layout.setContentsMargins(0, 4, 0, 0)
-        self._labels_layout.setSpacing(0)
-        selection_layout.addWidget(self._labels_container)
-
-        # Slider with proper padding for handle visibility
-        slider_container = QWidget()
-        slider_container.setObjectName("clear")
-        slider_container.setFixedHeight(36)
-        slider_inner = QHBoxLayout(slider_container)
-        slider_inner.setContentsMargins(0, 0, 0, 0)
-
         self._model_slider = QSlider(Qt.Orientation.Horizontal)
         self._model_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self._model_slider.setTickInterval(1)
+        self._model_slider.setFixedHeight(36)
         self._model_slider.valueChanged.connect(self._on_slider_changed)
-        slider_inner.addWidget(self._model_slider)
-        selection_layout.addWidget(slider_container)
 
-        # Container for size labels (will be rebuilt on language change)
-        self._size_container = QWidget()
-        self._size_container.setObjectName("clear")
-        self._size_layout = QHBoxLayout(self._size_container)
-        self._size_layout.setContentsMargins(0, 0, 0, 4)
-        self._size_layout.setSpacing(0)
-        selection_layout.addWidget(self._size_container)
+        # Names above the slider's stops, sizes below them (refilled on language change)
+        self._name_scale = _SliderScale(self._model_slider, "model_name")
+        self._size_scale = _SliderScale(self._model_slider, "model_size")
+        selection_layout.addSpacing(4)
+        selection_layout.addWidget(self._name_scale)
+        selection_layout.addWidget(self._model_slider)
+        selection_layout.addWidget(self._size_scale)
+        selection_layout.addSpacing(8)
 
         # Selected model info
         self._model_info_label = QLabel()
@@ -2884,7 +2984,7 @@ class WhisperSetupPage(ScrollableWizardPage):
         """Update the language info label based on current selection."""
         if self._is_english_only:
             self._lang_info_label.setText(
-                "English-only models are optimized for English and may have slightly better accuracy."
+                "English-only models are optimised for English and may have slightly better accuracy."
             )
         else:
             self._lang_info_label.setText(
@@ -2895,67 +2995,14 @@ class WhisperSetupPage(ScrollableWizardPage):
     def _rebuild_slider_ui(self):
         """Rebuild the slider labels based on current language mode."""
         options = self._get_current_model_options()
-        n = len(options)
 
-        # Clear existing labels.  The labels are already properly parented
-        # to their container widget, and takeAt() removes the layout's
-        # reference — scheduling deleteLater() is enough.  Do NOT call
-        # setParent(None) here: on macOS that promotes each QLabel to a
-        # top-level widget mid-transition, which triggers a native
-        # NSWindow creation and can SIGABRT inside QWizard.exec().  On
-        # Windows the same reparent creates a native HWND and fast-fails
-        # (0xc0000409) inside Qt6Core.dll — see dictation_history.py
-        # where the same mistake crashed the history window.
-        while self._labels_layout.count():
-            item = self._labels_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-            # Spacers are automatically cleaned up when the item goes out of scope.
-
-        while self._size_layout.count():
-            item = self._size_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-
-        # Add labels aligned with slider tick positions
-        # Slider ticks are at 0, 1/(n-1), 2/(n-1), ..., 1 of the groove width
-        # We achieve this by: label[0], stretch, label[1], stretch, ..., label[n-1]
-        # First label left-aligned, last label right-aligned, middle labels centered
-        for i, (model_id, name, file_size, vram, desc) in enumerate(options):
-            # Model name label
-            label = QLabel(name)
-            if i == 0:
-                label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            elif i == n - 1:
-                label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            else:
-                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setObjectName("model_name")
-            label.setFixedHeight(18)
-            self._labels_layout.addWidget(label)
-
-            # Size/VRAM label - single line to save space
-            size_label = QLabel(f"{file_size} / {vram}")
-            if i == 0:
-                size_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            elif i == n - 1:
-                size_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            else:
-                size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            size_label.setObjectName("model_size")
-            size_label.setFixedHeight(16)
-            self._size_layout.addWidget(size_label)
-
-            # Add stretch after each label except the last
-            if i < n - 1:
-                self._labels_layout.addStretch(1)
-                self._size_layout.addStretch(1)
-
-        # Update slider range
+        # The scales reuse their labels: deleting them here would leave the old
+        # ones on screen, because the wizard opens inside the app's running event
+        # loop and Qt holds deferred deletions until the dialog closes.
         self._model_slider.setMinimum(0)
         self._model_slider.setMaximum(len(options) - 1)
+        self._name_scale.set_texts([name for _, name, _, _, _ in options])
+        self._size_scale.set_texts([f"{size}\n{vram}" for _, _, size, vram, _ in options])
 
         # Find best matching position for current selection. If a stale turbo
         # selection was filtered out, use the same medium fallback as startup.
@@ -3500,6 +3547,222 @@ class LocationPage(ScrollableWizardPage):
         return super().nextId()
 
 
+class _CloudCheckWorker(KeepAliveWorker):
+    """Runs one cloud mode's sign-in check off the UI thread."""
+    checked = pyqtSignal(str, object)
+
+    def __init__(self, mode: str, parent=None):
+        super().__init__(parent)
+        self.mode = mode
+
+    def run(self):
+        try:
+            reason = check_cloud_mode(self.mode)
+        except Exception as exc:
+            from jarvis.debug import debug_log
+            debug_log(f"{self.mode} sign-in check raised {type(exc).__name__}", "setup")
+            reason = "start_failed"
+        self.checked.emit(self.mode, reason)
+
+
+class CloudModesPage(ScrollableWizardPage):
+    """Optional step that allows the Claude and Codex reply modes (``bridge/bridge.spec.md``).
+
+    Ticking a switch sets only ``claude_enabled`` / ``codex_enabled``: Jarvis still starts in
+    local mode and the user switches when they want to. Each card shows whether the CLI is
+    installed and signed in, and how to fix it when it is not.
+    """
+
+    MODES = {
+        "claude": ("Allow Claude Mode", "Claude Code",
+                   "Lets you switch Jarvis to Claude. In Claude mode, your requests, the context you "
+                   "choose to share and tool results are sent to Anthropic using your own Claude "
+                   "subscription sign-in."),
+        "codex": ("Allow Codex Mode", "Codex",
+                  "Lets you switch Jarvis to ChatGPT through Codex. In Codex mode, your requests, the "
+                  "context you choose to share and tool results are sent to OpenAI using your own "
+                  "ChatGPT sign-in."),
+    }
+    STATUS = {
+        None: "installed and signed in",
+        "not_found": "not installed",
+        "signed_out": "not signed in",
+        "api_key_auth": "signed in with an API key",
+        "unsupported": "needs a newer version",
+        "start_failed": "could not be checked",
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTitle("")
+        self._switches: Dict[str, QCheckBox] = {}
+        self._status: Dict[str, QLabel] = {}
+        self._fix: Dict[str, QLabel] = {}
+        self._workers: Dict[str, _CloudCheckWorker] = {}
+
+        layout = QVBoxLayout()
+        layout.setSpacing(16)
+        layout.setContentsMargins(28, 20, 28, 20)
+
+        title = QLabel("Cloud reply modes (optional)")
+        title.setObjectName("title")
+        layout.addWidget(title)
+
+        subtitle = QLabel(
+            "Jarvis answers on this PC and works fully offline. If you use Claude or ChatGPT, "
+            "you can also allow Jarvis to hand requests to them. Leave both off to keep "
+            "everything local."
+        )
+        subtitle.setObjectName("subtitle")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        for mode, (switch_text, cli, about) in self.MODES.items():
+            card = QFrame()
+            card.setObjectName("card")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(18, 14, 18, 14)
+            card_layout.setSpacing(6)
+
+            row = QHBoxLayout()
+            switch = QCheckBox(switch_text)
+            switch.setObjectName("option")
+            self._switches[mode] = switch
+            row.addWidget(switch)
+            row.addStretch()
+            status = QLabel(f"{cli}: checking...")
+            set_state(status, "tone", "muted")
+            self._status[mode] = status
+            row.addWidget(status)
+            recheck = QPushButton("Check again")
+            recheck.setObjectName("secondary")
+            recheck.clicked.connect(lambda _=False, m=mode: self.recheck(m))
+            row.addWidget(recheck)
+            card_layout.addLayout(row)
+
+            description = QLabel(about)
+            description.setWordWrap(True)
+            description.setObjectName("description")
+            card_layout.addWidget(description)
+
+            fix = QLabel("")
+            fix.setWordWrap(True)
+            fix.setOpenExternalLinks(True)
+            fix.setObjectName("detail_panel")
+            fix.setVisible(False)
+            self._fix[mode] = fix
+            card_layout.addWidget(fix)
+            layout.addWidget(card)
+
+        note = QLabel(
+            "Allowing a mode does not switch to it: Jarvis starts in local mode. Say \"use Claude\" "
+            "or \"use ChatGPT\", or choose a mode from the tray, when you want one. You can change "
+            "this later in Settings."
+        )
+        note.setWordWrap(True)
+        set_role(note, "muted")
+        layout.addWidget(note)
+        layout.addStretch()
+        self.setLayout(layout)
+
+    @staticmethod
+    def _fix_text(mode: str, reason: str) -> str:
+        cli = CloudModesPage.MODES[mode][1]
+        fixes = {
+            "claude": {
+                "not_found": f"Install {link('https://claude.com/claude-code', 'Claude Code')}, "
+                             "then press Check again.",
+                "signed_out": "Run <b>claude auth login</b> in a terminal and sign in with your Claude "
+                              "subscription, then press Check again.",
+                "api_key_auth": "Claude mode only uses a Claude subscription sign-in, never an API key. "
+                                "Run <b>claude auth login</b> and sign in with your subscription, then "
+                                "press Check again.",
+            },
+            "codex": {
+                "not_found": f"Install the {link('https://developers.openai.com/codex', 'Codex app or CLI')}, "
+                             "then press Check again.",
+                "signed_out": "Open the Codex app, or run <b>codex login</b>, and sign in with ChatGPT, "
+                              "then press Check again.",
+                "api_key_auth": "Codex mode only uses a ChatGPT sign-in, never an API key. Sign in with "
+                                "ChatGPT in the Codex app or with <b>codex login</b>, then press Check again.",
+                "unsupported": "This Codex version is too old for Jarvis. Update Codex, then press "
+                               "Check again.",
+            },
+        }
+        return fixes[mode].get(reason, f"{cli} could not be checked. You can still allow it now; "
+                                       "Jarvis checks again when you switch to it.")
+
+    def initializePage(self):
+        try:
+            from jarvis.config import default_config_path, _load_json
+            config = _load_json(default_config_path()) or {}
+        except Exception:
+            config = {}
+        for mode, switch in self._switches.items():
+            switch.setChecked(config.get(f"{mode}_enabled") is True)
+            self.recheck(mode)
+
+    def recheck(self, mode: str):
+        """Check one CLI again in the background."""
+        if mode in self._workers:
+            return
+        cli = self.MODES[mode][1]
+        self._status[mode].setText(f"{cli}: checking...")
+        set_state(self._status[mode], "tone", "muted")
+        worker = _CloudCheckWorker(mode)
+        worker.checked.connect(self._on_checked)
+        self._workers[mode] = worker
+        worker.start()
+
+    def _on_checked(self, mode: str, reason):
+        self._workers.pop(mode, None)
+        cli = self.MODES[mode][1]
+        reason = reason if reason in self.STATUS else "start_failed"
+        self._status[mode].setText(f"{cli}: {self.STATUS[reason]}")
+        set_state(self._status[mode], "tone", "success" if reason is None else "warning")
+        fix = self._fix[mode]
+        fix.setText("" if reason is None else self._fix_text(mode, reason))
+        fix.setVisible(reason is not None)
+
+    def checking(self) -> bool:
+        return bool(self._workers)
+
+    def status_tone(self, mode: str) -> str:
+        return str(self._status[mode].property("tone"))
+
+    def fix_text(self, mode: str) -> str:
+        fix = self._fix[mode]
+        return fix.text() if fix.isVisibleTo(self) else ""
+
+    def isComplete(self) -> bool:
+        return True
+
+    def validatePage(self) -> bool:
+        """Write only the ``<mode>_enabled`` permissions; ``reply_mode`` is never touched."""
+        try:
+            from jarvis.config import default_config_path, _load_json, _save_json
+            config_path = default_config_path()
+            config = _load_json(config_path) or {}
+            updated = dict(config)
+            for mode, switch in self._switches.items():
+                if switch.isChecked():
+                    updated[f"{mode}_enabled"] = True
+                else:
+                    updated.pop(f"{mode}_enabled", None)
+            if updated != config:
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                _save_json(config_path, updated)
+        except Exception:
+            pass
+        return True
+
+    def nextId(self) -> int:
+        wizard = self.wizard()
+        if isinstance(wizard, SetupWizard):
+            return wizard.dictation_page_id
+        return super().nextId()
+
+
 class DictationPage(ScrollableWizardPage):
     """Page for configuring dictation (hold-to-dictate) settings."""
 
@@ -3696,8 +3959,8 @@ class MCPPage(ScrollableWizardPage):
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "MCP (Model Context Protocol) servers give Jarvis extra abilities. "
-            "Select any you'd like to enable — you can always change these later in Settings."
+            "Optional MCP (Model Context Protocol) servers give Jarvis extra abilities. "
+            "Tick any you want, or none; you can change them later in Settings."
         )
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
@@ -3705,17 +3968,40 @@ class MCPPage(ScrollableWizardPage):
 
         layout.addSpacing(8)
 
-        # Node.js availability warning
-        self._node_warning = QLabel(
-            "<b>Node.js not found.</b> The MCP servers below require Node.js to run. "
-            f"{link('https://nodejs.org/', 'Download Node.js')} "
-            "and restart Jarvis, or skip this page for now."
-        )
-        self._node_warning.setOpenExternalLinks(True)
-        self._node_warning.setWordWrap(True)
-        self._node_warning.setObjectName("notice_error")
-        self._node_warning.setVisible(not self._is_node_available())
-        layout.addWidget(self._node_warning)
+        # Node.js note: only while a ticked server needs Node.js and this PC has none
+        self._node_ok = True
+        self._node_worker: Optional[CommandWorker] = None
+        self._node_box = QWidget()
+        self._node_box.setObjectName("clear")
+        node_layout = QVBoxLayout(self._node_box)
+        node_layout.setContentsMargins(0, 0, 0, 0)
+        node_layout.setSpacing(8)
+        self._node_note = QLabel("")
+        self._node_note.setOpenExternalLinks(True)
+        self._node_note.setWordWrap(True)
+        self._node_note.setObjectName("detail_panel")
+        node_layout.addWidget(self._node_note)
+        node_buttons = QHBoxLayout()
+        self._install_node_btn = QPushButton("Install Node.js")
+        self._install_node_btn.clicked.connect(self._install_node)
+        node_buttons.addWidget(self._install_node_btn)
+        self._recheck_node_btn = QPushButton("Check again")
+        self._recheck_node_btn.setObjectName("secondary")
+        self._recheck_node_btn.clicked.connect(self._recheck_node)
+        node_buttons.addWidget(self._recheck_node_btn)
+        node_buttons.addStretch()
+        node_layout.addLayout(node_buttons)
+        self._node_progress = QProgressBar()
+        self._node_progress.setRange(0, 0)
+        self._node_progress.setFixedHeight(6)
+        self._node_progress.setTextVisible(False)
+        self._node_progress.setVisible(False)
+        node_layout.addWidget(self._node_progress)
+        self._node_box.setVisible(False)
+        self._node_status = QLabel("")
+        self._node_status.setWordWrap(True)
+        self._node_status.setOpenExternalLinks(True)
+        self._node_status.setVisible(False)
 
         # Scrollable cards for wizard-featured entries
         scroll = QScrollArea()
@@ -3735,6 +4021,7 @@ class MCPPage(ScrollableWizardPage):
 
             cb = QCheckBox()
             cb.setChecked(self._is_already_configured(entry.name))
+            cb.toggled.connect(self._update_node_note)
             self._checkboxes[entry.name] = cb
             card_layout.addWidget(cb)
 
@@ -3753,6 +4040,9 @@ class MCPPage(ScrollableWizardPage):
             card_layout.addLayout(text_layout, 1)
             inner_layout.addWidget(card)
 
+        # The note sits under the servers it is about, inside the scroll area so it never squeezes them.
+        inner_layout.addWidget(self._node_box)
+        inner_layout.addWidget(self._node_status)
         inner_layout.addStretch()
         scroll.setWidget(inner)
         layout.addWidget(scroll, 1)
@@ -3768,15 +4058,78 @@ class MCPPage(ScrollableWizardPage):
 
         self.setLayout(layout)
 
-    @staticmethod
-    def _is_node_available() -> bool:
-        """Check if Node.js (npx) is available on the system."""
-        try:
-            from jarvis.tools.external.mcp_client import _resolve_command
-            _resolve_command("npx")
-            return True
-        except (FileNotFoundError, Exception):
-            return False
+    def initializePage(self):
+        self._recheck_node()
+
+    def _node_servers_ticked(self) -> List[str]:
+        return [e.display_name for e in get_wizard_entries()
+                if e.needs_node and e.name in self._checkboxes and self._checkboxes[e.name].isChecked()]
+
+    def _update_node_note(self, *_):
+        names = self._node_servers_ticked()
+        installing = self._node_worker is not None
+        self._node_box.setVisible(installing or (bool(names) and not self._node_ok))
+        if not names:
+            return
+        listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        need = "needs" if len(names) == 1 else "need"
+        can_install = node_setup.install_command() is not None
+        if can_install:
+            how = ("Jarvis can install the official LTS release for you with winget. "
+                   "Windows may ask for permission.")
+        else:
+            how = (f"{link(node_setup.NODE_DOWNLOAD_URL, 'Download Node.js')}, install it, "
+                   "then press Check again.")
+        self._node_note.setText(f"{listed} {need} Node.js, which this PC does not have yet. {how}")
+        self._install_node_btn.setVisible(can_install)
+        self._install_node_btn.setEnabled(not installing)
+        self._recheck_node_btn.setEnabled(not installing)
+
+    def _show_node_status(self, text: str, tone: str):
+        self._node_status.setText(text)
+        set_state(self._node_status, "tone", tone)
+        self._node_status.setVisible(bool(text))
+
+    def _recheck_node(self):
+        self._node_ok = node_setup.node_available()
+        if self._node_ok and self._node_status.isVisibleTo(self):
+            self._show_node_status("Node.js is ready. The servers you ticked can run.", "success")
+        self._update_node_note()
+
+    def _install_node(self):
+        """Install Node.js with winget, only because the user pressed the button."""
+        command = node_setup.install_command()
+        if command is None or self._node_worker is not None:
+            return
+        self._show_node_status("Installing Node.js with winget...", "muted")
+        self._node_progress.setVisible(True)
+        self._node_worker = CommandWorker(command)
+        self._node_worker.completed.connect(self._on_node_installed)
+        self._update_node_note()
+        self._node_worker.start()
+
+    def _on_node_installed(self, success: bool, message: str):
+        self._node_worker = None
+        self._node_progress.setVisible(False)
+        self._node_ok = node_setup.node_available()
+        if self._node_ok:
+            self._show_node_status("Node.js is installed. The servers you ticked can run.", "success")
+        elif success:
+            self._show_node_status(
+                "Node.js was installed, but Jarvis cannot find it yet. Restart Jarvis to finish.",
+                "warning")
+        else:
+            self._show_node_status(
+                f"Node.js could not be installed ({message}). You can "
+                f"{link(node_setup.NODE_DOWNLOAD_URL, 'download it from nodejs.org')} instead.",
+                "warning")
+        self._update_node_note()
+
+    def node_note_shown(self) -> bool:
+        return self._node_box.isVisibleTo(self)
+
+    def node_status_tone(self) -> str:
+        return str(self._node_status.property("tone"))
 
     @staticmethod
     def _is_already_configured(name: str) -> bool:

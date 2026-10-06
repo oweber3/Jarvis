@@ -108,3 +108,39 @@ class TestWizardEntries:
         wizard_names = {e.name for e in get_wizard_entries()}
         catalogue_names = {e.name for e in CATALOGUE}
         assert wizard_names.issubset(catalogue_names)
+
+
+class TestPlatforms:
+    """Entries that only work on one platform are offered only there."""
+
+    def test_wizard_offers_only_entries_for_the_given_platform(self):
+        for platform in ("win32", "darwin", "linux"):
+            entries = get_wizard_entries(platform)
+            assert entries
+            assert all(e.supports(platform) for e in entries)
+
+    def test_wizard_defaults_to_this_platform(self):
+        import sys
+        assert all(e.supports(sys.platform) for e in get_wizard_entries())
+
+    def test_macos_automation_is_offered_on_macos_only(self):
+        assert "macos" in {e.name for e in get_wizard_entries("darwin")}
+        assert "macos" not in {e.name for e in get_wizard_entries("win32")}
+        assert "macos" not in {e.name for e in get_wizard_entries("linux")}
+
+    def test_an_entry_without_platforms_works_everywhere(self):
+        entry = MCPEntry(name="t", display_name="T", description="d", command="npx", args=[])
+        assert all(entry.supports(p) for p in ("win32", "darwin", "linux"))
+
+    def test_platform_names_match_by_prefix(self):
+        entry = MCPEntry(name="t", display_name="T", description="d", command="npx", args=[],
+                         platforms=("linux",))
+        assert entry.supports("linux2") and not entry.supports("win32")
+
+
+class TestNodeRequirement:
+    def test_npx_servers_need_node(self):
+        assert CATALOGUE_BY_NAME["chrome-devtools"].needs_node is True
+
+    def test_other_launchers_do_not(self):
+        assert CATALOGUE_BY_NAME["whatsapp"].needs_node is False

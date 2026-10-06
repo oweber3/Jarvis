@@ -39,7 +39,7 @@ Your conversation memory stays on your computer. Sensitive information is redact
 | Windows · x64 | `Jarvis-Windows-x64.zip` | Extract, then run `Jarvis.exe` |
 | Linux · x64 | `Jarvis-Linux-x64.tar.gz` | Extract, then run `./Jarvis/Jarvis` |
 
-**2. Choose your local models.** The setup wizard guides you through speech recognition and a model server. Use [Ollama](https://ollama.com/download), or connect an OpenAI-compatible server you already run, such as LM Studio, oMLX or llama.cpp.
+**2. Choose your local models.** The setup wizard guides you through speech recognition and a model server. Use [Ollama](https://ollama.com/download), or connect an OpenAI-compatible server you already run, such as LM Studio, oMLX or llama.cpp. An optional step lets you allow the Claude and Codex reply modes; leave them off to stay fully offline.
 
 **3. Make it yours.** Allow microphone access and let the first model downloads finish. When Jarvis reports that it is listening, try:
 
@@ -205,13 +205,13 @@ Hold to record and release to paste. Double-tap for hands-free recording. Option
 
 ### Bring your own tools
 
-Connect MCP servers for browser automation, Home Assistant, GitHub, databases and more. Credentials and network access depend on the tools you choose. Review a server's permissions before enabling it.
+Connect MCP servers for browser automation, Home Assistant, GitHub, databases and more. Credentials and network access depend on the tools you choose. Review a server's permissions before enabling it. Most catalogue servers run on Node.js, which Jarvis does not bundle: when you tick one in setup and Node.js is missing, the wizard can install the official LTS release with winget, or links to the download.
 
 [Integration examples and server settings →](docs/CONFIGURATION.md#mcp-integrations)
 
 ### Switching who answers
 
-Jarvis answers with its local model by default. If you allow them in **Settings → Reply Mode**, it can instead hand requests to **ChatGPT through Codex** or **Claude through Claude Code**, both running hidden in the background. Switch at any time, with no restart:
+Jarvis answers with its local model by default. If you allow them in **Settings → Reply Mode** (or on the setup wizard's optional **Cloud reply modes** step, which also checks that each one is installed and signed in), it can instead hand requests to **ChatGPT through Codex** or **Claude through Claude Code**, both running hidden in the background. Switch at any time, with no restart:
 
 - say "Jarvis, use Claude", "use ChatGPT" or "go local";
 - or pick a mode under **Reply Mode** in the tray menu.

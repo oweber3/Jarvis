@@ -5,6 +5,7 @@ These tests verify the Ollama detection logic without touching the UI.
 They treat the detection functions as black boxes, verifying inputs produce correct outputs.
 """
 
+import json
 import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -667,6 +668,182 @@ class TestWelcomePageFlow:
             assert page.nextId() == 9
 
 
+def _wait_until(condition, timeout_ms=5000):
+    """Process Qt events until `condition()` holds or the timeout passes."""
+    from PyQt6.QtTest import QTest
+    for _ in range(timeout_ms // 10):
+        if condition():
+            return True
+        QTest.qWait(10)
+    return condition()
+
+
+class TestCloudModesPage:
+    """Optional page that allows the Claude and Codex reply modes without leaving local mode."""
+
+    MODES = ("claude", "codex")
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        path = tmp_path / "config.json"
+        path.write_text("{}")
+        with patch("jarvis.config.default_config_path", return_value=path):
+            yield path
+
+    @pytest.fixture
+    def checks(self, monkeypatch):
+        """Sign-in results per mode; the real checks start the CLIs, so tests never run them."""
+        from desktop_app import setup_wizard as ui
+        results = {"claude": None, "codex": None}
+        calls = []
+
+        def fake(mode):
+            calls.append(mode)
+            return results[mode]
+
+        monkeypatch.setattr(ui, "check_cloud_mode", fake)
+        return SimpleNamespace(results=results, calls=calls)
+
+    @pytest.fixture
+    def wizard(self, qapp, config, checks):
+        from desktop_app import setup_wizard as ui
+        wizard = ui.SetupWizard()
+        yield wizard
+        wizard.deleteLater()
+
+    @staticmethod
+    def _switch(page, mode):
+        from PyQt6.QtWidgets import QCheckBox
+        title = {"claude": "Allow Claude Mode", "codex": "Allow Codex Mode"}[mode]
+        (switch,) = [c for c in page.findChildren(QCheckBox) if c.text() == title]
+        return switch
+
+    @staticmethod
+    def _open(page):
+        page.initializePage()
+        assert _wait_until(lambda: not page.checking())
+
+    def test_both_provider_branches_reach_it_before_dictation(self, wizard):
+        assert wizard.models_page.nextId() == wizard.cloud_modes_page_id
+        assert wizard.openai_compat_page.nextId() == wizard.cloud_modes_page_id
+        assert wizard.cloud_modes_page.nextId() == wizard.dictation_page_id
+
+    def test_skipping_with_nothing_ticked_changes_no_config(self, wizard, config):
+        config.write_text(json.dumps({"reply_mode": "local", "other": 1}))
+        page = wizard.cloud_modes_page
+        self._open(page)
+        assert not any(self._switch(page, m).isChecked() for m in self.MODES)
+        assert page.isComplete()
+        assert page.validatePage() is True
+        assert json.loads(config.read_text()) == {"reply_mode": "local", "other": 1}
+
+    @pytest.mark.parametrize("mode", MODES)
+    def test_ticking_a_switch_allows_only_that_mode_and_stays_local(self, wizard, config, mode):
+        page = wizard.cloud_modes_page
+        self._open(page)
+        self._switch(page, mode).setChecked(True)
+        assert page.validatePage() is True
+        assert json.loads(config.read_text()) == {f"{mode}_enabled": True}
+
+    def test_rerunning_keeps_an_allowed_mode_and_unticking_removes_it(self, wizard, config):
+        config.write_text(json.dumps({"codex_enabled": True, "claude_enabled": True}))
+        page = wizard.cloud_modes_page
+        self._open(page)
+        assert self._switch(page, "codex").isChecked() and self._switch(page, "claude").isChecked()
+        self._switch(page, "claude").setChecked(False)
+        page.validatePage()
+        assert json.loads(config.read_text()) == {"codex_enabled": True}
+
+    def test_each_switch_says_where_requests_go(self, wizard):
+        from PyQt6.QtWidgets import QLabel
+        page = wizard.cloud_modes_page
+        for mode, provider in (("claude", "Anthropic"), ("codex", "OpenAI")):
+            card = self._switch(page, mode).parentWidget()
+            text = " ".join(l.text() for l in card.findChildren(QLabel))
+            assert provider in text and "your own" in text
+
+    def test_checks_each_cli_when_opened_and_again_on_request(self, wizard, checks):
+        page = wizard.cloud_modes_page
+        self._open(page)
+        assert sorted(checks.calls) == sorted(self.MODES)
+        page.recheck("codex")
+        assert _wait_until(lambda: not page.checking())
+        assert checks.calls.count("codex") == 2
+
+    @pytest.mark.parametrize("mode", MODES)
+    def test_a_ready_cli_shows_no_fix(self, wizard, mode):
+        page = wizard.cloud_modes_page
+        self._open(page)
+        assert page.status_tone(mode) == "success"
+        assert not page.fix_text(mode)
+
+    @pytest.mark.parametrize("mode", MODES)
+    @pytest.mark.parametrize("reason", ["not_found", "signed_out", "api_key_auth", "start_failed"])
+    def test_a_missing_or_signed_out_cli_shows_how_to_fix_it(self, wizard, checks, mode, reason):
+        checks.results[mode] = reason
+        page = wizard.cloud_modes_page
+        self._open(page)
+        assert page.status_tone(mode) == "warning"
+        assert page.fix_text(mode)
+        switch = self._switch(page, mode)
+        assert switch.isEnabled()
+        switch.setChecked(True)
+        assert page.isComplete()
+
+    def test_a_failing_check_is_reported_not_raised(self, wizard, monkeypatch):
+        from desktop_app import setup_wizard as ui
+
+        def broken(mode):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(ui, "check_cloud_mode", broken)
+        page = wizard.cloud_modes_page
+        self._open(page)
+        assert all(page.status_tone(m) == "warning" and page.fix_text(m) for m in self.MODES)
+
+
+class TestPagePurposes:
+    """Each page's heading says what that step is for, so no two steps read alike."""
+
+    @staticmethod
+    def _heading(page) -> str:
+        from PyQt6.QtWidgets import QLabel
+        return " ".join(l.text() for l in page.findChildren(QLabel)
+                        if l.objectName() in ("title", "subtitle")).lower()
+
+    @pytest.fixture
+    def pages(self, qapp, tmp_path):
+        from desktop_app import setup_wizard as ui
+        cfg = tmp_path / "config.json"
+        cfg.write_text("{}")
+        with patch("jarvis.config.default_config_path", return_value=cfg):
+            wizard = ui.SetupWizard()
+        yield wizard
+        wizard.deleteLater()
+
+    def test_provider_page_is_about_how_models_run(self, pages):
+        heading = self._heading(pages.provider_choice_page)
+        assert "run" in heading
+        assert "later" in heading, "the provider step should say models are chosen on a later step"
+
+    def test_models_page_is_about_which_models_to_download(self, pages):
+        heading = self._heading(pages.models_page)
+        assert "which models" in heading and "download" in heading
+
+    def test_status_page_names_what_it_checks_rather_than_greeting(self, pages):
+        heading = self._heading(pages.welcome_page)
+        assert "ollama" in heading
+        assert "welcome" not in heading, "the status step sits mid-flow, not at the start"
+
+    def test_every_page_title_is_distinct(self, pages):
+        from PyQt6.QtWidgets import QLabel
+        titles = []
+        for page_id in pages.pageIds():
+            page = pages.page(page_id)
+            titles += [l.text() for l in page.findChildren(QLabel) if l.objectName() == "title"]
+        assert len(titles) == len(set(titles)), titles
+
+
 class TestOpenAICompatiblePage:
     """Collects the OpenAI-compatible connection details."""
 
@@ -753,11 +930,11 @@ class TestOpenAICompatiblePage:
 
     def test_nextid_skips_ollama_pages(self):
         """After configuring the remote provider, the wizard jumps straight
-        to dictation — the Ollama install/server/models pages are
-        irrelevant."""
+        to the optional cloud reply modes — the Ollama install/server/models
+        pages are irrelevant."""
         page = OpenAICompatiblePage.__new__(OpenAICompatiblePage)
         wizard = MagicMock()
-        wizard.dictation_page_id = 8
+        wizard.cloud_modes_page_id = 8
         page.wizard = MagicMock(return_value=wizard)
         with patch("desktop_app.setup_wizard.SetupWizard", MagicMock):
             assert page.nextId() == 8
@@ -1772,78 +1949,37 @@ class TestWhisperSetupPageSliderRebuild:
     setParent(None)) during a QWizard page transition could trigger
     a SIGABRT ('Fatal Python error: Aborted') while the next page
     was being shown.  These tests guarantee that the slider labels
-    stay parented to their containers throughout rebuilds — the
-    safe pattern for clearing items out of a layout.
+    stay inside the page throughout rebuilds.
     """
 
-    def test_slider_labels_keep_container_parent_after_rebuild(self, qapp):
-        """Newly-built slider labels must remain children of their containers.
+    @staticmethod
+    def _assert_no_top_level_labels(qapp, page):
+        from PyQt6.QtWidgets import QLabel
 
-        If any label ends up reparented to None it becomes a top-level
-        widget, which on macOS triggers a native window creation that
-        can abort during wizard page transitions.
-        """
+        labels = [l for l in page.findChildren(QLabel) if l.objectName() in ("model_name", "model_size")]
+        assert labels
+        assert not any(label.isWindow() for label in labels)
+        assert not any(isinstance(w, QLabel) for w in qapp.topLevelWidgets()), (
+            "A slider label became a top-level widget, which crashes QWizard transitions on macOS."
+        )
+
+    def test_slider_labels_stay_inside_the_page_after_rebuild(self, qapp):
+        """Toggling the language refills the slider labels without promoting any to a window."""
         from desktop_app.setup_wizard import WhisperSetupPage
 
         page = WhisperSetupPage()
-
-        # Toggle language mode — this fires _rebuild_slider_ui which
-        # clears the old labels and inserts a new set.
         page._on_language_changed(True)
         page._on_language_changed(False)
-
-        labels_container = page._labels_container
-        size_container = page._size_container
-
-        for i in range(page._labels_layout.count()):
-            item = page._labels_layout.itemAt(i)
-            w = item.widget()
-            if w is not None:
-                assert w.parent() is labels_container, (
-                    "Slider name labels must stay parented to their "
-                    "container — a None parent promotes them to top-level "
-                    "widgets, which crashes QWizard transitions on macOS."
-                )
-
-        for i in range(page._size_layout.count()):
-            item = page._size_layout.itemAt(i)
-            w = item.widget()
-            if w is not None:
-                assert w.parent() is size_container, (
-                    "Slider size labels must stay parented to their "
-                    "container — a None parent promotes them to top-level "
-                    "widgets, which crashes QWizard transitions on macOS."
-                )
+        self._assert_no_top_level_labels(qapp, page)
 
     def test_initialize_page_can_be_called_multiple_times(self, qapp):
-        """initializePage must be safely re-callable.
-
-        QWizard calls initializePage each time a page is shown.  The
-        first call (right after construction) has to clear the initial
-        labels that __init__ built, and subsequent calls must not
-        crash or leak top-level widgets.
-        """
+        """QWizard calls initializePage each time the page is shown; repeating it is safe."""
         from desktop_app.setup_wizard import WhisperSetupPage
 
         page = WhisperSetupPage()
-
-        # Re-initialise a few times — this mirrors back/forward
-        # navigation between wizard pages.
         for _ in range(3):
             page.initializePage()
-
-        # All remaining labels in the layouts are still properly
-        # parented (not promoted to top-level).
-        for layout, container in [
-            (page._labels_layout, page._labels_container),
-            (page._size_layout, page._size_container),
-        ]:
-            for i in range(layout.count()):
-                item = layout.itemAt(i)
-                w = item.widget()
-                if w is not None:
-                    assert w.parent() is container
-
+        self._assert_no_top_level_labels(qapp, page)
 
 class TestMCPPage:
     """Tests for the MCP servers wizard page."""
@@ -1911,16 +2047,6 @@ class TestMCPPage:
         finally:
             cfg_path.unlink(missing_ok=True)
 
-    def test_is_node_available_returns_true_when_npx_found(self):
-        """_is_node_available returns True when _resolve_command succeeds."""
-        with patch("jarvis.tools.external.mcp_client._resolve_command", return_value="/usr/bin/npx"):
-            assert MCPPage._is_node_available() is True
-
-    def test_is_node_available_returns_false_when_npx_missing(self):
-        """_is_node_available returns False when _resolve_command raises."""
-        with patch("jarvis.tools.external.mcp_client._resolve_command", side_effect=FileNotFoundError("not found")):
-            assert MCPPage._is_node_available() is False
-
     def test_validate_page_preserves_existing_non_wizard_mcps(self):
         """validatePage must not remove MCPs that aren't in the wizard catalogue."""
         import json
@@ -1948,6 +2074,134 @@ class TestMCPPage:
             assert "custom-server" in saved.get("mcps", {}), "Custom MCP server was removed"
         finally:
             cfg_path.unlink(missing_ok=True)
+
+
+class _FakeInstall:
+    """Stands in for ``CommandWorker`` so no test ever runs winget."""
+
+    runs = []
+
+    def __init__(self, command, parent=None):
+        self.command = command
+        self._done = []
+        self.output = SimpleNamespace(connect=lambda cb: None)
+        self.completed = SimpleNamespace(connect=self._done.append)
+        self.result = (True, "Command completed successfully")
+
+    def start(self):
+        _FakeInstall.runs.append(self)
+        for callback in self._done:
+            callback(*self.result)
+
+
+class TestMCPPageNode:
+    """Node.js is optional: a neutral note and an install button only when a ticked server needs it."""
+
+    @pytest.fixture
+    def env(self, qapp, monkeypatch, tmp_path):
+        from desktop_app import node_setup, setup_wizard as ui
+
+        def no_real_processes(*args, **kwargs):
+            raise AssertionError(f"a test tried to start a process: {args[0] if args else kwargs}")
+
+        monkeypatch.setattr(ui.subprocess, "Popen", no_real_processes)
+        cfg = tmp_path / "config.json"
+        cfg.write_text("{}")
+        monkeypatch.setattr("jarvis.config.default_config_path", lambda: cfg)
+        state = SimpleNamespace(node=False, winget=True, after_install=True)
+        monkeypatch.setattr(node_setup, "node_available", lambda: state.node)
+        monkeypatch.setattr(node_setup, "install_command",
+                            lambda: ["winget.exe", "install", "--id", "OpenJS.NodeJS.LTS"] if state.winget else None)
+        _FakeInstall.runs = []
+        monkeypatch.setattr(ui, "CommandWorker", _FakeInstall)
+        state.cfg = cfg
+        return state
+
+    @staticmethod
+    def _page():
+        page = MCPPage()
+        page.initializePage()
+        return page
+
+    @staticmethod
+    def _node_server(page):
+        return next(name for name, cb in page._checkboxes.items()
+                    if next(e for e in get_wizard_entries() if e.name == name).needs_node)
+
+    def test_shows_only_entries_for_this_platform(self, env):
+        import sys
+        page = self._page()
+        assert set(page._checkboxes) == {e.name for e in get_wizard_entries(sys.platform)}
+
+    def test_no_note_until_a_server_that_needs_node_is_ticked(self, env):
+        page = self._page()
+        assert not page.node_note_shown()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        assert page.node_note_shown()
+        page._checkboxes[self._node_server(page)].setChecked(False)
+        assert not page.node_note_shown()
+
+    def test_the_note_is_neutral_not_an_error(self, env):
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        assert "error" not in page._node_note.objectName()
+
+    def test_no_note_when_node_is_installed(self, env):
+        env.node = True
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        assert not page.node_note_shown()
+
+    def test_an_already_configured_node_server_shows_the_note_on_open(self, env):
+        import json
+        name = next(e.name for e in get_wizard_entries() if e.needs_node)
+        env.cfg.write_text(json.dumps({"mcps": {name: {"command": "npx"}}}))
+        page = self._page()
+        assert page.node_note_shown()
+
+    def test_install_runs_winget_only_when_clicked_then_rechecks(self, env):
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        assert page._install_node_btn.isVisibleTo(page)
+        assert _FakeInstall.runs == []
+        env.node = True  # winget installed it; the recheck finds it without a restart
+        page._install_node_btn.click()
+        (run,) = _FakeInstall.runs
+        assert "OpenJS.NodeJS.LTS" in run.command
+        assert not page.node_note_shown()
+        assert page.node_status_tone() == "success"
+
+    def test_a_failed_install_offers_the_download_link(self, env, monkeypatch):
+        monkeypatch.setattr(_FakeInstall, "start", lambda self: (
+            _FakeInstall.runs.append(self), [cb(False, "Command failed with exit code 1") for cb in self._done]))
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        page._install_node_btn.click()
+        assert page.node_note_shown()
+        assert page.node_status_tone() == "warning"
+        assert "nodejs.org" in page._node_status.text()
+
+    def test_installed_but_not_found_says_to_restart(self, env):
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        page._install_node_btn.click()  # succeeds, but node_available() stays False
+        assert page.node_status_tone() == "warning"
+        assert "restart" in page._node_status.text().lower()
+
+    def test_without_winget_only_the_download_link_is_offered(self, env):
+        env.winget = False
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        assert page.node_note_shown()
+        assert not page._install_node_btn.isVisibleTo(page)
+        assert "nodejs.org" in page._node_note.text()
+
+    def test_check_again_finds_a_manual_install(self, env):
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        env.node = True
+        page._recheck_node_btn.click()
+        assert not page.node_note_shown()
 
 
 class TestSearchProvidersPage:
