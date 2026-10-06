@@ -76,6 +76,15 @@ def thread_isolation_config(effective_config: Mapping[str, Any]) -> Dict[str, bo
     return out
 
 
+def account_failure(response: Mapping[str, Any]) -> Optional[str]:
+    """``signed_out`` or ``api_key_auth`` for an ``account/read`` response without a ChatGPT sign-in,
+    else None."""
+    account = response.get("account")
+    if not isinstance(account, dict):
+        return "signed_out" if response.get("requiresOpenaiAuth", True) else "api_key_auth"
+    return None if account.get("type") == "chatgpt" else "api_key_auth"
+
+
 def resolve_executable(executable: str) -> Optional[str]:
     """The Codex executable to start, or None when it cannot be found."""
     name = (executable or "").strip() or "codex"

@@ -47,10 +47,10 @@ page transitions and model installation do not force a larger window.
 Whisper Setup (start) → Provider Choice ─┬─ Ollama → Welcome/Status → [Ollama Install] → [Ollama Server] → Models ─┐
                                           └─ OpenAI-compat → OpenAI-compatible config ───────────────────────────────────────┤
                                                                                                                               ▼
-                                            Dictation → MCP Servers → Search Providers → [Location] → Complete
+                              Cloud Reply Modes → Dictation → MCP Servers → Search Providers → [Location] → Complete
 ```
 
-**Whisper Setup** is the first step (`setStartId`), so its model choice informs the later memory budget. **Provider Choice** then branches: the Ollama path goes through the Welcome/Status dashboard and install/server/models; the OpenAI-compatible path uses a connection and model page. Pages in brackets are conditional, skipped when their prerequisite is already satisfied.
+**Whisper Setup** is the first step (`setStartId`), so its model choice informs the later memory budget. **Provider Choice** then branches: the Ollama path goes through the Welcome/Status dashboard and install/server/models; the OpenAI-compatible path uses a connection and model page. Both branches then reach the optional **Cloud Reply Modes** page before Dictation. Pages in brackets are conditional, skipped when their prerequisite is already satisfied.
 
 ### Pages
 
@@ -63,11 +63,12 @@ Whisper Setup (start) → Provider Choice ─┬─ Ollama → Welcome/Status �
 | 5 | **Ollama Install** | Ollama path + CLI not found | — |
 | 6 | **Ollama Server** | Ollama path + server not running | — |
 | 7 | **Models** | Ollama path | `ollama_chat_model`, `fast_model` |
-| 8 | **Dictation** | Always | `dictation_enabled`, `dictation_hotkey`, `dictation_filler_removal` |
-| 9 | **MCP Servers** | Always | `mcps` |
-| 10 | **Search Providers** | Always | `brave_search_api_key` (credential store), `wikipedia_fallback_enabled` |
-| 11 | **Location** | Location enabled but detection failing | `location_ip_address` |
-| 12 | **Complete** | Always | — |
+| 8 | **Cloud Reply Modes** | Always (optional, skippable) | `claude_enabled`, `codex_enabled` (`true` when ticked, key removed when unticked; never `reply_mode`) |
+| 9 | **Dictation** | Always | `dictation_enabled`, `dictation_hotkey`, `dictation_filler_removal` |
+| 10 | **MCP Servers** | Always | `mcps` |
+| 11 | **Search Providers** | Always | `brave_search_api_key` (credential store), `wikipedia_fallback_enabled` |
+| 12 | **Location** | Location enabled but detection failing | `location_ip_address` |
+| 13 | **Complete** | Always | — |
 
 Fields suffixed `?` are written only when non-empty (minimal-config invariant).
 
@@ -87,7 +88,7 @@ Each page's title and subtitle say what that step is for, in short British Engli
 - **Ollama-embeddings fallback.** When the probe shows the server can chat but not embed, a checkbox offers to route embeddings to Ollama (keeping full semantic memory). It is hidden otherwise.
 - **Memory budget.** A compact summary opens editable GB estimates for the chat, distinct fast, and embedding models. Known model IDs prefill their estimates; unknown IDs remain unknown until the user enters a value. A manual estimate is retained while comparing models. Shared chat/fast models count once. The Ollama-embeddings fallback uses the configured Ollama model and endpoint. Loopback workloads show a combined model and Whisper estimate with a detected-GPU comparison when available. Network workloads have separate figures and are not compared to the local GPU. Estimates guide selection and are not written to runtime config.
 
-`isComplete` gates Next on base URL + chat model. On validate, writes `llm_provider="openai_compatible"`, `llm_base_url`, `llm_chat_model` (the combo's current text), and the optional `embedding_model` only when non-empty. API keys never go into `config.json` (see `jarvis.credentials`): a typed key is stored in the OS credential store (a failure is reported with a dialog and nothing is written), an empty field keeps a stored key, and the field never shows a stored key, only a placeholder saying one is kept. Opening the page first moves a key still in `config.json` into the store (a key no store can take stays in the file rather than being lost); the Connect check and the capability probe use the typed key or, when the field is empty, the stored one. When the Ollama-embeddings checkbox is shown and ticked, writes `embedding_provider="ollama"` and drops `embedding_model` (Ollama's default applies); otherwise `embedding_provider` is cleared. `nextId` skips the Ollama install/server/models pages and goes to Dictation.
+`isComplete` gates Next on base URL + chat model. On validate, writes `llm_provider="openai_compatible"`, `llm_base_url`, `llm_chat_model` (the combo's current text), and the optional `embedding_model` only when non-empty. API keys never go into `config.json` (see `jarvis.credentials`): a typed key is stored in the OS credential store (a failure is reported with a dialog and nothing is written), an empty field keeps a stored key, and the field never shows a stored key, only a placeholder saying one is kept. Opening the page first moves a key still in `config.json` into the store (a key no store can take stays in the file rather than being lost); the Connect check and the capability probe use the typed key or, when the field is empty, the stored one. When the Ollama-embeddings checkbox is shown and ticked, writes `embedding_provider="ollama"` and drops `embedding_model` (Ollama's default applies); otherwise `embedding_provider` is cleared. `nextId` skips the Ollama install/server/models pages and goes to Cloud Reply Modes.
 
 **OllamaInstallPage** — Platform-specific download instructions. Opens official download page. Verify button re-checks `check_ollama_cli()`.
 
@@ -96,6 +97,8 @@ Each page's title and subtitle say what that step is for, in short British Engli
 **ModelsPage** — Titled "Choose which models to download". Uses two `QComboBox` dropdowns for model selection (chat + fast) instead of checkable buttons, eliminating layout compression. A link checkbox (default unchecked) lets the user optionally lock both models to the same ID. The chat dropdown lists all `SUPPORTED_CHAT_MODELS`; the fast dropdown lists only the fast-suitable subset (`qwen3.5:0.8b`, `qwen3.5:4b`, `gemma4:e2b`). Defaults: chat = `DEFAULT_CHAT_MODEL`, fast = `DEFAULT_FAST_MODEL`. On open, runs VRAM detection via `detect_total_vram_mb()` (DXGI on Windows, `nvidia-smi` elsewhere). The VRAM budget includes the chat model, fast model, the embedding model (`nomic-embed-text`, 1 GB), and the whisper model (read from config after WhisperSetupPage runs — ranges from 1 GB for tiny to 6 GB for large-v3-turbo). If VRAM is below the default model's requirement (including overhead), a warning banner appears with a recommendation to switch to `qwen3.5:0.8b`, and the chat model auto-switches. When the user selects a smaller chat model than the current fast model, or the total (chat + fast + embed + whisper) exceeds the detected VRAM, the fast model auto-downgrades to the largest fast-suitable model that fits the budget. Installs: selected chat model + embedding model (`nomic-embed-text`) + fast model (when it differs from chat). Progress bar and log output during `ollama pull`. User can skip if models are already present.
 
 **WhisperSetupPage** — Always shown first (it has no LLM dependencies and its model selection informs the later memory budget). Language mode toggle (multilingual vs English-only), then model size selection from hardcoded options via a slider. Each model name sits above its slider stop and its download size and memory (two lines) below it, with the selected model's description underneath. The labels are centred on their stops (the first and last align to the slider's ends), are reused rather than recreated when the language changes, and never overlap: the row's minimum width keeps neighbours apart, so a window too narrow for them scrolls instead. Apple Silicon: additional FFmpeg and MLX Whisper installation buttons. The model list follows the listener's effective backend: `large-v3-turbo` is offered when usable MLX is selected on Apple Silicon or when the installed faster-whisper supports it; it is hidden when MLX is unavailable/disabled and faster-whisper is too old. Installing MLX refreshes the list immediately. Exposes a `get_whisper_vram_mb()` static method used by both provider paths for memory estimates. `nextId` routes to Provider Choice.
+
+**CloudModesPage** — "Cloud reply modes (optional)", reached from Models (Ollama path) and from the OpenAI-compatible page, and leading to Dictation. It offers the optional Claude and Codex reply modes (`jarvis/bridge/bridge.spec.md`) without replacing the local setup. Two cards, each with an unticked switch, "Allow Claude Mode" and "Allow Codex Mode", preselected only from an existing `claude_enabled` / `codex_enabled` of `true` (safe re-entry). Each card says plainly that in that mode requests, the chosen context and tool results are sent to Anthropic or OpenAI using the user's own sign-in. Each card shows whether the CLI is installed and signed in: on open, and again on its "Check again" button, a `_CloudCheckWorker` runs `check_cloud_mode(mode)` off the UI thread, which calls the bridge's own `lifecycle.check_sign_in` (Claude: `claude auth status`; Codex: start the app-server child, `account/read`, stop it). No session, thread or turn starts and no request content is sent. When the CLI is missing, signed out, signed in with an API key, too old or cannot be checked (a check that raises counts as this), the status is a warning and a note says how to fix it (install link, sign-in command); the switch stays usable, since the bridge checks again whenever the mode starts. `isComplete` is always true, so the page can be skipped with nothing ticked. On validate, a ticked switch writes `<mode>_enabled: true` and an unticked one removes the key; nothing else is written and `reply_mode` is never touched, so Jarvis still starts in local mode and the offline path is unchanged. A footer says that allowing a mode does not switch to it.
 
 **DictationPage** — Enable/disable dictation, hotkey selection dropdown (4 presets), filler word removal toggle with delay warning. Reads current config values on open so re-running the wizard preserves user choices.
 
@@ -120,6 +123,7 @@ Each page's title and subtitle say what that step is for, in short British Engli
 | `check_mlx_whisper_status()` | `MLXWhisperStatus` | Apple Silicon Whisper readiness |
 | `detect_total_vram_mb()` | `Optional[int]` | GPU VRAM in MB via DXGI (Windows) or `nvidia-smi` |
 | `get_recommended_model_id(vram_mb)` | `str` | Best model ID for the given VRAM (low-VRAM models win when nothing larger fits) |
+| `check_cloud_mode(mode)` | `Optional[str]` | Whether the Claude or Codex CLI is installed and signed in, via the bridge's `lifecycle.check_sign_in`; None when ready, else its failure reason |
 
 ## Threading
 
@@ -136,6 +140,7 @@ Each page's title and subtitle say what that step is for, in short British Engli
 - `StatusCheckWorker` — runs `check_ollama_status()` off the UI thread, emits result via `status_ready`.
 - `CommandWorker` — runs shell commands (e.g. `ollama pull`), emits stdout line-by-line via `output` and completion status via `completed`.
 - `_ModelFetchWorker` — fetches the OpenAI-compatible model list off the UI thread, emits via `done`.
+- `_CloudCheckWorker` — runs one cloud mode's sign-in check off the UI thread, emits `(mode, failure reason or None)` via `checked`.
 
 ## Settings NOT Configured by Wizard
 

@@ -5,6 +5,7 @@ These tests verify the Ollama detection logic without touching the UI.
 They treat the detection functions as black boxes, verifying inputs produce correct outputs.
 """
 
+import json
 import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -667,6 +668,140 @@ class TestWelcomePageFlow:
             assert page.nextId() == 9
 
 
+def _wait_until(condition, timeout_ms=5000):
+    """Process Qt events until `condition()` holds or the timeout passes."""
+    from PyQt6.QtTest import QTest
+    for _ in range(timeout_ms // 10):
+        if condition():
+            return True
+        QTest.qWait(10)
+    return condition()
+
+
+class TestCloudModesPage:
+    """Optional page that allows the Claude and Codex reply modes without leaving local mode."""
+
+    MODES = ("claude", "codex")
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        path = tmp_path / "config.json"
+        path.write_text("{}")
+        with patch("jarvis.config.default_config_path", return_value=path):
+            yield path
+
+    @pytest.fixture
+    def checks(self, monkeypatch):
+        """Sign-in results per mode; the real checks start the CLIs, so tests never run them."""
+        from desktop_app import setup_wizard as ui
+        results = {"claude": None, "codex": None}
+        calls = []
+
+        def fake(mode):
+            calls.append(mode)
+            return results[mode]
+
+        monkeypatch.setattr(ui, "check_cloud_mode", fake)
+        return SimpleNamespace(results=results, calls=calls)
+
+    @pytest.fixture
+    def wizard(self, qapp, config, checks):
+        from desktop_app import setup_wizard as ui
+        wizard = ui.SetupWizard()
+        yield wizard
+        wizard.deleteLater()
+
+    @staticmethod
+    def _switch(page, mode):
+        from PyQt6.QtWidgets import QCheckBox
+        title = {"claude": "Allow Claude Mode", "codex": "Allow Codex Mode"}[mode]
+        (switch,) = [c for c in page.findChildren(QCheckBox) if c.text() == title]
+        return switch
+
+    @staticmethod
+    def _open(page):
+        page.initializePage()
+        assert _wait_until(lambda: not page.checking())
+
+    def test_both_provider_branches_reach_it_before_dictation(self, wizard):
+        assert wizard.models_page.nextId() == wizard.cloud_modes_page_id
+        assert wizard.openai_compat_page.nextId() == wizard.cloud_modes_page_id
+        assert wizard.cloud_modes_page.nextId() == wizard.dictation_page_id
+
+    def test_skipping_with_nothing_ticked_changes_no_config(self, wizard, config):
+        config.write_text(json.dumps({"reply_mode": "local", "other": 1}))
+        page = wizard.cloud_modes_page
+        self._open(page)
+        assert not any(self._switch(page, m).isChecked() for m in self.MODES)
+        assert page.isComplete()
+        assert page.validatePage() is True
+        assert json.loads(config.read_text()) == {"reply_mode": "local", "other": 1}
+
+    @pytest.mark.parametrize("mode", MODES)
+    def test_ticking_a_switch_allows_only_that_mode_and_stays_local(self, wizard, config, mode):
+        page = wizard.cloud_modes_page
+        self._open(page)
+        self._switch(page, mode).setChecked(True)
+        assert page.validatePage() is True
+        assert json.loads(config.read_text()) == {f"{mode}_enabled": True}
+
+    def test_rerunning_keeps_an_allowed_mode_and_unticking_removes_it(self, wizard, config):
+        config.write_text(json.dumps({"codex_enabled": True, "claude_enabled": True}))
+        page = wizard.cloud_modes_page
+        self._open(page)
+        assert self._switch(page, "codex").isChecked() and self._switch(page, "claude").isChecked()
+        self._switch(page, "claude").setChecked(False)
+        page.validatePage()
+        assert json.loads(config.read_text()) == {"codex_enabled": True}
+
+    def test_each_switch_says_where_requests_go(self, wizard):
+        from PyQt6.QtWidgets import QLabel
+        page = wizard.cloud_modes_page
+        for mode, provider in (("claude", "Anthropic"), ("codex", "OpenAI")):
+            card = self._switch(page, mode).parentWidget()
+            text = " ".join(l.text() for l in card.findChildren(QLabel))
+            assert provider in text and "your own" in text
+
+    def test_checks_each_cli_when_opened_and_again_on_request(self, wizard, checks):
+        page = wizard.cloud_modes_page
+        self._open(page)
+        assert sorted(checks.calls) == sorted(self.MODES)
+        page.recheck("codex")
+        assert _wait_until(lambda: not page.checking())
+        assert checks.calls.count("codex") == 2
+
+    @pytest.mark.parametrize("mode", MODES)
+    def test_a_ready_cli_shows_no_fix(self, wizard, mode):
+        page = wizard.cloud_modes_page
+        self._open(page)
+        assert page.status_tone(mode) == "success"
+        assert not page.fix_text(mode)
+
+    @pytest.mark.parametrize("mode", MODES)
+    @pytest.mark.parametrize("reason", ["not_found", "signed_out", "api_key_auth", "start_failed"])
+    def test_a_missing_or_signed_out_cli_shows_how_to_fix_it(self, wizard, checks, mode, reason):
+        checks.results[mode] = reason
+        page = wizard.cloud_modes_page
+        self._open(page)
+        assert page.status_tone(mode) == "warning"
+        assert page.fix_text(mode)
+        switch = self._switch(page, mode)
+        assert switch.isEnabled()
+        switch.setChecked(True)
+        assert page.isComplete()
+
+    def test_a_failing_check_is_reported_not_raised(self, wizard, monkeypatch):
+        from desktop_app import setup_wizard as ui
+
+        def broken(mode):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(ui, "check_cloud_mode", broken)
+        page = wizard.cloud_modes_page
+        self._open(page)
+        assert all(page.status_tone(m) == "warning" and page.fix_text(m) for m in self.MODES)
+
+
 class TestPagePurposes:
     """Each page's heading says what that step is for, so no two steps read alike."""
 
@@ -795,11 +930,11 @@ class TestOpenAICompatiblePage:
 
     def test_nextid_skips_ollama_pages(self):
         """After configuring the remote provider, the wizard jumps straight
-        to dictation — the Ollama install/server/models pages are
-        irrelevant."""
+        to the optional cloud reply modes — the Ollama install/server/models
+        pages are irrelevant."""
         page = OpenAICompatiblePage.__new__(OpenAICompatiblePage)
         wizard = MagicMock()
-        wizard.dictation_page_id = 8
+        wizard.cloud_modes_page_id = 8
         page.wizard = MagicMock(return_value=wizard)
         with patch("desktop_app.setup_wizard.SetupWizard", MagicMock):
             assert page.nextId() == 8

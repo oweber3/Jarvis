@@ -14,6 +14,27 @@ def runtime_dir() -> Path:
     return default_config_path().parent / "claude_runtime"
 
 
+def check_sign_in(cfg: Any, *, auth_reader: Optional[Callable[[], Dict[str, Any]]] = None) -> Optional[str]:
+    """The sign-in half of the preflight, for setup: None when Claude Code is installed and signed in
+    with a Claude subscription, else ``not_found``, ``start_failed``, ``signed_out`` or ``api_key_auth``.
+    Runs ``claude auth status`` only: no session starts and nothing is sent."""
+    from ..debug import debug_log
+    from .cli import ClaudeCliError, read_auth_status, resolve_executable, sign_in_failure
+
+    if auth_reader is None:
+        configured = str(getattr(cfg, "claude_executable", "") or "claude")
+        executable = resolve_executable(configured) or configured
+        auth_reader = lambda: read_auth_status(executable)  # noqa: E731
+    try:
+        auth = auth_reader()
+    except ClaudeCliError as exc:
+        failure = "not_found" if exc.reason == "not_found" else "start_failed"
+    else:
+        failure = sign_in_failure(auth)
+    debug_log(f"claude sign-in check: {failure or 'ready'}", "claude")
+    return failure
+
+
 def create_service(cfg: Any, *, workdir: Optional[Path] = None,
                    session_factory: Optional[Callable[[str, List[str]], Any]] = None,
                    auth_reader: Optional[Callable[[], Dict[str, Any]]] = None) -> Any:

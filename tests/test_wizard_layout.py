@@ -13,6 +13,7 @@ from desktop_app import setup_wizard as ui
     ui.DictationPage, ui.SearchProvidersPage,
     ui.WelcomePage, ui.OllamaInstallPage, ui.OllamaServerPage,
     ui.WhisperSetupPage, ui.LocationPage, ui.MCPPage, ui.CompletePage,
+    ui.CloudModesPage,
 ])
 @pytest.mark.parametrize("width,height", [(700, 600), (700, 800), (960, 780)])
 def test_controls_fit_on_short_display(qapp, monkeypatch, page_type, width, height):

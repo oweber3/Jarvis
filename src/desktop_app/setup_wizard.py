@@ -363,6 +363,19 @@ def should_show_setup_wizard(force_server_check: bool = False) -> bool:
     return False
 
 
+def check_cloud_mode(mode: str) -> Optional[str]:
+    """Whether the CLI behind a cloud reply mode ("claude" or "codex") is installed and signed in.
+
+    Runs the bridge's own sign-in check (``check_sign_in`` in its ``lifecycle`` module): None when
+    ready, else its failure reason. No session or turn starts and no request content is sent.
+    """
+    if mode == "claude":
+        from jarvis.claude_bridge.lifecycle import check_sign_in
+    else:
+        from jarvis.codex_bridge.lifecycle import check_sign_in
+    return check_sign_in(load_settings())
+
+
 # --- PyQt6 UI components below ---
 # These imports are wrapped to avoid import errors when only detection functions are needed
 # (e.g., on headless CI systems where system Qt libraries may be missing)
@@ -508,6 +521,7 @@ class ScrollableWizardPage(QWizardPage):
             "WhisperSetupPage": 0, "ProviderChoicePage": 1,
             "WelcomePage": 1, "OpenAICompatiblePage": 1,
             "OllamaInstallPage": 1, "OllamaServerPage": 1, "ModelsPage": 1,
+            "CloudModesPage": 1,
             "DictationPage": 2, "MCPPage": 2, "SearchProvidersPage": 2,
             "LocationPage": 2, "CompletePage": 3,
         }[type(self).__name__]
@@ -564,6 +578,7 @@ class SetupWizard(QWizard):
         self.ollama_install_page = OllamaInstallPage(self)
         self.ollama_server_page = OllamaServerPage(self)
         self.models_page = ModelsPage(self)
+        self.cloud_modes_page = CloudModesPage(self)
         self.mlx_whisper_page = WhisperSetupPage(self)
         self.dictation_page = DictationPage(self)
         self.mcp_page = MCPPage(self)
@@ -578,6 +593,7 @@ class SetupWizard(QWizard):
         self.ollama_install_page_id = self.addPage(self.ollama_install_page)
         self.ollama_server_page_id = self.addPage(self.ollama_server_page)
         self.models_page_id = self.addPage(self.models_page)
+        self.cloud_modes_page_id = self.addPage(self.cloud_modes_page)
         self.dictation_page_id = self.addPage(self.dictation_page)
         self.mcp_page_id = self.addPage(self.mcp_page)
         self.search_providers_page_id = self.addPage(self.search_providers_page)
@@ -1756,7 +1772,7 @@ class OpenAICompatiblePage(ScrollableWizardPage):
     def nextId(self) -> int:
         wizard = self.wizard()
         if isinstance(wizard, SetupWizard):
-            return wizard.dictation_page_id
+            return wizard.cloud_modes_page_id
         return super().nextId()
 
 
@@ -2571,7 +2587,7 @@ class ModelsPage(ScrollableWizardPage):
     def nextId(self):
         w = self.wizard()
         if isinstance(w, SetupWizard):
-            return w.dictation_page_id
+            return w.cloud_modes_page_id
         return super().nextId()
 
 
@@ -3527,6 +3543,222 @@ class LocationPage(ScrollableWizardPage):
         wizard = self.wizard()
         if isinstance(wizard, SetupWizard):
             return wizard.complete_page_id
+        return super().nextId()
+
+
+class _CloudCheckWorker(KeepAliveWorker):
+    """Runs one cloud mode's sign-in check off the UI thread."""
+    checked = pyqtSignal(str, object)
+
+    def __init__(self, mode: str, parent=None):
+        super().__init__(parent)
+        self.mode = mode
+
+    def run(self):
+        try:
+            reason = check_cloud_mode(self.mode)
+        except Exception as exc:
+            from jarvis.debug import debug_log
+            debug_log(f"{self.mode} sign-in check raised {type(exc).__name__}", "setup")
+            reason = "start_failed"
+        self.checked.emit(self.mode, reason)
+
+
+class CloudModesPage(ScrollableWizardPage):
+    """Optional step that allows the Claude and Codex reply modes (``bridge/bridge.spec.md``).
+
+    Ticking a switch sets only ``claude_enabled`` / ``codex_enabled``: Jarvis still starts in
+    local mode and the user switches when they want to. Each card shows whether the CLI is
+    installed and signed in, and how to fix it when it is not.
+    """
+
+    MODES = {
+        "claude": ("Allow Claude Mode", "Claude Code",
+                   "Lets you switch Jarvis to Claude. In Claude mode, your requests, the context you "
+                   "choose to share and tool results are sent to Anthropic using your own Claude "
+                   "subscription sign-in."),
+        "codex": ("Allow Codex Mode", "Codex",
+                  "Lets you switch Jarvis to ChatGPT through Codex. In Codex mode, your requests, the "
+                  "context you choose to share and tool results are sent to OpenAI using your own "
+                  "ChatGPT sign-in."),
+    }
+    STATUS = {
+        None: "installed and signed in",
+        "not_found": "not installed",
+        "signed_out": "not signed in",
+        "api_key_auth": "signed in with an API key",
+        "unsupported": "needs a newer version",
+        "start_failed": "could not be checked",
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTitle("")
+        self._switches: Dict[str, QCheckBox] = {}
+        self._status: Dict[str, QLabel] = {}
+        self._fix: Dict[str, QLabel] = {}
+        self._workers: Dict[str, _CloudCheckWorker] = {}
+
+        layout = QVBoxLayout()
+        layout.setSpacing(16)
+        layout.setContentsMargins(28, 20, 28, 20)
+
+        title = QLabel("Cloud reply modes (optional)")
+        title.setObjectName("title")
+        layout.addWidget(title)
+
+        subtitle = QLabel(
+            "Jarvis answers on this PC and works fully offline. If you use Claude or ChatGPT, "
+            "you can also allow Jarvis to hand requests to them. Leave both off to keep "
+            "everything local."
+        )
+        subtitle.setObjectName("subtitle")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        for mode, (switch_text, cli, about) in self.MODES.items():
+            card = QFrame()
+            card.setObjectName("card")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(18, 14, 18, 14)
+            card_layout.setSpacing(6)
+
+            row = QHBoxLayout()
+            switch = QCheckBox(switch_text)
+            switch.setObjectName("option")
+            self._switches[mode] = switch
+            row.addWidget(switch)
+            row.addStretch()
+            status = QLabel(f"{cli}: checking...")
+            set_state(status, "tone", "muted")
+            self._status[mode] = status
+            row.addWidget(status)
+            recheck = QPushButton("Check again")
+            recheck.setObjectName("secondary")
+            recheck.clicked.connect(lambda _=False, m=mode: self.recheck(m))
+            row.addWidget(recheck)
+            card_layout.addLayout(row)
+
+            description = QLabel(about)
+            description.setWordWrap(True)
+            description.setObjectName("description")
+            card_layout.addWidget(description)
+
+            fix = QLabel("")
+            fix.setWordWrap(True)
+            fix.setOpenExternalLinks(True)
+            fix.setObjectName("detail_panel")
+            fix.setVisible(False)
+            self._fix[mode] = fix
+            card_layout.addWidget(fix)
+            layout.addWidget(card)
+
+        note = QLabel(
+            "Allowing a mode does not switch to it: Jarvis starts in local mode. Say \"use Claude\" "
+            "or \"use ChatGPT\", or choose a mode from the tray, when you want one. You can change "
+            "this later in Settings."
+        )
+        note.setWordWrap(True)
+        set_role(note, "muted")
+        layout.addWidget(note)
+        layout.addStretch()
+        self.setLayout(layout)
+
+    @staticmethod
+    def _fix_text(mode: str, reason: str) -> str:
+        cli = CloudModesPage.MODES[mode][1]
+        fixes = {
+            "claude": {
+                "not_found": f"Install {link('https://claude.com/claude-code', 'Claude Code')}, "
+                             "then press Check again.",
+                "signed_out": "Run <b>claude auth login</b> in a terminal and sign in with your Claude "
+                              "subscription, then press Check again.",
+                "api_key_auth": "Claude mode only uses a Claude subscription sign-in, never an API key. "
+                                "Run <b>claude auth login</b> and sign in with your subscription, then "
+                                "press Check again.",
+            },
+            "codex": {
+                "not_found": f"Install the {link('https://developers.openai.com/codex', 'Codex app or CLI')}, "
+                             "then press Check again.",
+                "signed_out": "Open the Codex app, or run <b>codex login</b>, and sign in with ChatGPT, "
+                              "then press Check again.",
+                "api_key_auth": "Codex mode only uses a ChatGPT sign-in, never an API key. Sign in with "
+                                "ChatGPT in the Codex app or with <b>codex login</b>, then press Check again.",
+                "unsupported": "This Codex version is too old for Jarvis. Update Codex, then press "
+                               "Check again.",
+            },
+        }
+        return fixes[mode].get(reason, f"{cli} could not be checked. You can still allow it now; "
+                                       "Jarvis checks again when you switch to it.")
+
+    def initializePage(self):
+        try:
+            from jarvis.config import default_config_path, _load_json
+            config = _load_json(default_config_path()) or {}
+        except Exception:
+            config = {}
+        for mode, switch in self._switches.items():
+            switch.setChecked(config.get(f"{mode}_enabled") is True)
+            self.recheck(mode)
+
+    def recheck(self, mode: str):
+        """Check one CLI again in the background."""
+        if mode in self._workers:
+            return
+        cli = self.MODES[mode][1]
+        self._status[mode].setText(f"{cli}: checking...")
+        set_state(self._status[mode], "tone", "muted")
+        worker = _CloudCheckWorker(mode)
+        worker.checked.connect(self._on_checked)
+        self._workers[mode] = worker
+        worker.start()
+
+    def _on_checked(self, mode: str, reason):
+        self._workers.pop(mode, None)
+        cli = self.MODES[mode][1]
+        reason = reason if reason in self.STATUS else "start_failed"
+        self._status[mode].setText(f"{cli}: {self.STATUS[reason]}")
+        set_state(self._status[mode], "tone", "success" if reason is None else "warning")
+        fix = self._fix[mode]
+        fix.setText("" if reason is None else self._fix_text(mode, reason))
+        fix.setVisible(reason is not None)
+
+    def checking(self) -> bool:
+        return bool(self._workers)
+
+    def status_tone(self, mode: str) -> str:
+        return str(self._status[mode].property("tone"))
+
+    def fix_text(self, mode: str) -> str:
+        fix = self._fix[mode]
+        return fix.text() if fix.isVisibleTo(self) else ""
+
+    def isComplete(self) -> bool:
+        return True
+
+    def validatePage(self) -> bool:
+        """Write only the ``<mode>_enabled`` permissions; ``reply_mode`` is never touched."""
+        try:
+            from jarvis.config import default_config_path, _load_json, _save_json
+            config_path = default_config_path()
+            config = _load_json(config_path) or {}
+            updated = dict(config)
+            for mode, switch in self._switches.items():
+                if switch.isChecked():
+                    updated[f"{mode}_enabled"] = True
+                else:
+                    updated.pop(f"{mode}_enabled", None)
+            if updated != config:
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                _save_json(config_path, updated)
+        except Exception:
+            pass
+        return True
+
+    def nextId(self) -> int:
+        wizard = self.wizard()
+        if isinstance(wizard, SetupWizard):
+            return wizard.dictation_page_id
         return super().nextId()
 
 
