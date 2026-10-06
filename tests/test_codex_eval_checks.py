@@ -143,4 +143,6 @@ class TestInertDestructiveDetection:
         tried = [("pdfNavigate", {"action": "goto", "page": 42})]
         assert c.check(run(text="There is currently no PDF open for me to navigate.", calls=tried)) is None
         assert c.check(run(text="No PDF is open in your browser.", calls=tried)) is None
+        assert c.check(run(text="No PDF is currently open in PDFgear, Chrome or Edge.", calls=tried)) is None
+        assert c.check(run(text="There's no PDF currently open in Chrome.", calls=tried)) is None
         assert c.check(run(text="I have gone to page 42.", calls=tried)) is not None
