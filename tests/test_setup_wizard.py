@@ -1136,6 +1136,12 @@ class TestModelOptions:
         assert "qwen3.8:27b" in ModelsPage.MODEL_OPTIONS
         assert DEFAULT_CHAT_MODEL in ModelsPage.MODEL_OPTIONS
 
+    def test_benchmark_leader_for_pc_control_is_offered(self):
+        """gemma4:12b, the most reliable local model in docs/TOOL_MODEL_BENCHMARK.md, can be picked."""
+        from desktop_app.setup_wizard import ModelsPage
+
+        assert "gemma4:12b" in ModelsPage.MODEL_OPTIONS
+
     def test_model_options_have_required_fields(self):
         """Each model option has required info fields."""
         from desktop_app.setup_wizard import ModelsPage

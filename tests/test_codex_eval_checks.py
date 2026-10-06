@@ -125,3 +125,24 @@ class TestInertDestructiveDetection:
     def test_reads_and_listings_are_not_treated_as_destructive(self):
         result = dr.InertTools({})(None, None, "localFiles", {"operation": "list", "path": "."})
         assert result.success is True
+
+    @pytest.mark.parametrize("name, calls", [
+        ("everyday_mute", [("systemVolume", {"action": "mute"})]),
+        ("website_open_plain", [("openWebsite", {"url": "https://www.youtube.com"})]),
+        ("pdf_goto_page", [("pdfNavigate", {"action": "goto", "page": 42})]),
+    ])
+    def test_a_follow_up_question_after_the_right_action_still_passes(self, name, calls):
+        c = case(name)
+        assert c.check(run(text="Done.", calls=calls)) is None, "the plain confirmation must pass"
+        assert c.check(run(kind="question", text="Done. Anything else?", calls=calls)) is None
+        assert c.check(run(kind="awaiting_confirmation", text="Shall I?", calls=calls)) is not None
+        assert c.check(run(kind="question", text="", calls=calls)) is not None
+
+    def test_saying_no_pdf_is_open_is_an_honest_failure(self):
+        c = case("pdf_none_open")
+        tried = [("pdfNavigate", {"action": "goto", "page": 42})]
+        assert c.check(run(text="There is currently no PDF open for me to navigate.", calls=tried)) is None
+        assert c.check(run(text="No PDF is open in your browser.", calls=tried)) is None
+        assert c.check(run(text="No PDF is currently open in PDFgear, Chrome or Edge.", calls=tried)) is None
+        assert c.check(run(text="There's no PDF currently open in Chrome.", calls=tried)) is None
+        assert c.check(run(text="I have gone to page 42.", calls=tried)) is not None

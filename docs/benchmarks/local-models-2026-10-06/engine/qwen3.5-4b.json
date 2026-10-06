@@ -1,0 +1,1686 @@
+{
+ "models": {
+  "tool": "qwen3.5:4b",
+  "chat": "qwen3.5:4b",
+  "fast": "qwen3.5:4b"
+ },
+ "repeat": 3,
+ "passed": 63,
+ "requests": 84,
+ "seconds": {
+  "median": 1.38,
+  "p90": 2.72,
+  "max": 5.23
+ },
+ "first_tool_seconds": {
+  "median": 0.62,
+  "p90": 0.76
+ },
+ "web_search_replies_with_invented_results": 1,
+ "pass_counts": {
+  "website_open_in_zone": "0/3",
+  "website_open_plain": "3/3",
+  "pdf_goto_page": "2/3",
+  "pdf_find_chapter": "3/3",
+  "pdf_none_open": "1/3",
+  "everyday_volume_set": "3/3",
+  "everyday_mute": "3/3",
+  "everyday_pause_music": "3/3",
+  "everyday_skip_song": "3/3",
+  "everyday_now_playing": "3/3",
+  "everyday_top_ram": "3/3",
+  "everyday_gpu_temp": "3/3",
+  "everyday_bluetooth_settings": "3/3",
+  "everyday_dim_screen": "3/3",
+  "everyday_headphones": "3/3",
+  "everyday_downloads": "3/3",
+  "everyday_find_file": "0/3",
+  "everyday_minimise": "0/3",
+  "everyday_focus_app": "2/3",
+  "everyday_open_app": "3/3",
+  "everyday_next_desktop": "3/3",
+  "everyday_reopen_tab": "1/3",
+  "everyday_search_youtube": "1/3",
+  "everyday_gmail_second_monitor": "3/3",
+  "everyday_window_left": "0/3",
+  "everyday_weather": "3/3",
+  "everyday_web_search": "2/3",
+  "everyday_click_save": "3/3"
+ },
+ "runs": [
+  {
+   "case": "website_open_in_zone",
+   "run": 1,
+   "passed": false,
+   "failure": "should place it in the right zone: {'url': 'youtube.com', 'monitor': 'right'}",
+   "reply_kind": "reply",
+   "seconds": 3.3,
+   "t_first_tool": 1.61,
+   "calls": [
+    [
+     "openWebsite",
+     {
+      "url": "youtube.com",
+      "monitor": "right"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "website_open_plain",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.62,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "openWebsite",
+     {
+      "url": "youtube.com"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "pdf_goto_page",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.88,
+   "t_first_tool": 0.76,
+   "calls": [
+    [
+     "pdfNavigate",
+     {
+      "action": "goto",
+      "page": 42
+     }
+    ]
+   ]
+  },
+  {
+   "case": "pdf_find_chapter",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.69,
+   "t_first_tool": 0.72,
+   "calls": [
+    [
+     "pdfNavigate",
+     {
+      "action": "find",
+      "query": "soil preparation"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "pdf_none_open",
+   "run": 1,
+   "passed": false,
+   "failure": "with no PDF open, nothing else may be opened or driven: ['openPath']",
+   "reply_kind": "reply",
+   "seconds": 2.77,
+   "t_first_tool": 0.7,
+   "calls": [
+    [
+     "pdfNavigate",
+     {
+      "action": "goto",
+      "page": 42
+     }
+    ],
+    [
+     "openPath",
+     {
+      "target": "Thermal Imaging Sensors Application Guide.pdf"
+     }
+    ],
+    [
+     "pdfNavigate",
+     {
+      "action": "goto",
+      "page": 42
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_volume_set",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemVolume",
+     {
+      "action": "set",
+      "percent": 30.0
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_mute",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemVolume",
+     {
+      "action": "mute"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_pause_music",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "mediaControl",
+     {
+      "action": "pause"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_skip_song",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "mediaControl",
+     {
+      "action": "next"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_now_playing",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "mediaControl",
+     {
+      "action": "now_playing"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_top_ram",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemInfo",
+     {
+      "action": "top_memory"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_gpu_temp",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemInfo",
+     {
+      "action": "gpu"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_bluetooth_settings",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemSettings",
+     {
+      "action": "open_page",
+      "page": "bluetooth"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_dim_screen",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemSettings",
+     {
+      "action": "brightness",
+      "operation": "down"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_headphones",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemSettings",
+     {
+      "action": "audio_output",
+      "operation": "set",
+      "name": "headphones"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_downloads",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "openPath",
+     {
+      "target": "Downloads"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_find_file",
+   "run": 1,
+   "passed": false,
+   "failure": "expected openPath with {'target': <predicate>.<lambda> at 0x000001FB1A111BC0>}, got [('localFiles', {'name': 'proposal', 'type': 'document', 's…",
+   "reply_kind": "reply",
+   "seconds": 4.13,
+   "t_first_tool": 0.88,
+   "calls": [
+    [
+     "localFiles",
+     {
+      "name": "proposal",
+      "type": "document",
+      "sort": "newest",
+      "limit": 5
+     }
+    ],
+    [
+     "localFiles",
+     {
+      "limit": 20,
+      "sort": "newest"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_minimise",
+   "run": 1,
+   "passed": false,
+   "failure": "expected windowControl with {'action': 'minimise', 'target': <predicate>.<lambda> at 0x000001FB1A111DA0>}, got [('windowControl', {'action': 'm…",
+   "reply_kind": "reply",
+   "seconds": 1.63,
+   "t_first_tool": 0.76,
+   "calls": [
+    [
+     "windowControl",
+     {
+      "action": "minimise",
+      "target": "264438"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_focus_app",
+   "run": 1,
+   "passed": false,
+   "failure": "took 3 calls where 1 suffice: ['mediaControl', 'appControl', 'appControl']",
+   "reply_kind": "reply",
+   "seconds": 2.66,
+   "t_first_tool": 0.64,
+   "calls": [
+    [
+     "mediaControl",
+     {
+      "action": "now_playing"
+     }
+    ],
+    [
+     "appControl",
+     {
+      "action": "list",
+      "target": ""
+     }
+    ],
+    [
+     "appControl",
+     {
+      "action": "focus",
+      "target": "Apple Music"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_open_app",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.45,
+   "t_first_tool": 0.76,
+   "calls": [
+    [
+     "appControl",
+     {
+      "action": "open",
+      "target": "Apple Music"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_next_desktop",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "windowControl",
+     {
+      "action": "desktop_switch",
+      "target": "",
+      "desktop": "next"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_reopen_tab",
+   "run": 1,
+   "passed": false,
+   "failure": "took 3 calls where 1 suffice: ['appControl', 'appControl', 'inputControl']",
+   "reply_kind": "reply",
+   "seconds": 5.23,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "appControl",
+     {
+      "action": "focus",
+      "target": "Google Chrome"
+     }
+    ],
+    [
+     "appControl",
+     {
+      "action": "list",
+      "target": ""
+     }
+    ],
+    [
+     "inputControl",
+     {
+      "action": "hotkey",
+      "keys": "ctrl+shift+t"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_search_youtube",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.63,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "openWebsite",
+     {
+      "url": "https://www.youtube.com/results?search_query=lo-fi+beats"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_gmail_second_monitor",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.4,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "openWebsite",
+     {
+      "url": "gmail.com",
+      "monitor": "2"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_window_left",
+   "run": 1,
+   "passed": false,
+   "failure": "expected windowControl with {'action': 'place', 'target': <predicate>.<lambda> at 0x000001FB1A112AC0>, 'zone': {'left', '1'}}, got [('windowCon…",
+   "reply_kind": "reply",
+   "seconds": 1.63,
+   "t_first_tool": 0.91,
+   "calls": [
+    [
+     "windowControl",
+     {
+      "action": "place",
+      "target": "264438",
+      "monitor": "left",
+      "state": "maximise"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_weather",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "question",
+   "seconds": 1.29,
+   "t_first_tool": 0.62,
+   "calls": [
+    [
+     "getWeather",
+     {
+      "location": "London"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_web_search",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 2.01,
+   "t_first_tool": 0.62,
+   "calls": [
+    [
+     "webSearch",
+     {
+      "search_query": "latest F1 race results"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_click_save",
+   "run": 1,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.61,
+   "t_first_tool": 0.8,
+   "calls": [
+    [
+     "uiControl",
+     {
+      "action": "click",
+      "element": "Save",
+      "window": "264438"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "website_open_in_zone",
+   "run": 2,
+   "passed": false,
+   "failure": "should place it in the right zone: {'url': 'youtube.com', 'monitor': 'right'}",
+   "reply_kind": "reply",
+   "seconds": 1.41,
+   "t_first_tool": 0.68,
+   "calls": [
+    [
+     "openWebsite",
+     {
+      "url": "youtube.com",
+      "monitor": "right"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "website_open_plain",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.4,
+   "t_first_tool": 0.6,
+   "calls": [
+    [
+     "openWebsite",
+     {
+      "url": "youtube.com"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "pdf_goto_page",
+   "run": 2,
+   "passed": false,
+   "failure": "expected one pdfNavigate goto page 42, got [('pdfNavigate', {'action': 'goto', 'page': 42}), ('pdfNavigate', {'file': 'Gardening Handbook.pdf', 'action': 'goto'…",
+   "reply_kind": "reply",
+   "seconds": 1.9,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "pdfNavigate",
+     {
+      "action": "goto",
+      "page": 42
+     }
+    ],
+    [
+     "pdfNavigate",
+     {
+      "file": "Gardening Handbook.pdf",
+      "action": "goto",
+      "page": 42
+     }
+    ]
+   ]
+  },
+  {
+   "case": "pdf_find_chapter",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.58,
+   "t_first_tool": 0.7,
+   "calls": [
+    [
+     "pdfNavigate",
+     {
+      "action": "find",
+      "query": "soil preparation"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "pdf_none_open",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.58,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "pdfNavigate",
+     {
+      "action": "goto",
+      "page": 42
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_volume_set",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemVolume",
+     {
+      "action": "set",
+      "percent": 30.0
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_mute",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemVolume",
+     {
+      "action": "mute"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_pause_music",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "mediaControl",
+     {
+      "action": "pause"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_skip_song",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "mediaControl",
+     {
+      "action": "next"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_now_playing",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "mediaControl",
+     {
+      "action": "now_playing"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_top_ram",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemInfo",
+     {
+      "action": "top_memory"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_gpu_temp",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemInfo",
+     {
+      "action": "gpu"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_bluetooth_settings",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemSettings",
+     {
+      "action": "open_page",
+      "page": "bluetooth"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_dim_screen",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemSettings",
+     {
+      "action": "brightness",
+      "operation": "down"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_headphones",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemSettings",
+     {
+      "action": "audio_output",
+      "operation": "set",
+      "name": "headphones"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_downloads",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "openPath",
+     {
+      "target": "Downloads"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_find_file",
+   "run": 2,
+   "passed": false,
+   "failure": "took 3 calls where 1 suffice: ['localFiles', 'localFiles', 'openPath']",
+   "reply_kind": "reply",
+   "seconds": 2.8,
+   "t_first_tool": 0.59,
+   "calls": [
+    [
+     "localFiles",
+     {
+      "name": "proposal"
+     }
+    ],
+    [
+     "localFiles",
+     {
+      "glob": "*proposal*"
+     }
+    ],
+    [
+     "openPath",
+     {
+      "target": "Downloads/Proposal.pdf"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_minimise",
+   "run": 2,
+   "passed": false,
+   "failure": "expected windowControl with {'action': 'minimise', 'target': <predicate>.<lambda> at 0x000001FB1A111DA0>}, got [('windowControl', {'action': 'm…",
+   "reply_kind": "reply",
+   "seconds": 1.36,
+   "t_first_tool": 0.74,
+   "calls": [
+    [
+     "windowControl",
+     {
+      "action": "minimise",
+      "target": "264438"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_focus_app",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.37,
+   "t_first_tool": 0.67,
+   "calls": [
+    [
+     "appControl",
+     {
+      "action": "focus",
+      "target": "Apple Music"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_open_app",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.53,
+   "t_first_tool": 0.68,
+   "calls": [
+    [
+     "appControl",
+     {
+      "action": "open",
+      "target": "Apple Music"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_next_desktop",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "windowControl",
+     {
+      "action": "desktop_switch",
+      "target": "",
+      "desktop": "next"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_reopen_tab",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.6,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "inputControl",
+     {
+      "action": "hotkey",
+      "keys": "ctrl+shift+t"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_search_youtube",
+   "run": 2,
+   "passed": false,
+   "failure": "expected openWebsite with {'url': <predicate>.<lambda> at 0x000001FB1A112660>}, got [('openWebsite', {'url': 'youtube.com', 'state': 'maximise'…",
+   "reply_kind": "reply",
+   "seconds": 1.56,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "openWebsite",
+     {
+      "url": "youtube.com",
+      "state": "maximise"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_gmail_second_monitor",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "question",
+   "seconds": 1.56,
+   "t_first_tool": 0.72,
+   "calls": [
+    [
+     "openWebsite",
+     {
+      "url": "gmail.com",
+      "monitor": "2"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_window_left",
+   "run": 2,
+   "passed": false,
+   "failure": "expected windowControl with {'action': 'place', 'target': <predicate>.<lambda> at 0x000001FB1A112AC0>, 'zone': {'left', '1'}}, got [('windowCon…",
+   "reply_kind": "reply",
+   "seconds": 2.2,
+   "t_first_tool": 0.89,
+   "calls": [
+    [
+     "windowControl",
+     {
+      "action": "place",
+      "target": "264438",
+      "monitor": "left",
+      "state": "maximise"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_weather",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.28,
+   "t_first_tool": 0.61,
+   "calls": [
+    [
+     "getWeather",
+     {
+      "location": "London"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_web_search",
+   "run": 2,
+   "passed": false,
+   "failure": "took 2 calls where 1 suffice: ['webSearch', 'webSearch']",
+   "reply_kind": "reply",
+   "seconds": 3.96,
+   "t_first_tool": 0.62,
+   "calls": [
+    [
+     "webSearch",
+     {
+      "search_query": "latest F1 race results"
+     }
+    ],
+    [
+     "webSearch",
+     {
+      "search_query": "Formula 1 World Championship 2026 current standings latest race results"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_click_save",
+   "run": 2,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "question",
+   "seconds": 1.39,
+   "t_first_tool": 0.79,
+   "calls": [
+    [
+     "uiControl",
+     {
+      "action": "click",
+      "element": "Save",
+      "window": "264438"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "website_open_in_zone",
+   "run": 3,
+   "passed": false,
+   "failure": "should place it in the right zone: {'url': 'youtube.com', 'monitor': 'right'}",
+   "reply_kind": "reply",
+   "seconds": 1.46,
+   "t_first_tool": 0.68,
+   "calls": [
+    [
+     "openWebsite",
+     {
+      "url": "youtube.com",
+      "monitor": "right"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "website_open_plain",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.26,
+   "t_first_tool": 0.6,
+   "calls": [
+    [
+     "openWebsite",
+     {
+      "url": "youtube.com"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "pdf_goto_page",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.49,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "pdfNavigate",
+     {
+      "action": "goto",
+      "page": 42
+     }
+    ]
+   ]
+  },
+  {
+   "case": "pdf_find_chapter",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.69,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "pdfNavigate",
+     {
+      "action": "find",
+      "query": "soil preparation"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "pdf_none_open",
+   "run": 3,
+   "passed": false,
+   "failure": "with no PDF open, nothing else may be opened or driven: ['openPath']",
+   "reply_kind": "reply",
+   "seconds": 3.13,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "pdfNavigate",
+     {
+      "action": "goto",
+      "page": 42
+     }
+    ],
+    [
+     "screenshot",
+     {
+      "target": "window"
+     }
+    ],
+    [
+     "localFiles",
+     {
+      "path": ".",
+      "name": "thesis"
+     }
+    ],
+    [
+     "openPath",
+     {
+      "target": "thesis"
+     }
+    ],
+    [
+     "pdfNavigate",
+     {
+      "action": "goto",
+      "page": 42
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_volume_set",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemVolume",
+     {
+      "action": "set",
+      "percent": 30.0
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_mute",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemVolume",
+     {
+      "action": "mute"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_pause_music",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "mediaControl",
+     {
+      "action": "pause"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_skip_song",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "mediaControl",
+     {
+      "action": "next"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_now_playing",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "mediaControl",
+     {
+      "action": "now_playing"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_top_ram",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemInfo",
+     {
+      "action": "top_memory"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_gpu_temp",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemInfo",
+     {
+      "action": "gpu"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_bluetooth_settings",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemSettings",
+     {
+      "action": "open_page",
+      "page": "bluetooth"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_dim_screen",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemSettings",
+     {
+      "action": "brightness",
+      "operation": "down"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_headphones",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "systemSettings",
+     {
+      "action": "audio_output",
+      "operation": "set",
+      "name": "headphones"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_downloads",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "openPath",
+     {
+      "target": "Downloads"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_find_file",
+   "run": 3,
+   "passed": false,
+   "failure": "expected openPath with {'target': <predicate>.<lambda> at 0x000001FB1A111BC0>}, got [('localFiles', {'name': 'proposal'}), ('localFiles', {'glo…",
+   "reply_kind": "reply",
+   "seconds": 2.72,
+   "t_first_tool": 0.59,
+   "calls": [
+    [
+     "localFiles",
+     {
+      "name": "proposal"
+     }
+    ],
+    [
+     "localFiles",
+     {
+      "glob": "*proposal*"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_minimise",
+   "run": 3,
+   "passed": false,
+   "failure": "expected windowControl with {'action': 'minimise', 'target': <predicate>.<lambda> at 0x000001FB1A111DA0>}, got [('windowControl', {'action': 'm…",
+   "reply_kind": "reply",
+   "seconds": 1.39,
+   "t_first_tool": 0.72,
+   "calls": [
+    [
+     "windowControl",
+     {
+      "action": "minimise",
+      "target": "264438"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_focus_app",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.53,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "appControl",
+     {
+      "action": "focus",
+      "target": "Apple Music"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_open_app",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.4,
+   "t_first_tool": 0.7,
+   "calls": [
+    [
+     "appControl",
+     {
+      "action": "open",
+      "target": "Apple Music"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_next_desktop",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 0.0,
+   "t_first_tool": 0.0,
+   "calls": [
+    [
+     "windowControl",
+     {
+      "action": "desktop_switch",
+      "target": "",
+      "desktop": "next"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_reopen_tab",
+   "run": 3,
+   "passed": false,
+   "failure": "took 2 calls where 1 suffice: ['appControl', 'inputControl']",
+   "reply_kind": "reply",
+   "seconds": 2.11,
+   "t_first_tool": 0.67,
+   "calls": [
+    [
+     "appControl",
+     {
+      "action": "focus",
+      "target": "Chrome"
+     }
+    ],
+    [
+     "inputControl",
+     {
+      "action": "hotkey",
+      "keys": "ctrl+shift+t"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_search_youtube",
+   "run": 3,
+   "passed": false,
+   "failure": "expected openWebsite with {'url': <predicate>.<lambda> at 0x000001FB1A112660>}, got [('openWebsite', {'url': 'youtube.com', 'state': 'maximise'…",
+   "reply_kind": "reply",
+   "seconds": 4.01,
+   "t_first_tool": 0.69,
+   "calls": [
+    [
+     "openWebsite",
+     {
+      "url": "youtube.com",
+      "state": "maximise"
+     }
+    ],
+    [
+     "uiControl",
+     {
+      "action": "click",
+      "window": "Chrome",
+      "element": "Search bar"
+     }
+    ],
+    [
+     "uiControl",
+     {
+      "action": "snapshot",
+      "window": "Chrome"
+     }
+    ],
+    [
+     "appControl",
+     {
+      "action": "focus",
+      "target": "Chrome"
+     }
+    ],
+    [
+     "openWebsite",
+     {
+      "state": "restore",
+      "url": "youtube.com"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_gmail_second_monitor",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.49,
+   "t_first_tool": 0.68,
+   "calls": [
+    [
+     "openWebsite",
+     {
+      "url": "gmail.com",
+      "monitor": "2"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_window_left",
+   "run": 3,
+   "passed": false,
+   "failure": "expected windowControl with {'action': 'place', 'target': <predicate>.<lambda> at 0x000001FB1A112AC0>, 'zone': {'left', '1'}}, got [('windowCon…",
+   "reply_kind": "reply",
+   "seconds": 1.54,
+   "t_first_tool": 0.81,
+   "calls": [
+    [
+     "windowControl",
+     {
+      "action": "place",
+      "target": "264438",
+      "monitor": "left"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_weather",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.19,
+   "t_first_tool": 0.52,
+   "calls": [
+    [
+     "getWeather",
+     {}
+    ]
+   ]
+  },
+  {
+   "case": "everyday_web_search",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.7,
+   "t_first_tool": 0.66,
+   "calls": [
+    [
+     "webSearch",
+     {
+      "search_query": "latest F1 race results 2026"
+     }
+    ]
+   ]
+  },
+  {
+   "case": "everyday_click_save",
+   "run": 3,
+   "passed": true,
+   "failure": null,
+   "reply_kind": "reply",
+   "seconds": 1.44,
+   "t_first_tool": 0.81,
+   "calls": [
+    [
+     "uiControl",
+     {
+      "action": "click",
+      "element": "Save",
+      "window": "264438"
+     }
+    ]
+   ]
+  }
+ ]
+}

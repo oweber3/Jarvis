@@ -60,12 +60,25 @@ Memory needs depend on model size, quantisation, context length and speech recog
 | :--- | :--- |
 | Smaller hardware | `qwen3.5:0.8b` |
 | Default | `qwen3.5:9b` |
+| Most reliable PC control (12 GB+ GPU) | `gemma4:12b` |
 | Alternatives | `gemma4:e2b`, `gemma4:e4b` |
 | Larger local setup | `qwen3.8:27b` |
 
 Budget memory for Whisper and, when different from chat, the fast model used for voice intent and tool routing. Apple Silicon uses unified memory; other GPUs use dedicated VRAM.
 
-Optionally, **Settings → LLM & AI Models → Tool Model** lets a separate model choose and call tools while the chat model writes the reply. `gpt-oss:20b` chose tools most reliably in testing but needs about 13 GB; if it does not fit next to your chat model, use it as the chat model too, or every request reloads both.
+Optionally, **Settings → LLM & AI Models → Tool Model** lets a separate model choose and call tools while the chat model writes the reply. Setting it to the same model as chat costs no extra memory and made Qwen 3.5 noticeably more reliable; a different model only helps if both fit in memory together, or every request reloads them.
+
+**Quick reference for PC control.** 28 everyday requests (volume, media, settings, windows, files, websites, PDFs, weather, web search), each run three times through Jarvis in local mode on an RTX 5070 (12 GB). "Correct" means the right tool with the right arguments and a sensible reply. Speed is the median time from request to reply.
+
+| Model (chat, fast and tool) | Download | Correct | Speed |
+| :--- | :--- | :--- | :--- |
+| `gemma4:12b` | 7.6 GB | 82/84 | 2.7 s |
+| `gpt-oss:20b` | 13.8 GB | 74/84 | 5.9 s |
+| `granite4.2:8b` | 5.3 GB | 70/84 | 1.5 s |
+| `qwen3.5:9b` (fast model `qwen3.5:4b`) | 6.6 + 3.3 GB | 64/84 | 1.7 s |
+| `qwen3.5:4b` | 3.3 GB | 63/84 | 1.4 s |
+
+Pick the highest row that fits in your GPU memory next to Whisper. When a web search came back with nothing useful, most models invented race results in one or two of three tries; only the `qwen3.5:9b` setup never did. Smaller GPUs and CPU-only setups were not measured. Full results and method: [docs/TOOL_MODEL_BENCHMARK.md](docs/TOOL_MODEL_BENCHMARK.md).
 
 </details>
 
