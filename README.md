@@ -60,6 +60,7 @@ Memory needs depend on model size, quantisation, context length and speech recog
 | :--- | :--- |
 | Smaller hardware | `qwen3.5:0.8b` |
 | Default | `qwen3.5:9b` |
+| Most reliable PC control (12 GB+ GPU) | `gemma4:12b` |
 | Alternatives | `gemma4:e2b`, `gemma4:e4b` |
 | Larger local setup | `qwen3.8:27b` |
 

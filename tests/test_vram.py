@@ -42,10 +42,18 @@ class TestRecommendation:
         assert rec == "gemma4:e2b"
 
     def test_recommends_default_above_its_requirement(self):
-        """16 GB VRAM should recommend the default chat model."""
+        """VRAM above the default's requirement, below the next tier's, recommends the default."""
         from jarvis.config import DEFAULT_CHAT_MODEL
-        rec = get_recommended_model_id(16000)
+        default_mb = required_vram_mb(DEFAULT_CHAT_MODEL)
+        next_tier_mb = min(mb for _, _, mb, _ in _MODEL_VRAM_TABLE if mb > default_mb)
+        rec = get_recommended_model_id((default_mb + next_tier_mb) // 2)
         assert rec == DEFAULT_CHAT_MODEL
+
+    def test_recommends_the_most_capable_model_that_fits(self):
+        """With room for several models the one with the largest requirement that fits wins."""
+        for _, _, vram_mb, _ in _MODEL_VRAM_TABLE:
+            fitting = [mb for _, _, mb, _ in _MODEL_VRAM_TABLE if mb <= vram_mb]
+            assert required_vram_mb(get_recommended_model_id(vram_mb)) == max(fitting)
 
     def test_recommends_default_when_unknown(self):
         """Unknown VRAM (None) should recommend the default safely."""

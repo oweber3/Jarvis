@@ -34,6 +34,12 @@ SUPPORTED_CHAT_MODELS: Dict[str, Dict[str, str]] = {
         "size": "~9.6GB",
         "vram": "16GB+",
     },
+    "gemma4:12b": {
+        "name": "Gemma 4 12B (Best PC control)",
+        "description": "Most reliable local model at controlling the PC in Jarvis's benchmark, and quick; ~7.6GB download",
+        "size": "~7.6GB",
+        "vram": "12GB+",
+    },
     "qwen3.8:27b": {
         "name": "Qwen 3.8 27B (High-end)",
         "description": "Best performance, ~18GB download",
