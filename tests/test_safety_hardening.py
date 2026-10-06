@@ -30,6 +30,8 @@ from jarvis.tools.registry import BUILTIN_TOOLS, run_tool_with_retries
 
 class DummyCfg:
     windows_tools_enabled = True
+    # A user who allows deletion: these tests use delete to exercise confirmation.
+    file_delete_enabled = True
     windows_app_aliases = {}
     voice_debug = False
     tts_rate = 200

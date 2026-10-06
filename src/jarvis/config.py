@@ -388,6 +388,10 @@ class Settings:
     # screen only when a request asks about it. Off removes the tool from every reply mode.
     screen_awareness_enabled: bool = True
 
+    # File deletion (see src/jarvis/tools/builtin/local_files.spec.md): off means no request can delete a
+    # file, on any route. On, a delete still needs the user's confirmation.
+    file_delete_enabled: bool = False
+
     # Opt-in phone access (see src/jarvis/remote/remote.spec.md): the phone app served by the daemon to
     # paired phones on private networks. Off by default.
     remote_access_enabled: bool = False
@@ -866,6 +870,7 @@ def get_default_config() -> Dict[str, Any]:
         "activity_log_private_title_markers": _activity_defaults()[1],
         "activity_log_share_with_cloud": False,
         "screen_awareness_enabled": True,
+        "file_delete_enabled": False,
         "remote_access_enabled": False,
         "remote_access_host": "0.0.0.0",
         "remote_access_port": 8765,
@@ -1343,6 +1348,7 @@ def load_settings() -> Settings:
                                                         defaults["activity_log_private_title_markers"]),
         activity_log_share_with_cloud=merged.get("activity_log_share_with_cloud") is True,
         screen_awareness_enabled=merged.get("screen_awareness_enabled", True) is True,
+        file_delete_enabled=merged.get("file_delete_enabled") is True,
         remote_access_enabled=merged.get("remote_access_enabled") is True,
         remote_access_host=_text(merged.get("remote_access_host"), defaults["remote_access_host"]),
         remote_access_port=_port(merged.get("remote_access_port"), defaults["remote_access_port"]),

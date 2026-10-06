@@ -28,6 +28,13 @@ _INVALID_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED_NAMES = {'con', 'prn', 'aux', 'nul', *(f'com{i}' for i in range(1, 10)), *(f'lpt{i}' for i in range(1, 10))}
 _EXTENSION = re.compile(r'\.[^\W_]{1,10}', re.UNICODE)
 _PAST = {'move': 'moved', 'copy': 'copied', 'rename': 'renamed'}
+DELETE_OFF = ("File deletion is turned off, so no file was deleted. It can be turned on in Settings, "
+              "Windows Control, Allow File Deletion.")
+
+
+def _delete_allowed(cfg: Any) -> bool:
+    """Deleting needs ``file_delete_enabled`` to be exactly true; anything else keeps it off."""
+    return getattr(cfg, 'file_delete_enabled', False) is True
 
 
 def known_folder(name: str) -> str:
@@ -248,6 +255,9 @@ class LocalFilesTool(Tool):
             target_path = Path(str(path_arg))
 
         if operation == "delete":
+            if not _delete_allowed(cfg):
+                # Refused before any confirmation, so no "yes" can lead to a deletion.
+                return request(SafetyTier.DENY, "delete file", str(target_path), reason=DELETE_OFF)
             return request(SafetyTier.CONFIRM_VOICE, "delete file", str(target_path), mutates=True,
                            consequence="The file will be permanently deleted.")
         if operation == "write":
@@ -348,6 +358,10 @@ class LocalFilesTool(Tool):
 
             # delete
             if operation == "delete":
+                # Checked again here: an action confirmed before the switch went off must not run.
+                if not _delete_allowed(context.cfg):
+                    debug_log("localFiles delete refused: file deletion is turned off", "tools")
+                    return ToolExecutionResult(success=False, reply_text=DELETE_OFF)
                 try:
                     if target.exists() and target.is_file():
                         target.unlink()
