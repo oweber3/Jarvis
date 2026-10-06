@@ -192,7 +192,7 @@ Hold to record and release to paste. Double-tap for hands-free recording. Option
 
 ### Bring your own tools
 
-Connect MCP servers for browser automation, Home Assistant, GitHub, databases and more. Credentials and network access depend on the tools you choose. Review a server's permissions before enabling it.
+Connect MCP servers for browser automation, Home Assistant, GitHub, databases and more. Credentials and network access depend on the tools you choose. Review a server's permissions before enabling it. Most catalogue servers run on Node.js, which Jarvis does not bundle: when you tick one in setup and Node.js is missing, the wizard can install the official LTS release with winget, or links to the download.
 
 [Integration examples and server settings →](docs/CONFIGURATION.md#mcp-integrations)
 

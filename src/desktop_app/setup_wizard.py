@@ -397,6 +397,7 @@ try:
     from desktop_app.qt_worker import KeepAliveWorker
     from desktop_app.themes import line_icon, link, set_role, set_state, themed_stylesheet
     from desktop_app.mcp_catalogue import get_wizard_entries, MCPEntry
+    from desktop_app import node_setup
 
     # Import location utilities with crash protection for Windows native modules
     try:
@@ -3958,8 +3959,8 @@ class MCPPage(ScrollableWizardPage):
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "MCP (Model Context Protocol) servers give Jarvis extra abilities. "
-            "Select any you'd like to enable — you can always change these later in Settings."
+            "Optional MCP (Model Context Protocol) servers give Jarvis extra abilities. "
+            "Tick any you want, or none; you can change them later in Settings."
         )
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
@@ -3967,17 +3968,40 @@ class MCPPage(ScrollableWizardPage):
 
         layout.addSpacing(8)
 
-        # Node.js availability warning
-        self._node_warning = QLabel(
-            "<b>Node.js not found.</b> The MCP servers below require Node.js to run. "
-            f"{link('https://nodejs.org/', 'Download Node.js')} "
-            "and restart Jarvis, or skip this page for now."
-        )
-        self._node_warning.setOpenExternalLinks(True)
-        self._node_warning.setWordWrap(True)
-        self._node_warning.setObjectName("notice_error")
-        self._node_warning.setVisible(not self._is_node_available())
-        layout.addWidget(self._node_warning)
+        # Node.js note: only while a ticked server needs Node.js and this PC has none
+        self._node_ok = True
+        self._node_worker: Optional[CommandWorker] = None
+        self._node_box = QWidget()
+        self._node_box.setObjectName("clear")
+        node_layout = QVBoxLayout(self._node_box)
+        node_layout.setContentsMargins(0, 0, 0, 0)
+        node_layout.setSpacing(8)
+        self._node_note = QLabel("")
+        self._node_note.setOpenExternalLinks(True)
+        self._node_note.setWordWrap(True)
+        self._node_note.setObjectName("detail_panel")
+        node_layout.addWidget(self._node_note)
+        node_buttons = QHBoxLayout()
+        self._install_node_btn = QPushButton("Install Node.js")
+        self._install_node_btn.clicked.connect(self._install_node)
+        node_buttons.addWidget(self._install_node_btn)
+        self._recheck_node_btn = QPushButton("Check again")
+        self._recheck_node_btn.setObjectName("secondary")
+        self._recheck_node_btn.clicked.connect(self._recheck_node)
+        node_buttons.addWidget(self._recheck_node_btn)
+        node_buttons.addStretch()
+        node_layout.addLayout(node_buttons)
+        self._node_progress = QProgressBar()
+        self._node_progress.setRange(0, 0)
+        self._node_progress.setFixedHeight(6)
+        self._node_progress.setTextVisible(False)
+        self._node_progress.setVisible(False)
+        node_layout.addWidget(self._node_progress)
+        self._node_box.setVisible(False)
+        self._node_status = QLabel("")
+        self._node_status.setWordWrap(True)
+        self._node_status.setOpenExternalLinks(True)
+        self._node_status.setVisible(False)
 
         # Scrollable cards for wizard-featured entries
         scroll = QScrollArea()
@@ -3997,6 +4021,7 @@ class MCPPage(ScrollableWizardPage):
 
             cb = QCheckBox()
             cb.setChecked(self._is_already_configured(entry.name))
+            cb.toggled.connect(self._update_node_note)
             self._checkboxes[entry.name] = cb
             card_layout.addWidget(cb)
 
@@ -4015,6 +4040,9 @@ class MCPPage(ScrollableWizardPage):
             card_layout.addLayout(text_layout, 1)
             inner_layout.addWidget(card)
 
+        # The note sits under the servers it is about, inside the scroll area so it never squeezes them.
+        inner_layout.addWidget(self._node_box)
+        inner_layout.addWidget(self._node_status)
         inner_layout.addStretch()
         scroll.setWidget(inner)
         layout.addWidget(scroll, 1)
@@ -4030,15 +4058,78 @@ class MCPPage(ScrollableWizardPage):
 
         self.setLayout(layout)
 
-    @staticmethod
-    def _is_node_available() -> bool:
-        """Check if Node.js (npx) is available on the system."""
-        try:
-            from jarvis.tools.external.mcp_client import _resolve_command
-            _resolve_command("npx")
-            return True
-        except (FileNotFoundError, Exception):
-            return False
+    def initializePage(self):
+        self._recheck_node()
+
+    def _node_servers_ticked(self) -> List[str]:
+        return [e.display_name for e in get_wizard_entries()
+                if e.needs_node and e.name in self._checkboxes and self._checkboxes[e.name].isChecked()]
+
+    def _update_node_note(self, *_):
+        names = self._node_servers_ticked()
+        installing = self._node_worker is not None
+        self._node_box.setVisible(installing or (bool(names) and not self._node_ok))
+        if not names:
+            return
+        listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        need = "needs" if len(names) == 1 else "need"
+        can_install = node_setup.install_command() is not None
+        if can_install:
+            how = ("Jarvis can install the official LTS release for you with winget. "
+                   "Windows may ask for permission.")
+        else:
+            how = (f"{link(node_setup.NODE_DOWNLOAD_URL, 'Download Node.js')}, install it, "
+                   "then press Check again.")
+        self._node_note.setText(f"{listed} {need} Node.js, which this PC does not have yet. {how}")
+        self._install_node_btn.setVisible(can_install)
+        self._install_node_btn.setEnabled(not installing)
+        self._recheck_node_btn.setEnabled(not installing)
+
+    def _show_node_status(self, text: str, tone: str):
+        self._node_status.setText(text)
+        set_state(self._node_status, "tone", tone)
+        self._node_status.setVisible(bool(text))
+
+    def _recheck_node(self):
+        self._node_ok = node_setup.node_available()
+        if self._node_ok and self._node_status.isVisibleTo(self):
+            self._show_node_status("Node.js is ready. The servers you ticked can run.", "success")
+        self._update_node_note()
+
+    def _install_node(self):
+        """Install Node.js with winget, only because the user pressed the button."""
+        command = node_setup.install_command()
+        if command is None or self._node_worker is not None:
+            return
+        self._show_node_status("Installing Node.js with winget...", "muted")
+        self._node_progress.setVisible(True)
+        self._node_worker = CommandWorker(command)
+        self._node_worker.completed.connect(self._on_node_installed)
+        self._update_node_note()
+        self._node_worker.start()
+
+    def _on_node_installed(self, success: bool, message: str):
+        self._node_worker = None
+        self._node_progress.setVisible(False)
+        self._node_ok = node_setup.node_available()
+        if self._node_ok:
+            self._show_node_status("Node.js is installed. The servers you ticked can run.", "success")
+        elif success:
+            self._show_node_status(
+                "Node.js was installed, but Jarvis cannot find it yet. Restart Jarvis to finish.",
+                "warning")
+        else:
+            self._show_node_status(
+                f"Node.js could not be installed ({message}). You can "
+                f"{link(node_setup.NODE_DOWNLOAD_URL, 'download it from nodejs.org')} instead.",
+                "warning")
+        self._update_node_note()
+
+    def node_note_shown(self) -> bool:
+        return self._node_box.isVisibleTo(self)
+
+    def node_status_tone(self) -> str:
+        return str(self._node_status.property("tone"))
 
     @staticmethod
     def _is_already_configured(name: str) -> bool:

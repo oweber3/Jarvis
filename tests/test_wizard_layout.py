@@ -169,6 +169,41 @@ def test_whisper_slider_labels_sit_at_their_stops_without_overlap(qapp, monkeypa
         wizard.close()
 
 
+@pytest.mark.parametrize("width,height", [(700, 600), (960, 780)])
+def test_mcp_node_note_keeps_controls_usable(qapp, monkeypatch, tmp_path, width, height):
+    from desktop_app import node_setup
+
+    cfg = tmp_path / "config.json"
+    cfg.write_text("{}")
+    monkeypatch.setattr("jarvis.config.default_config_path", lambda: cfg)
+    monkeypatch.setattr(node_setup, "node_available", lambda: False)
+    monkeypatch.setattr(node_setup, "install_command", lambda: ["winget.exe"])
+    wizard = QWizard()
+    wizard.setStyleSheet(ui.themed_stylesheet())
+    page = ui.MCPPage()
+    wizard.addPage(page)
+    wizard.resize(width, height)
+    wizard.show()
+    page.initializePage()
+    for name, box in page._checkboxes.items():
+        box.setChecked(True)
+    page._show_node_status("Node.js could not be installed (exit code 1). " * 3, "warning")
+    QTest.qWait(100)
+    try:
+        assert page.node_note_shown()
+        assert wizard.height() <= height
+        for control in (page._install_node_btn, page._recheck_node_btn):
+            assert control.isVisible()
+            assert control.height() >= control.minimumSizeHint().height()
+            assert control.width() >= control.minimumSizeHint().width()
+        assert page._node_note.height() >= page._node_note.heightForWidth(page._node_note.width()) - 1
+        for scroll in page.findChildren(QScrollArea):
+            assert scroll.horizontalScrollBar().maximum() == 0
+        assert wizard.button(QWizard.WizardButton.FinishButton).isVisible()
+    finally:
+        wizard.close()
+
+
 @pytest.mark.parametrize("installed", [False, True])
 def test_whisper_install_buttons_fit_status_text(qapp, monkeypatch, installed):
     from PyQt6.QtWidgets import QStyle, QStyleOptionButton

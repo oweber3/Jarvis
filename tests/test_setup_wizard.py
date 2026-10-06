@@ -2041,16 +2041,6 @@ class TestMCPPage:
         finally:
             cfg_path.unlink(missing_ok=True)
 
-    def test_is_node_available_returns_true_when_npx_found(self):
-        """_is_node_available returns True when _resolve_command succeeds."""
-        with patch("jarvis.tools.external.mcp_client._resolve_command", return_value="/usr/bin/npx"):
-            assert MCPPage._is_node_available() is True
-
-    def test_is_node_available_returns_false_when_npx_missing(self):
-        """_is_node_available returns False when _resolve_command raises."""
-        with patch("jarvis.tools.external.mcp_client._resolve_command", side_effect=FileNotFoundError("not found")):
-            assert MCPPage._is_node_available() is False
-
     def test_validate_page_preserves_existing_non_wizard_mcps(self):
         """validatePage must not remove MCPs that aren't in the wizard catalogue."""
         import json
@@ -2078,6 +2068,134 @@ class TestMCPPage:
             assert "custom-server" in saved.get("mcps", {}), "Custom MCP server was removed"
         finally:
             cfg_path.unlink(missing_ok=True)
+
+
+class _FakeInstall:
+    """Stands in for ``CommandWorker`` so no test ever runs winget."""
+
+    runs = []
+
+    def __init__(self, command, parent=None):
+        self.command = command
+        self._done = []
+        self.output = SimpleNamespace(connect=lambda cb: None)
+        self.completed = SimpleNamespace(connect=self._done.append)
+        self.result = (True, "Command completed successfully")
+
+    def start(self):
+        _FakeInstall.runs.append(self)
+        for callback in self._done:
+            callback(*self.result)
+
+
+class TestMCPPageNode:
+    """Node.js is optional: a neutral note and an install button only when a ticked server needs it."""
+
+    @pytest.fixture
+    def env(self, qapp, monkeypatch, tmp_path):
+        from desktop_app import node_setup, setup_wizard as ui
+
+        def no_real_processes(*args, **kwargs):
+            raise AssertionError(f"a test tried to start a process: {args[0] if args else kwargs}")
+
+        monkeypatch.setattr(ui.subprocess, "Popen", no_real_processes)
+        cfg = tmp_path / "config.json"
+        cfg.write_text("{}")
+        monkeypatch.setattr("jarvis.config.default_config_path", lambda: cfg)
+        state = SimpleNamespace(node=False, winget=True, after_install=True)
+        monkeypatch.setattr(node_setup, "node_available", lambda: state.node)
+        monkeypatch.setattr(node_setup, "install_command",
+                            lambda: ["winget.exe", "install", "--id", "OpenJS.NodeJS.LTS"] if state.winget else None)
+        _FakeInstall.runs = []
+        monkeypatch.setattr(ui, "CommandWorker", _FakeInstall)
+        state.cfg = cfg
+        return state
+
+    @staticmethod
+    def _page():
+        page = MCPPage()
+        page.initializePage()
+        return page
+
+    @staticmethod
+    def _node_server(page):
+        return next(name for name, cb in page._checkboxes.items()
+                    if next(e for e in get_wizard_entries() if e.name == name).needs_node)
+
+    def test_shows_only_entries_for_this_platform(self, env):
+        import sys
+        page = self._page()
+        assert set(page._checkboxes) == {e.name for e in get_wizard_entries(sys.platform)}
+
+    def test_no_note_until_a_server_that_needs_node_is_ticked(self, env):
+        page = self._page()
+        assert not page.node_note_shown()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        assert page.node_note_shown()
+        page._checkboxes[self._node_server(page)].setChecked(False)
+        assert not page.node_note_shown()
+
+    def test_the_note_is_neutral_not_an_error(self, env):
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        assert "error" not in page._node_note.objectName()
+
+    def test_no_note_when_node_is_installed(self, env):
+        env.node = True
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        assert not page.node_note_shown()
+
+    def test_an_already_configured_node_server_shows_the_note_on_open(self, env):
+        import json
+        name = next(e.name for e in get_wizard_entries() if e.needs_node)
+        env.cfg.write_text(json.dumps({"mcps": {name: {"command": "npx"}}}))
+        page = self._page()
+        assert page.node_note_shown()
+
+    def test_install_runs_winget_only_when_clicked_then_rechecks(self, env):
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        assert page._install_node_btn.isVisibleTo(page)
+        assert _FakeInstall.runs == []
+        env.node = True  # winget installed it; the recheck finds it without a restart
+        page._install_node_btn.click()
+        (run,) = _FakeInstall.runs
+        assert "OpenJS.NodeJS.LTS" in run.command
+        assert not page.node_note_shown()
+        assert page.node_status_tone() == "success"
+
+    def test_a_failed_install_offers_the_download_link(self, env, monkeypatch):
+        monkeypatch.setattr(_FakeInstall, "start", lambda self: (
+            _FakeInstall.runs.append(self), [cb(False, "Command failed with exit code 1") for cb in self._done]))
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        page._install_node_btn.click()
+        assert page.node_note_shown()
+        assert page.node_status_tone() == "warning"
+        assert "nodejs.org" in page._node_status.text()
+
+    def test_installed_but_not_found_says_to_restart(self, env):
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        page._install_node_btn.click()  # succeeds, but node_available() stays False
+        assert page.node_status_tone() == "warning"
+        assert "restart" in page._node_status.text().lower()
+
+    def test_without_winget_only_the_download_link_is_offered(self, env):
+        env.winget = False
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        assert page.node_note_shown()
+        assert not page._install_node_btn.isVisibleTo(page)
+        assert "nodejs.org" in page._node_note.text()
+
+    def test_check_again_finds_a_manual_install(self, env):
+        page = self._page()
+        page._checkboxes[self._node_server(page)].setChecked(True)
+        env.node = True
+        page._recheck_node_btn.click()
+        assert not page.node_note_shown()
 
 
 class TestSearchProvidersPage:

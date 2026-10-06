@@ -102,7 +102,9 @@ Each page's title and subtitle say what that step is for, in short British Engli
 
 **DictationPage** — Enable/disable dictation, hotkey selection dropdown (4 presets), filler word removal toggle with delay warning. Reads current config values on open so re-running the wizard preserves user choices.
 
-**MCPPage** — Shows wizard-featured entries from `mcp_catalogue.py` as selectable cards (checkbox + name + description). Already-configured servers start checked. On validate, selected servers are added to `config.mcps` and deselected wizard entries are removed. Includes a tip pointing users to Settings → MCP Servers for the full catalogue and custom servers.
+**MCPPage** — Shows the wizard-featured entries from `mcp_catalogue.py` that work on this platform (`get_wizard_entries()` filters by each entry's `platforms`; macOS Automation is offered on macOS only) as selectable cards (checkbox + name + description), and says the servers are optional. Already-configured servers start checked. On validate, selected servers are added to `config.mcps` and deselected wizard entries are removed (entries not shown on this platform are left alone). Includes a tip pointing users to Settings → MCP Servers for the full catalogue and custom servers.
+
+Node.js is not bundled. While a ticked server needs it (`MCPEntry.needs_node`, launched with `npx`, `node` or `npm`) and `node_setup.node_available()` is false, a neutral note under the cards names those servers and says Node.js is missing; it is never an error and never shows otherwise. With winget available the note offers **Install Node.js**, which runs `node_setup.install_command()` (`winget install --id OpenJS.NodeJS.LTS --exact --source winget` with the agreements accepted by that click and interactivity off, since the console is hidden; Windows shows its own permission prompt) in a `CommandWorker`, only when clicked. Without winget (or on another platform) the note links to the Node.js download page instead. **Check again** and the end of an install re-run `node_available()` without a restart: besides this process's PATH, on Windows it reads the current machine and user PATH from the registry and the default install folder (`%ProgramFiles%\nodejs`), and adds the folder it finds to this process's PATH so servers started later (and a daemon started later) find Node.js. After an install the page says Node.js is ready, that it was installed but needs a Jarvis restart to be found, or that it could not be installed, with the download link.
 
 **SearchProvidersPage** — Explains and configures the web-search fallback chain (DDG → Brave → Wikipedia → honest block). Always shown: the explainer is the point, not the configuration. Brave card takes an optional API key (password-masked, never pre-filled; the placeholder says when one is stored) with a link to the Brave key portal. A typed key is stored in the OS credential store; an empty field keeps a stored key (Settings removes one); a key still in `config.json` moves to the store, and stays in the file when no store can take it (it is the only copy). Wikipedia card is a toggle that defaults to on. Only non-default values are written to `config.json` (empty Brave key and enabled Wikipedia are both omitted), matching the settings window's minimal-diff invariant.
 
@@ -123,6 +125,8 @@ Each page's title and subtitle say what that step is for, in short British Engli
 | `check_mlx_whisper_status()` | `MLXWhisperStatus` | Apple Silicon Whisper readiness |
 | `detect_total_vram_mb()` | `Optional[int]` | GPU VRAM in MB via DXGI (Windows) or `nvidia-smi` |
 | `get_recommended_model_id(vram_mb)` | `str` | Best model ID for the given VRAM (low-VRAM models win when nothing larger fits) |
+| `node_setup.node_available()` | `bool` | `npx` can start, including a Node.js installed after Jarvis started (Windows: current system PATH, default install folder) |
+| `node_setup.install_command()` | `Optional[list]` | The winget command for the Node.js LTS release; None without winget |
 | `check_cloud_mode(mode)` | `Optional[str]` | Whether the Claude or Codex CLI is installed and signed in, via the bridge's `lifecycle.check_sign_in`; None when ready, else its failure reason |
 
 ## Threading
@@ -138,7 +142,7 @@ Each page's title and subtitle say what that step is for, in short British Engli
   shadow the built-in `finished` signal — custom completion signals use
   other names (`completed`, `status_ready`, `done`).
 - `StatusCheckWorker` — runs `check_ollama_status()` off the UI thread, emits result via `status_ready`.
-- `CommandWorker` — runs shell commands (e.g. `ollama pull`), emits stdout line-by-line via `output` and completion status via `completed`.
+- `CommandWorker` — runs shell commands (e.g. `ollama pull`, the Node.js winget install), emits stdout line-by-line via `output` and completion status via `completed`.
 - `_ModelFetchWorker` — fetches the OpenAI-compatible model list off the UI thread, emits via `done`.
 - `_CloudCheckWorker` — runs one cloud mode's sign-in check off the UI thread, emits `(mode, failure reason or None)` via `checked`.
 
