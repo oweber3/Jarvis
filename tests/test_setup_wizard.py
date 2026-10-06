@@ -667,6 +667,48 @@ class TestWelcomePageFlow:
             assert page.nextId() == 9
 
 
+class TestPagePurposes:
+    """Each page's heading says what that step is for, so no two steps read alike."""
+
+    @staticmethod
+    def _heading(page) -> str:
+        from PyQt6.QtWidgets import QLabel
+        return " ".join(l.text() for l in page.findChildren(QLabel)
+                        if l.objectName() in ("title", "subtitle")).lower()
+
+    @pytest.fixture
+    def pages(self, qapp, tmp_path):
+        from desktop_app import setup_wizard as ui
+        cfg = tmp_path / "config.json"
+        cfg.write_text("{}")
+        with patch("jarvis.config.default_config_path", return_value=cfg):
+            wizard = ui.SetupWizard()
+        yield wizard
+        wizard.deleteLater()
+
+    def test_provider_page_is_about_how_models_run(self, pages):
+        heading = self._heading(pages.provider_choice_page)
+        assert "run" in heading
+        assert "later" in heading, "the provider step should say models are chosen on a later step"
+
+    def test_models_page_is_about_which_models_to_download(self, pages):
+        heading = self._heading(pages.models_page)
+        assert "which models" in heading and "download" in heading
+
+    def test_status_page_names_what_it_checks_rather_than_greeting(self, pages):
+        heading = self._heading(pages.welcome_page)
+        assert "ollama" in heading
+        assert "welcome" not in heading, "the status step sits mid-flow, not at the start"
+
+    def test_every_page_title_is_distinct(self, pages):
+        from PyQt6.QtWidgets import QLabel
+        titles = []
+        for page_id in pages.pageIds():
+            page = pages.page(page_id)
+            titles += [l.text() for l in page.findChildren(QLabel) if l.objectName() == "title"]
+        assert len(titles) == len(set(titles)), titles
+
+
 class TestOpenAICompatiblePage:
     """Collects the OpenAI-compatible connection details."""
 

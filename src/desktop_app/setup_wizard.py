@@ -656,14 +656,16 @@ class WelcomePage(ScrollableWizardPage):
         # Header
         header_layout = QVBoxLayout()
 
-        title = QLabel("Welcome to your Jarvis")
+        title = QLabel("Check Ollama on this PC")
         title.setObjectName("title")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_layout.addWidget(title)
 
-        subtitle = QLabel("Your AI-powered voice assistant")
+        subtitle = QLabel(
+            "Jarvis looks for Ollama, its server and the models it needs. "
+            "The next steps fix anything missing."
+        )
         subtitle.setObjectName("subtitle")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setWordWrap(True)
         header_layout.addWidget(subtitle)
 
         layout.addLayout(header_layout)
@@ -676,7 +678,7 @@ class WelcomePage(ScrollableWizardPage):
         status_layout.setContentsMargins(18, 16, 18, 16)
         status_layout.setSpacing(12)
 
-        status_title = QLabel("System Status")
+        status_title = QLabel("What Jarvis found")
         status_title.setObjectName("section_title")
         status_layout.addWidget(status_title)
         status_layout.addSpacing(8)
@@ -718,7 +720,7 @@ class WelcomePage(ScrollableWizardPage):
         layout.addStretch()
 
         # Info label
-        info = QLabel("Click 'Next' to continue with the setup process.")
+        info = QLabel("Next takes you to the first step that needs attention.")
         info.setWordWrap(True)
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         set_role(info, "muted")
@@ -873,12 +875,14 @@ class ProviderChoicePage(ScrollableWizardPage):
         layout.setSpacing(16)
         layout.setContentsMargins(28, 20, 28, 20)
 
-        title = QLabel("Choose your local intelligence")
+        title = QLabel("Choose how your models run")
         title.setObjectName("title")
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "Two ways to run Jarvis. Your models stay on hardware you control."
+            "Pick what runs Jarvis's language models: Ollama on this PC, or a "
+            "model server you already use. Either way they stay on hardware you "
+            "control. You choose the models themselves on a later step."
         )
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
@@ -2134,14 +2138,14 @@ class ModelsPage(ScrollableWizardPage):
         layout.setSpacing(16)
         layout.setContentsMargins(28, 20, 28, 20)
 
-        title = QLabel("Choose your AI models")
+        title = QLabel("Choose which models to download")
         title.setObjectName("title")
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "Jarvis needs a chat model (conversations) and a fast model "
-            "(voice intent, tool routing). Pick them separately for "
-            "best VRAM usage."
+            "Pick which models Ollama downloads and Jarvis uses: a chat model "
+            "for conversations and a fast model for quick commands. Separate "
+            "models make the best use of graphics memory."
         )
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
