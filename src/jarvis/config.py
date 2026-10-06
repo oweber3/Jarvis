@@ -29,7 +29,7 @@ SUPPORTED_CHAT_MODELS: Dict[str, Dict[str, str]] = {
         "vram": "8GB+",
     },
     "gemma4:e4b": {
-        "name": "Gemma 4 E4B (Recommended)",
+        "name": "Gemma 4 E4B",
         "description": "Smarter tool use and reasoning, multimodal, effective 4B — ~9.6GB download",
         "size": "~9.6GB",
         "vram": "16GB+",
