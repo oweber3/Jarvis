@@ -1,0 +1,30 @@
+{
+  "processes": [
+    "1Password",
+    "Bitwarden",
+    "KeePass",
+    "KeePassXC",
+    "Dashlane",
+    "LastPass",
+    "NordPass",
+    "Enpass",
+    "Proton Pass",
+    "RoboForm",
+    "Keeper"
+  ],
+  "private_title_markers": {
+    "en": ["Incognito", "InPrivate", "Private Browsing", "Private Window"],
+    "fr": ["Navigation privée", "Fenêtre privée"],
+    "de": ["Inkognito", "Privates Fenster", "Privater Modus"],
+    "es": ["Incógnito", "Navegación privada", "Ventana privada"],
+    "it": ["Navigazione in incognito", "Navigazione privata", "Finestra privata"],
+    "pt": ["Anônima", "Anónimo", "Navegação privada"],
+    "nl": ["Incognitovenster", "Privénavigatie", "Privévenster"],
+    "pl": ["Incognito", "Okno prywatne", "Przeglądanie prywatne"],
+    "tr": ["Gizli", "Gizli Gezinti"],
+    "ru": ["Инкогнито", "Приватный просмотр"],
+    "ja": ["シークレット", "プライベートブラウズ", "InPrivate"],
+    "ko": ["시크릿", "비공개 브라우징"],
+    "zh": ["无痕", "隐身", "InPrivate", "无痕浏览"]
+  }
+}

@@ -1,0 +1,1250 @@
+{
+  "prefixes": [
+    "please",
+    "could you",
+    "can you",
+    "would you",
+    "hey"
+  ],
+  "suffixes": [
+    "please",
+    "for me"
+  ],
+  "compound_words": [
+    "and",
+    "then",
+    "or"
+  ],
+  "folders": {
+    "downloads": "Downloads",
+    "documents": "Documents",
+    "desktop": "Desktop"
+  },
+  "article_prefixes": [
+    "my",
+    "the",
+    "a"
+  ],
+  "settings_pages": {
+    "bluetooth": "bluetooth",
+    "display": "display",
+    "screen": "display",
+    "monitor": "display",
+    "sound": "sound",
+    "audio": "sound",
+    "wifi": "wifi",
+    "wi-fi": "wifi",
+    "wi fi": "wifi",
+    "wireless": "wifi",
+    "network": "network",
+    "internet": "network",
+    "ethernet": "ethernet",
+    "vpn": "vpn",
+    "power": "power",
+    "power and sleep": "power",
+    "sleep": "power",
+    "battery": "battery",
+    "windows update": "updates",
+    "update": "updates",
+    "updates": "updates",
+    "apps": "apps",
+    "installed apps": "apps",
+    "default apps": "default_apps",
+    "startup apps": "startup_apps",
+    "startup": "startup_apps",
+    "privacy": "privacy",
+    "camera": "camera",
+    "microphone": "microphone",
+    "location": "location",
+    "night light": "night_light",
+    "focus": "focus",
+    "do not disturb": "focus",
+    "notifications": "notifications",
+    "storage": "storage",
+    "taskbar": "taskbar",
+    "personalisation": "personalisation",
+    "personalization": "personalisation",
+    "background": "background",
+    "colours": "colours",
+    "colors": "colours",
+    "mouse": "mouse",
+    "touchpad": "touchpad",
+    "keyboard": "keyboard",
+    "printer": "printers",
+    "printers": "printers",
+    "accounts": "accounts",
+    "account": "accounts",
+    "about": "about",
+    "accessibility": "accessibility",
+    "language": "language",
+    "time": "date_time",
+    "date and time": "date_time",
+    "gaming": "gaming",
+    "security": "security",
+    "windows security": "security",
+    "recovery": "recovery",
+    "troubleshoot": "troubleshoot",
+    "multitasking": "multitasking",
+    "clipboard": "clipboard",
+    "proxy": "proxy",
+    "airplane mode": "airplane_mode",
+    "sign in": "sign_in"
+  },
+  "power_plans": {
+    "balanced": "balanced",
+    "power saver": "power_saver",
+    "battery saver": "power_saver",
+    "high performance": "high_performance",
+    "performance": "high_performance",
+    "ultimate performance": "ultimate_performance",
+    "ultimate": "ultimate_performance"
+  },
+  "numbers": {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10
+  },
+  "key_joiners": [
+    "plus"
+  ],
+  "keys": {
+    "control": "ctrl",
+    "ctrl": "ctrl",
+    "shift": "shift",
+    "alt": "alt",
+    "windows": "win",
+    "win": "win",
+    "escape": "esc",
+    "esc": "esc",
+    "tab": "tab",
+    "enter": "enter",
+    "return": "enter",
+    "space": "space",
+    "spacebar": "space",
+    "delete": "delete",
+    "del": "delete",
+    "backspace": "backspace",
+    "home": "home",
+    "end": "end",
+    "insert": "insert",
+    "up": "up",
+    "down": "down",
+    "left": "left",
+    "right": "right",
+    "minus": "minus",
+    "comma": "comma",
+    "period": "period",
+    "plus": "equals"
+  },
+  "rules": [
+    {
+      "id": "time",
+      "family": "time",
+      "tool": "getTime",
+      "args": {
+        "local_only": true
+      },
+      "phrases": [
+        "what time is it",
+        "whats the time",
+        "what is the time",
+        "tell me the time",
+        "what time is it now",
+        "what time is it right now",
+        "whats the time now",
+        "what is the time now"
+      ],
+      "reply": null
+    },
+    {
+      "id": "date",
+      "family": "time",
+      "tool": "getTime",
+      "args": {
+        "local_only": true
+      },
+      "phrases": [
+        "what day is it",
+        "whats todays date",
+        "what is todays date",
+        "whats the date",
+        "what is the date",
+        "tell me todays date",
+        "what day is it today",
+        "whats the date today",
+        "what is the date today"
+      ],
+      "reply": null
+    },
+    {
+      "id": "folder.open",
+      "family": "files",
+      "tool": "openPath",
+      "args": {},
+      "phrases": [
+        "open {folder}",
+        "open my {folder}",
+        "open the {folder}",
+        "open {folder} folder",
+        "open my {folder} folder",
+        "open the {folder} folder"
+      ],
+      "reply": "Opening {folder}.",
+      "slot": "folder"
+    },
+    {
+      "id": "app.open",
+      "family": "apps",
+      "tool": "appControl",
+      "args": {
+        "action": "open"
+      },
+      "phrases": [
+        "open {app}",
+        "launch {app}",
+        "start {app}"
+      ],
+      "reply": "Opening {app}.",
+      "slot": "app"
+    },
+    {
+      "id": "routine.run",
+      "family": "routines",
+      "tool": "routineControl",
+      "args": {
+        "action": "run"
+      },
+      "phrases": [
+        "start {routine}",
+        "run {routine}",
+        "start my {routine} routine",
+        "start the {routine} routine",
+        "run my {routine} routine",
+        "run the {routine} routine"
+      ],
+      "reply": "{routine} done."
+    },
+    {
+      "id": "routine.name",
+      "family": "routines",
+      "tool": "routineControl",
+      "args": {
+        "action": "run"
+      },
+      "needs_wake_word": true,
+      "phrases": [
+        "{routine}"
+      ],
+      "reply": "{routine} done."
+    },
+    {
+      "id": "workspace.open",
+      "family": "workspaces",
+      "tool": "workspaceControl",
+      "args": {
+        "action": "open"
+      },
+      "phrases": [
+        "open my {workspace} workspace",
+        "open the {workspace} workspace",
+        "open {workspace} workspace",
+        "open my workspace for {workspace}",
+        "set up my {workspace} workspace",
+        "set up the {workspace} workspace",
+        "set up {workspace} workspace",
+        "set up {workspace}",
+        "start my {workspace} workspace",
+        "start the {workspace} workspace",
+        "start {workspace} workspace",
+        "launch my {workspace} workspace",
+        "launch the {workspace} workspace",
+        "launch {workspace} workspace"
+      ],
+      "reply": "Opening your {workspace} workspace.",
+      "slot": "workspace"
+    },
+    {
+      "id": "app.focus",
+      "family": "apps",
+      "tool": "appControl",
+      "args": {
+        "action": "focus"
+      },
+      "phrases": [
+        "switch to {app}",
+        "focus {app}",
+        "bring {app} to the front"
+      ],
+      "reply": "Switched to {app}.",
+      "slot": "app"
+    },
+    {
+      "id": "app.close",
+      "family": "apps",
+      "tool": "appControl",
+      "args": {
+        "action": "close"
+      },
+      "phrases": [
+        "close {app}",
+        "quit {app}"
+      ],
+      "reply": "Requested {app} to close.",
+      "slot": "app"
+    },
+    {
+      "id": "window.minimise",
+      "family": "windows",
+      "tool": "windowControl",
+      "args": {
+        "action": "minimise"
+      },
+      "phrases": [
+        "minimise {app}",
+        "minimize {app}"
+      ],
+      "reply": "Minimised {app}.",
+      "slot": "app"
+    },
+    {
+      "id": "window.maximise",
+      "family": "windows",
+      "tool": "windowControl",
+      "args": {
+        "action": "maximise"
+      },
+      "phrases": [
+        "maximise {app}",
+        "maximize {app}"
+      ],
+      "reply": "Maximised {app}.",
+      "slot": "app"
+    },
+    {
+      "id": "window.restore",
+      "family": "windows",
+      "tool": "windowControl",
+      "args": {
+        "action": "restore"
+      },
+      "phrases": [
+        "restore {app}"
+      ],
+      "reply": "Restored {app}.",
+      "slot": "app"
+    },
+    {
+      "id": "volume.set",
+      "family": "volume",
+      "tool": "systemVolume",
+      "args": {
+        "action": "set"
+      },
+      "phrases": [
+        "set volume to {percent}%",
+        "set the volume to {percent}%",
+        "set volume to {percent} percent",
+        "set the volume to {percent} percent",
+        "set volume to {percent}",
+        "set the volume to {percent}"
+      ],
+      "reply": null,
+      "slot": "percent"
+    },
+    {
+      "id": "volume.up",
+      "family": "volume",
+      "tool": "systemVolume",
+      "args": {
+        "action": "up"
+      },
+      "phrases": [
+        "turn the volume up",
+        "turn volume up",
+        "increase the volume",
+        "increase volume",
+        "raise the volume",
+        "volume up"
+      ],
+      "reply": null
+    },
+    {
+      "id": "volume.down",
+      "family": "volume",
+      "tool": "systemVolume",
+      "args": {
+        "action": "down"
+      },
+      "phrases": [
+        "turn the volume down",
+        "turn volume down",
+        "decrease the volume",
+        "decrease volume",
+        "lower the volume",
+        "volume down"
+      ],
+      "reply": null
+    },
+    {
+      "id": "volume.get",
+      "family": "volume",
+      "tool": "systemVolume",
+      "args": {
+        "action": "get"
+      },
+      "phrases": [
+        "whats the volume",
+        "what is the volume",
+        "whats the current volume",
+        "what is the current volume",
+        "whats the volume at",
+        "what is the volume at",
+        "what volume is it at",
+        "how loud is the volume"
+      ],
+      "reply": null
+    },
+    {
+      "id": "volume.mute",
+      "family": "volume",
+      "tool": "systemVolume",
+      "args": {
+        "action": "mute"
+      },
+      "phrases": [
+        "mute",
+        "mute the computer",
+        "mute the volume",
+        "mute the audio",
+        "mute audio",
+        "mute the sound",
+        "mute sound"
+      ],
+      "reply": null
+    },
+    {
+      "id": "volume.unmute",
+      "family": "volume",
+      "tool": "systemVolume",
+      "args": {
+        "action": "unmute"
+      },
+      "phrases": [
+        "unmute",
+        "unmute the computer",
+        "unmute the volume",
+        "unmute the audio",
+        "unmute audio",
+        "unmute the sound",
+        "unmute sound"
+      ],
+      "reply": null
+    },
+    {
+      "id": "media.pause",
+      "family": "media",
+      "tool": "mediaControl",
+      "args": {
+        "action": "pause"
+      },
+      "phrases": [
+        "pause the music",
+        "pause music",
+        "pause playback",
+        "pause the song",
+        "pause the track"
+      ],
+      "reply": null
+    },
+    {
+      "id": "media.play",
+      "family": "media",
+      "tool": "mediaControl",
+      "args": {
+        "action": "play"
+      },
+      "phrases": [
+        "play the music",
+        "play music",
+        "resume the music",
+        "resume music",
+        "resume playback",
+        "resume the song",
+        "resume the track"
+      ],
+      "reply": null
+    },
+    {
+      "id": "media.next",
+      "family": "media",
+      "tool": "mediaControl",
+      "args": {
+        "action": "next"
+      },
+      "phrases": [
+        "next track",
+        "next song",
+        "skip track",
+        "skip song",
+        "skip to the next track",
+        "skip to the next song",
+        "skip this song",
+        "skip this track",
+        "skip the song",
+        "skip the track"
+      ],
+      "reply": null
+    },
+    {
+      "id": "media.previous",
+      "family": "media",
+      "tool": "mediaControl",
+      "args": {
+        "action": "previous"
+      },
+      "phrases": [
+        "previous track",
+        "previous song",
+        "go to the previous track",
+        "go to the previous song",
+        "go back a song",
+        "go back a track"
+      ],
+      "reply": null
+    },
+    {
+      "id": "media.now_playing",
+      "family": "media",
+      "tool": "mediaControl",
+      "args": {
+        "action": "now_playing"
+      },
+      "phrases": [
+        "what song is this",
+        "whats this song",
+        "what is this song",
+        "what song is playing",
+        "whats playing",
+        "what is playing",
+        "whats playing right now",
+        "what is playing right now"
+      ],
+      "reply": null
+    },
+    {
+      "id": "system.top_memory",
+      "family": "system",
+      "tool": "systemInfo",
+      "args": {
+        "action": "top_memory"
+      },
+      "phrases": [
+        "whats using the most ram",
+        "what is using the most ram",
+        "whats using the most memory",
+        "what is using the most memory",
+        "which app is using the most ram"
+      ],
+      "reply": null
+    },
+    {
+      "id": "system.top_cpu",
+      "family": "system",
+      "tool": "systemInfo",
+      "args": {
+        "action": "top_cpu"
+      },
+      "phrases": [
+        "whats using the most cpu",
+        "what is using the most cpu",
+        "which app is using the most cpu"
+      ],
+      "reply": null
+    },
+    {
+      "id": "system.ram",
+      "family": "system",
+      "tool": "systemInfo",
+      "args": {
+        "action": "ram"
+      },
+      "phrases": [
+        "how much ram am i using",
+        "how much memory am i using",
+        "whats my ram usage",
+        "what is my ram usage"
+      ],
+      "reply": null
+    },
+    {
+      "id": "system.cpu",
+      "family": "system",
+      "tool": "systemInfo",
+      "args": {
+        "action": "cpu"
+      },
+      "phrases": [
+        "whats my cpu usage",
+        "what is my cpu usage",
+        "whats the cpu usage",
+        "what is the cpu usage"
+      ],
+      "reply": null
+    },
+    {
+      "id": "system.gpu",
+      "family": "system",
+      "tool": "systemInfo",
+      "args": {
+        "action": "gpu"
+      },
+      "phrases": [
+        "how hot is my gpu",
+        "how hot is the gpu",
+        "whats my gpu temperature",
+        "what is my gpu temperature",
+        "whats the gpu temperature",
+        "what is the gpu temperature",
+        "whats my gpu usage",
+        "what is my gpu usage"
+      ],
+      "reply": null
+    },
+    {
+      "id": "system.disk",
+      "family": "system",
+      "tool": "systemInfo",
+      "args": {
+        "action": "disk"
+      },
+      "phrases": [
+        "how much disk space do i have",
+        "how much free disk space do i have",
+        "how much storage do i have left",
+        "how much disk space is left",
+        "whats my disk usage",
+        "what is my disk usage"
+      ],
+      "reply": null
+    },
+    {
+      "id": "settings.open",
+      "family": "settings",
+      "tool": "systemSettings",
+      "args": {
+        "action": "open_page"
+      },
+      "phrases": [
+        "open {page} settings",
+        "open the {page} settings",
+        "open my {page} settings",
+        "open {page} settings page",
+        "go to {page} settings",
+        "go to the {page} settings",
+        "show {page} settings",
+        "show the {page} settings"
+      ],
+      "reply": "Opening {page} settings.",
+      "slot": "page"
+    },
+    {
+      "id": "brightness.set",
+      "family": "brightness",
+      "tool": "systemSettings",
+      "args": {
+        "action": "brightness",
+        "operation": "set"
+      },
+      "phrases": [
+        "set brightness to {percent}%",
+        "set the brightness to {percent}%",
+        "set brightness to {percent} percent",
+        "set the brightness to {percent} percent",
+        "set brightness to {percent}",
+        "set the brightness to {percent}",
+        "set screen brightness to {percent}%",
+        "set screen brightness to {percent} percent",
+        "set screen brightness to {percent}",
+        "set the screen brightness to {percent}%",
+        "set the screen brightness to {percent} percent",
+        "set the screen brightness to {percent}"
+      ],
+      "reply": null,
+      "slot": "percent"
+    },
+    {
+      "id": "brightness.up",
+      "family": "brightness",
+      "tool": "systemSettings",
+      "args": {
+        "action": "brightness",
+        "operation": "up"
+      },
+      "phrases": [
+        "increase the brightness",
+        "increase brightness",
+        "turn the brightness up",
+        "turn brightness up",
+        "brightness up",
+        "raise the brightness",
+        "make the screen brighter",
+        "make the screen a bit brighter",
+        "brighten the screen"
+      ],
+      "reply": null
+    },
+    {
+      "id": "brightness.down",
+      "family": "brightness",
+      "tool": "systemSettings",
+      "args": {
+        "action": "brightness",
+        "operation": "down"
+      },
+      "phrases": [
+        "decrease the brightness",
+        "decrease brightness",
+        "turn the brightness down",
+        "turn brightness down",
+        "brightness down",
+        "lower the brightness",
+        "dim the screen",
+        "make the screen dimmer",
+        "make the screen a bit dimmer"
+      ],
+      "reply": null
+    },
+    {
+      "id": "brightness.get",
+      "family": "brightness",
+      "tool": "systemSettings",
+      "args": {
+        "action": "brightness",
+        "operation": "get"
+      },
+      "phrases": [
+        "whats the brightness",
+        "what is the brightness",
+        "whats the screen brightness",
+        "what is the screen brightness"
+      ],
+      "reply": null
+    },
+    {
+      "id": "power.set",
+      "family": "power",
+      "tool": "systemSettings",
+      "args": {
+        "action": "power_plan",
+        "operation": "set"
+      },
+      "phrases": [
+        "switch to the {plan} power plan",
+        "switch to {plan} power plan",
+        "set power plan to {plan}",
+        "set the power plan to {plan}",
+        "use the {plan} power plan",
+        "use {plan} power plan",
+        "change power plan to {plan}",
+        "change the power plan to {plan}"
+      ],
+      "reply": null,
+      "slot": "plan"
+    },
+    {
+      "id": "power.get",
+      "family": "power",
+      "tool": "systemSettings",
+      "args": {
+        "action": "power_plan",
+        "operation": "get"
+      },
+      "phrases": [
+        "what power plan am i using",
+        "what power plan am i on",
+        "whats my power plan",
+        "what is my power plan"
+      ],
+      "reply": null
+    },
+    {
+      "id": "audio.output",
+      "family": "audio",
+      "tool": "systemSettings",
+      "args": {
+        "action": "audio_output",
+        "operation": "set"
+      },
+      "phrases": [
+        "switch audio to {device}",
+        "switch the audio to {device}",
+        "switch audio output to {device}",
+        "switch the audio output to {device}",
+        "change audio output to {device}",
+        "change the audio output to {device}",
+        "switch sound to {device}",
+        "switch the sound to {device}",
+        "set audio output to {device}",
+        "set the audio output to {device}"
+      ],
+      "reply": null,
+      "slot": "device"
+    },
+    {
+      "id": "desktop.switch",
+      "family": "desktops",
+      "tool": "windowControl",
+      "args": {
+        "action": "desktop_switch",
+        "target": ""
+      },
+      "phrases": [
+        "switch to desktop {number}",
+        "go to desktop {number}",
+        "switch to virtual desktop {number}",
+        "go to virtual desktop {number}",
+        "show desktop {number}"
+      ],
+      "reply": null,
+      "slot": "number",
+      "slot_args": {
+        "number": "desktop"
+      }
+    },
+    {
+      "id": "pdf.goto",
+      "family": "pdf",
+      "tool": "pdfNavigate",
+      "args": {
+        "action": "goto"
+      },
+      "phrases": [
+        "page {page_number}",
+        "go to page {page_number}",
+        "jump to page {page_number}",
+        "skip to page {page_number}",
+        "turn to page {page_number}"
+      ],
+      "reply": "Page {page_number}.",
+      "slot": "page_number"
+    },
+    {
+      "id": "desktop.next",
+      "family": "desktops",
+      "tool": "windowControl",
+      "args": {
+        "action": "desktop_switch",
+        "target": "",
+        "desktop": "next"
+      },
+      "phrases": [
+        "next desktop",
+        "go to the next desktop",
+        "switch to the next desktop",
+        "next virtual desktop"
+      ],
+      "reply": null
+    },
+    {
+      "id": "desktop.previous",
+      "family": "desktops",
+      "tool": "windowControl",
+      "args": {
+        "action": "desktop_switch",
+        "target": "",
+        "desktop": "previous"
+      },
+      "phrases": [
+        "previous desktop",
+        "go to the previous desktop",
+        "switch to the previous desktop",
+        "previous virtual desktop"
+      ],
+      "reply": null
+    },
+    {
+      "id": "desktop.new",
+      "family": "desktops",
+      "tool": "windowControl",
+      "args": {
+        "action": "desktop_new",
+        "target": ""
+      },
+      "phrases": [
+        "new desktop",
+        "create a new desktop",
+        "make a new desktop",
+        "new virtual desktop",
+        "create a new virtual desktop"
+      ],
+      "reply": null
+    },
+    {
+      "id": "hotkey.press",
+      "family": "input",
+      "tool": "inputControl",
+      "args": {
+        "action": "hotkey"
+      },
+      "phrases": [
+        "press {keys}",
+        "hit {keys}"
+      ],
+      "reply": null,
+      "slot": "keys"
+    },
+    {
+      "id": "hotkey.show_desktop",
+      "family": "input",
+      "tool": "inputControl",
+      "args": {
+        "action": "hotkey",
+        "keys": "win+d"
+      },
+      "phrases": [
+        "show the desktop",
+        "show desktop"
+      ],
+      "reply": null
+    },
+    {
+      "id": "hotkey.task_view",
+      "family": "input",
+      "tool": "inputControl",
+      "args": {
+        "action": "hotkey",
+        "keys": "win+tab"
+      },
+      "phrases": [
+        "open task view",
+        "show task view"
+      ],
+      "reply": null
+    },
+    {
+      "id": "hotkey.undo",
+      "family": "input",
+      "tool": "inputControl",
+      "args": {
+        "action": "hotkey",
+        "keys": "ctrl+z"
+      },
+      "phrases": [
+        "undo",
+        "undo that"
+      ],
+      "reply": null,
+      "needs_wake_word": true
+    },
+    {
+      "id": "hotkey.redo",
+      "family": "input",
+      "tool": "inputControl",
+      "args": {
+        "action": "hotkey",
+        "keys": "ctrl+y"
+      },
+      "phrases": [
+        "redo",
+        "redo that"
+      ],
+      "reply": null,
+      "needs_wake_word": true
+    },
+    {
+      "id": "hotkey.copy",
+      "family": "input",
+      "tool": "inputControl",
+      "args": {
+        "action": "hotkey",
+        "keys": "ctrl+c"
+      },
+      "phrases": [
+        "copy",
+        "copy that"
+      ],
+      "reply": null,
+      "needs_wake_word": true
+    },
+    {
+      "id": "hotkey.paste",
+      "family": "input",
+      "tool": "inputControl",
+      "args": {
+        "action": "hotkey",
+        "keys": "ctrl+v"
+      },
+      "phrases": [
+        "paste",
+        "paste that"
+      ],
+      "reply": null,
+      "needs_wake_word": true
+    },
+    {
+      "id": "hotkey.select_all",
+      "family": "input",
+      "tool": "inputControl",
+      "args": {
+        "action": "hotkey",
+        "keys": "ctrl+a"
+      },
+      "phrases": [
+        "select all"
+      ],
+      "reply": null,
+      "needs_wake_word": true
+    },
+    {
+      "id": "hotkey.save",
+      "family": "input",
+      "tool": "inputControl",
+      "args": {
+        "action": "hotkey",
+        "keys": "ctrl+s"
+      },
+      "phrases": [
+        "save this",
+        "save that",
+        "save the file"
+      ],
+      "reply": null,
+      "needs_wake_word": true
+    },
+    {
+      "id": "reply_mode.local",
+      "family": "reply_mode",
+      "tool": "replyMode",
+      "args": {
+        "action": "set",
+        "mode": "local"
+      },
+      "reply": null,
+      "phrases": [
+        "go local",
+        "go back to local",
+        "go back to local mode",
+        "back to local mode",
+        "switch to local mode",
+        "use local mode",
+        "use the local model",
+        "use local"
+      ]
+    },
+    {
+      "id": "reply_mode.codex",
+      "family": "reply_mode",
+      "tool": "replyMode",
+      "args": {
+        "action": "set",
+        "mode": "codex"
+      },
+      "reply": null,
+      "phrases": [
+        "use chatgpt",
+        "use chat gpt",
+        "use chatgpt mode",
+        "use chat gpt mode",
+        "switch to chatgpt mode",
+        "switch to chat gpt mode",
+        "use codex",
+        "use codex mode",
+        "switch to codex mode"
+      ]
+    },
+    {
+      "id": "reply_mode.claude",
+      "family": "reply_mode",
+      "tool": "replyMode",
+      "args": {
+        "action": "set",
+        "mode": "claude"
+      },
+      "reply": null,
+      "phrases": [
+        "use claude",
+        "use claude mode",
+        "switch to claude mode"
+      ]
+    },
+    {
+      "id": "tv.power_on",
+      "family": "tv",
+      "tool": "tvControl",
+      "args": {
+        "action": "key",
+        "key": "PowerOn"
+      },
+      "reply": null,
+      "phrases": [
+        "turn on the tv",
+        "turn the tv on",
+        "switch on the tv",
+        "switch the tv on",
+        "power on the tv",
+        "power the tv on",
+        "turn on my tv",
+        "turn my tv on",
+        "switch on my tv",
+        "switch my tv on",
+        "power on my tv",
+        "power my tv on"
+      ]
+    },
+    {
+      "id": "tv.power_off",
+      "family": "tv",
+      "tool": "tvControl",
+      "args": {
+        "action": "key",
+        "key": "PowerOff"
+      },
+      "reply": null,
+      "phrases": [
+        "turn off the tv",
+        "turn the tv off",
+        "switch off the tv",
+        "switch the tv off",
+        "power off the tv",
+        "power the tv off",
+        "turn off my tv",
+        "turn my tv off",
+        "switch off my tv",
+        "switch my tv off",
+        "power off my tv",
+        "power my tv off"
+      ]
+    },
+    {
+      "id": "tv.volume_up",
+      "family": "tv",
+      "tool": "tvControl",
+      "args": {
+        "action": "key",
+        "key": "VolumeUp",
+        "repeat": 5
+      },
+      "reply": null,
+      "phrases": [
+        "tv volume up",
+        "turn the tv volume up",
+        "turn up the tv volume",
+        "raise the tv volume",
+        "increase the tv volume",
+        "turn my tv volume up",
+        "turn up my tv volume",
+        "raise my tv volume",
+        "increase my tv volume"
+      ]
+    },
+    {
+      "id": "tv.volume_down",
+      "family": "tv",
+      "tool": "tvControl",
+      "args": {
+        "action": "key",
+        "key": "VolumeDown",
+        "repeat": 5
+      },
+      "reply": null,
+      "phrases": [
+        "tv volume down",
+        "turn the tv volume down",
+        "turn down the tv volume",
+        "lower the tv volume",
+        "decrease the tv volume",
+        "turn my tv volume down",
+        "turn down my tv volume",
+        "lower my tv volume",
+        "decrease my tv volume"
+      ]
+    },
+    {
+      "id": "tv.mute",
+      "family": "tv",
+      "tool": "tvControl",
+      "args": {
+        "action": "key",
+        "key": "VolumeMute"
+      },
+      "reply": null,
+      "phrases": [
+        "mute the tv",
+        "mute tv",
+        "tv mute",
+        "unmute the tv",
+        "unmute tv",
+        "mute my tv",
+        "unmute my tv"
+      ]
+    },
+    {
+      "id": "tv.play_pause",
+      "family": "tv",
+      "tool": "tvControl",
+      "args": {
+        "action": "key",
+        "key": "Play"
+      },
+      "reply": null,
+      "phrases": [
+        "pause the tv",
+        "play the tv",
+        "resume the tv",
+        "pause my tv",
+        "play my tv",
+        "resume my tv"
+      ]
+    },
+    {
+      "id": "tv.home",
+      "family": "tv",
+      "tool": "tvControl",
+      "args": {
+        "action": "key",
+        "key": "Home"
+      },
+      "reply": null,
+      "phrases": [
+        "tv home",
+        "tv home screen",
+        "go to the tv home screen",
+        "show the tv home screen",
+        "go to my tv home screen",
+        "show my tv home screen"
+      ]
+    },
+    {
+      "id": "tv.launch",
+      "family": "tv",
+      "tool": "tvControl",
+      "args": {
+        "action": "launch"
+      },
+      "reply": null,
+      "phrases": [
+        "put on {tv_app}",
+        "put {tv_app} on",
+        "put on {tv_app} on the tv",
+        "put {tv_app} on the tv",
+        "open {tv_app} on the tv",
+        "launch {tv_app} on the tv",
+        "start {tv_app} on the tv",
+        "watch {tv_app} on the tv",
+        "put on {tv_app} on my tv",
+        "put {tv_app} on my tv",
+        "open {tv_app} on my tv",
+        "launch {tv_app} on my tv",
+        "start {tv_app} on my tv",
+        "watch {tv_app} on my tv"
+      ]
+    }
+  ]
+}

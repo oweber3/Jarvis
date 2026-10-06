@@ -1,0 +1,84 @@
+{
+  "app": "Notepad Save As dialog",
+  "source": "hand-written approximation of the UIA structure; replace with: scripts/capture_uia_snapshot.py",
+  "snapshot": {
+    "window": {
+      "hwnd": 1102,
+      "process": "notepad",
+      "title": "Save As"
+    },
+    "elements": [
+      {
+        "id": "e1",
+        "type": "button",
+        "name": "Back"
+      },
+      {
+        "id": "e2",
+        "type": "button",
+        "name": "Up to \"Documents\""
+      },
+      {
+        "id": "e3",
+        "type": "edit",
+        "name": "Search Documents"
+      },
+      {
+        "id": "e4",
+        "type": "treeitem",
+        "name": "Desktop"
+      },
+      {
+        "id": "e5",
+        "type": "treeitem",
+        "name": "Downloads"
+      },
+      {
+        "id": "e6",
+        "type": "treeitem",
+        "name": "Documents",
+        "state": "selected"
+      },
+      {
+        "id": "e7",
+        "type": "listitem",
+        "name": "Notes.txt"
+      },
+      {
+        "id": "e8",
+        "type": "listitem",
+        "name": "Lab report.txt"
+      },
+      {
+        "id": "e9",
+        "type": "edit",
+        "name": "File name:",
+        "value": "*.txt"
+      },
+      {
+        "id": "e10",
+        "type": "combobox",
+        "name": "Save as type:",
+        "value": "Text documents (*.txt)"
+      },
+      {
+        "id": "e11",
+        "type": "combobox",
+        "name": "Encoding:",
+        "value": "UTF-8"
+      },
+      {
+        "id": "e12",
+        "type": "button",
+        "name": "Save"
+      },
+      {
+        "id": "e13",
+        "type": "button",
+        "name": "Cancel"
+      }
+    ],
+    "texts": [],
+    "truncated": false
+  }
+}

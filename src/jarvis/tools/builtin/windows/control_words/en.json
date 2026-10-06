@@ -1,0 +1,14 @@
+{
+  "irreversible": [
+    "send", "send now", "submit", "post", "publish",
+    "delete", "delete permanently", "remove", "erase", "wipe", "discard", "don't save", "dont save",
+    "empty recycle bin", "move to trash", "trash",
+    "buy", "buy now", "purchase", "pay", "pay now", "checkout", "check out", "place order", "order now",
+    "subscribe", "unsubscribe", "transfer", "sell", "donate",
+    "confirm", "uninstall", "reset", "factory reset", "overwrite", "replace", "replace all",
+    "format disk", "format drive", "end task", "sign out", "log out", "restart", "shut down", "shutdown"
+  ],
+  "generic_accept": [
+    "yes", "yes to all", "ok", "okay", "continue", "proceed", "allow", "accept", "agree", "i agree", "go ahead"
+  ]
+}

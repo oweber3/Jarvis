@@ -1,0 +1,89 @@
+{
+  "app": "Win32 standard controls (test fixture)",
+  "source": "captured with ui_automation.snapshot from tests/fixtures/uia_fixture_app.py",
+  "snapshot": {
+    "window": {
+      "hwnd": 2001,
+      "process": "fixture",
+      "title": "Message editor"
+    },
+    "elements": [
+      {
+        "id": "e1",
+        "type": "button",
+        "name": "Apply"
+      },
+      {
+        "id": "e2",
+        "type": "button",
+        "name": "Send"
+      },
+      {
+        "id": "e3",
+        "type": "checkbox",
+        "name": "Word wrap",
+        "state": "off"
+      },
+      {
+        "id": "e4",
+        "type": "edit",
+        "name": "Subject:",
+        "value": "Hello"
+      },
+      {
+        "id": "e5",
+        "type": "edit",
+        "name": "Password:",
+        "password": true
+      },
+      {
+        "id": "e6",
+        "type": "combobox",
+        "name": "Colour:"
+      },
+      {
+        "id": "e7",
+        "type": "listitem",
+        "name": "Apple"
+      },
+      {
+        "id": "e8",
+        "type": "listitem",
+        "name": "Banana"
+      },
+      {
+        "id": "e9",
+        "type": "listitem",
+        "name": "Cherry"
+      },
+      {
+        "id": "e10",
+        "type": "document",
+        "name": "Notes:",
+        "value": "Line 1: the quick brown fox jumps over the lazy dog. Line 2…"
+      },
+      {
+        "id": "e11",
+        "type": "edit",
+        "name": "Page:",
+        "value": "1"
+      },
+      {
+        "id": "e12",
+        "type": "menuitem",
+        "name": "File",
+        "state": "collapsed"
+      },
+      {
+        "id": "e13",
+        "type": "menuitem",
+        "name": "Format",
+        "state": "collapsed"
+      }
+    ],
+    "texts": [
+      "of 40"
+    ],
+    "truncated": false
+  }
+}

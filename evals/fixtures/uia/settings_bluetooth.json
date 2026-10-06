@@ -1,0 +1,85 @@
+{
+  "app": "Windows Settings, Bluetooth & devices",
+  "source": "hand-written approximation of the UIA structure; replace with: scripts/capture_uia_snapshot.py",
+  "snapshot": {
+    "window": {
+      "hwnd": 1103,
+      "process": "SystemSettings",
+      "title": "Settings"
+    },
+    "elements": [
+      {
+        "id": "e1",
+        "type": "button",
+        "name": "Back"
+      },
+      {
+        "id": "e2",
+        "type": "edit",
+        "name": "Find a setting"
+      },
+      {
+        "id": "e3",
+        "type": "listitem",
+        "name": "Home"
+      },
+      {
+        "id": "e4",
+        "type": "listitem",
+        "name": "System"
+      },
+      {
+        "id": "e5",
+        "type": "listitem",
+        "name": "Bluetooth & devices",
+        "state": "selected"
+      },
+      {
+        "id": "e6",
+        "type": "listitem",
+        "name": "Network & internet"
+      },
+      {
+        "id": "e7",
+        "type": "listitem",
+        "name": "Personalisation"
+      },
+      {
+        "id": "e8",
+        "type": "listitem",
+        "name": "Apps"
+      },
+      {
+        "id": "e9",
+        "type": "button",
+        "name": "Add device"
+      },
+      {
+        "id": "e10",
+        "type": "button",
+        "name": "Bluetooth",
+        "state": "on"
+      },
+      {
+        "id": "e11",
+        "type": "button",
+        "name": "Devices"
+      },
+      {
+        "id": "e12",
+        "type": "button",
+        "name": "Printers & scanners"
+      },
+      {
+        "id": "e13",
+        "type": "button",
+        "name": "Mouse"
+      }
+    ],
+    "texts": [
+      "Bluetooth & devices",
+      "Discoverable as \"DESKTOP-PC\""
+    ],
+    "truncated": false
+  }
+}

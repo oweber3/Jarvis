@@ -1,0 +1,34 @@
+{
+  "affirmative": [
+    "yes",
+    "yeah",
+    "yep",
+    "sure",
+    "confirm",
+    "proceed",
+    "do it",
+    "go ahead",
+    "yes please",
+    "ok",
+    "okay",
+    "correct",
+    "affirmative",
+    "aye",
+    "please do",
+    "sure thing"
+  ],
+  "negative": [
+    "no",
+    "nope",
+    "cancel",
+    "stop",
+    "abort",
+    "don't",
+    "dont",
+    "no thanks",
+    "negative",
+    "never mind",
+    "nevermind",
+    "do not"
+  ]
+}

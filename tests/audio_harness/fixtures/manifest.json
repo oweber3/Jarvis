@@ -1,0 +1,107 @@
+{
+  "wake__jarvis__alan.wav": {
+    "kind": "wake",
+    "text": "Jarvis.",
+    "voice": "en_GB-alan-medium"
+  },
+  "wake__jarvis__alba.wav": {
+    "kind": "wake",
+    "text": "Jarvis.",
+    "voice": "en_GB-alba-medium"
+  },
+  "wake__jarvis__lessac.wav": {
+    "kind": "wake",
+    "text": "Jarvis.",
+    "voice": "en_US-lessac-medium"
+  },
+  "wake__jarvis__ryan.wav": {
+    "kind": "wake",
+    "text": "Jarvis.",
+    "voice": "en_US-ryan-medium"
+  },
+  "wake__jarvis__libri12.wav": {
+    "kind": "wake",
+    "text": "Jarvis.",
+    "voice": "en_US-libritts_r-medium#12"
+  },
+  "wake__jarvis__libri305.wav": {
+    "kind": "wake",
+    "text": "Jarvis.",
+    "voice": "en_US-libritts_r-medium#305"
+  },
+  "wake_command__jarvis_open_word__alan.wav": {
+    "kind": "wake_command",
+    "text": "Jarvis, open Word.",
+    "voice": "en_GB-alan-medium"
+  },
+  "wake_command__jarvis_open_word__lessac.wav": {
+    "kind": "wake_command",
+    "text": "Jarvis, open Word.",
+    "voice": "en_US-lessac-medium"
+  },
+  "wake_command__jarvis_open_word__libri12.wav": {
+    "kind": "wake_command",
+    "text": "Jarvis, open Word.",
+    "voice": "en_US-libritts_r-medium#12"
+  },
+  "wake_command__jarvis_what_time_is_it__alba.wav": {
+    "kind": "wake_command",
+    "text": "Jarvis, what time is it?",
+    "voice": "en_GB-alba-medium"
+  },
+  "wake_command__jarvis_what_time_is_it__ryan.wav": {
+    "kind": "wake_command",
+    "text": "Jarvis, what time is it?",
+    "voice": "en_US-ryan-medium"
+  },
+  "near_miss__travis__alan.wav": {
+    "kind": "near_miss",
+    "text": "Travis.",
+    "voice": "en_GB-alan-medium"
+  },
+  "near_miss__travis__lessac.wav": {
+    "kind": "near_miss",
+    "text": "Travis.",
+    "voice": "en_US-lessac-medium"
+  },
+  "near_miss__service__alba.wav": {
+    "kind": "near_miss",
+    "text": "Service.",
+    "voice": "en_GB-alba-medium"
+  },
+  "near_miss__service__ryan.wav": {
+    "kind": "near_miss",
+    "text": "Service.",
+    "voice": "en_US-ryan-medium"
+  },
+  "near_miss__a_jar_of_this__alan.wav": {
+    "kind": "near_miss",
+    "text": "A jar of this.",
+    "voice": "en_GB-alan-medium"
+  },
+  "near_miss__a_jar_of_this__libri305.wav": {
+    "kind": "near_miss",
+    "text": "A jar of this.",
+    "voice": "en_US-libritts_r-medium#305"
+  },
+  "near_miss__davis__lessac.wav": {
+    "kind": "near_miss",
+    "text": "Davis.",
+    "voice": "en_US-lessac-medium"
+  },
+  "speech__i_think_we_should_leave_for_the_station_in_about_ten_minutes__alan.wav": {
+    "kind": "speech",
+    "text": "I think we should leave for the station in about ten minutes.",
+    "voice": "en_GB-alan-medium"
+  },
+  "speech__can_you_pass_me_the_salt_and_the_pepper_please__lessac.wav": {
+    "kind": "speech",
+    "text": "Can you pass me the salt and the pepper, please?",
+    "voice": "en_US-lessac-medium"
+  },
+  "speech__the_meeting_has_been_moved_to_thursday_afternoon__libri12.wav": {
+    "kind": "speech",
+    "text": "The meeting has been moved to Thursday afternoon.",
+    "voice": "en_US-libritts_r-medium#12"
+  }
+}

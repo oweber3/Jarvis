@@ -1,0 +1,77 @@
+{
+  "app": "PDFgear",
+  "source": "hand-written approximation of the UIA structure; replace with: scripts/capture_uia_snapshot.py",
+  "snapshot": {
+    "window": {
+      "hwnd": 1105,
+      "process": "pdfeditor",
+      "title": "Garden.pdf - PDFgear"
+    },
+    "elements": [
+      {
+        "id": "e1",
+        "type": "tabitem",
+        "name": "Garden.pdf",
+        "state": "selected"
+      },
+      {
+        "id": "e2",
+        "type": "button",
+        "name": "Open"
+      },
+      {
+        "id": "e3",
+        "type": "button",
+        "name": "Print"
+      },
+      {
+        "id": "e4",
+        "type": "button",
+        "name": "Previous page"
+      },
+      {
+        "id": "e5",
+        "type": "edit",
+        "name": "",
+        "hint": "PageNumberTextBox",
+        "value": "1"
+      },
+      {
+        "id": "e6",
+        "type": "button",
+        "name": "Next page"
+      },
+      {
+        "id": "e7",
+        "type": "button",
+        "name": "Zoom out"
+      },
+      {
+        "id": "e8",
+        "type": "combobox",
+        "name": "",
+        "hint": "ZoomComboBox",
+        "value": "100%"
+      },
+      {
+        "id": "e9",
+        "type": "button",
+        "name": "Zoom in"
+      },
+      {
+        "id": "e10",
+        "type": "button",
+        "name": "Search"
+      },
+      {
+        "id": "e11",
+        "type": "document",
+        "name": "Garden.pdf"
+      }
+    ],
+    "texts": [
+      "/ 240"
+    ],
+    "truncated": false
+  }
+}

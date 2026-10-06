@@ -1,0 +1,55 @@
+{
+  "app": "Notepad (classic)",
+  "source": "hand-written approximation of the UIA structure; replace with: scripts/capture_uia_snapshot.py",
+  "snapshot": {
+    "window": {
+      "hwnd": 1101,
+      "process": "notepad",
+      "title": "Untitled - Notepad"
+    },
+    "elements": [
+      {
+        "id": "e1",
+        "type": "menuitem",
+        "name": "File",
+        "state": "collapsed"
+      },
+      {
+        "id": "e2",
+        "type": "menuitem",
+        "name": "Edit",
+        "state": "collapsed"
+      },
+      {
+        "id": "e3",
+        "type": "menuitem",
+        "name": "Format",
+        "state": "collapsed"
+      },
+      {
+        "id": "e4",
+        "type": "menuitem",
+        "name": "View",
+        "state": "collapsed"
+      },
+      {
+        "id": "e5",
+        "type": "menuitem",
+        "name": "Help",
+        "state": "collapsed"
+      },
+      {
+        "id": "e6",
+        "type": "document",
+        "name": "Text Editor"
+      }
+    ],
+    "texts": [
+      "Ln 1, Col 1",
+      "100%",
+      "Windows (CRLF)",
+      "UTF-8"
+    ],
+    "truncated": false
+  }
+}

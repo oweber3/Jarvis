@@ -1,0 +1,92 @@
+{
+  "app": "Apple Music",
+  "source": "hand-written approximation of the UIA structure; replace with: scripts/capture_uia_snapshot.py",
+  "snapshot": {
+    "window": {
+      "hwnd": 1104,
+      "process": "AppleMusic",
+      "title": "Apple Music"
+    },
+    "elements": [
+      {
+        "id": "e1",
+        "type": "edit",
+        "name": "Search"
+      },
+      {
+        "id": "e2",
+        "type": "listitem",
+        "name": "Listen Now"
+      },
+      {
+        "id": "e3",
+        "type": "listitem",
+        "name": "Browse"
+      },
+      {
+        "id": "e4",
+        "type": "listitem",
+        "name": "Radio"
+      },
+      {
+        "id": "e5",
+        "type": "listitem",
+        "name": "Recently Added"
+      },
+      {
+        "id": "e6",
+        "type": "listitem",
+        "name": "Songs",
+        "state": "selected"
+      },
+      {
+        "id": "e7",
+        "type": "button",
+        "name": "Shuffle",
+        "state": "off"
+      },
+      {
+        "id": "e8",
+        "type": "button",
+        "name": "Previous"
+      },
+      {
+        "id": "e9",
+        "type": "button",
+        "name": "Pause"
+      },
+      {
+        "id": "e10",
+        "type": "button",
+        "name": "Next"
+      },
+      {
+        "id": "e11",
+        "type": "button",
+        "name": "Repeat",
+        "state": "off"
+      },
+      {
+        "id": "e12",
+        "type": "slider",
+        "name": "Volume",
+        "value": "45"
+      },
+      {
+        "id": "e13",
+        "type": "button",
+        "name": "Lyrics"
+      },
+      {
+        "id": "e14",
+        "type": "button",
+        "name": "Playing Next"
+      }
+    ],
+    "texts": [
+      "Yellow",
+      "Coldplay — Parachutes"
+    ],
+    "truncated": false
+  }
+}

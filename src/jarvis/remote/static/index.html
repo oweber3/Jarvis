@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#05070c">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Jarvis">
+  <meta name="referrer" content="no-referrer">
+  <title>Jarvis</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-dot" id="link-dot" aria-hidden="true"></span>
+        <span class="brand-name">JARVIS</span>
+      </div>
+      <div class="topbar-right">
+        <span class="mode-badge" id="mode-badge" hidden></span>
+        <button class="icon-button" id="menu-button" type="button" aria-label="Menu" aria-haspopup="true" aria-expanded="false" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="orb-stage" id="orb-stage" aria-label="Jarvis status">
+      <canvas id="orb" class="orb" role="img" aria-label="Jarvis orb"></canvas>
+      <p class="orb-label" id="orb-label" aria-live="polite">● CONNECTING</p>
+      <p class="pc-stats" id="pc-stats" hidden></p>
+    </section>
+
+    <!-- Pairing: shown until this phone has a device token. -->
+    <section class="pair" id="pair" hidden>
+      <h1 class="pair-title">Pair this phone</h1>
+      <p class="pair-help">On your PC, open <strong>📱 Phone Access</strong> from the Jarvis tray icon and press <strong>Pair a phone</strong>. Enter the six-digit code shown there.</p>
+      <form class="pair-form" id="pair-form" novalidate>
+        <label class="field">
+          <span class="field-label">Pairing code</span>
+          <input id="pair-code" class="code-input" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="••••••" required>
+        </label>
+        <label class="field">
+          <span class="field-label">Name for this phone</span>
+          <input id="pair-name" maxlength="40" autocomplete="off" autocapitalize="words">
+        </label>
+        <button class="primary-button" id="pair-submit" type="submit">Pair</button>
+        <p class="form-message" id="pair-message" role="alert"></p>
+      </form>
+    </section>
+
+    <!-- The conversation: shown once paired. -->
+    <main class="chat" id="chat" hidden>
+      <div class="confirm-card" id="confirm-card" role="alertdialog" aria-labelledby="confirm-title" aria-describedby="confirm-what" hidden>
+        <div class="confirm-head">
+          <span class="confirm-title" id="confirm-title">Jarvis needs your OK</span>
+          <span class="confirm-timer" id="confirm-timer"></span>
+        </div>
+        <p class="confirm-what" id="confirm-what"></p>
+        <p class="confirm-consequence" id="confirm-consequence"></p>
+        <p class="confirm-tool" id="confirm-tool"></p>
+        <div class="confirm-actions">
+          <button class="ghost-button" id="confirm-deny" type="button">Deny</button>
+          <button class="warn-button" id="confirm-approve" type="button">Approve</button>
+        </div>
+      </div>
+
+      <div class="transcript" id="transcript" aria-live="polite" aria-relevant="additions">
+        <div class="empty" id="empty">
+          <p class="empty-title">Connected to Jarvis</p>
+          <p class="empty-text">Your conversation with Jarvis shows up here, whether you speak at the PC or type on this phone.</p>
+        </div>
+        <div class="entries" id="entries"></div>
+        <div class="echoes" id="echoes"></div>
+      </div>
+
+      <div class="quick-actions" id="quick-actions" role="group" aria-label="Quick actions" hidden></div>
+
+      <form class="composer" id="composer">
+        <textarea id="input" rows="1" maxlength="4000" placeholder="Message Jarvis" aria-label="Message Jarvis" enterkeyhint="send"></textarea>
+        <button class="send-button" id="send" type="submit" aria-label="Send">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-8-6 16-2.5-6.5z"/></svg>
+        </button>
+        <button class="stop-button" id="stop" type="button" aria-label="Stop" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </button>
+      </form>
+    </main>
+
+    <div class="sheet-backdrop" id="sheet-backdrop" hidden></div>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+      <h2 class="sheet-title" id="sheet-title">Jarvis on this phone</h2>
+      <label class="toggle">
+        <input type="checkbox" id="speak-toggle">
+        <span class="toggle-track" aria-hidden="true"></span>
+        <span class="toggle-text">
+          <span>Read replies aloud</span>
+          <small>Uses this phone's own voice for replies to what you type here.</small>
+        </span>
+      </label>
+      <button class="danger-button" id="unpair" type="button">Unpair this phone</button>
+      <button class="ghost-button" id="sheet-close" type="button">Close</button>
+    </div>
+  </div>
+</body>
+</html>

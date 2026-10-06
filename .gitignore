@@ -1,0 +1,28 @@
+.DS_Store
+.env/
+.venv/
+__pycache__/
+.pytest_cache/
+tests/performance/reports/
+.mamba_env/
+.micromamba/
+.agents/*
+!.agents/launch.json
+!.agents/skills/
+
+# Release artifacts
+release_output.log
+node_modules/
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec.backup
+qt.conf
+
+# Auto-generated version file (created at build time)
+src/jarvis/_version.py
+.reasonix/
+
+# Firmware WiFi credentials in any extension (copy the .example.h)
+extensions/**/wifi_config.h

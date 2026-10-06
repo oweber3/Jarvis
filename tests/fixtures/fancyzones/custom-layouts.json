@@ -1,0 +1,33 @@
+{
+  "custom-layouts": [
+    {
+      "uuid": "{00000000-0000-0000-0000-0000C0DE0001}",
+      "name": "Sample grid",
+      "type": "grid",
+      "info": {
+        "rows": 2,
+        "columns": 3,
+        "rows-percentage": [5000, 5000],
+        "columns-percentage": [2500, 5000, 2500],
+        "cell-child-map": [[0, 1, 2], [0, 1, 3]],
+        "show-spacing": true,
+        "spacing": 10,
+        "sensitivity-radius": 20
+      }
+    },
+    {
+      "uuid": "{00000000-0000-0000-0000-0000C0DE0002}",
+      "name": "Sample canvas",
+      "type": "canvas",
+      "info": {
+        "ref-width": 1000,
+        "ref-height": 500,
+        "sensitivity-radius": 20,
+        "zones": [
+          {"X": 0, "Y": 0, "width": 500, "height": 250},
+          {"X": 500, "Y": 250, "width": 500, "height": 250}
+        ]
+      }
+    }
+  ]
+}
