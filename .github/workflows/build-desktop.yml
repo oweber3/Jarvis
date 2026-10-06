@@ -116,7 +116,7 @@ jobs:
           name: Jarvis-Windows
           path: dist/Jarvis-Windows-x64.zip
 
-  # ── macOS: build + optional smoke test (arm64 + x64) ────────────────────
+  # ── macOS: build + optional smoke test (Apple Silicon) ────────────────────
   build-macos:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -126,8 +126,6 @@ jobs:
         include:
           - os: macos-latest
             arch: arm64
-          - os: macos-15-intel
-            arch: x64
 
     steps:
       - name: 📥 Checkout code

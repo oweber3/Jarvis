@@ -36,7 +36,6 @@ Your conversation memory stays on your computer. Sensitive information is redact
 | Platform | Package | Open |
 | :--- | :--- | :--- |
 | macOS · Apple Silicon | `Jarvis-macOS-arm64.zip` | Extract, move to Applications, then right-click → Open |
-| macOS · Intel | `Jarvis-macOS-x64.zip` | Extract, move to Applications, then right-click → Open |
 | Windows · x64 | `Jarvis-Windows-x64.zip` | Extract, then run `Jarvis.exe` |
 | Linux · x64 | `Jarvis-Linux-x64.tar.gz` | Extract, then run `./Jarvis/Jarvis` |
 
