@@ -42,7 +42,7 @@ for extra in (ROOT / "src", ROOT):
 from jarvis.tools.types import ToolExecutionResult  # noqa: E402
 
 HONEST_FAILURE = re.compile(
-    r"could(?:n['’]?t| not)|can(?:['’]?t|not)|unable|no (?:open |matching )|not found|failed|didn['’]?t|"
+    r"could(?:n['’]?t| not)|can(?:['’]?t|not)|unable|no (?:open |matching )|no \w+ (?:is )?open|not found|failed|didn['’]?t|"
     r"did not|wasn['’]?t|isn['’]?t|not available|unavailable|partial|without reaching", re.IGNORECASE)
 
 
