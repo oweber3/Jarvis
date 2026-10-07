@@ -1843,6 +1843,11 @@ class VoiceListener(threading.Thread):
             query = self.state_manager.clear_collection()
             if query.strip():
                 self._dispatch_query(query)
+            else:
+                # A wake (spoken or from the orb) that no request followed.
+                debug_log("wake wait ended with no request; back to wake word mode", "voice")
+                print("  💤 No request heard", flush=True)
+                self._end_engagement()
 
         # Also check hot window expiry - this ensures the timeout is enforced
         # even when there's no audio being processed
