@@ -58,6 +58,7 @@ class StateManager:
         # Timer-based hot window management
         self._hot_window_activation_timer: Optional[threading.Timer] = None
         self._hot_window_expiry_timer: Optional[threading.Timer] = None
+        self._activation_generation = 0  # Bumped on every cancel; guarded by _state_lock
         self._timer_lock = threading.Lock()
         self._voice_debug: bool = False  # Cache for use in timer callbacks
 
@@ -258,6 +259,9 @@ class StateManager:
         Call this when user starts a new query to prevent delayed activation
         from interfering with the current interaction.
         """
+        with self._state_lock:
+            # A timer that already fired checks this before opening the window.
+            self._activation_generation += 1
         with self._timer_lock:
             if self._hot_window_activation_timer is not None:
                 self._hot_window_activation_timer.cancel()
@@ -354,14 +358,16 @@ class StateManager:
         with self._state_lock:
             self._hot_window_span_start = time.time()
             self._hot_window_span_end = 0.0
+            generation = self._activation_generation
 
         # Cache voice_debug for use in timer callbacks
         self._voice_debug = voice_debug
 
         def _activate():
-            # Clear the timer reference now that it's fired
+            # Clear the timer reference now that it's fired, unless it was cancelled or replaced
             with self._timer_lock:
-                self._hot_window_activation_timer = None
+                if self._hot_window_activation_timer is timer:
+                    self._hot_window_activation_timer = None
 
             # Check if we should still activate
             if self._should_stop:
@@ -369,6 +375,9 @@ class StateManager:
                 return
 
             with self._state_lock:
+                if generation != self._activation_generation:
+                    debug_log("hot window activation cancelled after its timer fired", "state")
+                    return
                 # Don't overwrite COLLECTING state - user may have already started a new query
                 if self._state == ListeningState.COLLECTING:
                     debug_log("hot window activation cancelled (already collecting)", "state")
@@ -391,10 +400,11 @@ class StateManager:
             self._schedule_hot_window_expiry()
 
         # Use Timer for more reliable activation
+        timer = threading.Timer(self.echo_tolerance, _activate)
+        timer.daemon = True
         with self._timer_lock:
-            self._hot_window_activation_timer = threading.Timer(self.echo_tolerance, _activate)
-            self._hot_window_activation_timer.daemon = True
-            self._hot_window_activation_timer.start()
+            self._hot_window_activation_timer = timer
+            timer.start()
 
         debug_log("hot window activation timer started", "state")
 
@@ -468,6 +478,21 @@ class StateManager:
                 print("💤 Returning to wake word mode", flush=True)
             except Exception:
                 pass
+
+    def close_hot_window(self) -> None:
+        """End the hot window without touching the face state.
+
+        For when the window's speech has been acted on (a dispatched fast
+        command or a stop), so its expiry timer cannot later report a return
+        to wake word mode over whatever the face shows by then.
+        """
+        self._cancel_hot_window_expiry_timer()
+        with self._state_lock:
+            if self._state != ListeningState.HOT_WINDOW:
+                return
+            self._state = ListeningState.WAKE_WORD
+            self._hot_window_span_end = time.time()
+        debug_log("hot window closed (its speech was acted on)", "state")
 
     def stop(self) -> None:
         """Stop the state manager and cancel all timers."""

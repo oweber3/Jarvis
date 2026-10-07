@@ -179,7 +179,8 @@ def make_voice_listener(cfg, judge, *, collect_seconds=0.3):
     obj.cfg = cfg
     obj.tts = None
     obj.echo_detector = SimpleNamespace(_tts_start_time=0, _last_tts_finish_time=0,
-                                        _last_tts_text='', echo_tolerance=.3)
+                                        _last_tts_text='', echo_tolerance=.3,
+                                        track_tts_finish=lambda: None)
     obj.state_manager = StateManager(voice_collect_seconds=collect_seconds, wake_wait_seconds=5.0)
     obj._transcript_buffer = TranscriptBuffer()
     obj._buffer_duration = 120

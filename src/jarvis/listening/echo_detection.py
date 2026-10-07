@@ -133,6 +133,46 @@ class EchoDetector:
 
         return is_similar
     
+    def _tts_window(self, tts_rate: float, utterance_start_time: float, heard_word_count: int):
+        """Where TTS likely was when an utterance started.
+
+        Returns ``(tts_words, words_per_sec, time_offset, start_idx, end_idx)``
+        for the words Jarvis was probably saying, or None without TTS timing.
+        """
+        if not (self._tts_start_time > 0 and utterance_start_time > 0):
+            return None
+        tts_words = self._last_tts_text.split()
+        if not tts_words:
+            return None
+
+        time_offset = utterance_start_time - self._tts_start_time
+        time_offset_with_tolerance = max(0, time_offset - self.echo_tolerance)
+
+        # Use exact duration from Piper if available, otherwise estimate from WPM
+        if self._tts_exact_duration and self._tts_exact_duration > 0:
+            words_per_sec = len(tts_words) / self._tts_exact_duration
+        else:
+            words_per_sec = tts_rate / 60.0
+
+        estimated_word_index = int(time_offset_with_tolerance * words_per_sec)
+
+        # The window must be large enough to account for transcription errors
+        # and the length of the heard text itself; round() plus a base tolerance.
+        tolerance_words = round(self.echo_tolerance * words_per_sec) + 5
+
+        start_idx = max(0, estimated_word_index - tolerance_words)
+        # The end of the window should be far enough out to contain all the words we heard.
+        end_idx = min(len(tts_words), estimated_word_index + heard_word_count + tolerance_words)
+        return tts_words, words_per_sec, time_offset, start_idx, end_idx
+
+    def tts_words_near(self, tts_rate: float, utterance_start_time: float, heard_word_count: int) -> str:
+        """The words Jarvis was probably saying when an utterance started ("" without TTS timing)."""
+        window = self._tts_window(tts_rate, utterance_start_time, heard_word_count)
+        if window is None:
+            return ""
+        tts_words, _rate, _offset, start_idx, end_idx = window
+        return " ".join(tts_words[start_idx:end_idx])
+
     def _matches_tts_segment(self, heard_text: str, tts_rate: float, utterance_start_time: float) -> bool:
         """Checks if heard text matches the likely TTS segment playing at a given time.
 
@@ -145,34 +185,10 @@ class EchoDetector:
         - System TTS buffering delays
         - Audio processing latency
         """
-        if not (self._tts_start_time > 0 and utterance_start_time > 0):
+        window = self._tts_window(tts_rate, utterance_start_time, len(heard_text.split()))
+        if window is None:
             return False
-
-        time_offset = utterance_start_time - self._tts_start_time
-        time_offset_with_tolerance = max(0, time_offset - self.echo_tolerance)
-
-        tts_words = self._last_tts_text.split()
-
-        if not tts_words:
-            return False
-
-        # Use exact duration from Piper if available, otherwise estimate from WPM
-        if self._tts_exact_duration and self._tts_exact_duration > 0:
-            words_per_sec = len(tts_words) / self._tts_exact_duration
-        else:
-            words_per_sec = tts_rate / 60.0
-
-        estimated_word_index = int(time_offset_with_tolerance * words_per_sec)
-
-        # The window for checking the echo must be large enough to account for transcription errors
-        # and the length of the heard text itself.
-        heard_word_count = len(heard_text.split())
-        # Use round() instead of int() for better accuracy and add a base tolerance.
-        tolerance_words = round(self.echo_tolerance * words_per_sec) + 5
-
-        start_idx = max(0, estimated_word_index - tolerance_words)
-        # The end of the window should be far enough out to contain all the words we heard.
-        end_idx = min(len(tts_words), estimated_word_index + heard_word_count + tolerance_words)
+        tts_words, words_per_sec, time_offset, start_idx, end_idx = window
 
         # Phase 1: Check precise time-based segment
         relevant_tts_text = " ".join(tts_words[start_idx:end_idx])

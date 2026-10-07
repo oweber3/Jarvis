@@ -183,3 +183,16 @@ def test_a_queued_reply_that_starts_while_ducked_plays_at_full_volume():
         assert harness.tts.ducked
         harness.listener.track_tts_start("A queued reply.")
         assert not harness.tts.ducked
+
+
+def test_echo_tail_after_a_barge_in_interrupt_still_counts_as_jarvis():
+    clip = fixture("wake_command__jarvis_what_time_is_it__alba.wav")
+    with ListenerHarness(speaker_verifier=StubVerifier(score=0.9), with_tts=True) as harness:
+        harness.tts.speaking = True
+        harness.listener.track_tts_start(JARVIS_REPLY)
+        harness.play(pad(clip.audio, before=LEAD_IN, after=0.7), text=clip.text)
+        assert harness.tts.time_of("interrupt") is not None
+        tail = fixture("speech__can_you_pass_me_the_salt_and_the_pepper_please__lessac.wav")
+        harness.play(pad(tail.audio, after=0.8), text="")  # what the room still carries of the cut reply
+        tail_job = harness._job
+    assert tail_job.captured_during_tts

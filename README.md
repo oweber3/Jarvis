@@ -171,7 +171,7 @@ When speaking is inconvenient, open Chat from the tray. It picks up the same con
 This fork is developed and tested on Windows 11, and the desktop controls are Windows only. macOS and Linux keep the upstream voice, chat and memory features but are tested less. Model choice and hardware affect response quality and speed; [automated evaluation results](EVALS.md) show what is being measured.
 
 - **macOS 26+ dictation is unavailable** because of a pynput incompatibility. This limitation concerns the global dictation hotkey.
-- **Spoken “stop” can be mistaken for echo** while Jarvis is speaking.
+- **Stopping Jarvis by voice can lag over loud playback.** A plain “Stop” or “Jarvis, stop” stops it (say “Jarvis, stop” if Jarvis is saying the word “stop” at that moment). When the microphone hears Jarvis's own voice loudly, the stop can wait for a few seconds of audio, and a stop that Whisper merges with several of Jarvis's words, or phrased differently (“please stop”), depends on the intent judge. Headphones or a lower speaker volume help.
 - **No mobile app store app.** Phone access is a web page your PC serves to your phone's browser. It is text only (browsers allow the microphone only over HTTPS), works only while the PC is on, and needs the phone on your home network or your own VPN.
 - **First-run downloads can take time.** Whisper and language models can be large. Check Logs for progress before assuming startup is stuck.
 - **Whisper turbo needs a compatible backend.** The wizard hides it when the selected backend cannot load it; an existing unsupported selection uses `medium` instead.

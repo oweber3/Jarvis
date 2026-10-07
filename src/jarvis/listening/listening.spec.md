@@ -32,10 +32,23 @@ Warnings are transition-based; dictation pauses suspend health checks. With
 peak level and capture rate, without saving microphone audio. Linux warnings
 point users to PipeWire/PulseAudio recording-source routing.
 
+The capture queue between the audio callback and the listener thread holds
+`intent_judge_timeout_sec` (counted up to the Settings maximum of 30 s) plus
+2 s of audio, at least 64 blocks. The intent judge runs on the listener thread,
+so speech the user starts while it decides is kept; anything beyond that bound
+is dropped and reported by the health check. Each block is one frame, so a
+block's capture time is estimated from the blocks still queued behind it, and
+speech timing (utterance start and end, the end of speech, echo flags and
+hot-window checks) uses capture time rather than the time the listener got to
+it. A collection does not complete while more than about 100 ms of captured
+audio is waiting, so speech said while the judge decided joins the request.
+
 Audio-frame processing is limited to VAD and utterance assembly. Completed
 utterances are enqueued for a single FIFO Whisper worker. Transcription results
 return to the listener loop in order, where transcript storage and intent
-processing remain serialised. The bounded transcription backlog reports an
+processing remain serialised. An error while processing one transcript drops
+that utterance with a warning and a debug log; the loop keeps listening. Echo
+timing estimates use the default speech rate when `tts_rate` is empty. The bounded transcription backlog reports an
 explicit warning when full rather than blocking microphone-frame consumption
 or silently losing an utterance. A dictation pause clears captured audio and
 invalidates transcription work started before the pause, including a decode
@@ -144,16 +157,16 @@ The intent judge receives full context and makes intelligent decisions:
 
 **Fast-command bypass:** The judge is the decision-maker for every finalised utterance that is not a confident fast command. Before the judge runs, an utterance with an engagement signal (wake word, or hot window after the early echo check) has its text after the wake word passed to the fast-command matcher (`src/jarvis/fastpath/`, see `reply.spec.md`). A whole-utterance, high-confidence match skips both the intent judge and the collection window and is dispatched immediately through `_dispatch_query`, which keeps the face state, TTS and hot-window behaviour identical to any other query. Ambiguous, compound or low-confidence commands return no match and continue unchanged into the judge and the collection window. Echo rejection and stop-command handling always run before the matcher.
 
-Pending confirmations precede matching, but only a wake-word utterance or hot-window speech can answer one; background speech is ignored and leaves the request pending until it expires. Collection fragments and transcripts captured during TTS retain the judge path. A bypass marks the current transcript segment processed and cancels pending hot-window activation before normal dispatch. Unsupported detected languages, disabled routing and an unready app catalogue fall through; matcher discovery never blocks the listener.
+Pending confirmations precede matching, but only a wake-word utterance or hot-window speech can answer one; background speech is ignored and leaves the request pending until it expires. Collection fragments and transcripts captured during TTS retain the judge path. A bypass marks the current transcript segment processed, cancels pending hot-window activation and closes an open hot window (leaving the face to dispatch) before normal dispatch. Unsupported detected languages, disabled routing and an unready app catalogue fall through; matcher discovery never blocks the listener.
 
 ### Collection Window
 
 An accepted utterance starts a collection: the extracted query is held while the user may still be talking, and later fragments are appended to it. The pause that completes a collection is silence measured from the **end of speech** (the last voiced VAD frame), not from when Whisper or the judge finished, so transcription and judging time count towards it.
 
 - A collection with query text is dispatched after `voice_collect_seconds` (default 1.0 s) of silence. In practice the query is dispatched as soon as Whisper and the judge finish when they take longer than that.
-- A bare wake word (no query text yet) waits up to `voice_wake_wait_seconds` (default 4.5 s) of silence for the request. An utterance that is only the wake word (or an alias) and punctuation is recognised deterministically before the intent judge and starts this wait without judging, because a small judge can invent a query from the name alone.
+- A bare wake word (no query text yet) waits up to `voice_wake_wait_seconds` (default 4.5 s) of silence for the request. An utterance that is only the wake word (or an alias) and punctuation is recognised deterministically before the intent judge and starts this wait without judging, because a small judge can invent a query from the name alone. When the wait ends with no request, the engagement ends: the face returns to idle and the next utterance is handled from wake word mode (wake detection, fast path and judge) like any other.
 - A manual wake (`VoiceListener.toggle_manual_wake()`, triggered by clicking the orb) is equivalent to a bare wake word: the request is flagged from any thread and the listener thread starts the same wait on its next tick. If the listener is already collecting a request or in the hot window, the toggle instead deactivates: the pending request is discarded (nothing is dispatched), the hot window ends and the face returns to idle. It is ignored while hold-to-dictate is recording. While a reply is in progress (queued or being generated on the reply worker, being spoken, or a background bridge request in flight), the toggle instead stops it at once on the calling thread, exactly as an addressed spoken stop does: pending replies are cancelled, the bridge request is cancelled, TTS is interrupted, any scheduled hot window is cancelled and the face returns to idle; that toggle does not also wake. At the daemon level (`jarvis.daemon.toggle_manual_wake`), a typed chat request in flight is cancelled (as the chat window's Stop does) instead of waking.
-- The collection never completes while the user is speaking (VAD utterance in progress) or an utterance is still queued for or inside Whisper. Voiced frames during the collection restart the pause, and fragments transcribed during it are appended. `voice_max_collect_seconds` bounds the whole collection regardless.
+- The collection never completes while the user is speaking (VAD utterance in progress), captured audio is still waiting to be processed, or an utterance is still queued for or inside Whisper. Voiced frames during the collection restart the pause, and fragments transcribed during it are appended. `voice_max_collect_seconds` bounds the whole collection regardless.
 - Accepting an utterance keeps audio the user has already started speaking so it can join the request. Audio captured while TTS is playing is discarded at that point as likely echo.
 
 **Gating:** The judge is called only when there is an engagement signal — (a) a wake word was detected in the current utterance, (b) the utterance falls inside (or pending) a hot window, or (c) TTS is currently speaking. Pure ambient speech skips the judge entirely. This keeps the synchronous audio loop from blocking up to `intent_judge_timeout_sec` on every background utterance, which would otherwise freeze the UI when Ollama is slow or contended.
@@ -221,7 +234,7 @@ System is waiting for wake word activation.
 
 After TTS finishes, allow wake-word-free follow-up.
 
-**Activation:** `echo_tolerance` seconds after TTS ends (allows echo to settle)
+**Activation:** `echo_tolerance` seconds after TTS ends (allows echo to settle). The end of every spoken reply records the TTS finish time for echo detection first, so with `hot_window_enabled` off echo just after a reply is still flagged as captured during TTS, and the face returns to idle instead of staying on speaking.
 
 **Duration:** Configurable (default: 3 seconds)
 
@@ -237,13 +250,21 @@ After TTS finishes, allow wake-word-free follow-up.
 
 **Expiry:** Timer-based, guaranteed to fire even if no audio
 
+**Cancellation:** a cancelled activation never opens the window, even when its timer had already fired as it was cancelled.
+
 ### 3. During TTS
 
 While TTS is playing, echo rejection and stop commands are handled with fast text-based checks (no LLM). This prevents self-loops where the mic picks up TTS output. After TTS finishes, the intent judge takes over. Audio captured while TTS was playing but transcribed only after it ended (common with Whisper on CPU) still goes through the early fuzzy echo check, whether or not it overlaps the hot window, before wake word detection and the intent judge. Pure echo is rejected, so a wake word inside Jarvis's own reply never engages it.
 
+**Utterance cap:** an utterance is capped at `tts_max_utterance_ms` (default 3 s) while TTS plays and at `max_utterance_ms` (default 12 s) otherwise, even while the VAD is still voiced. Jarvis's own echo keeps the VAD voiced for as long as it speaks, so without the cap a stop said over it would never reach Whisper. Past the cap the cut happens at the first unvoiced frame (a pause between words); with no pause it is forced 500 ms later, and the last `vad_pre_roll_ms` of audio is carried into the next utterance so a word split by the cut is heard whole there.
+
 **Stop detection:**
-- Text-based: Check for "stop", "quiet", "shut up", etc.
-- Intent judge can also detect stop commands
+- Text-based, against the configured `stop_commands` (defaults: "stop", "quiet", "shut up", ...), for every utterance captured during TTS in the same TTS context, before any echo check. It applies whether the transcript arrives while TTS is still playing or after playback ended (slow Whisper), so a short "stop" is never rejected as echo of a reply that contains a similar word ("top", "stopped").
+- Only a bare stop counts: once the wake word is removed, nothing is left but configured stop phrases (whole words; no fuzzy matching). With the wake word it always counts. Without it, it does not count while Jarvis was saying that same phrase (the words of the reply around the utterance's start, `EchoDetector.tts_words_near`), because it is then most likely Jarvis's own echo; said at any other point of the reply, it counts.
+- Anything more ("stop the music", "please stop", "the nearest bus stop is…") is not swallowed by this check: it continues through echo rejection and normal processing, and while TTS plays a short utterance holding a stop phrase goes to the intent judge rather than being skipped as a likely stop.
+- Acting on it is the same as the orb's stop: TTS is interrupted if still playing (replies already handed to TTS behind it are dropped too), replies queued or being generated are cancelled with any bridge request or routine, the hot window activation is cancelled (an already open hot window closes) and the face returns to idle. An interrupted reply never runs its TTS completion callback, however playback ended, so the hot window does not open after a stop.
+- The intent judge can also detect a stop while TTS plays ("please stop"); that stop acts the same way.
+- The TTS context changes when the next reply is handed to TTS (which can be while the previous one is still audible). A stop whose context is no longer current when its transcript arrives is not acted on by this check.
 
 **Echo handling:**
 - Transcripts during TTS are flagged with `is_during_tts=true`
@@ -253,9 +274,9 @@ While TTS is playing, echo rejection and stop commands are handled with fast tex
 
 ### Reply Generation and Stopping a Pending Reply
 
-Dispatch hands the query to a single serial reply worker and returns at once, so the listener keeps capturing, transcribing and processing speech while a reply is generated. Queries dispatched while another reply is pending are answered in order; the shared voice+text query lock still serialises them with text chat. The reply worker runs the reply engine, then speaks the reply through the normal TTS path and arms the hot window when it finishes.
+Dispatch hands the query to a single serial reply worker and returns at once, so the listener keeps capturing, transcribing and processing speech while a reply is generated. Queries dispatched while another reply is pending are answered in order; the shared voice+text query lock still serialises them with text chat. The reply worker runs the reply engine, then speaks the reply through the normal TTS path and arms the hot window when it finishes. When the reply engine fails, the spoken apology goes through the same path.
 
-An engaged utterance (wake word or hot window) that is a stop command while a request is still being collected or its reply is being generated cancels it immediately: the collection is dropped, every queued or in-flight voice reply is discarded and not spoken, a background Codex request (from voice or chat) is cancelled, a routine in progress stops between steps (`routines/routines.spec.md`), and the face state reverts to IDLE. The stop utterance is not dispatched, not judged and is marked processed. Without the wake word, ambient "stop" does nothing. The chat window's Stop button cancels the same Codex request and routine. Once TTS is playing, the during-TTS stop handling applies instead. The intent judge remains a local FAST-tier call, so automatic wake-word conversation in `codex` reply mode still includes one small local inference.
+An engaged utterance (wake word or hot window) that is a bare stop (nothing but the wake word and configured stop phrases, as above) while a request is still being collected or its reply is being generated cancels it immediately: the collection is dropped, every queued or in-flight voice reply is discarded and not spoken, a background Codex request (from voice or chat) is cancelled, a routine in progress stops between steps (`routines/routines.spec.md`), and the face state reverts to IDLE. The stop utterance is not dispatched, not judged and is marked processed. Without the wake word, ambient "stop" does nothing. The chat window's Stop button cancels the same Codex request and routine. Once TTS is playing, the during-TTS stop handling applies instead. The intent judge remains a local FAST-tier call, so automatic wake-word conversation in `codex` reply mode still includes one small local inference.
 
 ## Speaker Verification and Barge-in
 
@@ -285,7 +306,7 @@ Each finalised utterance that was not captured during TTS is verified on the Whi
 With a verifier and `barge_in_enabled` (default on), voiced frames while TTS is speaking drive a sliding check. Every 100 ms of voiced speech the most recent `barge_in_verify_ms` (default 300) are scored, and two consecutive windows at or above `speaker_barge_in_threshold` (default 0.2, calibrated on an enrolled voice mixed with Jarvis's own speech, which scores lower than clean speech) count as the owner talking over Jarvis. Jarvis's own Piper voice is a different speaker and does not pass.
 
 - **Action:** `tts.duck()` immediately, before Whisper. Piper ramps its gain to 0.15 within one 1024-sample output block and keeps playing. An engine without `duck` is interrupted instead. It happens once per reply.
-- **Resolution:** when the transcript of that speech is processed, a stop command interrupts through the existing stop path; a request that starts a collection or a reply interrupts the speech; anything else (chatter, an empty transcript, rejected echo) calls `unduck()`. A ducked reply left unresolved for 6 s is restored. The duck never outlives its reply: when the reply ends on its own or the next queued reply starts before the transcript arrives, the volume is restored at once.
+- **Resolution:** when the transcript of that speech is processed, a stop command interrupts through the existing stop path; a request that starts a collection or a reply interrupts the speech (recording the TTS finish time, so the echo tail of the cut reply is still flagged as captured during TTS); anything else (chatter, an empty transcript, rejected echo) calls `unduck()`. A ducked reply left unresolved for 6 s is restored. The duck never outlives its reply: when the reply ends on its own or the next queued reply starts before the transcript arrives, the volume is restored at once.
 - **Latency:** from the owner's first word, ducking takes about 0.3 to 0.4 s when the owner is 6 to 12 dB above Jarvis's own voice at the microphone, around 1.3 s at equal level, and is often missed when Jarvis is louder (simulated clock with Piper voices; the output device adds its own latency). Verification of a 300 ms window costs about 8 ms of CPU.
 
 ## Rolling Transcript Buffer

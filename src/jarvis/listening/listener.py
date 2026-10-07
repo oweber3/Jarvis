@@ -12,6 +12,7 @@ import time
 import queue
 import sys
 import platform
+import re
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -493,7 +494,7 @@ class VoiceListener(threading.Thread):
         self._mlx_model_repo: Optional[str] = None  # For MLX backend
         self.model: Optional[Any] = None  # WhisperModel for faster-whisper, None for MLX
         self.transcribe_lock = threading.Lock()  # Shared lock for Whisper model access
-        self._audio_q: queue.Queue = queue.Queue(maxsize=64)
+        self._audio_q: queue.Queue = queue.Queue(maxsize=self._capture_backlog_blocks())
         self._transcription_jobs_q: queue.Queue = queue.Queue(maxsize=8)
         self._transcription_results_q: queue.Queue = queue.Queue()
         self._transcription_worker_thread: Optional[threading.Thread] = None
@@ -563,6 +564,32 @@ class VoiceListener(threading.Thread):
         self._speaker_verifier = create_verifier(self.cfg)
         self._barge_in_reset()
 
+    # The intent judge runs on the listener thread, so capture blocks wait in
+    # the queue for up to its timeout. The queue holds that long plus a margin
+    # (request overhead, the Whisper hand-off); the timeout counted is capped
+    # at the Settings maximum so memory stays bounded.
+    _CAPTURE_BACKLOG_MARGIN_SEC = 2.0
+    _CAPTURE_BACKLOG_MAX_JUDGE_SEC = 30.0
+    _CAPTURE_BACKLOG_MIN_BLOCKS = 64
+
+    def _capture_backlog_blocks(self) -> int:
+        """Capture blocks the audio queue holds while the listener is busy judging an utterance."""
+        try:
+            frame_ms = int(getattr(self.cfg, "vad_frame_ms", 20))
+        except (TypeError, ValueError):
+            frame_ms = 20
+        if frame_ms not in (10, 20, 30):
+            frame_ms = 20
+        try:
+            judge_sec = float(getattr(self.cfg, "intent_judge_timeout_sec", 6.0))
+        except (TypeError, ValueError):
+            judge_sec = 6.0
+        judge_sec = min(max(judge_sec, 0.0), self._CAPTURE_BACKLOG_MAX_JUDGE_SEC)
+        backlog_ms = (judge_sec + self._CAPTURE_BACKLOG_MARGIN_SEC) * 1000
+        blocks = max(self._CAPTURE_BACKLOG_MIN_BLOCKS, int(-(-backlog_ms // frame_ms)))
+        debug_log(f"capture queue holds {blocks} blocks ({blocks * frame_ms / 1000:.1f}s of audio)", "voice")
+        return blocks
+
     def stop(self) -> None:
         """Stop the voice listener."""
         self._should_stop = True
@@ -607,6 +634,14 @@ class VoiceListener(threading.Thread):
         """Set the assistant state to LISTENING."""
         set_state(AssistantState.LISTENING)
 
+    def _tts_rate(self) -> float:
+        """Speech rate in words per minute for echo timing; an empty setting uses the default."""
+        rate = getattr(self.cfg, "tts_rate", None)
+        if isinstance(rate, (int, float)) and not isinstance(rate, bool) and rate > 0:
+            return float(rate)
+        from ..config import get_default_config
+        return float(get_default_config()["tts_rate"])
+
     def track_tts_start(self, tts_text: str) -> None:
         """Called when TTS starts speaking."""
         if self.tts and self.tts.enabled:
@@ -622,12 +657,14 @@ class VoiceListener(threading.Thread):
         """Activate hot window after TTS completion."""
         debug_log("TTS completed, checking hot window activation", "voice")
 
-        if not self.cfg.hot_window_enabled:
-            debug_log("hot window disabled in config, skipping", "voice")
-            return
-
-        # Track TTS finish time for echo detection
+        # Track TTS finish time for echo detection, with or without a hot window
         self.echo_detector.track_tts_finish()
+
+        if not self.cfg.hot_window_enabled:
+            debug_log("hot window disabled in config, back to wake word mode", "voice")
+            if not self.state_manager.is_collecting():  # a request heard over the reply keeps LISTENING
+                set_state(AssistantState.IDLE)
+            return
 
         # Schedule delayed hot window activation
         debug_log(f"scheduling hot window activation (echo_tolerance={self.state_manager.echo_tolerance}s, hot_window={self.state_manager.hot_window_seconds}s)", "voice")
@@ -675,6 +712,17 @@ class VoiceListener(threading.Thread):
             and bool(self.tts and self.tts.is_speaking())
             and same_tts_context
         )
+
+        # A stop spoken while Jarvis talks is honoured whether or not playback
+        # has ended by the time Whisper finishes, before any echo check can
+        # mistake a short "stop" for Jarvis's own words. A later reply that
+        # started since the capture is not stopped by it.
+        if (received_during_tts and same_tts_context and self.tts and self.tts.enabled
+                and self._is_spoken_stop(text_lower, utterance_start_time)):
+            debug_log(f"stop command heard during TTS: {text_lower} (energy: {utterance_energy:.4f})", "voice")
+            self._transcript_buffer.mark_segment_processed(text_lower)
+            self._stop_after_spoken_stop()
+            return
 
         # --- Early echo check + early engagement ---
         # Check for echo BEFORE starting engagement and BEFORE intent judge.
@@ -764,33 +812,20 @@ class VoiceListener(threading.Thread):
                     self._set_face_state_listening()
                     debug_log("early engagement: wake word detected", "voice")
 
-        # Echo rejection & stop commands — only while TTS is actively playing.
+        # Echo rejection — only while TTS is actively playing.
         # After TTS finishes, the intent judge handles everything (echo detection,
         # hot window follow-ups, etc.) using full transcript context + last TTS text.
         if self.tts and self.tts.enabled and active_tts_overlapped:
-            # Stop command detection (fast, text-based)
-            stop_commands = getattr(self.cfg, "stop_commands", ["stop", "quiet", "shush", "silence", "enough", "shut up"])
-            if is_stop_command(text_lower, stop_commands):
-                debug_log(f"stop command detected during TTS: {text_lower} (energy: {utterance_energy:.4f})", "voice")
-                self.tts.interrupt()
-                self._barge_in_reset()  # interrupt() also restores a ducked volume
-                try:
-                    while not self._audio_q.empty():
-                        self._audio_q.get_nowait()
-                except Exception:
-                    pass
-                return
-
             # Echo rejection during active TTS
             should_reject = self.echo_detector.should_reject_as_echo(
                 text_lower, utterance_energy, True,
-                getattr(self.cfg, 'tts_rate', 200), utterance_start_time
+                self._tts_rate(), utterance_start_time
             )
             if should_reject:
                 # Try to salvage user speech appended after echo
                 salvaged = self.echo_detector.cleanup_leading_echo_during_tts(
                     text_lower,
-                    getattr(self.cfg, 'tts_rate', 200),
+                    self._tts_rate(),
                     utterance_start_time,
                 )
                 min_words = self.echo_detector.min_salvage_words
@@ -820,7 +855,7 @@ class VoiceListener(threading.Thread):
                 and utterance_start_time < last_tts_finish + echo_tol):
             salvaged = self.echo_detector._salvage_suffix_from_echo(
                 text_lower,
-                getattr(self.cfg, 'tts_rate', 200),
+                self._tts_rate(),
                 utterance_start_time,
             )
             # If the prefix-based salvage fails or truncates too aggressively
@@ -887,9 +922,7 @@ class VoiceListener(threading.Thread):
             )
             if _addressed:
                 _stop_query = extract_query_after_wake(text_lower, _wake_word, _aliases)
-                _stop_commands = getattr(self.cfg, "stop_commands",
-                                         ["stop", "quiet", "shush", "silence", "enough", "shut up"])
-                if is_stop_command(_stop_query, _stop_commands):
+                if self._is_bare_stop(_stop_query):
                     debug_log('stop command cancels the reply in flight', 'voice')
                     print("  🛑 Stopped", flush=True)
                     if _collecting:
@@ -917,6 +950,8 @@ class VoiceListener(threading.Thread):
                 debug_log(f'FAST_ROUTE voice family={fast_match.family} tool={fast_match.tool_name}; judge and collection skipped', 'routing')
                 self._mark_turn("fast-command match")
                 self.state_manager.cancel_hot_window_activation()
+                # The window's speech is answered; its expiry must not reset the face mid-reply.
+                self.state_manager.close_hot_window()
                 self._transcript_buffer.mark_segment_processed(text_lower)
                 self._dispatch_query(fast_query)
                 return
@@ -933,8 +968,11 @@ class VoiceListener(threading.Thread):
 
         # Use the upgraded intent judge if available (with full transcript context)
         # Allow during TTS for longer utterances (>3 words) that might be user responses
+        # A short utterance holding a stop phrase with other words ("please stop",
+        # "stop the music") is not a bare stop, so the judge decides it.
         word_count = len(text_lower.split())
-        skip_intent_judge_during_tts = is_speaking_now and word_count <= 3
+        holds_stop_phrase = self._without_phrases(text_lower, self._stop_commands()) != text_lower
+        skip_intent_judge_during_tts = is_speaking_now and word_count <= 3 and not holds_stop_phrase
 
         # Gate the intent judge on an engagement signal. Without this check the
         # judge was called on every ambient utterance, blocking the audio loop
@@ -1015,11 +1053,10 @@ class VoiceListener(threading.Thread):
                         return
 
             if intent_judgment is not None:
-                # If judge says stop command, interrupt TTS
+                # If judge says stop command, stop like a spoken stop
                 if intent_judgment.stop and active_tts_overlapped:
                     debug_log(f"🛑 Intent judge detected stop command", "voice")
-                    self.tts.interrupt()
-                    self._barge_in_reset()  # interrupt() also restores a ducked volume
+                    self._stop_after_spoken_stop()
                     return
 
                 # If directed with query, process it
@@ -1435,10 +1472,8 @@ class VoiceListener(threading.Thread):
                 # Log the error visibly - this should never happen silently
                 print(f"\n  ❌ Reply engine error: {e}", flush=True)
                 debug_log(f"reply engine exception: {e}", "voice")
-                self._end_engagement()
-                # Provide user feedback via TTS
-                if self.tts and self.tts.enabled:
-                    self.tts.speak("Sorry, I encountered an error processing your request.")
+                # Spoken like any reply, so echo timing, the face and the hot window follow it
+                self._speak_reply("Sorry, I encountered an error processing your request.")
                 return
 
             if cancelled.is_set():
@@ -1484,6 +1519,7 @@ class VoiceListener(threading.Thread):
         """True while the user is talking or an utterance awaits its transcript."""
         return (
             self.is_speech_active
+            or self._capture_backlog_pending()
             or self._transcription_jobs_q.unfinished_tasks > 0
             or not self._transcription_results_q.empty()
         )
@@ -1757,9 +1793,70 @@ class VoiceListener(threading.Thread):
         if speaking:
             self.tts.interrupt()
             self._barge_in_reset()  # interrupt() also restores a ducked volume
+            self.echo_detector.track_tts_finish()  # the echo tail after the cut is still Jarvis
         self.state_manager.cancel_hot_window_activation()
         set_state(AssistantState.IDLE)
         return True
+
+    def _stop_commands(self) -> list:
+        stop_commands = getattr(self.cfg, "stop_commands", None)
+        if isinstance(stop_commands, (list, tuple)) and stop_commands:
+            return [str(command).lower() for command in stop_commands if str(command).strip()]
+        from ..config import get_default_config
+        return list(get_default_config()["stop_commands"])
+
+    @staticmethod
+    def _without_phrases(text: str, phrases: list) -> str:
+        """``text`` with every whole-word occurrence of ``phrases`` removed."""
+        for phrase in phrases:
+            text = re.sub(rf"(?<!\w){re.escape(phrase)}(?!\w)", " ", text)
+        return text
+
+    def _is_bare_stop(self, text: str) -> bool:
+        """True when ``text`` (the wake word already removed) is configured stop phrases and nothing else."""
+        if not re.search(r"\w", text, re.UNICODE):
+            return False
+        return not re.search(r"\w", self._without_phrases(text, self._stop_commands()), re.UNICODE)
+
+    def _is_spoken_stop(self, text_lower: str, utterance_start_time: float) -> bool:
+        """True when speech captured during TTS is nothing but a stop phrase (and the wake word).
+
+        Anything more ("stop the music", "please stop") is left to normal
+        processing and the intent judge, so a command is never swallowed. A
+        bare stop phrase without the wake word does not count while Jarvis is
+        saying that very word, since it is then most likely its own echo.
+        """
+        wake_word = getattr(self.cfg, "wake_word", "jarvis")
+        aliases = list(set(getattr(self.cfg, "wake_aliases", [])) | {wake_word})
+        remainder = extract_query_after_wake(text_lower, wake_word, aliases)
+        stop_commands = self._stop_commands()
+        if not self._is_bare_stop(remainder):
+            return False
+        if is_wake_word_detected(text_lower, wake_word, aliases,
+                                 float(getattr(self.cfg, "wake_fuzzy_ratio", 0.78))):
+            return True
+        heard_word_count = len(remainder.split())
+        jarvis_was_saying = self.echo_detector.tts_words_near(
+            self._tts_rate(), utterance_start_time, heard_word_count).lower()
+        said_by_jarvis = [phrase for phrase in stop_commands
+                          if self._without_phrases(remainder, [phrase]) != remainder
+                          and self._without_phrases(jarvis_was_saying, [phrase]) != jarvis_was_saying]
+        if said_by_jarvis:
+            debug_log("bare stop phrase heard while Jarvis was saying it: treated as echo", "voice")
+            return False
+        return True
+
+    def _stop_after_spoken_stop(self) -> None:
+        """Act on a stop heard during TTS, whether or not playback has ended since.
+
+        Jarvis falls silent, replies queued behind this one are dropped and the
+        follow-up window does not open (or closes if it already has).
+        """
+        if not self._stop_reply_in_progress():
+            print("  🛑 Stopped", flush=True)
+            self.state_manager.cancel_hot_window_activation()
+            set_state(AssistantState.IDLE)
+        self.state_manager.close_hot_window()
 
     def _apply_manual_wake_toggle(self) -> None:
         """Wake if idle; drop back to idle if waiting for a request or in the hot window."""
@@ -1788,6 +1885,11 @@ class VoiceListener(threading.Thread):
             query = self.state_manager.clear_collection()
             if query.strip():
                 self._dispatch_query(query)
+            else:
+                # A wake (spoken or from the orb) that no request followed.
+                debug_log("wake wait ended with no request; back to wake word mode", "voice")
+                print("  💤 No request heard", flush=True)
+                self._end_engagement()
 
         # Also check hot window expiry - this ensures the timeout is enforced
         # even when there's no audio being processed
@@ -1945,8 +2047,14 @@ class VoiceListener(threading.Thread):
             debug_log("finished queued Whisper transcription work", "voice")
 
     def _handle_transcription_result(self, result: _TranscriptionResult) -> None:
+        """Process one transcript; a failure costs that utterance, never the listener loop."""
         try:
             self._apply_transcription_result(result)
+        except Exception as exc:
+            debug_log(f"transcript processing failed ({type(exc).__name__}: {exc}); still listening", "voice")
+            print("  ⚠️  Could not process that utterance; still listening.", flush=True)
+            if not self.state_manager.is_collecting():
+                self._end_engagement()
         finally:
             self._resolve_barge_in()
 
@@ -2042,6 +2150,7 @@ class VoiceListener(threading.Thread):
             debug_log("barge-in: request heard, stopping TTS", "voice")
             self._barge_in_reset()
             tts.interrupt()
+            self.echo_detector.track_tts_finish()  # an interrupted reply runs no completion callback
         else:
             debug_log("barge-in: no request heard, resuming TTS", "voice")
             self._barge_in_resume()
@@ -2921,7 +3030,10 @@ class VoiceListener(threading.Thread):
                 if np is None:
                     continue
 
-                self._process_audio_block(item)
+                self._consume_audio_block(item)
+
+    # Past the utterance cap, how long the cut may wait for a pause between words.
+    _UTTERANCE_CAP_GRACE_MS = 500
 
     def _configure_audio(self, frame_ms: int) -> int:
         """Derive frame-based VAD limits from config; returns the frame duration used."""
@@ -2936,11 +3048,28 @@ class VoiceListener(threading.Thread):
         # The utterance length limit depends on TTS state at the time of each frame.
         self._normal_max_utt_frames = max(1, int(int(getattr(self.cfg, "max_utterance_ms", 12000)) / frame_ms))
         self._tts_max_utt_frames = max(1, int(int(getattr(self.cfg, "tts_max_utterance_ms", 3000)) / frame_ms))
+        self._cap_grace_frames = max(1, self._UTTERANCE_CAP_GRACE_MS // frame_ms)
         return frame_ms
 
-    def _process_audio_block(self, item) -> None:
+    def _consume_audio_block(self, item) -> None:
+        """Process one block taken from the capture queue, timed from when it was captured.
+
+        Each block holds one frame, so the blocks still queued behind it say
+        how long ago it was captured. Speech timing, echo flags and hot-window
+        checks then use capture time even when the listener fell behind (for
+        example while the intent judge decided an earlier utterance).
+        """
+        lag = self._audio_q.qsize() * getattr(self, "_frame_ms", 20) / 1000.0
+        self._process_audio_block(item, captured_at=time.time() - lag)
+
+    def _capture_backlog_pending(self) -> bool:
+        """True while captured audio waits to be processed (more than about 100 ms of it)."""
+        frame_ms = getattr(self, "_frame_ms", 20)
+        return self._audio_q.qsize() > max(1, 100 // frame_ms)
+
+    def _process_audio_block(self, item, captured_at: Optional[float] = None) -> None:
         """Run VAD and utterance assembly over one captured audio block."""
-        frame_timestamp = time.time()  # Timestamp for this batch of frames
+        frame_timestamp = time.time() if captured_at is None else captured_at
         for frame in self._audio_frames(item):
             # VAD decision
             is_voice = self._is_speech_frame(frame)
@@ -2955,7 +3084,7 @@ class VoiceListener(threading.Thread):
                     # Backdate start time by pre-roll duration — the
                     # actual speech onset was before VAD triggered.
                     pre_roll_sec = len(self._pre_roll) * self._frame_ms / 1000.0
-                    utterance_start_time = time.time() - pre_roll_sec
+                    utterance_start_time = frame_timestamp - pre_roll_sec
 
                     # Track utterance timing for echo detection
                     self.echo_detector.track_utterance_timing(utterance_start_time, 0.0)
@@ -2979,19 +3108,32 @@ class VoiceListener(threading.Thread):
                     self._silence_frames = 0
                 else:
                     self._silence_frames += 1
-                    # Use shorter timeout during TTS for quick stop command detection
-                    current_max_frames = self._tts_max_utt_frames if (self.tts and self.tts.is_speaking()) else self._normal_max_utt_frames
-                    if self._silence_frames >= self._endpoint_silence_frames or len(self._utterance_frames) >= current_max_frames:
-                        self._finalize_utterance()
-                        self._pre_roll.clear()
+                # The length cap applies even while speech continues: Jarvis's own
+                # echo keeps the VAD voiced during TTS, and the shorter cap then
+                # gets a spoken stop to Whisper promptly. Past the cap the cut
+                # waits for a pause between words; with none, it is forced after
+                # the grace and the tail is carried into the next utterance so a
+                # word split by the cut is heard whole there.
+                current_max_frames = self._tts_max_utt_frames if (self.tts and self.tts.is_speaking()) else self._normal_max_utt_frames
+                frames = len(self._utterance_frames)
+                cut_in_pause = frames >= current_max_frames and not is_voice
+                forced_cut = frames >= current_max_frames + self._cap_grace_frames
+                if self._silence_frames >= self._endpoint_silence_frames or cut_in_pause or forced_cut:
+                    carried = []
+                    if forced_cut and is_voice:
+                        carried = list(self._utterance_frames[-self._pre_roll_max_frames:])
+                        debug_log(f"utterance cut at {frames * self._frame_ms} ms while speech continues", "voice")
+                    self._finalize_utterance(end_time=frame_timestamp)
+                    self._pre_roll.clear()
+                    self._pre_roll.extend(carried)
 
             self._barge_in_tick(is_voice)
 
             # Check for query timeouts
             self._check_query_timeout()
 
-    def _finalize_utterance(self) -> None:
-        """Queue a completed utterance for serial transcription."""
+    def _finalize_utterance(self, end_time: Optional[float] = None) -> None:
+        """Queue a completed utterance for serial transcription; ``end_time`` is its capture time."""
         self._barge_in_voiced_frames = 0
         self._barge_in_next_check = 0
         self._barge_in_passes = 0
@@ -3007,7 +3149,7 @@ class VoiceListener(threading.Thread):
             return
 
         # Track when utterance ends - but don't overwrite global timing yet
-        utterance_end_time = time.time()
+        utterance_end_time = time.time() if end_time is None else end_time
         utterance_start_time = self.echo_detector._utterance_start_time
         speech_end_time = self._last_voice_frame_time or utterance_end_time
         TurnLatency(speech_end_time).mark("utterance finalised (VAD endpoint silence)")
