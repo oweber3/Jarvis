@@ -601,7 +601,9 @@ class ChatterboxTTS:
             
             # Signal speaking stopped to face widget
             self._notify_speaking_state(False)
-            
+
+            # An interrupt during synthesis ends without reaching the playback loop.
+            interrupted = interrupted or self._should_interrupt.is_set()
             # Call completion callback if set and not interrupted
             if self._completion_callback is not None and not interrupted:
                 try:
@@ -1187,6 +1189,11 @@ class PiperTTS:
             self._is_speaking.clear()
             self._notify_speaking_state(False)
 
+            # interrupt() aborts the stream, so playback can end on an inactive
+            # stream before the wait loop sees the flag.
+            interrupted = interrupted or self._should_interrupt.is_set()
+            if interrupted:
+                debug_log("Piper TTS interrupted; completion callback skipped", "tts")
             # Call completion callback if set and not interrupted
             if self._completion_callback is not None and not interrupted:
                 try:
