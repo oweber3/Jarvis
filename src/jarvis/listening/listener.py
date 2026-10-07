@@ -3030,6 +3030,9 @@ class VoiceListener(threading.Thread):
 
                 self._process_audio_block(item)
 
+    # Past the utterance cap, how long the cut may wait for a pause between words.
+    _UTTERANCE_CAP_GRACE_MS = 500
+
     def _configure_audio(self, frame_ms: int) -> int:
         """Derive frame-based VAD limits from config; returns the frame duration used."""
         if frame_ms not in (10, 20, 30):
@@ -3043,6 +3046,7 @@ class VoiceListener(threading.Thread):
         # The utterance length limit depends on TTS state at the time of each frame.
         self._normal_max_utt_frames = max(1, int(int(getattr(self.cfg, "max_utterance_ms", 12000)) / frame_ms))
         self._tts_max_utt_frames = max(1, int(int(getattr(self.cfg, "tts_max_utterance_ms", 3000)) / frame_ms))
+        self._cap_grace_frames = max(1, self._UTTERANCE_CAP_GRACE_MS // frame_ms)
         return frame_ms
 
     def _process_audio_block(self, item) -> None:
@@ -3088,14 +3092,22 @@ class VoiceListener(threading.Thread):
                     self._silence_frames += 1
                 # The length cap applies even while speech continues: Jarvis's own
                 # echo keeps the VAD voiced during TTS, and the shorter cap then
-                # gets a spoken stop to Whisper promptly.
+                # gets a spoken stop to Whisper promptly. Past the cap the cut
+                # waits for a pause between words; with none, it is forced after
+                # the grace and the tail is carried into the next utterance so a
+                # word split by the cut is heard whole there.
                 current_max_frames = self._tts_max_utt_frames if (self.tts and self.tts.is_speaking()) else self._normal_max_utt_frames
-                at_cap = len(self._utterance_frames) >= current_max_frames
-                if self._silence_frames >= self._endpoint_silence_frames or at_cap:
-                    if at_cap and is_voice:
-                        debug_log(f"utterance cut at {current_max_frames * self._frame_ms} ms while speech continues", "voice")
+                frames = len(self._utterance_frames)
+                cut_in_pause = frames >= current_max_frames and not is_voice
+                forced_cut = frames >= current_max_frames + self._cap_grace_frames
+                if self._silence_frames >= self._endpoint_silence_frames or cut_in_pause or forced_cut:
+                    carried = []
+                    if forced_cut and is_voice:
+                        carried = list(self._utterance_frames[-self._pre_roll_max_frames:])
+                        debug_log(f"utterance cut at {frames * self._frame_ms} ms while speech continues", "voice")
                     self._finalize_utterance()
                     self._pre_roll.clear()
+                    self._pre_roll.extend(carried)
 
             self._barge_in_tick(is_voice)
 

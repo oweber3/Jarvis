@@ -12,7 +12,7 @@ import time
 import pytest
 
 from jarvis.listening.state_manager import ListeningState
-from tests.audio_harness import ListenerHarness, white_noise
+from tests.audio_harness import ListenerHarness, silence, white_noise
 from tests.test_hot_window_input import _create_listener, _install_intent_judge, _make_judgment
 
 pytestmark = pytest.mark.unit
@@ -43,6 +43,11 @@ def _hear_captured_during_tts(listener, text, *, started_ago=1.5, ended_ago=0.3)
 # A stop said over continuous echo is heard within the during-TTS cap
 # ---------------------------------------------------------------------------
 
+def _hard_cap_seconds(listener):
+    """The longest an utterance can run during TTS: the cap plus its grace for a pause between words."""
+    return (listener.cfg.tts_max_utterance_ms + listener._UTTERANCE_CAP_GRACE_MS) / 1000.0
+
+
 def test_stop_said_over_continuous_echo_interrupts_within_the_tts_utterance_cap():
     reply = "Tomorrow will be mostly sunny with a top temperature of twenty one degrees."
     with ListenerHarness({"vad_enabled": False}, with_tts=True) as harness:
@@ -52,11 +57,11 @@ def test_stop_said_over_continuous_echo_interrupts_within_the_tts_utterance_cap(
         said_stop_at = harness.now
         harness.play(white_noise(0.6, level=VOICED, seed=2), text="stop")
         harness.play(white_noise(6.0, level=VOICED, seed=3))
-        cap = harness.listener.cfg.tts_max_utterance_ms / 1000.0
+        longest = _hard_cap_seconds(harness.listener)
 
     interrupted_at = harness.tts.time_of("interrupt")
     assert interrupted_at is not None, "the stop was never heard while echo kept the VAD voiced"
-    assert interrupted_at - said_stop_at <= cap + 0.1
+    assert interrupted_at - said_stop_at <= longest + 0.1
 
 
 def test_utterances_during_tts_never_outgrow_the_cap_while_echo_continues():
@@ -64,10 +69,39 @@ def test_utterances_during_tts_never_outgrow_the_cap_while_echo_continues():
         harness.tts.speaking = True
         harness.listener.track_tts_start("A long reply that keeps playing for a while.")
         harness.play(white_noise(8.0, level=VOICED, seed=4))
-        cap = harness.listener.cfg.tts_max_utterance_ms / 1000.0
+        longest = _hard_cap_seconds(harness.listener)
 
     assert len(harness.whisper_calls) >= 2
-    assert all(call.duration <= cap + 0.05 for call in harness.whisper_calls)
+    assert all(call.duration <= longest + 0.05 for call in harness.whisper_calls)
+
+
+def test_a_stop_straddling_the_cap_is_heard_whole():
+    with ListenerHarness({"vad_enabled": False}, with_tts=True) as harness:
+        harness.tts.speaking = True
+        harness.listener.track_tts_start("A long reply that keeps playing for a while.")
+        cap = harness.listener.cfg.tts_max_utterance_ms / 1000.0
+        harness.play(white_noise(cap - 0.12, level=VOICED, seed=5))
+        harness.play(white_noise(0.25, level=VOICED, seed=6), text="stop")  # across the cap
+        harness.play(white_noise(4.0, level=VOICED, seed=7))
+
+    assert harness.tts.time_of("interrupt") is not None
+
+
+def test_long_speech_is_cut_in_a_pause_between_words():
+    word, gap = 0.4, 0.1  # pauses far shorter than the endpoint silence
+    with ListenerHarness({"vad_enabled": False}, with_tts=True) as harness:
+        harness.tts.speaking = True
+        harness.listener.track_tts_start("A long reply that keeps playing for a while.")
+        started = harness.now
+        for index in range(16):
+            harness.play(white_noise(word, level=VOICED, seed=10 + index))
+            harness.play(silence(gap))
+
+    cuts = [call.end_time - started for call in harness.whisper_calls]
+    assert len(cuts) >= 2
+    for cut in cuts:
+        position = round(cut % (word + gap), 3)
+        assert position == 0 or position > word, f"cut mid-word at {cut:.2f}s"
 
 
 # ---------------------------------------------------------------------------
