@@ -58,6 +58,14 @@ def state() -> Dict[str, Any]:
         return {"mode": _active, "enabled": enabled_modes(_cfg)}
 
 
+def update_cfg(cfg: Any) -> None:
+    """Use ``cfg`` from now on (the local model changed); the active mode and its service are untouched."""
+    global _cfg
+    with _lock:
+        if _cfg is not None:
+            _cfg = cfg
+
+
 def add_listener(callback: Callable[[str, List[str]], None]) -> None:
     """``callback(mode, enabled_modes)`` after the daemon starts and after every switch."""
     with _lock:

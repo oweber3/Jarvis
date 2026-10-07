@@ -11,6 +11,7 @@ import time
 import signal
 import threading
 import contextlib
+import dataclasses
 
 # Fix OpenBLAS threading crash in bundled apps (must be before numpy imports)
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
@@ -272,6 +273,75 @@ def switch_chat_conversation(messages: list) -> bool:
     if outgoing.has_pending_chunks():
         _flush_detached_conversation(outgoing)
     return True
+
+
+@dataclasses.dataclass(frozen=True)
+class LocalModelResult:
+    ok: bool
+    model: str  # the local chat model in use after the call
+    reason: Optional[str] = None  # already | not_ready | unsupported_provider | not_offered | busy | not_installed | save_failed
+
+
+def set_local_chat_model(model: str) -> LocalModelResult:
+    """Make ``model`` the local chat model for the whole assistant, voice included.
+
+    Only a model Jarvis offers (``OFFERED_CHAT_MODELS``) that the runtime reports as installed is
+    accepted, and only on the Ollama provider. The daemon's settings, the voice listener's and the
+    reply-mode registry's are replaced, the choice is saved, the new model is warmed and the old
+    one released unless another role shares it. Refused while a query runs.
+    """
+    global _global_cfg
+    cfg = _global_cfg
+    if cfg is None:
+        return LocalModelResult(False, "", "not_ready")
+    current = str(getattr(cfg, "llm_chat_model", "") or "")
+    if getattr(cfg, "llm_provider", "ollama") != "ollama":
+        return LocalModelResult(False, current, "unsupported_provider")
+    wanted = str(model or "").strip()
+    if wanted and wanted == current:
+        return LocalModelResult(True, current, "already")
+    from .config import OFFERED_CHAT_MODELS
+    if wanted not in OFFERED_CHAT_MODELS:
+        return LocalModelResult(False, current, "not_offered")
+    if not _chat_query_lock.acquire(blocking=False):
+        debug_log("local model switch rejected: a query is in flight", "chat")
+        return LocalModelResult(False, current, "busy")
+    try:
+        from . import config as config_module, llm
+        backend = llm.get_llm_backend(cfg)
+        if wanted not in backend.list_models():
+            return LocalModelResult(False, current, "not_installed")
+        if not config_module.update_config_values({"ollama_chat_model": wanted}):
+            return LocalModelResult(False, current, "save_failed")
+        updated = dataclasses.replace(cfg, llm_chat_model=wanted, ollama_chat_model=wanted)
+        _global_cfg = updated
+        listener = _global_voice_listener
+        if listener is not None:
+            listener.cfg = updated
+        from .bridge import modes
+        modes.update_cfg(updated)
+    finally:
+        _chat_query_lock.release()
+    debug_log("local chat model switched", "chat")
+    print(f"🧠 Local chat model: {wanted}", flush=True)
+    threading.Thread(target=_swap_resident_models, args=(backend, cfg, updated, current), daemon=True,
+                     name="local-model-swap").start()
+    return LocalModelResult(True, wanted, None)
+
+
+def _swap_resident_models(backend, before, after, old_model: str) -> None:
+    """Load the new chat model and unload the old one when nothing else uses it."""
+    from .llm.tiers import Tier, resolve_model
+    try:
+        from .bridge import modes
+        if modes.active_mode() == modes.LOCAL:
+            backend.warm_up(after.llm_chat_model, timeout_sec=60.0)
+            still_used = {resolve_model(after, Tier.FAST), resolve_model(after, Tier.TOOL),
+                          str(getattr(after, "embedding_model", "") or "")}
+            if old_model and old_model not in still_used and backend.release(old_model):
+                print(f"  🧹 Unloaded local model '{old_model}'", flush=True)
+    except Exception as exc:
+        debug_log(f"local model swap failed: {type(exc).__name__}", "chat")
 
 
 def _flush_detached_conversation(detached) -> None:
