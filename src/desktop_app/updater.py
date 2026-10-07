@@ -438,6 +438,31 @@ def is_frozen() -> bool:
     return getattr(sys, "frozen", False)
 
 
+TRANSLOCATED_MESSAGE = (
+    "Jarvis is running from a temporary read-only copy that macOS makes for apps "
+    "opened outside the Applications folder, so it cannot be updated in place. "
+    "Quit Jarvis, move Jarvis.app into Applications, open it from there, then update again."
+)
+
+
+def _is_translocated(app_path: Path) -> bool:
+    """True when macOS App Translocation runs the bundle from a read-only copy."""
+    return "/AppTranslocation/" in app_path.as_posix()
+
+
+def running_translocated() -> bool:
+    """True when this Mac bundle runs from a translocated read-only copy."""
+    return sys.platform == "darwin" and is_frozen() and _is_translocated(get_app_path())
+
+
+def update_install_blocker() -> Optional[str]:
+    """A message saying why this install cannot update itself, or None."""
+    if running_translocated():
+        debug_log("Update blocked: app is translocated", "updater")
+        return TRANSLOCATED_MESSAGE
+    return None
+
+
 def install_update_macos(download_path: Path) -> bool:
     """Install update on macOS.
 
@@ -450,6 +475,9 @@ def install_update_macos(download_path: Path) -> bool:
     import plistlib
 
     app_path = get_app_path()
+    if _is_translocated(app_path):
+        debug_log("macOS update refused: app is translocated", "updater")
+        return False
     temp_dir = Path(tempfile.mkdtemp())
     current_pid = os.getpid()
 
@@ -509,9 +537,21 @@ done
 echo "Process exited, applying update..."
 rm -rf {escaped_backup}
 if [ -e {escaped_app} ]; then
-    mv {escaped_app} {escaped_backup}
+    if ! mv {escaped_app} {escaped_backup}; then
+        echo "Update failed: could not move the current app aside; reopening it"
+        open -n {escaped_app}
+        rm -rf {escaped_temp}
+        exit 1
+    fi
 fi
-mv {escaped_new_app} {escaped_app}
+if ! mv {escaped_new_app} {escaped_app}; then
+    echo "Update failed: could not move the new app into place; restoring the previous version"
+    rm -rf {escaped_app}
+    mv {escaped_backup} {escaped_app}
+    open -n {escaped_app}
+    rm -rf {escaped_temp}
+    exit 1
+fi
 xattr -dr com.apple.quarantine {escaped_app} 2>/dev/null || true
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 if [ -x "$LSREGISTER" ]; then

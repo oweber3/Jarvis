@@ -770,6 +770,40 @@ def mark_session_clean_exit():
         pass
 
 
+TRANSLOCATED_LAUNCH_MESSAGE = (
+    "macOS is running Jarvis from a temporary read-only copy because it was opened "
+    "outside the Applications folder. Like this, Jarvis can be unstable and cannot "
+    "install updates.\n\nQuit, move Jarvis.app into Applications, then open it from there."
+)
+
+
+def _ask_translocated_launch(message: str) -> bool:
+    """Ask whether to continue from a translocated copy. True to continue."""
+    from PyQt6.QtWidgets import QMessageBox
+    msg = QMessageBox()
+    msg.setIcon(QMessageBox.Icon.Warning)
+    msg.setWindowTitle("Move Jarvis to Applications")
+    msg.setText("Jarvis is not running from the Applications folder")
+    msg.setInformativeText(message)
+    quit_btn = msg.addButton("Quit", QMessageBox.ButtonRole.RejectRole)
+    continue_btn = msg.addButton("Continue Anyway", QMessageBox.ButtonRole.AcceptRole)
+    msg.setDefaultButton(quit_btn)
+    apply_theme(msg)
+    msg.exec()
+    return msg.clickedButton() is continue_btn
+
+
+def confirm_launch_location(ask=_ask_translocated_launch) -> bool:
+    """Warn a Mac user running a translocated copy. False means quit."""
+    from desktop_app.updater import running_translocated
+    if not running_translocated():
+        return True
+    debug_log("Launched from a translocated copy, asking the user", "desktop")
+    proceed = ask(TRANSLOCATED_LAUNCH_MESSAGE)
+    debug_log(f"Translocated launch: {'continuing' if proceed else 'quitting'}", "desktop")
+    return proceed
+
+
 def show_crash_report_dialog(crash_content: str) -> None:
     """
     Show a dialog offering to submit a crash report to GitHub.
@@ -2305,11 +2339,12 @@ class JarvisSystemTray:
         Args:
             show_no_update_dialog: If True, shows a dialog even when no update is available.
         """
-        from desktop_app.updater import check_for_updates, is_frozen
+        from desktop_app.updater import check_for_updates, is_frozen, update_install_blocker
         from desktop_app.update_dialog import (
             UpdateAvailableDialog,
             UpdateProgressDialog,
             show_no_update_dialog as show_no_update,
+            show_update_blocked_dialog,
             show_update_error_dialog,
         )
 
@@ -2339,6 +2374,10 @@ class JarvisSystemTray:
                 # Show update available dialog
                 dialog = UpdateAvailableDialog(status)
                 if dialog.exec() == QDialog.DialogCode.Accepted:
+                    blocker = update_install_blocker()
+                    if blocker:
+                        show_update_blocked_dialog(blocker)
+                        return
                     # User chose to update - create callback to save diary before install
                     def save_session_before_update():
                         """Stop daemon and save diary before update installation."""
@@ -3461,6 +3500,10 @@ def main() -> int:
         if app is None:
             app = QApplication(sys.argv)
         app.setQuitOnLastWindowClosed(False)
+
+        if not confirm_launch_location():
+            print("🚪 Quitting so Jarvis can be moved into Applications", flush=True)
+            return 0
 
         # Show crash report dialog if previous session crashed
         if previous_crash:

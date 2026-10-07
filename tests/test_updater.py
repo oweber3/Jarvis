@@ -983,7 +983,8 @@ class TestInstallUpdateMacos:
         move_to_backup_idx = script_content.find(f"mv '{mock_app_path}' '{backup_path}'")
         install_idx = script_content.find(f"mv '") # first mv is to backup, find install
         xattr_idx = script_content.find("xattr -dr com.apple.quarantine")
-        open_idx = script_content.find("open ")
+        # The relaunch after a successful swap (failure branches reopen earlier).
+        open_idx = script_content.find("open ", script_content.find("Relaunching"))
         assert clear_backup_idx < move_to_backup_idx, "must clear old backup before creating new one"
         assert move_to_backup_idx < xattr_idx, "backup happens before xattr strip"
         assert xattr_idx < open_idx, "xattr strip must precede launch"
@@ -1313,6 +1314,133 @@ class TestInstallUpdateMacos:
         )
 
 
+TRANSLOCATED_APP = Path(
+    "/private/var/folders/dl/abc/T/AppTranslocation/5BC1ADE4-B30B-483B-B767-C3AC9DD10730/d/Jarvis.app"
+)
+
+
+class TestUpdateInstallBlocker:
+    """macOS runs an app opened from outside Applications (with the download
+    quarantine flag) from a randomised read-only copy. Replacing that copy
+    always fails, so the update must be refused up front with instructions."""
+
+    @pytest.mark.unit
+    def test_translocated_mac_app_is_blocked_with_instructions(self):
+        from desktop_app.updater import update_install_blocker
+
+        with patch("desktop_app.updater.sys.platform", "darwin"),              patch("desktop_app.updater.is_frozen", return_value=True):
+            with patch("desktop_app.updater.get_app_path", return_value=TRANSLOCATED_APP):
+                message = update_install_blocker()
+
+        assert message
+        assert "Applications" in message
+
+    @pytest.mark.unit
+    def test_mac_app_in_applications_is_not_blocked(self):
+        from desktop_app.updater import update_install_blocker
+
+        with patch("desktop_app.updater.sys.platform", "darwin"),              patch("desktop_app.updater.is_frozen", return_value=True):
+            with patch("desktop_app.updater.get_app_path",
+                       return_value=Path("/Applications/Jarvis.app")):
+                assert update_install_blocker() is None
+
+    @pytest.mark.unit
+    def test_other_platforms_are_not_blocked(self):
+        from desktop_app.updater import update_install_blocker
+
+        with patch("desktop_app.updater.sys.platform", "win32"):
+            with patch("desktop_app.updater.get_app_path",
+                       return_value=Path("C:/Users/me/AppData/Local/Jarvis/Jarvis.exe")):
+                assert update_install_blocker() is None
+
+    @pytest.mark.unit
+    def test_translocated_install_fails_without_starting_the_swap(self, tmp_path):
+        from desktop_app.updater import install_update_macos
+
+        with patch("desktop_app.updater.get_app_path", return_value=TRANSLOCATED_APP):
+            with patch("desktop_app.updater._extract_macos_bundle") as extract:
+                with patch("desktop_app.updater.subprocess.Popen") as popen:
+                    assert install_update_macos(tmp_path / "update.zip") is False
+
+        assert not extract.called
+        assert not popen.called
+
+
+class TestMacosSwapFailure:
+    """If the new bundle cannot be moved into place, the script must put the
+    old bundle back (never leave the user with no app) and log the failure."""
+
+    @pytest.mark.unit
+    def test_failed_swap_restores_previous_bundle_and_logs_failure(self, tmp_path):
+        if sys.platform == "win32" and not _bash_available():
+            pytest.skip("a POSIX bash (WSL or Git Bash) is required on Windows")
+        import plistlib
+        import re
+        import shutil
+        import zipfile
+
+        zip_path = tmp_path / "update.zip"
+        app_source = tmp_path / "zip_content" / "Jarvis.app"
+        (app_source / "Contents" / "MacOS").mkdir(parents=True)
+        (app_source / "Contents" / "Info.plist").write_bytes(
+            plistlib.dumps({"CFBundleExecutable": "Jarvis"})
+        )
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for f in app_source.rglob("*"):
+                if f.is_file():
+                    zf.write(f, arcname=str(f.relative_to(tmp_path / "zip_content")))
+
+        mock_app_path = tmp_path / "Applications" / "Jarvis.app"
+        (mock_app_path / "Contents").mkdir(parents=True)
+        (mock_app_path / "Contents" / "old_marker").write_text("old")
+
+        stub_dir = tmp_path / "path_stubs"
+        stub_dir.mkdir()
+        opened = tmp_path / "opened.txt"
+        (stub_dir / "open").write_text(f'#!/bin/bash\necho "$@" >> \'{opened.as_posix()}\'\nexit 0\n')
+        (stub_dir / "xattr").write_text("#!/bin/bash\nexit 0\n")
+        for stub in stub_dir.iterdir():
+            stub.chmod(0o755)
+
+        from desktop_app.updater import install_update_macos
+
+        captured = {}
+
+        def capture_popen(args, **kwargs):
+            if len(args) == 1 and args[0].endswith("update.sh"):
+                captured["text"] = Path(args[0]).read_text()
+            return MagicMock()
+
+        with patch("desktop_app.updater._extract_macos_bundle", side_effect=_zipfile_extract_for_tests):
+            with patch("desktop_app.updater.get_app_path", return_value=mock_app_path):
+                with patch("desktop_app.updater.subprocess.Popen", side_effect=capture_popen):
+                    assert install_update_macos(zip_path) is True
+
+        # Make the swap fail: the extracted bundle disappears before the move.
+        new_app = re.search(r"mv '([^']+\.app)' '" + re.escape(str(mock_app_path)) + "'",
+                            captured["text"])
+        assert new_app, "could not find the extracted bundle in the script"
+        shutil.rmtree(new_app.group(1))
+
+        log_path = tmp_path / "updater.log"
+        script_text = re.sub(r"while kill -0 \d+ 2>/dev/null; do\s*\n\s*sleep 1\s*\ndone", ":",
+                             captured["text"])
+        script_text = re.sub(r"^LOG_FILE=.*$", f"LOG_FILE='{log_path.as_posix()}'", script_text,
+                             count=1, flags=re.MULTILINE)
+        runnable = tmp_path / "run.sh"
+        runnable.write_text(script_text)
+
+        env = os.environ.copy()
+        env["PATH"] = f"{stub_dir}{os.pathsep}{env.get('PATH', '')}"
+        subprocess.run(["bash", str(runnable)], env=env, capture_output=True, text=True, timeout=15)
+
+        assert (mock_app_path / "Contents" / "old_marker").read_text() == "old", (
+            "the previous bundle must be back in place after a failed swap"
+        )
+        assert "fail" in log_path.read_text().lower()
+        assert opened.exists(), "the previous version must be reopened"
+
+
 class TestInstallUpdateLinux:
     """Tests for Linux update installation."""
 
@@ -1445,3 +1573,37 @@ class TestPathEscaping:
         path = Path('/opt/Jarvis/Jarvis')
         escaped = _escape_shell_path(path)
         assert escaped == "'/opt/Jarvis/Jarvis'"
+
+
+class TestTrayUpdateFlow:
+    """Choosing Update Now on an install that cannot update itself explains
+    what to do instead of downloading an update that would never apply."""
+
+    @pytest.mark.unit
+    def test_blocked_install_shows_instructions_and_skips_download(self):
+        from types import SimpleNamespace
+        from PyQt6.QtWidgets import QDialog
+        from desktop_app.app import JarvisSystemTray
+
+        release = ReleaseInfo(
+            asset_id=1, tag_name="v9.9.9", version="9.9.9", name="v9.9.9", prerelease=False,
+            html_url="https://example.invalid", download_url="https://example.invalid/x.zip",
+            asset_name="Jarvis-macOS-arm64.zip", asset_size=1, release_notes="",
+        )
+        status = UpdateStatus(update_available=True, current_version="1.0.0",
+                              current_channel="stable", latest_release=release)
+        accepted = MagicMock()
+        accepted.return_value.exec.return_value = QDialog.DialogCode.Accepted
+        tray = SimpleNamespace(is_listening=False, quit_app=MagicMock())
+
+        with patch("desktop_app.updater.is_frozen", return_value=True), \
+             patch("desktop_app.updater.check_for_updates", return_value=status), \
+             patch("desktop_app.updater.update_install_blocker", return_value="move it"), \
+             patch("desktop_app.update_dialog.UpdateAvailableDialog", accepted), \
+             patch("desktop_app.update_dialog.UpdateProgressDialog") as progress, \
+             patch("desktop_app.update_dialog.show_update_blocked_dialog") as blocked:
+            JarvisSystemTray.check_for_updates(tray)
+
+        blocked.assert_called_once_with("move it")
+        assert not progress.called
+        assert not tray.quit_app.called
