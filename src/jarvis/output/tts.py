@@ -396,6 +396,8 @@ class ChatterboxTTS:
         self._duration_callback: Optional[Callable[[float], None]] = None
         self._first_audio_callback: Optional[Callable[[], None]] = None
         self._should_interrupt = threading.Event()
+        # Bumped by interrupt(); queued replies from an earlier generation are dropped.
+        self._interrupt_generation = 0
 
         # Chatterbox model (eagerly loaded during initialization)
         self._model = None
@@ -498,12 +500,14 @@ class ChatterboxTTS:
         processed_text = _preprocess_for_speech(text)
         try:
             # Callbacks travel with their text so queued replies keep their own.
-            self._q.put_nowait((processed_text, completion_callback, duration_callback, first_audio_callback))
+            self._q.put_nowait((self._interrupt_generation, processed_text, completion_callback,
+                                duration_callback, first_audio_callback))
         except Exception:
             pass
 
     def interrupt(self) -> None:
-        """Stop current speech immediately"""
+        """Stop current speech immediately, with any replies queued behind it"""
+        self._interrupt_generation += 1
         self._should_interrupt.set()
 
     def _run(self) -> None:
@@ -514,7 +518,10 @@ class ChatterboxTTS:
                 continue
             if not item:
                 continue
-            text, self._completion_callback, self._duration_callback, self._first_audio_callback = item
+            generation, text, self._completion_callback, self._duration_callback, self._first_audio_callback = item
+            if generation != self._interrupt_generation:
+                debug_log("TTS dropped a reply queued before an interrupt", "tts")
+                continue
             try:
                 self._speak_once(text)
             except Exception:
@@ -826,6 +833,8 @@ class PiperTTS:
         self._duration_callback: Optional[Callable[[float], None]] = None
         self._first_audio_callback: Optional[Callable[[], None]] = None
         self._should_interrupt = threading.Event()
+        # Bumped by interrupt(); queued replies from an earlier generation are dropped.
+        self._interrupt_generation = 0
         self._duck_gain = 1.0  # persists across sentences until restored or interrupted
         self._playing: Optional[_StreamedAudio] = None
 
@@ -975,7 +984,8 @@ class PiperTTS:
         processed_text = _preprocess_for_speech(text)
         try:
             # Callbacks travel with their text so queued replies keep their own.
-            self._q.put_nowait((processed_text, completion_callback, duration_callback, first_audio_callback))
+            self._q.put_nowait((self._interrupt_generation, processed_text, completion_callback,
+                                duration_callback, first_audio_callback))
         except Exception:
             pass
 
@@ -998,7 +1008,8 @@ class PiperTTS:
             playing.set_gain(1.0)
 
     def interrupt(self) -> None:
-        """Stop current speech immediately."""
+        """Stop current speech immediately, with any replies queued behind it."""
+        self._interrupt_generation += 1
         self._should_interrupt.set()
         self._duck_gain = 1.0
         playing = self._playing
@@ -1043,7 +1054,10 @@ class PiperTTS:
                 continue
             if not item:
                 continue
-            text, self._completion_callback, self._duration_callback, self._first_audio_callback = item
+            generation, text, self._completion_callback, self._duration_callback, self._first_audio_callback = item
+            if generation != self._interrupt_generation:
+                debug_log("TTS dropped a reply queued before an interrupt", "tts")
+                continue
             try:
                 self._speak_once(text)
             except Exception as e:

@@ -34,6 +34,28 @@ def test_interrupt_while_playing_stops_without_completing(fake_audio):
         tts.stop()
 
 
+def test_interrupt_drops_replies_queued_behind_the_one_playing(fake_audio):
+    # "Stop" silences Jarvis: a reply already handed to TTS must not start afterwards.
+    started, completed = [], []
+    synthesised = threading.Event()
+    tts = make_tts(FakeVoice(samples_per_sentence=_voice_seconds(30)))
+    tts.start()
+    try:
+        tts.speak("First reply.", duration_callback=lambda _seconds: synthesised.set())
+        tts.speak("Second reply.", first_audio_callback=lambda: started.append("second"),
+                  completion_callback=lambda: completed.append("second"))
+        assert synthesised.wait(3)
+        tts.interrupt()
+        time.sleep(0.8)
+        assert started == [] and completed == []
+
+        after = threading.Event()
+        tts.speak("A new reply.", completion_callback=after.set)
+        assert after.wait(5), "speech after a stop no longer plays"
+    finally:
+        tts.stop()
+
+
 def test_a_reply_played_to_the_end_still_completes(fake_audio):
     completed = threading.Event()
     tts = make_tts(FakeVoice())
