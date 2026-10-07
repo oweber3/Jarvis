@@ -223,7 +223,7 @@ System is waiting for wake word activation.
 
 After TTS finishes, allow wake-word-free follow-up.
 
-**Activation:** `echo_tolerance` seconds after TTS ends (allows echo to settle)
+**Activation:** `echo_tolerance` seconds after TTS ends (allows echo to settle). The end of every spoken reply records the TTS finish time for echo detection first, so with `hot_window_enabled` off echo just after a reply is still flagged as captured during TTS, and the face returns to idle instead of staying on speaking.
 
 **Duration:** Configurable (default: 3 seconds)
 
@@ -260,7 +260,7 @@ While TTS is playing, echo rejection and stop commands are handled with fast tex
 
 ### Reply Generation and Stopping a Pending Reply
 
-Dispatch hands the query to a single serial reply worker and returns at once, so the listener keeps capturing, transcribing and processing speech while a reply is generated. Queries dispatched while another reply is pending are answered in order; the shared voice+text query lock still serialises them with text chat. The reply worker runs the reply engine, then speaks the reply through the normal TTS path and arms the hot window when it finishes.
+Dispatch hands the query to a single serial reply worker and returns at once, so the listener keeps capturing, transcribing and processing speech while a reply is generated. Queries dispatched while another reply is pending are answered in order; the shared voice+text query lock still serialises them with text chat. The reply worker runs the reply engine, then speaks the reply through the normal TTS path and arms the hot window when it finishes. When the reply engine fails, the spoken apology goes through the same path.
 
 An engaged utterance (wake word or hot window) that is a stop command while a request is still being collected or its reply is being generated cancels it immediately: the collection is dropped, every queued or in-flight voice reply is discarded and not spoken, a background Codex request (from voice or chat) is cancelled, a routine in progress stops between steps (`routines/routines.spec.md`), and the face state reverts to IDLE. The stop utterance is not dispatched, not judged and is marked processed. Without the wake word, ambient "stop" does nothing. The chat window's Stop button cancels the same Codex request and routine. Once TTS is playing, the during-TTS stop handling applies instead. The intent judge remains a local FAST-tier call, so automatic wake-word conversation in `codex` reply mode still includes one small local inference.
 

@@ -631,12 +631,14 @@ class VoiceListener(threading.Thread):
         """Activate hot window after TTS completion."""
         debug_log("TTS completed, checking hot window activation", "voice")
 
-        if not self.cfg.hot_window_enabled:
-            debug_log("hot window disabled in config, skipping", "voice")
-            return
-
-        # Track TTS finish time for echo detection
+        # Track TTS finish time for echo detection, with or without a hot window
         self.echo_detector.track_tts_finish()
+
+        if not self.cfg.hot_window_enabled:
+            debug_log("hot window disabled in config, back to wake word mode", "voice")
+            if not self.state_manager.is_collecting():  # a request heard over the reply keeps LISTENING
+                set_state(AssistantState.IDLE)
+            return
 
         # Schedule delayed hot window activation
         debug_log(f"scheduling hot window activation (echo_tolerance={self.state_manager.echo_tolerance}s, hot_window={self.state_manager.hot_window_seconds}s)", "voice")
@@ -1439,10 +1441,8 @@ class VoiceListener(threading.Thread):
                 # Log the error visibly - this should never happen silently
                 print(f"\n  ❌ Reply engine error: {e}", flush=True)
                 debug_log(f"reply engine exception: {e}", "voice")
-                self._end_engagement()
-                # Provide user feedback via TTS
-                if self.tts and self.tts.enabled:
-                    self.tts.speak("Sorry, I encountered an error processing your request.")
+                # Spoken like any reply, so echo timing, the face and the hot window follow it
+                self._speak_reply("Sorry, I encountered an error processing your request.")
                 return
 
             if cancelled.is_set():
