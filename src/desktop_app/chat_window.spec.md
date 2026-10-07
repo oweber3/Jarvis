@@ -64,7 +64,9 @@ run `run_reply_engine` concurrently against the shared dialogue memory.
 Stop never calls `request_stop`, which is the daemon lifecycle shutdown
 signal and would tear down the whole voice assistant. It cancels the one
 query in flight, and does so in three places because no single one of them
-is sufficient.
+is sufficient. In the daemon, Stop also ends the work: the reply engine stops
+at its next step and drops the model call in flight (`reply/reply.spec.md`,
+Stopping a reply), so the chat is free for the next message at once.
 
 **In the window.** Pressing Stop marks the exchange abandoned and resets the
 thinking indicator at once. `_on_complete` then declines the reply for that

@@ -233,6 +233,16 @@ sequenceDiagram
   Engine-->>Caller: reply
 ```
 
+### Stopping a reply
+
+A typed request can be stopped (the chat windows' Stop button, the orb). The daemon runs it inside `reply/cancellation.py`'s `cancel_scope`, whose event Stop sets. The engine then:
+
+- checks the signal before the planner, at the top of every turn, right after each model call and before each tool call; a Stop raises `RequestCancelled`, which `run_reply_engine` catches at the top of the request and returns `None`: nothing is delivered, spoken or added to the dialogue memory;
+- sends its chat calls through `LLMBackend.chat_cancellable`, so a model call in flight is dropped at once (`llm/llm.spec.md`, Cancelling a chat call) instead of running to its end;
+- cannot interrupt a tool that is already running, nor the short planner, router and enrichment calls: a Stop takes effect when they return, at the next check.
+
+A request with no scope (voice) has no signal and behaves exactly as before. Background bridge replies (Codex, Claude) have their own cancel path (`bridge/bridge.spec.md`).
+
 ### Notes
 - This document intentionally excludes ingestion specifics (voice/stdin, wake/hot-window, stop/echo), tool internals, and diary update scheduling. Those are documented separately.
 

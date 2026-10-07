@@ -47,6 +47,7 @@ from .tools.registry import (start_mcp_discovery, configure_windows_tools, confi
 from .assistant_state import AssistantState, set_state
 from .extensions import load_extensions
 from .debug import debug_log
+from .llm.errors import RequestCancelled
 from .listening.listener import VoiceListener
 from .utils.location import get_location_context, is_location_available
 
@@ -724,8 +725,8 @@ def regenerate_chat_reply(
 
 def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc: bool, origin: str) -> None:
     """Run one text query on a worker thread. The caller holds ``_chat_query_lock``; the worker releases it."""
-    # Per-query cancellation flag. The Stop button sets this so the worker
-    # drops the reply instead of displaying it.
+    # Per-query cancellation flag. The Stop button sets this; the reply engine ends the request at its
+    # next step and drops the model call in flight, and the worker drops any reply that still arrives.
     global _chat_cancel_event
     cancel_event = threading.Event()
     _chat_cancel_event = cancel_event
@@ -741,17 +742,22 @@ def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc
             from .utils.redact import redact
             display_query = redact(text)
             _notify_chat("start", display_query, callbacks=callbacks, use_ipc=use_ipc)
+            from .reply.cancellation import cancel_scope
             from .reply.engine import run_reply_engine
-            reply = run_reply_engine(
-                db=db,
-                cfg=cfg,
-                tts=None,
-                text=text,
-                dialogue_memory=dm,
-                language=None,
-                quiet=True,
-                origin=origin,
-            )
+            try:
+                with cancel_scope(cancel_event):
+                    reply = run_reply_engine(
+                        db=db,
+                        cfg=cfg,
+                        tts=None,
+                        text=text,
+                        dialogue_memory=dm,
+                        language=None,
+                        quiet=True,
+                        origin=origin,
+                    )
+            except RequestCancelled:
+                reply = None
             if cancel_event.is_set():
                 debug_log("chat query cancelled, dropping reply", "chat")
                 reply = None

@@ -58,6 +58,15 @@ When a model rejects the `tools` parameter (Ollama returns HTTP 400 in that case
 
 Each backend parses its own stream format internally (Ollama JSONL, OpenAI SSE). The public `on_token(str)` contract is identical across backends.
 
+### Cancelling a chat call
+
+`chat_cancellable(model, messages, cancel, ...)` is `chat` that ends with `RequestCancelled` as soon as the `cancel` event is set; with the event already set it never contacts the server. `RequestCancelled` is a `BaseException`, so the reply engine's `except Exception` guards cannot swallow a Stop.
+
+- `OllamaBackend` streams the request (`/api/chat` with `stream: true`) on a helper thread and puts the pieces back together as the single response `chat` returns: the content and thinking joined, the tool calls collected, the closing chunk's fields kept. `timeout_sec` bounds the whole call, as it does for `chat`; failures map as in `chat` (a timeout or server error gives `None`, an unreachable server raises, a model that rejects `tools` raises `ToolsNotSupportedError`). On cancel the connection is closed with a reset at once, which makes Ollama stop generating, and the caller is released without waiting for the helper thread.
+- Every other backend inherits the default, which cannot drop a request already sent: it runs `chat` on a helper thread and stops waiting for it, so the caller is free at once and the server finishes its answer for nobody.
+
+Only the reply engine's chat call uses it, and only for a request that has a Stop signal (`reply/reply.spec.md`, Stopping a reply); every other call is unchanged.
+
 ### Embeddings
 
 `embed()` is part of the same backend interface so the same provider can serve both chat and embeddings when capable. The `embedding_provider` config key lets users on runtimes without embeddings (e.g. some oMLX builds) route embeddings through Ollama while keeping chat on their preferred runtime. Every embedding call site under `src/jarvis/` resolves through `get_embedding_backend(cfg)`.

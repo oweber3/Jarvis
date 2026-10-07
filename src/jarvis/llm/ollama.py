@@ -3,12 +3,18 @@
 from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional, Union
 
+import http.client
 import json
+import socket
+import struct
+import threading
 import time
+from urllib.parse import urlsplit
+
 import requests
 
 from ..debug import debug_log
-from .errors import is_timeout_error
+from .errors import RequestCancelled, is_timeout_error
 from .backend import LLMBackend, ToolsNotSupportedError, strip_nonstandard_message_fields
 
 
@@ -62,6 +68,19 @@ def extract_text_from_response(data: Dict[str, Any]) -> Optional[str]:
             return content
 
     return None
+
+
+def _drop_connection(sock: Optional[socket.socket]) -> None:
+    """Close a socket now, even while another thread is blocked reading it, so the server sees the
+    connection reset and stops generating. Closing the socket object alone is not enough: the response's
+    buffered reader holds it open, so its handle is released directly."""
+    if sock is None:
+        return
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        socket.socket(fileno=sock.detach()).close()
+    except OSError:
+        pass
 
 
 # (base URL, model) -> whether Ollama reports the model's ``vision`` capability. Only answers Ollama
@@ -242,34 +261,7 @@ class OllamaBackend(LLMBackend):
 
         Context size and residency are shared with direct, streaming and warmup.
         """
-        sanitised = strip_nonstandard_message_fields(messages, keep=frozenset({"images"}))
-        payload: Dict[str, Any] = {
-            "model": chat_model,
-            "messages": sanitised,
-            "stream": False,
-            "cache_prompt": True,
-            "options": {},
-            "think": thinking,
-        }
-        # Generation options are translated here; backend load settings win.
-        if extra_options and isinstance(extra_options, dict):
-            for key, value in extra_options.items():
-                if key in {"keep_alive", "format", "think"}:
-                    payload[key] = value
-                elif key == "max_tokens":
-                    payload["options"]["num_predict"] = int(value)
-                elif key == "options" and isinstance(value, dict):
-                    for inner_key, inner_value in value.items():
-                        if inner_key == "max_tokens":
-                            payload["options"]["num_predict"] = int(inner_value)
-                        else:
-                            payload["options"][inner_key] = inner_value
-                else:
-                    payload["options"][key] = value
-
-        self._apply_request_shape(payload)
-        if tools and isinstance(tools, list) and len(tools) > 0:
-            payload["tools"] = tools
+        payload = self._chat_payload(chat_model, messages, extra_options, tools, thinking)
 
         try:
             with requests.post(
@@ -305,6 +297,167 @@ class OllamaBackend(LLMBackend):
             return None
 
         return None
+
+    def _chat_payload(
+        self,
+        chat_model: str,
+        messages: List[Dict[str, Any]],
+        extra_options: Optional[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        thinking: bool,
+    ) -> Dict[str, Any]:
+        sanitised = strip_nonstandard_message_fields(messages, keep=frozenset({"images"}))
+        payload: Dict[str, Any] = {
+            "model": chat_model,
+            "messages": sanitised,
+            "stream": False,
+            "cache_prompt": True,
+            "options": {},
+            "think": thinking,
+        }
+        # Generation options are translated here; backend load settings win.
+        if extra_options and isinstance(extra_options, dict):
+            for key, value in extra_options.items():
+                if key in {"keep_alive", "format", "think"}:
+                    payload[key] = value
+                elif key == "max_tokens":
+                    payload["options"]["num_predict"] = int(value)
+                elif key == "options" and isinstance(value, dict):
+                    for inner_key, inner_value in value.items():
+                        if inner_key == "max_tokens":
+                            payload["options"]["num_predict"] = int(inner_value)
+                        else:
+                            payload["options"][inner_key] = inner_value
+                else:
+                    payload["options"][key] = value
+
+        self._apply_request_shape(payload)
+        if tools and isinstance(tools, list) and len(tools) > 0:
+            payload["tools"] = tools
+        return payload
+
+    def chat_cancellable(
+        self,
+        chat_model: str,
+        messages: List[Dict[str, Any]],
+        cancel: threading.Event,
+        timeout_sec: float = 30.0,
+        extra_options: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        thinking: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """``chat`` that Stop can end: the request is streamed, and the moment ``cancel`` is set the connection
+        is shut down (which makes Ollama stop generating) and the caller is released. The pieces are put back
+        together as the single response ``chat`` returns. ``timeout_sec`` bounds the whole call, as it does
+        for ``chat``."""
+        if cancel.is_set():
+            raise RequestCancelled()
+        payload = self._chat_payload(chat_model, messages, extra_options, tools, thinking)
+        payload["stream"] = True
+        target = urlsplit(f"{self._base_url}/api/chat")
+        connection_class = http.client.HTTPSConnection if target.scheme == "https" else http.client.HTTPConnection
+        connection = connection_class(target.hostname, target.port, timeout=timeout_sec)
+        outcome: Dict[str, Any] = {}
+        held: Dict[str, Any] = {}
+        finished = threading.Event()
+
+        # A blocked network read cannot be woken from another thread on every platform, so the read runs
+        # on a helper thread and this one waits on the Stop signal.
+        def read() -> None:
+            try:
+                outcome["value"] = self._stream_chat(connection, held, target.path, payload, tools, chat_model, timeout_sec)
+            except BaseException as exc:  # handed to the waiting caller below
+                outcome["error"] = exc
+            finally:
+                finished.set()
+                connection.close()
+
+        threading.Thread(target=read, daemon=True, name="llm-chat-stream").start()
+        while not finished.wait(0.05):
+            if cancel.is_set():
+                _drop_connection(held.get("sock"))
+                debug_log("chat call stopped, connection dropped", "llm")
+                raise RequestCancelled()
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome.get("value")
+
+    def _stream_chat(self, connection, held: Dict[str, Any], path: str, payload: Dict[str, Any], tools,
+                     chat_model: str, timeout_sec: float) -> Optional[Dict[str, Any]]:
+        """The streamed request itself, with the failures ``chat`` reports. The socket is put in ``held``
+        because the connection forgets it once a response that ends the connection begins."""
+        deadline = time.monotonic() + timeout_sec
+        try:
+            connection.connect()
+            held["sock"] = connection.sock
+            connection.request("POST", path, body=json.dumps(payload).encode("utf-8"),
+                               headers={"Content-Type": "application/json"})
+            response = connection.getresponse()
+            if response.status != 200:
+                if response.status == 400 and tools:
+                    raise ToolsNotSupportedError(
+                        f"Model {chat_model!r} returned HTTP 400 — native tools API not supported"
+                    )
+                print(f"  ❌ LLM HTTP error (status {response.status})", flush=True)
+                return None
+            return self._read_chat_stream(response, connection, deadline, timeout_sec)
+        except ToolsNotSupportedError:
+            raise
+        except (socket.timeout, TimeoutError):
+            print(f"  ⏱️ LLM request timed out (configured timeout: {timeout_sec:g}s)", flush=True)
+            return None
+        except (ConnectionError, socket.gaierror) as exc:
+            print("  ❌ LLM connection error", flush=True)
+            raise requests.exceptions.ConnectionError(type(exc).__name__) from None
+        except (OSError, http.client.HTTPException, ValueError) as exc:
+            print(f"  ❌ LLM error ({type(exc).__name__})", flush=True)
+            return None
+
+    @staticmethod
+    def _read_chat_stream(response, connection, deadline: float, timeout_sec: float) -> Optional[Dict[str, Any]]:
+        """Put a streamed chat answer back together: the pieces of content and thinking, the tool calls, and
+        the closing chunk's fields. ``None`` when the stream ends without its closing chunk."""
+        content: List[str] = []
+        thinking: List[str] = []
+        tool_calls: List[Any] = []
+        role = "assistant"
+        final: Optional[Dict[str, Any]] = None
+        while final is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print(f"  ⏱️ LLM request timed out (configured timeout: {timeout_sec:g}s)", flush=True)
+                return None
+            if connection.sock is not None:
+                connection.sock.settimeout(remaining)
+            line = response.readline()
+            if not line:
+                return None
+            try:
+                chunk = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(chunk, dict):
+                continue
+            if chunk.get("error"):
+                print("  ❌ LLM error (the model reported a failure)", flush=True)
+                return None
+            message = chunk.get("message")
+            if isinstance(message, dict):
+                role = message.get("role") or role
+                if isinstance(message.get("content"), str):
+                    content.append(message["content"])
+                if isinstance(message.get("thinking"), str):
+                    thinking.append(message["thinking"])
+                if isinstance(message.get("tool_calls"), list):
+                    tool_calls.extend(message["tool_calls"])
+            if chunk.get("done"):
+                final = chunk
+        assembled: Dict[str, Any] = {"role": role, "content": "".join(content)}
+        if thinking:
+            assembled["thinking"] = "".join(thinking)
+        if tool_calls:
+            assembled["tool_calls"] = tool_calls
+        return {**{k: v for k, v in final.items() if k != "message"}, "message": assembled}
 
     # ── embeddings & discovery ────────────────────────────────────────
 
