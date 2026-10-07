@@ -7,8 +7,16 @@ on:
 
 jobs:
   unit:
-    name: Unit tests (Linux, Python 3.11)
-    runs-on: ubuntu-latest
+    name: Unit tests (${{ matrix.label }}, Python 3.11)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+          - os: ubuntu-latest
+            label: Linux
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -17,6 +25,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - name: Install system dependencies
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y portaudio19-dev libegl1 libxkbcommon0
       - name: Install deps
         run: |
@@ -25,4 +34,3 @@ jobs:
       - name: Run unit tests
         run: |
           python -m pytest -q -m unit
-

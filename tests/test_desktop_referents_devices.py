@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "windows_control"))
 
 from jarvis.memory.desktop_referents import get_desktop_referents  # noqa: E402
 
+pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows desktop only")
+
 
 @pytest.fixture(autouse=True)
 def fresh_referents():

@@ -47,11 +47,12 @@ spec = importlib.util.spec_from_file_location('qt_fixtures', sys.argv[1])
 fixtures = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = fixtures
 spec.loader.exec_module(fixtures)
-raise SystemExit(pytest.main(['-q', sys.argv[2]], plugins=[fixtures]))
+raise SystemExit(pytest.main(['-q', '-p', 'no:cacheprovider', '--rootdir', sys.argv[3], sys.argv[2]],
+                             plugins=[fixtures]))
 '''
     env = {**os.environ, 'QT_QPA_PLATFORM': 'offscreen'}
     result = subprocess.run(
-        [sys.executable, '-c', runner, str(root / 'tests/conftest.py'), str(scenario)],
-        env=env, capture_output=True, text=True, timeout=60,
+        [sys.executable, '-c', runner, str(root / 'tests/conftest.py'), str(scenario), str(tmp_path)],
+        env=env, cwd=tmp_path, capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
