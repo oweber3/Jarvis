@@ -264,7 +264,7 @@ While TTS is playing, echo rejection and stop commands are handled with fast tex
 - Anything more ("stop the music", "please stop", "the nearest bus stop is…") is not swallowed by this check: it continues through echo rejection and normal processing, and while TTS plays a short utterance holding a stop phrase goes to the intent judge rather than being skipped as a likely stop.
 - Acting on it is the same as the orb's stop: TTS is interrupted if still playing (replies already handed to TTS behind it are dropped too), replies queued or being generated are cancelled with any bridge request or routine, the hot window activation is cancelled (an already open hot window closes) and the face returns to idle. An interrupted reply never runs its TTS completion callback, however playback ended, so the hot window does not open after a stop.
 - The intent judge can also detect a stop while TTS plays ("please stop"); that stop acts the same way.
-- A stop captured during an earlier reply does not stop a later reply that started before the transcript arrived.
+- The TTS context changes when the next reply is handed to TTS (which can be while the previous one is still audible). A stop whose context is no longer current when its transcript arrives is not acted on by this check.
 
 **Echo handling:**
 - Transcripts during TTS are flagged with `is_during_tts=true`
