@@ -437,6 +437,11 @@ def _build_field_metadata() -> List[FieldMeta]:
       "stores it. In Codex or Claude mode the screen you asked about is sent to that model. Turn this off "
       "and Jarvis never looks at the screen. Takes effect after Jarvis restarts.",
       "windows", "bool")
+    f("file_delete_enabled", "Allow File Deletion",
+      "Let Jarvis delete a file in your home folder when you ask, after you confirm it. Off means Jarvis "
+      "cannot delete files at all, whatever is asked and in every reply mode. Moving, copying and "
+      "renaming are not affected. Takes effect after Jarvis restarts.",
+      "windows", "bool")
     f("windows_fancyzones_enabled", "FancyZones Zones",
       "Let window placement use the zone layouts you set up in Microsoft PowerToys FancyZones. "
       "Jarvis only reads them from this PC and never changes them.",

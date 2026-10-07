@@ -295,7 +295,7 @@ Spec: `src/jarvis/devices/roku.spec.md`.
 Tool actions follow a centralised safety policy in `src/jarvis/tools/confirmation.py`:
 
 - **`SAFE`**: Routine local actions execute immediately without prompting (opening apps, setting volume, querying system usage, listing windows/files).
-- **`CONFIRM_VOICE`**: Normal destructive actions require spoken or typed confirmation ("yes"/"no"), such as deleting a user file, overwriting a file, or terminating a standard user process.
+- **`CONFIRM_VOICE`**: Normal destructive actions require spoken or typed confirmation ("yes"/"no"), such as deleting a user file, overwriting a file, or terminating a standard user process. Deleting a file additionally needs `file_delete_enabled` (Settings → Windows Control → Allow File Deletion, off by default); while it is off a delete is refused outright, without a confirmation question.
 - **`CONFIRM_DIALOG`**: High-risk operations (system shutdown/reboot, uninstalling software, killing critical system processes, bulk deletions, or actions targeting system directories) require explicit confirmation via a desktop dialog. Voice cannot authorise dialog actions.
 - **`DENY`**: Prohibited operations (e.g. formatting a drive or wiping filesystem root) are rejected unconditionally.
 

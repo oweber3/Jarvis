@@ -32,7 +32,7 @@
 - `list` lists a folder's direct contents, or with `recursive` everything below it, filtered by `glob` (default `*`). It shows at most 50 entries, alphabetically, and says how many more there are.
 - `read` returns a text file's content as UTF-8, with undecodable bytes replaced. It is cut off after 10,000 characters, with a note saying so.
 - `write` creates or replaces a file with `content` and creates missing parent folders. `append` adds `content` to the end of a file and creates it if needed.
-- `delete` permanently removes one file. Folders are not deleted.
+- `delete` permanently removes one file, only while file deletion is allowed (see Safety). Folders are not deleted.
 
 ## Move, copy, rename
 
@@ -47,7 +47,8 @@
 Classification goes through the central policy (`tools/confirmation.py`).
 
 - `find`, `list` and `read` are safe.
-- `write` of a new file and `append` are safe. Replacing an existing file with `write` needs voice confirmation. `delete` needs voice confirmation.
+- **Deletion switch.** `delete` works only while `file_delete_enabled` is exactly `true` (default `false`; Settings → Windows Control → Allow File Deletion). Otherwise it is classified `DENY` with a reason saying deletion is turned off and where to turn it on, so it is refused before any confirmation question and no reply can lead to a deletion. `run` checks the switch again, so a delete confirmed before the switch was turned off does not run either. The switch applies on every route (local, Codex, Claude, phone, routines), because they all reach the tool through the central path. Other operations are unaffected.
+- `write` of a new file and `append` are safe. Replacing an existing file with `write` needs voice confirmation. `delete`, when allowed, needs voice confirmation.
 - `move`, `copy` and `rename` are routine and need no confirmation, because they never replace anything. The item's current path (`move`, `rename`) or its final path (`copy`) is the policy target. When the source of a move or rename, or the final path, is in an important location (system folders, startup folders, `.ssh` and similar), desktop confirmation is required.
 - The central policy raises any mutating operation in an important location to desktop confirmation, and a bulk or folder-wide delete likewise.
 

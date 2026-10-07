@@ -119,7 +119,7 @@ On Windows, Jarvis's built-in tools understand requests like these. Simple Engli
 | Everything else | Web search, weather, time, nutrition tracking and optional location awareness |
 
 - **Follow-ups just work.** "Close this" acts on the window in front of you, and after Jarvis opens or moves something, "move it" or "close it" act on that exact window.
-- **Asks before anything risky.** Deleting, overwriting, shutting down or clicking a control that sends, deletes or buys needs your confirmation. Password fields are never touched, files are only moved, copied or renamed inside your home folder, and nothing is ever overwritten silently.
+- **Asks before anything risky.** Deleting, overwriting, shutting down or clicking a control that sends, deletes or buys needs your confirmation. Password fields are never touched, files are only moved, copied or renamed inside your home folder, and nothing is ever overwritten silently. Jarvis cannot delete files at all until you turn on **Allow File Deletion** in Settings → Windows Control.
 - **Sees your screen only when you ask.** The screenshot is read offline and never stored, and one switch in Settings removes the ability entirely.
 - **Smart devices.** A Roku TV on your home network ("turn off the TV", "put on Netflix") is built in ([setup](docs/CONFIGURATION.md#roku-tv)); other devices connect through MCP, for example Home Assistant.
 

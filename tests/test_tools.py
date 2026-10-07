@@ -7,6 +7,7 @@ from jarvis.tools.registry import run_tool_with_retries, ToolExecutionResult
 class DummyCfg:
     def __init__(self):
         self.voice_debug = False
+        self.file_delete_enabled = True
         self.ollama_base_url = "http://localhost"
         self.ollama_chat_model = "test"
         self.llm_chat_timeout_sec = 5.0
