@@ -36,7 +36,12 @@ The capture queue between the audio callback and the listener thread holds
 `intent_judge_timeout_sec` (counted up to the Settings maximum of 30 s) plus
 2 s of audio, at least 64 blocks. The intent judge runs on the listener thread,
 so speech the user starts while it decides is kept; anything beyond that bound
-is dropped and reported by the health check.
+is dropped and reported by the health check. Each block is one frame, so a
+block's capture time is estimated from the blocks still queued behind it, and
+speech timing (utterance start and end, the end of speech, echo flags and
+hot-window checks) uses capture time rather than the time the listener got to
+it. A collection does not complete while more than about 100 ms of captured
+audio is waiting, so speech said while the judge decided joins the request.
 
 Audio-frame processing is limited to VAD and utterance assembly. Completed
 utterances are enqueued for a single FIFO Whisper worker. Transcription results
@@ -161,7 +166,7 @@ An accepted utterance starts a collection: the extracted query is held while the
 - A collection with query text is dispatched after `voice_collect_seconds` (default 1.0 s) of silence. In practice the query is dispatched as soon as Whisper and the judge finish when they take longer than that.
 - A bare wake word (no query text yet) waits up to `voice_wake_wait_seconds` (default 4.5 s) of silence for the request. An utterance that is only the wake word (or an alias) and punctuation is recognised deterministically before the intent judge and starts this wait without judging, because a small judge can invent a query from the name alone. When the wait ends with no request, the engagement ends: the face returns to idle and the next utterance is handled from wake word mode (wake detection, fast path and judge) like any other.
 - A manual wake (`VoiceListener.toggle_manual_wake()`, triggered by clicking the orb) is equivalent to a bare wake word: the request is flagged from any thread and the listener thread starts the same wait on its next tick. If the listener is already collecting a request or in the hot window, the toggle instead deactivates: the pending request is discarded (nothing is dispatched), the hot window ends and the face returns to idle. It is ignored while hold-to-dictate is recording. While a reply is in progress (queued or being generated on the reply worker, being spoken, or a background bridge request in flight), the toggle instead stops it at once on the calling thread, exactly as an addressed spoken stop does: pending replies are cancelled, the bridge request is cancelled, TTS is interrupted, any scheduled hot window is cancelled and the face returns to idle; that toggle does not also wake. At the daemon level (`jarvis.daemon.toggle_manual_wake`), a typed chat request in flight is cancelled (as the chat window's Stop does) instead of waking.
-- The collection never completes while the user is speaking (VAD utterance in progress) or an utterance is still queued for or inside Whisper. Voiced frames during the collection restart the pause, and fragments transcribed during it are appended. `voice_max_collect_seconds` bounds the whole collection regardless.
+- The collection never completes while the user is speaking (VAD utterance in progress), captured audio is still waiting to be processed, or an utterance is still queued for or inside Whisper. Voiced frames during the collection restart the pause, and fragments transcribed during it are appended. `voice_max_collect_seconds` bounds the whole collection regardless.
 - Accepting an utterance keeps audio the user has already started speaking so it can join the request. Audio captured while TTS is playing is discarded at that point as likely echo.
 
 **Gating:** The judge is called only when there is an engagement signal — (a) a wake word was detected in the current utterance, (b) the utterance falls inside (or pending) a hot window, or (c) TTS is currently speaking. Pure ambient speech skips the judge entirely. This keeps the synchronous audio loop from blocking up to `intent_judge_timeout_sec` on every background utterance, which would otherwise freeze the UI when Ollama is slow or contended.

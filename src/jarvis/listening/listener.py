@@ -1519,6 +1519,7 @@ class VoiceListener(threading.Thread):
         """True while the user is talking or an utterance awaits its transcript."""
         return (
             self.is_speech_active
+            or self._capture_backlog_pending()
             or self._transcription_jobs_q.unfinished_tasks > 0
             or not self._transcription_results_q.empty()
         )
@@ -3028,7 +3029,7 @@ class VoiceListener(threading.Thread):
                 if np is None:
                     continue
 
-                self._process_audio_block(item)
+                self._consume_audio_block(item)
 
     # Past the utterance cap, how long the cut may wait for a pause between words.
     _UTTERANCE_CAP_GRACE_MS = 500
@@ -3049,9 +3050,25 @@ class VoiceListener(threading.Thread):
         self._cap_grace_frames = max(1, self._UTTERANCE_CAP_GRACE_MS // frame_ms)
         return frame_ms
 
-    def _process_audio_block(self, item) -> None:
+    def _consume_audio_block(self, item) -> None:
+        """Process one block taken from the capture queue, timed from when it was captured.
+
+        Each block holds one frame, so the blocks still queued behind it say
+        how long ago it was captured. Speech timing, echo flags and hot-window
+        checks then use capture time even when the listener fell behind (for
+        example while the intent judge decided an earlier utterance).
+        """
+        lag = self._audio_q.qsize() * getattr(self, "_frame_ms", 20) / 1000.0
+        self._process_audio_block(item, captured_at=time.time() - lag)
+
+    def _capture_backlog_pending(self) -> bool:
+        """True while captured audio waits to be processed (more than about 100 ms of it)."""
+        frame_ms = getattr(self, "_frame_ms", 20)
+        return self._audio_q.qsize() > max(1, 100 // frame_ms)
+
+    def _process_audio_block(self, item, captured_at: Optional[float] = None) -> None:
         """Run VAD and utterance assembly over one captured audio block."""
-        frame_timestamp = time.time()  # Timestamp for this batch of frames
+        frame_timestamp = time.time() if captured_at is None else captured_at
         for frame in self._audio_frames(item):
             # VAD decision
             is_voice = self._is_speech_frame(frame)
@@ -3066,7 +3083,7 @@ class VoiceListener(threading.Thread):
                     # Backdate start time by pre-roll duration — the
                     # actual speech onset was before VAD triggered.
                     pre_roll_sec = len(self._pre_roll) * self._frame_ms / 1000.0
-                    utterance_start_time = time.time() - pre_roll_sec
+                    utterance_start_time = frame_timestamp - pre_roll_sec
 
                     # Track utterance timing for echo detection
                     self.echo_detector.track_utterance_timing(utterance_start_time, 0.0)
@@ -3105,7 +3122,7 @@ class VoiceListener(threading.Thread):
                     if forced_cut and is_voice:
                         carried = list(self._utterance_frames[-self._pre_roll_max_frames:])
                         debug_log(f"utterance cut at {frames * self._frame_ms} ms while speech continues", "voice")
-                    self._finalize_utterance()
+                    self._finalize_utterance(end_time=frame_timestamp)
                     self._pre_roll.clear()
                     self._pre_roll.extend(carried)
 
@@ -3114,8 +3131,8 @@ class VoiceListener(threading.Thread):
             # Check for query timeouts
             self._check_query_timeout()
 
-    def _finalize_utterance(self) -> None:
-        """Queue a completed utterance for serial transcription."""
+    def _finalize_utterance(self, end_time: Optional[float] = None) -> None:
+        """Queue a completed utterance for serial transcription; ``end_time`` is its capture time."""
         self._barge_in_voiced_frames = 0
         self._barge_in_next_check = 0
         self._barge_in_passes = 0
@@ -3131,7 +3148,7 @@ class VoiceListener(threading.Thread):
             return
 
         # Track when utterance ends - but don't overwrite global timing yet
-        utterance_end_time = time.time()
+        utterance_end_time = time.time() if end_time is None else end_time
         utterance_start_time = self.echo_detector._utterance_start_time
         speech_end_time = self._last_voice_frame_time or utterance_end_time
         TurnLatency(speech_end_time).mark("utterance finalised (VAD endpoint silence)")

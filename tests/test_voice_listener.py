@@ -939,6 +939,7 @@ class TestCrossPlatformAudioHealthWarning:
                                 raise q.Empty()
 
                             listener._audio_q = MagicMock()
+                            listener._audio_q.qsize.return_value = 0
                             listener._audio_q.get = fake_get
                             listener._callback_count = 0
 
@@ -1112,6 +1113,7 @@ class TestSampleRateFallback:
                                 raise q.Empty()
 
                             listener._audio_q = MagicMock()
+                            listener._audio_q.qsize.return_value = 0
                             listener._audio_q.get = fake_get
 
                             with patch("jarvis.listening.listener.time") as mock_time:
