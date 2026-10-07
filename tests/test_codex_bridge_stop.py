@@ -129,3 +129,20 @@ class TestChatStop:
         runtime.set_service(service)
         daemon.cancel_active_chat_query()
         assert service.cancelled == ["stop"]
+
+
+@pytest.mark.unit
+class TestCloudModelCannotEndTheConversation:
+    """A cloud model calling the local ``stop`` tool would end the turn silently, so it is never offered."""
+
+    @pytest.mark.parametrize("mode", ["codex", "claude"])
+    def test_stop_tool_is_not_in_the_bridge_snapshot(self, mode):
+        from jarvis.tools.registry import BUILTIN_TOOLS
+        from jarvis.codex_bridge.service import codex_tool_snapshot
+        from jarvis.claude_bridge.service import claude_tool_snapshot
+
+        assert "stop" in BUILTIN_TOOLS
+        cfg = SimpleNamespace(mcps={})
+        snapshot = (codex_tool_snapshot if mode == "codex" else claude_tool_snapshot)(cfg)
+        assert snapshot, "the bridge still offers the other tools"
+        assert "stop" not in snapshot
