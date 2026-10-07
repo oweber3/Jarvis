@@ -1988,6 +1988,31 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
     except (TypeError, ValueError):
         tool_search_cap = 3
 
+    # Every tool call of this reply carries this reference, so the confirmation a call raises is
+    # found exactly (``ConfirmationStore.pending_for_ref``).
+    _confirmation_ref = f"reply-{uuid.uuid4().hex}"
+
+    def _held_question(tool_name: str, tool_call_id: str, result, text_mode: bool) -> Optional[str]:
+        """The gate's own question when the call now waits for the user's confirmation, else None.
+
+        Only one confirmation can be pending, so the reply ends here: a later held call would replace
+        this one, and a paraphrase could name a different action from the one a "yes" runs. The
+        question is recorded as the call's result, so the tool carryover keeps the call answered.
+        """
+        if _conf_store.pending_for_ref(_confirmation_ref) is None:
+            return None
+        question = (redact(result.reply_text or result.error_message or "").strip()
+                    or "Please confirm the action.")
+        if text_mode:
+            messages.append({"role": "user", "content": f"[Tool result: {tool_name}]\n{question}",
+                             "tool_name": tool_name, "tool_failed": True})
+        else:
+            messages.append({"role": "tool", "tool_call_id": tool_call_id, "tool_name": tool_name,
+                             "content": question, "tool_failed": True})
+        debug_log(f"{tool_name} awaits confirmation; reply ends with its question", "safety")
+        print(f"    ✋ {tool_name} is waiting for your confirmation", flush=True)
+        return question
+
     reply: Optional[str] = None
     # The latest plausible natural-language candidate. Used by the max-turns
     # digest backstop when the loop exhausts without producing a reply.
@@ -2138,7 +2163,12 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
                                 redacted_text=redacted,
                                 max_retries=1,
                                 language=language,
+                                request_ref=_confirmation_ref,
                             )
+                            _question = _held_question(_name, _plan_call_id, _plan_result, True)
+                            if _question:
+                                reply = _question
+                                break
                             if _plan_result.reply_text:
                                 _plan_text = _maybe_digest_tool_result(
                                     cfg=cfg,
@@ -2507,7 +2537,12 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
                 redacted_text=redacted,
                 max_retries=1,
                 language=language,
+                request_ref=_confirmation_ref,
             )
+            _question = _held_question(tool_name, tool_call_id, result, use_text_tools)
+            if _question:
+                reply = _question
+                break
 
             # Handle stop tool - end conversation without response
             if result.reply_text == STOP_SIGNAL:
