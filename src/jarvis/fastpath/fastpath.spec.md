@@ -123,7 +123,9 @@ as reply output. Fast turns record redacted user and assistant messages.
 
 The listener checks only finalised transcripts, after echo/stop checks and
 pending confirmation handling. A wake word or hot-window engagement is required.
-A confident match cancels pending hot-window activation, marks its transcript
+A confident match cancels pending hot-window activation, closes an open hot
+window (without changing the face, so its expiry cannot reset the face or print
+"Returning to wake word mode" mid-reply), marks its transcript
 segment processed and calls `_dispatch_query` immediately, skipping judge and
 collection. Existing collection fragments and transcripts captured during TTS
 keep the existing judge path. No match preserves that path unchanged. Normal

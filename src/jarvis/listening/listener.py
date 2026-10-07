@@ -924,6 +924,8 @@ class VoiceListener(threading.Thread):
                 debug_log(f'FAST_ROUTE voice family={fast_match.family} tool={fast_match.tool_name}; judge and collection skipped', 'routing')
                 self._mark_turn("fast-command match")
                 self.state_manager.cancel_hot_window_activation()
+                # The window's speech is answered; its expiry must not reset the face mid-reply.
+                self.state_manager.close_hot_window()
                 self._transcript_buffer.mark_segment_processed(text_lower)
                 self._dispatch_query(fast_query)
                 return
