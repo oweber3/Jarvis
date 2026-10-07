@@ -2150,6 +2150,7 @@ class VoiceListener(threading.Thread):
             debug_log("barge-in: request heard, stopping TTS", "voice")
             self._barge_in_reset()
             tts.interrupt()
+            self.echo_detector.track_tts_finish()  # an interrupted reply runs no completion callback
         else:
             debug_log("barge-in: no request heard, resuming TTS", "voice")
             self._barge_in_resume()
