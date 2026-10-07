@@ -26,6 +26,8 @@ MCP_SERVER = "jarvis"
 _READ_CHUNK = 65536
 _ERROR_MESSAGE_CHARS = 300
 _AUTH_TIMEOUT_SEC = 20.0
+# The only sign-in Claude mode uses: a Claude subscription, never an API key.
+SUBSCRIPTION_AUTH = "claude.ai"
 
 # Analytics, error reporting, update checks, memory files and auto-memory are off for the child only;
 # the user's Claude Code settings are never changed.
@@ -129,6 +131,15 @@ def read_auth_status(executable: str, *, runner: Callable[..., Any] = subprocess
     if not isinstance(data, dict):
         raise ClaudeCliError("start_failed", "auth status output")
     return {key: data.get(key) for key in ("loggedIn", "authMethod", "apiProvider", "subscriptionType")}
+
+
+def sign_in_failure(auth: Mapping[str, Any]) -> Optional[str]:
+    """``signed_out`` or ``api_key_auth`` for an ``auth status`` that Claude mode cannot use, else None."""
+    if not auth.get("loggedIn"):
+        return "signed_out"
+    if auth.get("authMethod") != SUBSCRIPTION_AUTH:
+        return "api_key_auth"
+    return None
 
 
 class ClaudeSession:

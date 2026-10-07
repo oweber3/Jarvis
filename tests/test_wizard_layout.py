@@ -1,7 +1,7 @@
 """Wizard controls stay readable when the page exceeds the display height."""
 
 import pytest
-from PyQt6.QtCore import QPoint
+from PyQt6.QtCore import QPoint, QRect
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QComboBox, QDoubleSpinBox, QLineEdit, QPushButton, QScrollArea, QWizard
 
@@ -13,6 +13,7 @@ from desktop_app import setup_wizard as ui
     ui.DictationPage, ui.SearchProvidersPage,
     ui.WelcomePage, ui.OllamaInstallPage, ui.OllamaServerPage,
     ui.WhisperSetupPage, ui.LocationPage, ui.MCPPage, ui.CompletePage,
+    ui.CloudModesPage,
 ])
 @pytest.mark.parametrize("width,height", [(700, 600), (700, 800), (960, 780)])
 def test_controls_fit_on_short_display(qapp, monkeypatch, page_type, width, height):
@@ -90,6 +91,114 @@ def test_expanded_memory_estimates_remain_usable(qapp, monkeypatch, width, heigh
         scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
         bottom = scroll.widget().mapTo(scroll.viewport(), QPoint(0, scroll.widget().height()))
         assert bottom.y() <= scroll.viewport().height()
+        assert wizard.button(QWizard.WizardButton.FinishButton).isVisible()
+    finally:
+        wizard.close()
+
+
+def _visible_rect(widget, ancestor):
+    return QRect(widget.mapTo(ancestor, QPoint(0, 0)), widget.size())
+
+
+def _stop_centre_x(slider, value, ancestor):
+    from PyQt6.QtWidgets import QStyle, QStyleOptionSlider
+
+    option = QStyleOptionSlider()
+    slider.initStyleOption(option)
+    option.sliderPosition = option.sliderValue = value
+    handle = slider.style().subControlRect(
+        QStyle.ComplexControl.CC_Slider, option, QStyle.SubControl.SC_SliderHandle, slider
+    )
+    return slider.mapTo(ancestor, handle.center()).x()
+
+
+@pytest.mark.parametrize("english", [True, False])
+@pytest.mark.parametrize("width,height", [(700, 600), (960, 780)])
+def test_whisper_slider_labels_sit_at_their_stops_without_overlap(qapp, monkeypatch, english, width, height):
+    from types import SimpleNamespace
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWidgets import QApplication, QLabel
+
+    # Five stops (turbo offered) is the tightest case.
+    monkeypatch.setattr(ui, "_is_faster_whisper_turbo_supported", lambda: True)
+    monkeypatch.setattr(ui, "load_settings",
+                        lambda: SimpleNamespace(whisper_model="small.en" if english else "small"))
+    wizard = QWizard()
+    wizard.setStyleSheet(ui.themed_stylesheet())
+    page = ui.WhisperSetupPage()
+    wizard.addPage(page)
+    wizard.resize(width, height)
+    wizard.show()
+    QTest.qWait(100)
+    try:
+        # The app opens the wizard from inside its running event loop, where Qt holds deferred
+        # deletions until the dialog closes: settle layouts only, never deferred deletes.
+        page.initializePage()
+        page._on_language_changed(not english)
+        page._on_language_changed(english)
+        for _ in range(3):
+            QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+        card = page._model_info_label.parentWidget()
+        visible = [l for l in card.findChildren(QLabel) if l.isVisible() and l.text()]
+        names = sorted((l for l in visible if l.objectName() == "model_name"), key=lambda l: l.x())
+        sizes = sorted((l for l in visible if l.objectName() == "model_size"), key=lambda l: l.x())
+        options = page._get_current_model_options()
+        assert [l.text() for l in names] == [o[1] for o in options]
+        assert len(sizes) == len(options)
+
+        rects = [_visible_rect(l, card) for l in visible]
+        for i, a in enumerate(rects):
+            for b in rects[i + 1:]:
+                assert not a.intersects(b), (a, b)
+
+        slider = page._model_slider
+        slider_rect = _visible_rect(slider, card)
+        info_top = _visible_rect(page._model_info_label, card).top()
+        for value, (name, size, option) in enumerate(zip(names, sizes, options)):
+            stop = _stop_centre_x(slider, value, card)
+            name_rect, size_rect = _visible_rect(name, card), _visible_rect(size, card)
+            assert option[2] in size.text()
+            assert name_rect.left() <= stop <= name_rect.right()
+            assert size_rect.left() <= stop <= size_rect.right()
+            assert name_rect.bottom() < slider_rect.top()
+            assert slider_rect.bottom() < size_rect.top()
+            assert size_rect.bottom() < info_top
+        scroll = page.findChild(QScrollArea)
+        assert scroll.horizontalScrollBar().maximum() == 0
+    finally:
+        wizard.close()
+
+
+@pytest.mark.parametrize("width,height", [(700, 600), (960, 780)])
+def test_mcp_node_note_keeps_controls_usable(qapp, monkeypatch, tmp_path, width, height):
+    from desktop_app import node_setup
+
+    cfg = tmp_path / "config.json"
+    cfg.write_text("{}")
+    monkeypatch.setattr("jarvis.config.default_config_path", lambda: cfg)
+    monkeypatch.setattr(node_setup, "node_available", lambda: False)
+    monkeypatch.setattr(node_setup, "install_command", lambda: ["winget.exe"])
+    wizard = QWizard()
+    wizard.setStyleSheet(ui.themed_stylesheet())
+    page = ui.MCPPage()
+    wizard.addPage(page)
+    wizard.resize(width, height)
+    wizard.show()
+    page.initializePage()
+    for name, box in page._checkboxes.items():
+        box.setChecked(True)
+    page._show_node_status("Node.js could not be installed (exit code 1). " * 3, "warning")
+    QTest.qWait(100)
+    try:
+        assert page.node_note_shown()
+        assert wizard.height() <= height
+        for control in (page._install_node_btn, page._recheck_node_btn):
+            assert control.isVisible()
+            assert control.height() >= control.minimumSizeHint().height()
+            assert control.width() >= control.minimumSizeHint().width()
+        assert page._node_note.height() >= page._node_note.heightForWidth(page._node_note.width()) - 1
+        for scroll in page.findChildren(QScrollArea):
+            assert scroll.horizontalScrollBar().maximum() == 0
         assert wizard.button(QWizard.WizardButton.FinishButton).isVisible()
     finally:
         wizard.close()

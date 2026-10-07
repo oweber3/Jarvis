@@ -39,7 +39,7 @@ Your conversation memory stays on your computer. Sensitive information is redact
 | Windows · x64 | `Jarvis-Windows-x64.zip` | Extract, then run `Jarvis.exe` |
 | Linux · x64 | `Jarvis-Linux-x64.tar.gz` | Extract, then run `./Jarvis/Jarvis` |
 
-**2. Choose your local models.** The setup wizard guides you through speech recognition and a model server. Use [Ollama](https://ollama.com/download), or connect an OpenAI-compatible server you already run, such as LM Studio, oMLX or llama.cpp.
+**2. Choose your local models.** The setup wizard guides you through speech recognition and a model server. Use [Ollama](https://ollama.com/download), or connect an OpenAI-compatible server you already run, such as LM Studio, oMLX or llama.cpp. An optional step lets you allow the Claude and Codex reply modes; leave them off to stay fully offline.
 
 **3. Make it yours.** Allow microphone access and let the first model downloads finish. When Jarvis reports that it is listening, try:
 
@@ -60,12 +60,25 @@ Memory needs depend on model size, quantisation, context length and speech recog
 | :--- | :--- |
 | Smaller hardware | `qwen3.5:0.8b` |
 | Default | `qwen3.5:9b` |
+| Most reliable PC control (12 GB+ GPU) | `gemma4:12b` |
 | Alternatives | `gemma4:e2b`, `gemma4:e4b` |
 | Larger local setup | `qwen3.8:27b` |
 
 Budget memory for Whisper and, when different from chat, the fast model used for voice intent and tool routing. Apple Silicon uses unified memory; other GPUs use dedicated VRAM.
 
-Optionally, **Settings → LLM & AI Models → Tool Model** lets a separate model choose and call tools while the chat model writes the reply. `gpt-oss:20b` chose tools most reliably in testing but needs about 13 GB; if it does not fit next to your chat model, use it as the chat model too, or every request reloads both.
+Optionally, **Settings → LLM & AI Models → Tool Model** lets a separate model choose and call tools while the chat model writes the reply. Setting it to the same model as chat costs no extra memory and made Qwen 3.5 noticeably more reliable; a different model only helps if both fit in memory together, or every request reloads them.
+
+**Quick reference for PC control.** 28 everyday requests (volume, media, settings, windows, files, websites, PDFs, weather, web search), each run three times through Jarvis in local mode on an RTX 5070 (12 GB). "Correct" means the right tool with the right arguments and a sensible reply. Speed is the median time from request to reply.
+
+| Model (chat, fast and tool) | Download | Correct | Speed |
+| :--- | :--- | :--- | :--- |
+| `gemma4:12b` | 7.6 GB | 82/84 | 2.7 s |
+| `gpt-oss:20b` | 13.8 GB | 74/84 | 5.9 s |
+| `granite4.2:8b` | 5.3 GB | 70/84 | 1.5 s |
+| `qwen3.5:9b` (fast model `qwen3.5:4b`) | 6.6 + 3.3 GB | 64/84 | 1.7 s |
+| `qwen3.5:4b` | 3.3 GB | 63/84 | 1.4 s |
+
+Pick the highest row that fits in your GPU memory next to Whisper. When a web search came back with nothing useful, most models invented race results in one or two of three tries; only the `qwen3.5:9b` setup never did. Smaller GPUs and CPU-only setups were not measured. Full results and method: [docs/TOOL_MODEL_BENCHMARK.md](docs/TOOL_MODEL_BENCHMARK.md).
 
 </details>
 
@@ -192,13 +205,13 @@ Hold to record and release to paste. Double-tap for hands-free recording. Option
 
 ### Bring your own tools
 
-Connect MCP servers for browser automation, Home Assistant, GitHub, databases and more. Credentials and network access depend on the tools you choose. Review a server's permissions before enabling it.
+Connect MCP servers for browser automation, Home Assistant, GitHub, databases and more. Credentials and network access depend on the tools you choose. Review a server's permissions before enabling it. Most catalogue servers run on Node.js, which Jarvis does not bundle: when you tick one in setup and Node.js is missing, the wizard can install the official LTS release with winget, or links to the download.
 
 [Integration examples and server settings →](docs/CONFIGURATION.md#mcp-integrations)
 
 ### Switching who answers
 
-Jarvis answers with its local model by default. If you allow them in **Settings → Reply Mode**, it can instead hand requests to **ChatGPT through Codex** or **Claude through Claude Code**, both running hidden in the background. Switch at any time, with no restart:
+Jarvis answers with its local model by default. If you allow them in **Settings → Reply Mode** (or on the setup wizard's optional **Cloud reply modes** step, which also checks that each one is installed and signed in), it can instead hand requests to **ChatGPT through Codex** or **Claude through Claude Code**, both running hidden in the background. Switch at any time, with no restart:
 
 - say "Jarvis, use Claude", "use ChatGPT" or "go local";
 - or pick a mode under **Reply Mode** in the tray menu.
