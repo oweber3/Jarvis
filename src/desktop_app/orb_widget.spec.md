@@ -11,7 +11,7 @@ The face window shows a reactive sphere of light, the orb (`orb_widget.py`), hos
 | `build_sphere` / `SpherePoints` | Qt-free. The fixed set of `SPHERE_POINTS` (5,000) points, built once per process (`shared_sphere`) and never regenerated per frame |
 | `OrbModel` | Qt-free animation maths. Smooths glow, rotation, the voice level (`voice`), the thinking glow (`think`) and the wake flash towards per-state targets, and projects the sphere for each frame (`sphere_frame`) with numpy. Frame gaps are clamped |
 | `OrbWidget` | `QPainter` renderer. Owns the timer, polls state (about 10 Hz), reads audio level, paints the model. Emits `clicked` on a left-button release over it; the host decides what a click means |
-| `AudioLevelSource` | Thread-safe 0..1 level with staleness expiry. Producers `push`, the orb reads `current` |
+| `shared_voice_level` / `AudioLevelSource` | Where the orb reads its 0..1 level: by default the live level the daemon shares (`jarvis.voice_levels`), or any object with `current()`; `AudioLevelSource` is a thread-safe in-process one with staleness expiry |
 
 ## Look: a sphere of light that moves as one
 
@@ -45,10 +45,17 @@ Text is minimal: a `J.A.R.V.I.S.` header and a single state label footer.
 
 - **Lightweight**: the timer runs only while the widget is visible (show/hide events): about 32 FPS (30 ms) in an active state or during the wake flash, about 16 FPS (62 ms) at rest. The sphere is projected with one matrix product per frame and drawn in batches by sphere and brightness step (steps on a square-root scale so dim points still show). Each frame's points go into one numpy-backed `sip.array` that `QPainter` reads in place, so no Qt object is built per point. Only the brightest steps are antialiased, so a frame costs about 3.5 ms at rest and under 4 ms when speaking at the face window's default size.
 - **Resizes**: geometry derives from the widget size, with space reserved for header and footer; tiny sizes paint without error.
-- **Real amplitude is optional**: with no fresh level, listening stays calm and speaking uses a synthetic speech-like envelope. A producer that stops pushing never freezes the orb.
+- **Real amplitude is optional**: with no fresh level, listening stays calm and speaking uses a synthetic speech-like envelope. A producer that stops publishing never freezes the orb.
 - **One palette**: the orb's state colours and backdrop come from `ORB_PALETTE` in `themes.py`, which the chat window's HUD palette is derived from. Dictating (green) and error (red) take their hues from the status colours in `ORB_PALETTE`. The splash screen hosts this widget rather than painting an orb of its own.
-- **Core independence**: the orb depends on core only for `debug_log`; core never depends on the orb's internals.
+- **Core independence**: the orb depends on core only for `debug_log` and the shared voice levels (`jarvis.voice_levels`); core never depends on the orb's internals.
 
 ## Audio level wiring
 
-`get_audio_level_source()` is the default source. Producers connect by calling `push(level)`: mic RMS from the listener frame loop, and playback RMS from the TTS audio callback. Both producers run in the daemon, so in dev mode (daemon as subprocess) the level has to cross the process boundary the same way the state file does before the orb sees it.
+The daemon shares two live levels through `jarvis.voice_levels`, so the orb sees them whether the daemon runs as a thread (bundled) or a subprocess (dev mode):
+
+- **Microphone**: the listener publishes the loudness of every capture frame it processes, timed from when the frame was captured (so audio it catches up on after falling behind reads as stale, not live), and dictation publishes the loudness of every block it records.
+- **Jarvis's voice**: Piper publishes the loudness of every block it plays, after ducking. It does so even when the PC voice is off and a voice output plays the reply, so the orb still moves with the voice. Chatterbox publishes nothing, so while it speaks the orb follows the microphone.
+
+Loudness is the block's RMS on a decibel scale, so quiet-room noise reads near 0 and loud speech near 1 (`level_from_rms`). The levels live in a small memory-mapped file in the temp folder (`jarvis_voice_levels`), one slot per voice guarded by a sequence number, written as three separate steps (odd sequence, data, even sequence), so a reader in another process never takes half a write: it retries while a write is in progress. Each level carries the time it was measured and reads as absent after `MAX_AGE_S` (0.3 s). `current()` returns Jarvis's voice while it plays and the microphone otherwise, so the orb follows whoever is speaking without knowing the assistant's state, and Jarvis's own voice heard by the microphone never moves it twice.
+
+Only the two numbers and their times are shared: never audio, and nothing is logged. Publishing never raises; when the file cannot be used the orb falls back as above. Tests point the channel at a file of their own (`tests/conftest.py`), so they never move the orb of a Jarvis running on the same machine.

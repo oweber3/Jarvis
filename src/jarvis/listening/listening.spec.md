@@ -23,6 +23,10 @@ on audio-state resets. WebRTC VAD receives a 16 kHz mono PCM copy, including whe
 the hardware captures at 44.1 or 48 kHz. Utterances retain native-rate samples
 until resampling for Whisper, preserving their duration.
 
+Every processed frame's loudness is published as a single 0..1 number for the orb
+(`jarvis.voice_levels`, see `src/desktop_app/orb_widget.spec.md`); no audio leaves
+the listener this way.
+
 VAD errors emit a single warning and use the configured energy threshold instead
 of silently discarding speech. Capture health is checked every five seconds with
 a monotonic clock. Missing callbacks, silent samples, callback errors, PortAudio

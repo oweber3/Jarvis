@@ -220,6 +220,27 @@ def fake_tv(monkeypatch):
     device.close()
 
 
+@pytest.fixture(scope="session")
+def _voice_levels_sandbox(tmp_path_factory):
+    return tmp_path_factory.mktemp("voice_levels")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_voice_levels(_voice_levels_sandbox, request, monkeypatch):
+    """Keep tests from moving the orb of a Jarvis running on this machine: each test gets its own levels file."""
+    import importlib
+    import zlib
+    from jarvis.voice_levels import LevelChannel
+
+    sandbox = str(_voice_levels_sandbox / f"levels-{zlib.crc32(request.node.nodeid.encode()):08x}")
+    for name in ("jarvis.voice_levels", "src.jarvis.voice_levels"):   # some tests import through ``src.``
+        try:
+            module = importlib.import_module(name)
+        except ImportError:
+            continue
+        monkeypatch.setattr(module, "_channel", LevelChannel(sandbox))
+
+
 @pytest.fixture(autouse=True)
 def _isolate_powertoys_files(monkeypatch):
     """Keep tests from reading the developer's real PowerToys FancyZones folder."""

@@ -38,8 +38,8 @@ from desktop_app.orb_widget import (  # the orb's colour and easing helpers keep
     _blend,
     _clamp01,
     _with_alpha,
-    get_audio_level_source,
     orb_state_for,
+    shared_voice_level,
     state_colours,
     synthetic_speech_level,
 )
@@ -404,7 +404,7 @@ class WakeOverlay(QObject):
                  enabled: bool = True, parent: Optional[QObject] = None):
         super().__init__(parent)
         self._read_state = state_reader or _default_state
-        self._audio = audio_source if audio_source is not None else get_audio_level_source()
+        self._audio = audio_source if audio_source is not None else shared_voice_level()
         self._screens = screens or _default_screens
         self._enabled = bool(enabled)
         self._started = False

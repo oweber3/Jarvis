@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Callable, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from ..assistant_state import AssistantState, set_state
+from .. import voice_levels
 from ..debug import debug_log
 from ..utils.audio_lock import portaudio_lock
 
@@ -745,13 +746,16 @@ class _StreamedAudio:
         if drained:
             self.output_drained.set()
         out[written:] = 0
-        if not self._audible:
-            out[:] = 0
-        elif start != 1.0 or target != 1.0:
-            import numpy as np
+        import numpy as np
 
+        if start != 1.0 or target != 1.0:
             ramp = np.linspace(start, target, wanted + 1, dtype=np.float32)[1:]
             out[:] = np.clip(out * ramp, -32768, 32767).astype(out.dtype)
+        # The orb follows the voice even when the PC speakers are off and another output plays it.
+        rms = float(np.sqrt(np.mean(np.square(out, dtype=np.float32)))) if wanted else 0.0
+        voice_levels.publish(voice_levels.Voice.JARVIS, voice_levels.level_from_rms(rms, full_scale=32768.0))
+        if not self._audible:
+            out[:] = 0
         return not exhausted
 
     def _release_output(self, start_gain: float, end_gain: float) -> None:

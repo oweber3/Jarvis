@@ -18,6 +18,7 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
+from .. import voice_levels
 from ..debug import debug_log
 from ..utils.audio_lock import portaudio_lock
 from ..utils.audio_capture import mono_capture, open_input_stream, resolve_input_device
@@ -991,7 +992,11 @@ class DictationEngine:
             return
         # No max duration cap — the user controls when to stop (release hotkey).
         # A cap would paste prematurely mid-dictation and restart recording.
-        self._audio_frames.append(mono_capture(indata).copy())
+        frame = mono_capture(indata).copy()
+        self._audio_frames.append(frame)
+        if frame.size:
+            rms = math.sqrt(float((frame.astype("float32") ** 2).mean()))
+            voice_levels.publish(voice_levels.Voice.MICROPHONE, voice_levels.level_from_rms(rms))
 
     def _stop_recording(self, discard: bool = False) -> None:
         # Flip state and snapshot the work queue atomically, under minimal

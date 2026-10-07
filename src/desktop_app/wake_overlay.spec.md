@@ -42,7 +42,7 @@ The whole effect is one soft glow hugging the screen edges, brightest at the edg
 - **Clean up fully**: the edge windows exist only while the effect is visible. When it has faded out, or on disable or shutdown, the frame timer stops and every window is closed and deleted. Screens are read again at each wake, so monitors added or removed in between are handled.
 - **Animates only while visible**: the frame timer (30 ms, about 32 FPS on Windows) runs only while the windows are up. While hidden, only a light state watch runs (about 10 Hz, reading the same state file as the orb).
 - **Cheap to draw**: each band's glow is rendered once at a shallow and a deep reach, tinted, and the breath cross-fades between the two, so a frame is two image draws per band. A band whose look has not changed is not repainted.
-- **Audio is optional**: it reads `get_audio_level_source()` like the orb; with no fresh level, speaking uses the orb's synthetic speech envelope.
+- **Audio is optional**: it reads the live voice level like the orb (`shared_voice_level`, `orb_widget.spec.md`); with no fresh level, speaking uses the orb's synthetic speech envelope.
 - **Local only**: nothing is logged beyond state changes and window counts, and nothing leaves the PC.
 - **Core independence**: lives in `desktop_app`; core knows nothing of it. The Windows API calls live only in `win32_overlay.py`, imported lazily and failing safe (no screen skipped, the window left as Qt made it).
 

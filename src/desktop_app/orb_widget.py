@@ -14,9 +14,11 @@ Split in layers so each can be improved independently:
 - ``OrbWidget``: a ``QPainter`` renderer that owns the timer, reads state and
   audio level, and draws the model as additive light over a dark backdrop.
 
-Audio amplitude arrives through ``AudioLevelSource`` (push a 0..1 level from
-any thread). When no fresh level exists, listening stays calm and speaking
-uses a synthetic speech-like envelope.
+By default the orb follows the live voice level the daemon shares
+(``jarvis.voice_levels``): Jarvis's voice while it plays, otherwise the
+microphone. Any object with ``current()`` can stand in (``AudioLevelSource``
+is an in-process one). When no fresh level exists, listening stays calm and
+speaking uses a synthetic speech-like envelope.
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import QWidget
 
 from desktop_app.themes import ORB_PALETTE
+from jarvis import voice_levels
 from jarvis.debug import debug_log
 
 
@@ -153,17 +156,16 @@ class AudioLevelSource:
             return self._level
 
 
-_audio_source: Optional[AudioLevelSource] = None
-_audio_source_lock = threading.Lock()
+class SharedVoiceLevel:
+    """The live level the daemon shares, from any process: Jarvis's voice while it plays, otherwise the microphone."""
+
+    def current(self) -> Optional[float]:
+        return voice_levels.current()
 
 
-def get_audio_level_source() -> AudioLevelSource:
-    """Process-wide level source the orb reads by default."""
-    global _audio_source
-    with _audio_source_lock:
-        if _audio_source is None:
-            _audio_source = AudioLevelSource()
-        return _audio_source
+def shared_voice_level() -> SharedVoiceLevel:
+    """The level source the orb and the wake screen effect read by default."""
+    return SharedVoiceLevel()
 
 
 def _approach(value: float, target: float, rate: float, dt: float) -> float:
@@ -357,7 +359,7 @@ class OrbWidget(QWidget):
     COLOUR_RATE = 6.0
     _LEVELS = 7          # brightness steps the points are drawn in
 
-    def __init__(self, parent=None, audio_source: Optional[AudioLevelSource] = None,
+    def __init__(self, parent=None, audio_source=None,
                  state_manager=None):
         super().__init__(parent)
         self.setMinimumSize(240, 260)
@@ -367,7 +369,7 @@ class OrbWidget(QWidget):
         self.orb_state = OrbState.OFFLINE
         self._override: Optional[OrbState] = None
         self._caption: Optional[str] = None
-        self._audio = audio_source if audio_source is not None else get_audio_level_source()
+        self._audio = audio_source if audio_source is not None else shared_voice_level()
         self._state_manager = state_manager
         self._since_poll = self.STATE_POLL_S
         self._colour = QColor(_LOOKS[OrbState.OFFLINE].colour)

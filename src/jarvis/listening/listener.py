@@ -37,6 +37,7 @@ from .intent_judge import (
     warm_up_chat_model,
 )
 from ..assistant_state import AssistantState, set_state
+from .. import voice_levels
 from ..bridge import modes as reply_modes
 from ..debug import debug_log
 from ..llm import get_embedding_backend
@@ -1600,14 +1601,15 @@ class VoiceListener(threading.Thread):
 
         debug_log("audio buffers cleared", "voice")
 
-    def _is_speech_frame(self, frame) -> bool:
-        """Determine if audio frame contains speech."""
+    def _is_speech_frame(self, frame, captured_at: Optional[float] = None) -> bool:
+        """Determine if audio frame contains speech; ``captured_at`` (wall clock) times its published loudness."""
         if np is None:
             return True
 
         # Track energy for echo detection
         rms = float(np.sqrt(np.mean(np.square(frame))))
         self._recent_audio_energy.append(rms)
+        voice_levels.publish(voice_levels.Voice.MICROPHONE, voice_levels.level_from_rms(rms), now=captured_at)
 
         if self._vad is None:
             return rms >= float(getattr(self.cfg, "voice_min_energy", 0.0045))
@@ -3073,7 +3075,7 @@ class VoiceListener(threading.Thread):
         frame_timestamp = time.time() if captured_at is None else captured_at
         for frame in self._audio_frames(item):
             # VAD decision
-            is_voice = self._is_speech_frame(frame)
+            is_voice = self._is_speech_frame(frame, captured_at=frame_timestamp)
             self._speech_frames_seen += int(is_voice)
             if is_voice:
                 self._last_voice_frame_time = frame_timestamp

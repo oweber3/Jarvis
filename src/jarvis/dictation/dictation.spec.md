@@ -108,6 +108,9 @@ After transcription, text passes through these stages in order:
   sample rate is stored in `_stream_sample_rate`.
 - If the stream rate differs from the Whisper target rate, audio is resampled
   via linear interpolation before transcription.
+- While recording, each block's loudness is published as a single 0..1 number
+  for the orb (`jarvis.voice_levels`, see `src/desktop_app/orb_widget.spec.md`);
+  no audio leaves the engine this way.
 
 ## Edge Cases
 

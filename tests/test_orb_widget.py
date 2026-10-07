@@ -465,6 +465,37 @@ class TestOrbWidget:
         assert w.model.voice > 0.5
 
 
+class TestLiveVoiceLevels:
+    def test_by_default_the_orb_follows_the_level_the_daemon_shares(self, qapp):
+        from desktop_app.orb_widget import OrbWidget
+        from jarvis import voice_levels
+
+        w = OrbWidget()
+        w.set_state_override(OrbState.LISTENING)
+        for _ in range(20):
+            voice_levels.publish(voice_levels.Voice.MICROPHONE, 0.9)
+            w.tick(1.0 / 30)
+        assert w.model.voice > 0.5
+
+    def test_speaking_follows_jarvis_real_voice_rather_than_the_built_in_rhythm(self, qapp):
+        from desktop_app.orb_widget import OrbWidget
+        from jarvis import voice_levels
+
+        w = OrbWidget()
+        w.set_state_override(OrbState.SPEAKING)
+        for _ in range(30):
+            voice_levels.publish(voice_levels.Voice.JARVIS, 0.0)     # a pause in the reply
+            w.tick(1.0 / 30)
+        assert w.model.voice < 0.05
+
+    def test_the_wake_screen_effect_follows_the_same_level(self):
+        from desktop_app import wake_overlay
+        from jarvis import voice_levels
+
+        voice_levels.publish(voice_levels.Voice.MICROPHONE, 0.8)
+        assert wake_overlay.WakeOverlay(enabled=False)._audio.current() == pytest.approx(0.8)
+
+
 class TestFaceWindowHostsOrb:
     def test_face_window_contains_orb_and_keeps_launch_api(self, qapp):
         from desktop_app.face_widget import FaceWindow
