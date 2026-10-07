@@ -1,7 +1,5 @@
 # Web Chat Specification
 
-DRAFT FOR APPROVAL. Items marked **(decision)** wait for the owner's choice.
-
 A second chat interface for Jarvis, built on assistant-ui (React, MIT licence) and shown inside the desktop app. It adds a model selector and projects (named groups of chats). The Qt chat window (`src/desktop_app/chat_window.spec.md`) stays; a setting chooses which one the tray's `Chat` entry opens.
 
 ## Principles
@@ -11,7 +9,7 @@ A second chat interface for Jarvis, built on assistant-ui (React, MIT licence) a
 - **Loopback only.** The server listens on `127.0.0.1` and applies the Memory Viewer's Host and Origin checks to every request (below). It adds no network exposure.
 - **Same text path.** Every message runs through `jarvis.daemon.submit_text_query`, so redaction, the fast path, the one-query-at-a-time lock, central safety and desktop confirmations apply unchanged. The web chat never runs tools itself.
 - **Privacy.** Stored messages are the redacted text the dialogue memory holds, never what was typed. The owner can delete a chat or everything. Nothing is sent anywhere.
-- **Voice shares the open chat (decision).** See **Voice**.
+- **Voice shares the open chat.** See **Voice**.
 
 ## Where it runs
 
@@ -70,13 +68,13 @@ Jarvis has one dialogue memory, so exactly one chat is *open*: the one whose tur
 
 The hub mirrors every turn the memory gains into the open chat with `DialogueMemory.messages_after`, exactly as Phone Access does. Typed replies, voice turns and the outcome of a confirmed action therefore all land the same way, once. Local notices (busy, no reply, stopped) are shown but never stored.
 
-## Voice **(decision)**
+## Voice
 
-Recommended: **voice goes into the open chat**. A spoken request and a typed follow-up stay one conversation, as today. The page shows which chat voice is joining. With the window closed, voice joins the last open chat, and a first run opens a chat called "Voice and quick questions".
+**Voice goes into the open chat**. A spoken request and a typed follow-up stay one conversation, as today. The page shows which chat voice is joining. With the window closed, voice joins the last open chat, and a first run opens a chat called "Voice and quick questions".
 
 A separate permanent voice chat is not possible without a second dialogue memory, so it is not offered.
 
-## Models **(decision)**
+## Models
 
 The model selector in the composer lists:
 
@@ -85,7 +83,7 @@ The model selector in the composer lists:
 
 Choosing a reply mode calls `bridge.modes.switch` (so a mode that is not allowed is refused, a request in flight is cancelled and the choice is persisted, as the tray does). Choosing a local model changes the model for the whole assistant, voice included, and is persisted to the configuration, because the model is loaded once and shared. A live swap replaces the daemon's settings object and the listener's, loads the new model and releases the old one.
 
-Recommended: each chat **remembers** the mode and model it last used (`last_mode`, `last_model`) and shows them, but opening a chat never switches anything on its own. If they differ from the current ones, the page offers one tap to switch back. A cloud mode is never entered by opening a chat.
+Each chat **remembers** the mode and model it last used (`last_mode`, `last_model`) and shows them, but opening a chat never switches anything on its own. If they differ from the current ones, the page offers one tap to switch back. A cloud mode is never entered by opening a chat.
 
 ## HTTP API
 
