@@ -1587,3 +1587,114 @@ class TestIntentJudgeGating:
 
         assert mock_judge.judge.call_count == 1
         listener.state_manager.stop()
+
+
+# ---------------------------------------------------------------------------
+# Tests: Echo captured during TTS but transcribed after it ends
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestEchoTranscribedAfterTtsEnds:
+    """On a slow (CPU) Whisper the mic picks up Jarvis's reply while it plays,
+    but the transcript only arrives once TTS has finished. That transcript is
+    still Jarvis's own voice and must not start a new request, or Jarvis ends
+    up answering itself in a loop."""
+
+    def _capture_during_tts_then_finish(self, listener, mock_tts, tts_text):
+        listener.echo_detector.track_tts_start(tts_text)
+        captured_tts_start = listener.echo_detector._tts_start_time
+        speech_start = time.time()
+        mock_tts.is_speaking.return_value = False
+        _simulate_tts_finish(listener)
+        _wait_for_hot_window_active(listener)
+        return captured_tts_start, speech_start
+
+    @patch("builtins.print")
+    def test_pure_echo_rejected_even_when_judge_invents_a_request(self, _print):
+        listener, mock_tts = _create_listener(echo_tolerance=0.02, hot_window_seconds=3.0)
+        tts_text = "I can see your screen. It shows Claude and a Jarvis window that appears to be thinking."
+        captured_tts_start, speech_start = self._capture_during_tts_then_finish(
+            listener, mock_tts, tts_text)
+
+        _install_intent_judge(listener, _make_judgment(
+            directed=True, query="what's the weather in london"))
+        listener._process_transcript(
+            "I can see your screen. It shows Claude and a jar of this window that appears to be thinking.",
+            utterance_energy=0.01,
+            utterance_start_time=speech_start,
+            utterance_end_time=time.time(),
+            captured_during_tts=True,
+            captured_tts_start_time=captured_tts_start,
+        )
+
+        assert _accepted_query(listener) == ""
+        assert not _is_engaged(listener)
+        listener.state_manager.stop()
+
+    @patch("builtins.print")
+    def test_echo_containing_the_wake_word_does_not_engage(self, _print):
+        listener, mock_tts = _create_listener(echo_tolerance=0.02, hot_window_seconds=3.0)
+        tts_text = "I've just checked your screen. The Jarvis log shows it looked at the screen."
+        captured_tts_start, _ = self._capture_during_tts_then_finish(
+            listener, mock_tts, tts_text)
+        listener.state_manager.expire_hot_window()
+
+        _install_intent_judge(listener, _make_judgment(
+            directed=True, query="what are you doing"))
+        listener._process_transcript(
+            "I've just checked your screen. The Jarvis Log shows it looked at the screen.",
+            utterance_energy=0.01,
+            utterance_start_time=captured_tts_start,
+            utterance_end_time=captured_tts_start + 2.0,
+            captured_during_tts=True,
+            captured_tts_start_time=captured_tts_start,
+        )
+
+        assert _accepted_query(listener) == ""
+        listener.state_manager.stop()
+
+    @patch("builtins.print")
+    def test_user_follow_up_after_echo_is_kept(self, _print):
+        listener, mock_tts = _create_listener(echo_tolerance=0.02, hot_window_seconds=3.0)
+        tts_text = "The weather is sunny today."
+        captured_tts_start, speech_start = self._capture_during_tts_then_finish(
+            listener, mock_tts, tts_text)
+
+        _install_intent_judge(listener, _make_judgment(
+            directed=True, query="what about tomorrow in paris"))
+        listener._process_transcript(
+            "the weather is sunny today what about tomorrow in paris",
+            utterance_energy=0.01,
+            utterance_start_time=speech_start,
+            utterance_end_time=time.time(),
+            captured_during_tts=True,
+            captured_tts_start_time=captured_tts_start,
+        )
+
+        assert "tomorrow" in _accepted_query(listener)
+        listener.state_manager.stop()
+
+
+@pytest.mark.unit
+class TestJudgeQueryMustComeFromWhatWasHeard:
+    """A small intent judge can invent a request from earlier conversation
+    when the new transcript is only Jarvis's echo. An invented request must
+    not rescue an echo."""
+
+    @patch("builtins.print")
+    def test_invented_query_does_not_rescue_echo_while_engaged(self, _print):
+        listener, _ = _create_listener(echo_tolerance=0.02, hot_window_seconds=3.0)
+        tts_text = "I couldn't detect your location. Which city should I check?"
+        listener.echo_detector.track_tts_start(tts_text)
+        _simulate_tts_finish(listener)
+        _wait_for_hot_window_active(listener)
+        listener._start_engagement()
+
+        _install_intent_judge(listener, _make_judgment(
+            directed=True, query="what are you doing?"))
+        _process_transcript(listener,
+            "I couldn't detect your location if city should I check.",
+            utterance_energy=0.01)
+
+        assert _accepted_query(listener) == ""
+        listener.state_manager.stop()

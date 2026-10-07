@@ -680,11 +680,14 @@ class VoiceListener(threading.Thread):
         # Check for echo BEFORE starting engagement and BEFORE intent judge.
         # This prevents: false engagement on echo, intent judge blocking the audio
         # loop for seconds on echo, and hot window extending from echo resets.
-        if not received_during_tts and not self._is_engaged():
+        # Audio captured while TTS played but transcribed after it ended (slow
+        # CPU Whisper) gets the same check: the during-TTS echo check below
+        # only covers transcripts that arrive while TTS is still playing.
+        if not active_tts_overlapped and not self._is_engaged():
             in_hot_window = self.state_manager.was_speech_during_hot_window(
                 utterance_start_time, utterance_end_time
             )
-            if in_hot_window:
+            if in_hot_window or received_during_tts:
                 # Fuzzy echo check — instant, no intent judge needed.
                 # Only catches pure echo (transcript ≈ TTS text). Mixed
                 # echo+speech chunks (user spoke over echo) go to the
@@ -741,6 +744,11 @@ class VoiceListener(threading.Thread):
                             print(f"  🔇 Heard (echo): \"{text_lower[:50]}{'...' if len(text_lower) > 50 else ''}\"", flush=True)
                             return
 
+            if received_during_tts:
+                # Non-echo speech captured during TTS goes to the intent judge
+                # below without early engagement.
+                pass
+            elif in_hot_window:
                 # Non-echo (or salvaged) in hot window — start engagement
                 self._start_engagement()
                 self._set_face_state_listening()
@@ -1055,13 +1063,18 @@ class VoiceListener(threading.Thread):
                             )
                             if is_pure_echo:
                                 # Also check judge's extracted query — if it matches
-                                # TTS too, it's genuinely pure echo. If the query is
-                                # different, the judge extracted real user speech.
+                                # TTS too, it's genuinely pure echo. A different
+                                # query counts as real user speech only when it was
+                                # actually heard: small judges invent requests from
+                                # earlier turns when shown nothing but echo.
                                 query_echo_score = fuzz.partial_ratio(
                                     intent_judgment.query.lower(),
                                     last_tts_text.lower()
                                 )
-                                if query_echo_score >= 70:
+                                query_heard_score = fuzz.partial_ratio(
+                                    intent_judgment.query.lower(), text_lower
+                                )
+                                if query_echo_score >= 70 or query_heard_score < 70:
                                     debug_log(f"🔇 Echo in hot window (directed, score={echo_score}): \"{text_lower}\"", "voice")
                                     print(f"  🔇 Heard (echo): \"{text_lower[:50]}{'...' if len(text_lower) > 50 else ''}\"", flush=True)
                                     self._end_engagement()
