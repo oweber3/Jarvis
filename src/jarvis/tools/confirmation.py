@@ -140,8 +140,50 @@ def get_locale_phrases(language: Optional[str] = "en") -> Optional[Dict[str, Lis
         return None
 
 
+# A short answer ("ok never mind", "yes please go ahead") is read phrase by phrase; anything longer
+# is an answer only when it is exactly one phrase from the table.
+SHORT_ANSWER_MAX_WORDS = 4
+
+# Apostrophes join a word ("don't" -> "dont"); every other punctuation mark separates words.
+_APOSTROPHES = re.compile(r"['’ʼ`´]")
+
+
+def _phrase_words(text: str) -> tuple:
+    """The words of ``text`` as the matcher compares them: lower case, apostrophes removed."""
+    joined = _APOSTROPHES.sub("", (text or "").lower())
+    return tuple(re.sub(r"[^\w\s]", " ", joined).split())
+
+
+def _contains_phrase(words: tuple, phrase: tuple) -> bool:
+    size = len(phrase)
+    return size > 0 and any(words[i:i + size] == phrase for i in range(len(words) - size + 1))
+
+
+def _is_short_approval(words: tuple, affirmatives: List[tuple], fillers: Set[str]) -> bool:
+    """True when the words are affirmative phrases and politeness fillers only, with at least one
+    affirmative phrase. Any other word makes the answer unclear, and an unclear answer is no approval."""
+    longest_first = sorted(affirmatives, key=len, reverse=True)
+    index, approved = 0, False
+    while index < len(words):
+        phrase = next((p for p in longest_first if p and words[index:index + len(p)] == p), None)
+        if phrase is not None:
+            approved = True
+            index += len(phrase)
+        elif words[index] in fillers:
+            index += 1
+        else:
+            return False
+    return approved
+
+
 def match_voice_response(text: str, language: Optional[str] = "en") -> VoiceResponseStatus:
-    """Classify user speech as affirmative, negative or unrelated using locale phrase tables."""
+    """Classify an answer to a pending confirmation as affirmative, negative or unrelated.
+
+    Uses the locale phrase table (``phrases/<language>.json``). A refusal anywhere in a short answer
+    wins over any affirmative word beside it ("okay never mind" is a refusal). A short answer is
+    approval only when every word belongs to an affirmative phrase or the table's politeness fillers;
+    anything else is unrelated.
+    """
     if not text or not text.strip():
         return VoiceResponseStatus.UNRELATED
 
@@ -150,29 +192,25 @@ def match_voice_response(text: str, language: Optional[str] = "en") -> VoiceResp
         # Without a phrase table, voice input cannot authorise the action
         return VoiceResponseStatus.UNRELATED
 
-    # Normalise: remove punctuation, collapse whitespace
-    cleaned = re.sub(r"[^\w\s]", " ", text.lower())
-    cleaned = " ".join(cleaned.split())
-    if not cleaned:
+    words = _phrase_words(text)
+    if not words:
         return VoiceResponseStatus.UNRELATED
 
-    affirmative_phrases = {p.lower().strip() for p in phrases.get("affirmative", [])}
-    negative_phrases = {p.lower().strip() for p in phrases.get("negative", [])}
+    affirmatives = [w for w in (_phrase_words(p) for p in phrases.get("affirmative", [])) if w]
+    negatives = [w for w in (_phrase_words(p) for p in phrases.get("negative", [])) if w]
+    fillers = {word for p in phrases.get("filler", []) for word in _phrase_words(p)}
 
-    # Check exact phrase match
-    if cleaned in affirmative_phrases:
-        return VoiceResponseStatus.AFFIRMATIVE
-    if cleaned in negative_phrases:
+    if words in negatives:
         return VoiceResponseStatus.NEGATIVE
+    if words in affirmatives:
+        return VoiceResponseStatus.AFFIRMATIVE
+    if len(words) > SHORT_ANSWER_MAX_WORDS:
+        return VoiceResponseStatus.UNRELATED
 
-    # Single-word checks for utterances with politeness tokens (e.g. "yes please", "no thanks")
-    words = cleaned.split()
-    if len(words) <= 3:
-        if any(w in affirmative_phrases for w in words) and not any(w in negative_phrases for w in words):
-            return VoiceResponseStatus.AFFIRMATIVE
-        if any(w in negative_phrases for w in words) and not any(w in affirmative_phrases for w in words):
-            return VoiceResponseStatus.NEGATIVE
-
+    if any(_contains_phrase(words, phrase) for phrase in negatives):
+        return VoiceResponseStatus.NEGATIVE
+    if _is_short_approval(words, affirmatives, fillers):
+        return VoiceResponseStatus.AFFIRMATIVE
     return VoiceResponseStatus.UNRELATED
 
 

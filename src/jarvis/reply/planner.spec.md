@@ -188,8 +188,11 @@ The engine consumes the plan in two phases.
   the tool directly, bypassing the chat model for that turn. This
   keeps small models on-rails without relying on their native
   tool-call reliability.
-- The chat model still runs the final synthesis turn so the reply is
-  phrased in the daemon's voice using its own profile and persona.
+- A direct-exec step that leaves a confirmation pending ends the plan:
+  later steps do not run, no synthesis turn runs, and the reply is the
+  central gate's own question (`reply.spec.md`, Action Safety).
+- Otherwise the chat model still runs the final synthesis turn so the
+  reply is phrased in the daemon's voice using its own profile and persona.
 
 ### resolve_next_tool_call
 

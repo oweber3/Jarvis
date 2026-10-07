@@ -29,6 +29,23 @@
     "negative",
     "never mind",
     "nevermind",
-    "do not"
+    "do not",
+    "wait",
+    "hold on",
+    "hang on",
+    "not yet",
+    "not now"
+  ],
+  "filler": [
+    "please",
+    "thanks",
+    "thank",
+    "you",
+    "then",
+    "sir",
+    "well",
+    "oh",
+    "um",
+    "uh"
   ]
 }
