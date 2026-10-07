@@ -1,5 +1,5 @@
 """
-Reactive orb for the Jarvis face window: a see-through holographic data sphere.
+Reactive orb for the Jarvis face window: a sphere of light that moves with the voice.
 
 Split in layers so each can be improved independently:
 
@@ -7,10 +7,10 @@ Split in layers so each can be improved independently:
   visual states (plus ``MUTED`` and ``ERROR``, which are set by override).
   ``state_colours`` and ``synthetic_speech_level`` are shared with the wake
   screen effect (``wake_overlay``) so both read as one look.
-- ``build_fragments``: the fixed, seeded set of 3D shell fragments (no Qt).
-- ``OrbModel``: pure animation maths (no Qt). Smooths glow, shell rotation,
-  audio-reactive sectors and the wake flash towards per-state targets, and
-  projects the shell for each frame.
+- ``build_sphere``: the fixed, evenly spread set of 3D points (no Qt).
+- ``OrbModel``: pure animation maths (no Qt). Smooths glow, rotation, the
+  voice level, the thinking glow and the wake flash towards per-state targets,
+  and projects the sphere for each frame.
 - ``OrbWidget``: a ``QPainter`` renderer that owns the timer, reads state and
   audio level, and draws the model as additive light over a dark backdrop.
 
@@ -26,12 +26,12 @@ import threading
 import time as _time
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, NamedTuple, Optional, Tuple
+from typing import NamedTuple, Optional, Tuple
 
 import numpy as np
 
 from PyQt6 import sip
-from PyQt6.QtCore import QLineF, QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -81,31 +81,27 @@ def orb_state_for(jarvis_state_value: str) -> OrbState:
 @dataclass(frozen=True)
 class _Look:
     """Per-state animation targets and colours."""
-    glow: float          # overall shell brightness 0..1
-    ring_speed: float    # outer ring rotation, degrees per second
-    scan_speed: float    # scanning sweep rotation, degrees per second
-    scan_strength: float  # scanning sweep opacity 0..1
-    bar_gain: float      # how strongly bars follow the level 0..1
-    ripples: bool        # emit expanding listening ripples
+    glow: float          # overall brightness 0..1
+    spin: float          # rotation, radians per second
+    think: float         # inner glow and sweeping band of light 0..1
+    voice_gain: float    # how strongly the surface follows the level 0..1
+    stir: float          # how much the surface moves with no sound
     colour: str
     accent: str
     label: str
 
 
 _LOOKS = {
-    OrbState.OFFLINE: _Look(0.08, 2, 0, 0.0, 0.0, False, ORB_PALETTE["slate_dark"], ORB_PALETTE["slate"], "offline"),
-    OrbState.IDLE: _Look(0.28, 8, 14, 0.10, 0.0, False, ORB_PALETTE["cyan"], ORB_PALETTE["sky"], "system online"),
-    OrbState.LISTENING: _Look(0.70, 16, 20, 0.15, 1.0, True, ORB_PALETTE["cyan"], ORB_PALETTE["blue_light"], "listening"),
-    OrbState.THINKING: _Look(0.55, 30, 220, 1.0, 0.0, False, ORB_PALETTE["indigo"], ORB_PALETTE["sky"], "thinking"),
-    OrbState.SPEAKING: _Look(0.92, 20, 26, 0.20, 1.0, False, ORB_PALETTE["cyan_light"], ORB_PALETTE["blue"], "speaking"),
-    OrbState.DICTATING: _Look(0.75, 14, 18, 0.15, 1.0, True, ORB_PALETTE["green_light"], ORB_PALETTE["green"], "dictating"),
-    OrbState.MUTED: _Look(0.14, 4, 0, 0.0, 0.0, False, ORB_PALETTE["slate_mid"], ORB_PALETTE["slate_light"], "muted"),
-    OrbState.ERROR: _Look(0.45, 6, 0, 0.0, 0.0, False, ORB_PALETTE["red"], ORB_PALETTE["red_light"], "error"),
+    OrbState.OFFLINE: _Look(0.08, 0.05, 0.0, 0.0, 0.01, ORB_PALETTE["slate_dark"], ORB_PALETTE["slate"], "offline"),
+    OrbState.IDLE: _Look(0.30, 0.25, 0.0, 0.0, 0.025, ORB_PALETTE["cyan"], ORB_PALETTE["sky"], "system online"),
+    OrbState.LISTENING: _Look(0.70, 0.40, 0.0, 1.0, 0.045, ORB_PALETTE["cyan"], ORB_PALETTE["blue_light"], "listening"),
+    OrbState.THINKING: _Look(0.60, 0.90, 1.0, 0.0, 0.03, ORB_PALETTE["indigo"], ORB_PALETTE["sky"], "thinking"),
+    OrbState.SPEAKING: _Look(0.92, 0.45, 0.0, 1.0, 0.03, ORB_PALETTE["cyan_light"], ORB_PALETTE["blue"], "speaking"),
+    OrbState.DICTATING: _Look(0.75, 0.35, 0.0, 1.0, 0.045, ORB_PALETTE["green_light"], ORB_PALETTE["green"], "dictating"),
+    OrbState.MUTED: _Look(0.14, 0.10, 0.0, 0.0, 0.01, ORB_PALETTE["slate_mid"], ORB_PALETTE["slate_light"], "muted"),
+    OrbState.ERROR: _Look(0.45, 0.15, 0.0, 0.0, 0.02, ORB_PALETTE["red"], ORB_PALETTE["red_light"], "error"),
 }
 
-NUM_BARS = 56
-_RIPPLE_PERIOD_S = 1.6
-_RIPPLE_LIFE_S = 2.2
 _MAX_DT = 0.1
 _FLASH_DECAY = 2.2   # per second; the wake flash is gone within about two seconds
 
@@ -132,7 +128,7 @@ class AudioLevelSource:
 
     Producers call ``push`` from any thread (mic frames, TTS playback
     callback); the orb calls ``current``. Levels older than ``max_age_s``
-    count as absent so a stalled producer never freezes the bars.
+    count as absent so a stalled producer never freezes the orb.
     """
 
     def __init__(self, max_age_s: float = 0.3):
@@ -177,125 +173,72 @@ def _clamp01(value: float) -> float:
     return min(1.0, max(0.0, value))
 
 
-FRAG_ARC, FRAG_BLOCK, FRAG_SPARK, FRAG_STREAK, FRAG_RING = range(5)
-_LAYER_SPEEDS = (1.0, -0.65, 1.45)    # each shell layer turns at its own speed and direction
-_SHELL_TILT = math.radians(-18)       # the turning axis leans towards the viewer
+SPHERE_POINTS = 5000
+_INNER_SHARE = 0.2            # a fifth of the points form the dimmer inner sphere
+_INNER_RADIUS = 0.55
+_GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
+_VIEW_TILT = math.radians(20)   # the sphere is seen from a little above
 
 
-class Fragments(NamedTuple):
-    """The fixed set of 3D shell fragments, built once: endpoints on (or near) a unit sphere."""
-    start: "np.ndarray"     # (N, 3)
-    mid: "np.ndarray"       # (N, 3) halfway along the curve, so filaments bend with the sphere
-    end: "np.ndarray"       # (N, 3)
-    kind: "np.ndarray"      # FRAG_* per fragment
-    layer: "np.ndarray"     # index into _LAYER_SPEEDS
-    light: "np.ndarray"     # base brightness 0..1
-    tone: "np.ndarray"      # 0 = state colour, 1 = accent
-    twinkle: "np.ndarray"   # spark twinkle phase
-    radius: "np.ndarray"    # distance from the centre, so each layer glows at its own rim
+class SpherePoints(NamedTuple):
+    """The fixed point set, built once: the outer sphere (radius 1) then the inner one."""
+    position: "np.ndarray"   # (N, 3)
+    inner: "np.ndarray"      # 1 for points of the inner sphere
 
 
-class ShellFrame(NamedTuple):
-    """One frame of the shell, projected: unit coordinates (centre 0, rim 1), depth -1 (back) .. 1 (front)."""
-    x1: "np.ndarray"
-    y1: "np.ndarray"
-    xm: "np.ndarray"
-    ym: "np.ndarray"
-    x2: "np.ndarray"
-    y2: "np.ndarray"
+class SphereFrame(NamedTuple):
+    """One projected frame: unit coordinates (centre 0, rest radius 1), depth -1 (back) .. 1 (front)."""
+    x: "np.ndarray"
+    y: "np.ndarray"
     depth: "np.ndarray"
-    light: "np.ndarray"
-    kind: "np.ndarray"
-    tone: "np.ndarray"
+    light: "np.ndarray"      # 0..1
+    inner: "np.ndarray"
 
 
-def _on_sphere(lat, lon, radius):
-    return np.stack([radius * np.cos(lat) * np.sin(lon), radius * np.sin(lat),
-                     radius * np.cos(lat) * np.cos(lon)], axis=-1)
+def _fibonacci_sphere(count: int, offset: float) -> "np.ndarray":
+    """``count`` points spread evenly over the unit sphere (equal area per point)."""
+    i = np.arange(count)
+    y = 1.0 - 2.0 * (i + 0.5) / count
+    r = np.sqrt(1.0 - y * y)
+    a = i * _GOLDEN_ANGLE + offset
+    return np.stack([np.cos(a) * r, y, np.sin(a) * r], axis=1)
 
 
-def build_fragments(seed: int = 7) -> Fragments:
-    """The shell's fragments: filament arcs, circuit blocks, sparks, flow streaks and broken inner rings.
-
-    Seeded, so the orb looks the same on every start and nothing is generated per frame.
-    """
-    rng = np.random.default_rng(seed)
-    parts = []
-
-    def scatter(count, kind, length, radius, light):
-        lat = np.arcsin(rng.uniform(-0.97, 0.97, count))
-        lon = rng.uniform(0, math.tau, count)
-        r = rng.uniform(*radius, count)
-        span = rng.uniform(*length, count)
-        along_lat = rng.random(count) < 0.8           # most filaments follow the latitude lines
-        dlat = np.where(along_lat, 0.0, span)
-        dlon = np.where(along_lat, span / np.maximum(np.cos(lat), 0.25), 0.0)
-        lat2 = np.clip(lat + dlat, -1.5, 1.5)
-        latm = np.clip(lat + dlat / 2, -1.5, 1.5)
-        parts.append((_on_sphere(lat, lon, r), _on_sphere(latm, lon + dlon / 2, r), _on_sphere(lat2, lon + dlon, r),
-                      np.full(count, kind), rng.uniform(*light, count)))
-
-    # The outer shell: the densest layer of filaments, blocks and sparks.
-    scatter(760, FRAG_ARC, (0.06, 0.32), (0.9, 1.0), (0.35, 1.0))
-    scatter(260, FRAG_BLOCK, (0.015, 0.04), (0.86, 1.0), (0.4, 1.0))
-    scatter(300, FRAG_SPARK, (0.0, 0.0), (0.86, 1.08), (0.5, 1.0))
-    scatter(60, FRAG_ARC, (0.03, 0.12), (1.0, 1.14), (0.2, 0.6))        # ragged fragments past the rim
-    scatter(90, FRAG_STREAK, (0.4, 0.9), (0.9, 1.06), (0.15, 0.4))      # faint flow trails
-    # Nested inner layers fill the sphere, each a little sparser and dimmer than the one outside it.
-    for low, high, arcs, blocks, sparks, light in ((0.75, 0.9, 300, 80, 110, (0.3, 0.85)),
-                                                   (0.5, 0.75, 260, 60, 100, (0.25, 0.75)),
-                                                   (0.25, 0.5, 170, 40, 80, (0.2, 0.65))):
-        scatter(arcs, FRAG_ARC, (0.08, 0.45), (low, high), light)
-        scatter(blocks, FRAG_BLOCK, (0.02, 0.05), (low, high), light)
-        scatter(sparks, FRAG_SPARK, (0.0, 0.0), (low, high), light)
-
-    # Broken inner rings at different tilts, a third of each missing.
-    for tilt, radius in ((0.35, 0.82), (-0.9, 0.7), (1.25, 0.62), (0.1, 0.55), (-0.45, 0.46),
-                         (0.8, 0.38), (-1.3, 0.3), (1.6, 0.77)):
-        count = max(20, int(48 * radius))
-        angles = np.linspace(0, math.tau, count, endpoint=False)
-        keep = rng.random(count) > 0.33
-        a1, a2 = angles[keep], angles[keep] + math.tau / count * 0.85
-        def ring_point(a):
-            x, y = radius * np.cos(a), radius * np.sin(a)
-            return np.stack([x, y * math.cos(tilt), y * math.sin(tilt)], axis=-1)
-        parts.append((ring_point(a1), ring_point((a1 + a2) / 2), ring_point(a2), np.full(keep.sum(), FRAG_RING),
-                      rng.uniform(0.55, 1.0, keep.sum())))
-
-    start = np.concatenate([p[0] for p in parts])
-    mid = np.concatenate([p[1] for p in parts])
-    end = np.concatenate([p[2] for p in parts])
-    kind = np.concatenate([p[3] for p in parts]).astype(np.int8)
-    light = np.concatenate([p[4] for p in parts])
-    n = len(kind)
-    layer = rng.integers(0, len(_LAYER_SPEEDS), n)
-    layer[kind == FRAG_RING] = rng.integers(0, len(_LAYER_SPEEDS), (kind == FRAG_RING).sum())
-    fragments = Fragments(start, mid, end, kind, layer.astype(np.int8), light, (rng.random(n) < 0.35).astype(np.int8),
-                          rng.uniform(0, math.tau, n), np.linalg.norm(mid, axis=1))
-    # Grouped by layer, so each layer turns as one contiguous block.
-    order = np.argsort(fragments.layer, kind="stable")
-    return Fragments(*(field[order] for field in fragments))
+def build_sphere(count: int = SPHERE_POINTS) -> SpherePoints:
+    """The orb's points: an evenly spread outer sphere and a smaller inner one. Nothing is generated per frame."""
+    inner = int(count * _INNER_SHARE)
+    outer = count - inner
+    position = np.concatenate([_fibonacci_sphere(outer, 0.0), _fibonacci_sphere(inner, 1.0) * _INNER_RADIUS])
+    return SpherePoints(position, np.r_[np.zeros(outer, np.int8), np.ones(inner, np.int8)])
 
 
-_FRAGMENTS: Optional[Fragments] = None
+_SPHERE: Optional[SpherePoints] = None
 
 
-def shared_fragments() -> Fragments:
-    """The process-wide fragment set (built on first use)."""
-    global _FRAGMENTS
-    if _FRAGMENTS is None:
-        _FRAGMENTS = build_fragments()
-        debug_log(f"orb shell built: {len(_FRAGMENTS.kind)} fragments", "desktop")
-    return _FRAGMENTS
+def shared_sphere() -> SpherePoints:
+    """The process-wide point set (built on first use)."""
+    global _SPHERE
+    if _SPHERE is None:
+        _SPHERE = build_sphere()
+        debug_log(f"orb sphere built: {len(_SPHERE.position)} points", "desktop")
+    return _SPHERE
 
 
-def _turn(yaw: float) -> "np.ndarray":
-    """Rotation about the leaning vertical axis by ``yaw`` radians."""
-    cy, sy = math.cos(yaw), math.sin(yaw)
-    ct, st = math.cos(_SHELL_TILT), math.sin(_SHELL_TILT)
-    spin = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
-    lean = np.array([[1, 0, 0], [0, ct, -st], [0, st, ct]])
-    return lean @ spin
+def _surface_field(direction: "np.ndarray", phase: "np.ndarray") -> "np.ndarray":
+    """A smooth, slowly changing shape over the sphere, about -1..1: where the surface rises and falls."""
+    x, y, z = direction[:, 0], direction[:, 1], direction[:, 2]
+    return (np.sin(x * 2.6 + phase * 1.7) * np.sin(y * 2.9 - phase * 1.3) * np.sin(z * 2.4 + phase * 2.1)
+            + 0.55 * np.sin(x * 5.1 - phase * 2.6 + y * 1.5) * np.sin(z * 5.6 + phase * 2.2)
+            + 0.3 * np.sin(y * 9.0 - phase * 4.0 + z * 2.0) * np.sin(x * 8.5 + phase * 3.1))
+
+
+def _view(spin: float) -> "np.ndarray":
+    """Rotation by ``spin`` about the vertical axis, seen from a little above."""
+    cy, sy = math.cos(spin), math.sin(spin)
+    ct, st = math.cos(_VIEW_TILT), math.sin(_VIEW_TILT)
+    turn = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    tilt = np.array([[1, 0, 0], [0, ct, -st], [0, st, ct]])
+    return tilt @ turn
 
 
 class OrbModel:
@@ -303,32 +246,22 @@ class OrbModel:
 
     def __init__(self) -> None:
         self.glow = 0.0
-        self.ring_angle = 0.0
-        self.scan_angle = 0.0
-        self.scan_strength = 0.0
-        self.pulse = 0.0                     # output-level pulse 0..1 (the haze swells with it)
+        self.voice = 0.0                     # smoothed voice level 0..1: the surface swells and ripples with it
+        self.think = 0.0                     # thinking glow 0..1: inner light and a sweeping band
         self.flash = 0.0                     # wake flash 0..1, decays after a wake
         self.shimmer = 1.0                   # hologram brightness flicker, close to 1
-        self.bars: List[float] = [0.0] * NUM_BARS
-        self.ripples: List[float] = []       # ages in seconds
+        self.spin = 0.0                      # rotation in radians, unbounded
         self.time = 0.0
-        self._ripple_clock = 0.0
-        self._ring_speed = 0.0
-        self._scan_speed = 0.0
-        self._speech_level = 0.0
+        self._spin_speed = 0.0
+        self._stir = 0.0
+        self._phase = 0.0                    # how far the surface shape has moved; faster with the voice
         self._previous_state: Optional[OrbState] = None
-        self._spin = 0.0                     # shell rotation in radians, unbounded so layers never jump
-        self.fragments = shared_fragments()
-        f = self.fragments
-        self._points = np.stack([f.start, f.mid, f.end])      # (3, N, 3): every point turns in one product per layer
-        bounds = np.searchsorted(f.layer, np.arange(len(_LAYER_SPEEDS) + 1))
-        self._layer_spans = list(zip(bounds[:-1].tolist(), bounds[1:].tolist()))
-
-    def _synthetic_level(self, state: OrbState) -> float:
-        """Speech-like envelope used when no real amplitude is available."""
-        if state is not OrbState.SPEAKING:
-            return 0.0
-        return synthetic_speech_level(self.time)
+        self.sphere = shared_sphere()
+        position = self.sphere.position
+        self._direction = position / np.linalg.norm(position, axis=1, keepdims=True)
+        self._inner = self.sphere.inner.astype(bool)
+        # The inner sphere moves out of step with the outer one.
+        self._phase_offset = np.where(self._inner, 2.0, 0.0)
 
     def step(self, dt: float, state: OrbState, level: Optional[float]) -> None:
         dt = min(max(dt, 0.0), _MAX_DT)
@@ -342,74 +275,47 @@ class OrbModel:
 
         t = self.time
         flicker = 0.5 + 0.5 * math.sin(t * 37.0) * math.sin(t * 11.3 + 0.7)
-        glitch = 0.12 if math.sin(t * 0.9) * math.sin(t * 2.7 + 0.4) > 0.94 else 0.0
-        self.shimmer = _clamp01(1.0 - 0.035 * flicker - glitch)
+        self.shimmer = _clamp01(1.0 - 0.03 * flicker)
 
         self.glow = _clamp01(_approach(self.glow, look.glow, 4.0, dt))
-        self._ring_speed = _approach(self._ring_speed, look.ring_speed, 3.0, dt)
-        self._scan_speed = _approach(self._scan_speed, look.scan_speed, 3.0, dt)
-        self.ring_angle = (self.ring_angle + self._ring_speed * dt) % 360.0
-        self._spin += math.radians(self._ring_speed * dt)
-        self.scan_angle = self.scan_angle + self._scan_speed * dt
-        self.scan_strength = _approach(self.scan_strength, look.scan_strength, 5.0, dt)
+        self.think = _clamp01(_approach(self.think, look.think, 5.0, dt))
+        self._stir = _approach(self._stir, look.stir, 3.0, dt)
+        self._spin_speed = _approach(self._spin_speed, look.spin, 3.0, dt)
+        self.spin += self._spin_speed * dt
 
         if level is None:
-            level = self._synthetic_level(state)
-        level = _clamp01(level) * look.bar_gain
-        self._speech_level = _approach(self._speech_level, level, 14.0, dt)
-        self.pulse = _approach(self.pulse, self._speech_level, 10.0, dt)
+            level = synthetic_speech_level(t) if state is OrbState.SPEAKING else 0.0
+        target = _clamp01(level) * look.voice_gain
+        # Quick to rise, slower to fall, like a level meter.
+        self.voice = _clamp01(_approach(self.voice, target, 18.0 if target > self.voice else 7.0, dt))
+        self._phase += dt * (0.6 + 5.0 * self.voice)
 
-        for i in range(NUM_BARS):
-            phase = i / NUM_BARS * math.tau
-            shape = (
-                0.55
-                + 0.25 * math.sin(phase * 3 + self.time * 5.0)
-                + 0.20 * math.sin(phase * 7 - self.time * 8.0)
-            )
-            target = _clamp01(self._speech_level * shape)
-            rate = 22.0 if target > self.bars[i] else 7.0
-            self.bars[i] = _clamp01(_approach(self.bars[i], target, rate, dt))
-
-        self._step_ripples(dt, look.ripples)
-
-    def shell_frame(self) -> ShellFrame:
-        """Project the shell for this frame: turned layers, see-through depth, sectors swelling with the voice."""
-        f = self.fragments
-        turned = np.empty_like(self._points)
-        for (low, high), speed in zip(self._layer_spans, _LAYER_SPEEDS):
-            turned[:, low:high] = self._points[:, low:high] @ _turn(self._spin * speed).T
-        start, mid, end = turned
-        depth = np.clip(mid[:, 2], -1.0, 1.0)
-        rho = np.hypot(mid[:, 0], mid[:, 1])
-        sector = ((np.arctan2(mid[:, 1], mid[:, 0]) / math.tau) * NUM_BARS).astype(int) % NUM_BARS
-        excite = np.asarray(self.bars)[sector]
-        swell = 1.0 + 0.12 * excite
+    def sphere_frame(self) -> SphereFrame:
+        """Project the sphere for this frame: the surface shaped by the voice, turned, see-through."""
+        t = self.time
+        inner = self._inner
+        shape = _surface_field(self._direction, self._phase + self._phase_offset)
+        breath = (1.0 + 0.015 * math.sin(t * 1.3) - 0.03 * self.think * (0.5 + 0.5 * math.sin(t * 4.0))
+                  + 0.08 * self.flash)
+        amplitude = np.where(inner, 1.5, 1.0) * (self._stir + 0.22 * self.voice)
+        ripple = 0.05 * self.think * np.sin(self._direction[:, 1] * 10.0 - t * 6.0)
+        scale = breath * (1.0 + amplitude * shape + ripple)
+        turned = (self.sphere.position * scale[:, None]) @ _view(self.spin).T
+        x, y, z = turned[:, 0], turned[:, 1], turned[:, 2]
+        size = np.maximum(np.linalg.norm(turned, axis=1), 1e-6)
+        depth = np.clip(z / size, -1.0, 1.0)
         front = (depth + 1.0) / 2.0
-        # Front brighter than back (see-through depth). Each layer is brightest at its own rim, so
-        # the nested layers read as shells inside shells, and the outer rim stays the brightest.
-        limb = np.minimum(rho / np.maximum(f.radius, 0.2), 1.0)
-        outer = np.minimum(f.radius, 1.0)
-        light = (f.light * (0.18 + 0.82 * front ** 1.5) * (0.3 + 0.7 * limb ** 2.5)
-                 * (0.45 + 0.55 * outer ** 2))
-        # While thinking the inner layers light up from within.
-        light *= 1.0 + 1.4 * self.scan_strength * (1.0 - outer)
-        sparks = f.kind == FRAG_SPARK
-        light[sparks] *= 0.55 + 0.45 * np.sin(self.time * 3.0 + f.twinkle[sparks])
-        light = np.clip(light * (1.0 + 0.8 * excite), 0.0, 1.0)
-        return ShellFrame(start[:, 0] * swell, -start[:, 1] * swell, mid[:, 0] * swell, -mid[:, 1] * swell,
-                          end[:, 0] * swell, -end[:, 1] * swell, depth, light, f.kind, f.tone)
-
-    def _step_ripples(self, dt: float, emitting: bool) -> None:
-        self.ripples = [age + dt for age in self.ripples if age + dt < _RIPPLE_LIFE_S]
-        if emitting:
-            if not self.ripples and self._ripple_clock == 0.0:
-                self.ripples.append(0.0)
-            self._ripple_clock += dt
-            if self._ripple_clock >= _RIPPLE_PERIOD_S:
-                self._ripple_clock -= _RIPPLE_PERIOD_S
-                self.ripples.append(0.0)
-        else:
-            self._ripple_clock = 0.0
+        limb = np.hypot(x, y) / size          # 0 facing the viewer, 1 at the outline
+        # Front brighter than back, the outline brightest, and the raised parts of the surface catch more light.
+        light = ((0.1 + 0.9 * front ** 1.7) * (0.4 + 0.6 * limb ** 4)
+                 * (0.75 + 0.6 * np.maximum(shape, 0.0) * (0.3 + self.voice)))
+        # The inner sphere is dim, and lights up from within while thinking.
+        light = np.where(inner, light * (0.35 + 0.5 * self.think), light)
+        # Thinking: a band of light sweeps over the outer sphere, top to bottom.
+        band = (t * 0.65) % 1.0 * 2.4 - 1.2
+        sweep = self.think * 0.9 * np.exp(-((self._direction[:, 1] - band) ** 2) / 0.012) * (0.3 + 0.7 * front)
+        light = np.clip(light + np.where(inner, 0.0, sweep), 0.0, 1.0)
+        return SphereFrame(x, -y, depth, light, self.sphere.inner)
 
 
 def _with_alpha(colour, alpha: float) -> QColor:
@@ -426,22 +332,16 @@ def _blend(a: QColor, b: QColor, t: float) -> QColor:
     )
 
 
-def _qt_array(kind, rows: "np.ndarray") -> "sip.array":
-    """``rows`` of coordinates as a ``sip.array`` of ``QLineF`` or ``QPointF`` that ``QPainter`` reads in place."""
-    array = sip.array(kind, len(rows))
+def _qt_points(rows: "np.ndarray") -> "sip.array":
+    """``rows`` of (x, y) as a ``sip.array`` of ``QPointF`` that ``QPainter`` reads in place."""
+    array = sip.array(QPointF, len(rows))
     if len(rows):
         np.frombuffer(sip.voidptr(array, rows.size * 8), dtype=np.float64).reshape(rows.shape)[:] = rows
     return array
 
 
-def _polar(cx: float, cy: float, radius: float, degrees: float) -> QPointF:
-    """Point at ``degrees`` (clockwise from 3 o'clock on screen) and ``radius`` from the centre."""
-    a = math.radians(degrees)
-    return QPointF(cx + math.cos(a) * radius, cy + math.sin(a) * radius)
-
-
 class OrbWidget(QWidget):
-    """Painter-based holographic orb. Animates only while visible."""
+    """Painter-based particle orb. Animates only while visible."""
 
     clicked = pyqtSignal()
 
@@ -451,6 +351,7 @@ class OrbWidget(QWidget):
     RESTING_INTERVAL_MS = 62
     STATE_POLL_S = 0.1
     COLOUR_RATE = 6.0
+    _LEVELS = 7          # brightness steps the points are drawn in
 
     def __init__(self, parent=None, audio_source: Optional[AudioLevelSource] = None,
                  state_manager=None):
@@ -557,7 +458,6 @@ class OrbWidget(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
         painter.fillRect(0, 0, w, h, self.BG_COLOR)
         if w < 8 or h < 8:
@@ -568,132 +468,74 @@ class OrbWidget(QWidget):
         header = min(34.0, h * 0.12)
         cx = w / 2
         cy = header + (h - header - footer) / 2
-        radius = max(10.0, min(w, h - header - footer) / 2 * 0.86)
+        # The rest radius leaves room for the surface to swell with the voice.
+        radius = max(10.0, min(w, h - header - footer) / 2 * 0.72)
         energy = self._energy()
 
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._draw_atmosphere(painter, cx, cy, radius, energy)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
-        self._draw_ripples(painter, cx, cy, radius)
-        self._draw_shell(painter, cx, cy, radius, energy)
+        self._draw_sphere(painter, cx, cy, radius, energy)
         self._draw_flash(painter, cx, cy, radius)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._draw_text(painter, w, h, header, footer, energy)
         painter.end()
 
     def _draw_atmosphere(self, p: QPainter, cx, cy, r, energy) -> None:
-        """Soft projected light round the sphere, strongest at its rim; it swells a little with the output level."""
-        strength = 0.06 + 0.14 * energy + 0.06 * self.model.pulse
-        g = QRadialGradient(QPointF(cx, cy), r * 1.5)
-        g.setColorAt(0.0, _with_alpha(self._colour, strength * 0.35))
-        g.setColorAt(0.62, _with_alpha(self._colour, strength))
+        """Soft light round the sphere with a glowing rim; both swell with the voice."""
+        voice = self.model.voice
+        reach = r * (1.0 + 0.1 * voice) * 1.75
+        g = QRadialGradient(QPointF(cx, cy), reach)
+        g.setColorAt(0.0, _with_alpha(self._colour, (0.04 + 0.05 * voice) * energy))
+        g.setColorAt(0.45, _with_alpha(self._colour, (0.07 + 0.07 * voice) * energy))
+        g.setColorAt(0.57, _with_alpha(self._colour, (0.2 + 0.18 * voice) * energy))
+        g.setColorAt(0.75, _with_alpha(self._colour, (0.05 + 0.06 * voice) * energy))
         g.setColorAt(1.0, _with_alpha(self._colour, 0.0))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(g)
-        p.drawEllipse(QPointF(cx, cy), r * 1.5, r * 1.5)
+        p.drawEllipse(QPointF(cx, cy), reach, reach)
 
-    def _draw_ripples(self, p: QPainter, cx, cy, r) -> None:
-        """Listening: broken rings of light spreading out through the shell."""
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        for age in self.model.ripples:
-            t = age / _RIPPLE_LIFE_S
-            rr = r * (0.3 + 0.85 * t)
-            fade = (1.0 - t) ** 1.5
-            pen = QPen(_with_alpha(self._colour, 0.45 * fade), 1.2)
-            pen.setStyle(Qt.PenStyle.CustomDashLine)
-            pen.setDashPattern([6.0, 3.0, 1.0, 4.0])
-            p.setPen(pen)
-            p.drawEllipse(QPointF(cx, cy), rr, rr)
-
-    # Pen width (px at a 170 px radius) and cap of each fragment kind.
-    _KIND_PENS = {
-        FRAG_ARC: (1.1, Qt.PenCapStyle.FlatCap),     # flat: the two halves of a curve meet without a bright bead
-        FRAG_BLOCK: (2.6, Qt.PenCapStyle.SquareCap),
-        FRAG_STREAK: (0.8, Qt.PenCapStyle.FlatCap),
-        FRAG_RING: (1.3, Qt.PenCapStyle.FlatCap),
-        FRAG_SPARK: (2.4, Qt.PenCapStyle.RoundCap),
-    }
-    _LEVELS = 6
-
-    def _draw_shell(self, p: QPainter, cx, cy, r, energy) -> None:
-        """The data sphere: every fragment as a stroke of light, batched by kind, tone and brightness."""
-        f = self.model.shell_frame()
+    def _draw_sphere(self, p: QPainter, cx, cy, r, energy) -> None:
+        """Every point as a dot of light, batched by sphere and brightness step; the brightest are whiter."""
+        f = self.model.sphere_frame()
         light = np.clip(f.light * (0.3 + 0.7 * energy), 0.0, 1.0)
-        # Steps on a square-root scale: dim fragments still get a faint step of their own, so the
-        # sphere reads as full even at rest, while the bright steps stay distinct.
+        # Steps on a square-root scale, so dim points still show and the bright ones stay distinct.
         level = np.minimum((np.sqrt(light) * self._LEVELS).astype(np.int16), self._LEVELS - 1)
-        # Long curves bend through their midpoint; short ones are near enough straight for one stroke.
-        bent = (np.hypot(f.x2 - f.x1, f.y2 - f.y1) > 0.2) & (f.kind != FRAG_BLOCK)
-        visible = np.nonzero(level > 0)[0]
-        keys = (f.kind[visible].astype(np.int16) * 100 + f.tone[visible] * 10 + level[visible])
+        keys = f.inner.astype(np.int16) * self._LEVELS + level
         order = np.argsort(keys, kind="stable")
-        visible, keys = visible[order], keys[order]
-        starts = np.flatnonzero(np.r_[True, keys[1:] != keys[:-1]])
-        # Every stroke of the frame goes into one array Qt reads in place, in batch order: sparks as
-        # points, other fragments as one segment or, when bent, two through the midpoint.
-        spark = f.kind[visible] == FRAG_SPARK
-        segments = np.where(spark, 0, 1 + bent[visible])
-        frag = np.repeat(visible, segments)
-        second = np.r_[False, frag[1:] == frag[:-1]]
-        to_mid = bent[frag] & ~second
-        lines = np.stack([np.where(second, f.xm[frag], f.x1[frag]), np.where(second, f.ym[frag], f.y1[frag]),
-                          np.where(to_mid, f.xm[frag], f.x2[frag]), np.where(to_mid, f.ym[frag], f.y2[frag])], axis=1)
-        line_array = _qt_array(QLineF, lines * r + (cx, cy, cx, cy))
-        points = np.stack([f.x1[visible[spark]], f.y1[visible[spark]]], axis=1)
-        point_array = _qt_array(QPointF, points * r + (cx, cy))
-        line_at = np.r_[0, np.cumsum(segments)].tolist()
-        point_at = np.r_[0, np.cumsum(spark)].tolist()
+        bounds = np.searchsorted(keys[order], np.arange(2 * self._LEVELS + 1)).tolist()
+        # One array for the whole frame, in batch order, that Qt reads in place.
+        points = _qt_points(np.stack([f.x[order], f.y[order]], axis=1) * r + (cx, cy))
         white = QColor(ORB_PALETTE["white"])
-        scale = max(0.6, r / 170.0)
-        for start, stop in zip(starts.tolist(), np.r_[starts[1:], len(keys)].tolist()):
-            key = int(keys[start])
-            kind, tone, lv = key // 100, (key // 10) % 10, key % 10
-            base = self._accent if tone else self._colour
-            alpha = ((lv + 0.5) / self._LEVELS) ** 2
-            tint = _blend(base, white, 0.55 * (lv - 2) / (self._LEVELS - 3)) if lv > 2 else base
-            width, cap = self._KIND_PENS[kind]
-            if kind == FRAG_SPARK:
-                points = point_array[point_at[start]:point_at[stop]]
-                if lv >= 3:   # bright sparks get a soft halo
-                    halo = QPen(_with_alpha(tint, alpha * 0.25), width * scale * 3.2)
-                    halo.setCapStyle(cap)
-                    p.setPen(halo)
-                    p.drawPoints(points)
-                pen = QPen(_with_alpha(tint, alpha), width * scale)
-                pen.setCapStyle(cap)
-                p.setPen(pen)
-                p.drawPoints(points)
+        scale = max(0.6, r / 150.0)
+        for key in range(2 * self._LEVELS):
+            start, stop = bounds[key], bounds[key + 1]
+            lv = key % self._LEVELS
+            if lv == 0 or start == stop:
                 continue
-            lines = line_array[line_at[start]:line_at[stop]]
-            if lv >= 5:       # bloom: only the very brightest filaments glow beyond their stroke
-                bloom = QPen(_with_alpha(base, alpha * 0.18), width * scale * 3.5)
-                bloom.setCapStyle(Qt.PenCapStyle.RoundCap)
-                p.setPen(bloom)
-                p.drawLines(lines)
-            pen = QPen(_with_alpha(tint, alpha), width * scale)
-            pen.setCapStyle(cap)
+            base = self._accent if key >= self._LEVELS else self._colour
+            whiten = max(0.0, (lv - 3) / (self._LEVELS - 4)) * 0.75
+            pen = QPen(_with_alpha(_blend(base, white, whiten), min(1.0, ((lv + 0.6) / self._LEVELS) ** 2 * 1.15)),
+                       scale * (1.0 + 0.2 * lv))
+            # Dim dots are small squares drawn without antialiasing (cheap); bright ones are round.
+            bright = lv >= 5
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap if bright else Qt.PenCapStyle.SquareCap)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing, bright)
             p.setPen(pen)
-            # The faintest steps are drawn without antialiasing: invisible at their alpha, and far cheaper.
-            p.setRenderHint(QPainter.RenderHint.Antialiasing, lv > 1)
-            p.drawLines(lines)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            p.drawPoints(points[start:stop])
 
     def _draw_flash(self, p: QPainter, cx, cy, r) -> None:
-        """Wake flash: a broken ring of light thrown out through the shell from its centre."""
+        """Wake flash: a soft ring of light spreading out from the sphere's centre."""
         f = self.model.flash
         if f < 0.01:
             return
-        progress = 1.0 - f
-        ring_r = r * (0.15 + 0.95 * progress)
+        ring_r = r * (0.15 + 1.0 * (1.0 - f))
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setBrush(Qt.BrushStyle.NoBrush)
         bright = _blend(self._colour, QColor(ORB_PALETTE["white"]), 0.6)
-        # A broken ring of light fragments, like the shell, turning as it spreads.
-        for tone, alpha, width, pattern in ((self._colour, 0.35, max(6.0, r * 0.08), [3.0, 0.8, 1.2, 0.6]),
-                                            (bright, 0.9, 2.0 + 2.0 * f, [10.0, 3.0, 4.0, 2.0, 1.0, 3.0])):
-            pen = QPen(_with_alpha(tone, alpha * f), width)
-            pen.setStyle(Qt.PenStyle.CustomDashLine)
-            pen.setDashPattern(pattern)
-            pen.setDashOffset(progress * 40.0)
-            p.setPen(pen)
+        for tone, alpha, width in ((self._colour, 0.3, max(6.0, r * 0.1)), (bright, 0.8, 1.5 + 2.0 * f)):
+            p.setPen(QPen(_with_alpha(tone, alpha * f), width))
             p.drawEllipse(QPointF(cx, cy), ring_r, ring_r)
 
     def _draw_text(self, p: QPainter, w, h, header, footer, energy) -> None:

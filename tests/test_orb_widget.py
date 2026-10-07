@@ -3,6 +3,7 @@
 import os
 import time
 
+import numpy as np
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -66,55 +67,47 @@ class TestOrbModelBehaviour:
         _run(offline, OrbState.OFFLINE, 2)
         assert offline.glow < idle.glow
 
-    def test_listening_bars_follow_input_level(self):
+    def test_listening_voice_follows_input_level(self):
         quiet, loud = OrbModel(), OrbModel()
         _run(quiet, OrbState.LISTENING, 1, level=0.02)
         _run(loud, OrbState.LISTENING, 1, level=0.9)
-        assert max(loud.bars) > max(quiet.bars) + 0.3
+        assert loud.voice > quiet.voice + 0.5
 
-    def test_bars_fall_back_when_level_stops(self):
+    def test_voice_falls_back_when_level_stops(self):
         model = OrbModel()
         _run(model, OrbState.LISTENING, 1, level=0.9)
-        peak = max(model.bars)
+        peak = model.voice
         _run(model, OrbState.LISTENING, 1, level=0.0)
-        assert max(model.bars) < peak * 0.5
+        assert model.voice < peak * 0.5
 
-    def test_speaking_without_real_level_still_animates(self):
+    def test_speaking_without_real_level_still_moves_with_a_voice(self):
         model = OrbModel()
-        _run(model, OrbState.SPEAKING, 1, level=None)
-        assert max(model.bars) > 0.2
+        samples = []
+        for _ in range(60):
+            model.step(1.0 / 30, OrbState.SPEAKING, None)
+            samples.append(model.voice)
+        assert max(samples) > 0.3
+        assert max(samples) - min(samples[20:]) > 0.1      # it rises and falls like speech
 
-    def test_idle_bars_stay_near_flat(self):
+    def test_idle_ignores_sound(self):
         model = OrbModel()
-        _run(model, OrbState.IDLE, 2)
-        assert max(model.bars) < 0.15
-
-    def test_thinking_scan_rotates_faster_than_idle(self):
-        thinking, idle = OrbModel(), OrbModel()
-        _run(thinking, OrbState.THINKING, 1)
-        _run(idle, OrbState.IDLE, 1)
-        assert thinking.scan_angle > idle.scan_angle
+        _run(model, OrbState.IDLE, 2, level=0.9)
+        assert model.voice < 0.05
 
     def test_thinking_is_visually_distinct_from_listening(self):
         thinking, listening = OrbModel(), OrbModel()
         _run(thinking, OrbState.THINKING, 2, level=0.5)
         _run(listening, OrbState.LISTENING, 2, level=0.5)
-        assert thinking.scan_strength > listening.scan_strength
-        assert max(thinking.bars) < max(listening.bars)
-
-    def test_listening_spawns_ripples_that_expire(self):
-        model = OrbModel()
-        _run(model, OrbState.LISTENING, 1)
-        assert model.ripples
-        _run(model, OrbState.IDLE, 4)
-        assert not model.ripples
+        assert thinking.think > listening.think + 0.5
+        assert thinking.voice < listening.voice
 
     def test_model_values_stay_in_unit_range(self):
         model = OrbModel()
         for state in OrbState:
             _run(model, state, 1, level=2.0)
             assert 0.0 <= model.glow <= 1.0
-            assert all(0.0 <= b <= 1.0 for b in model.bars)
+            assert 0.0 <= model.voice <= 1.0
+            assert 0.0 <= model.think <= 1.0
 
     def test_huge_frame_gap_does_not_blow_up(self):
         model = OrbModel()
@@ -123,60 +116,100 @@ class TestOrbModelBehaviour:
         assert 0.0 <= model.flash <= 1.0
 
 
-class TestDataSphere:
-    """The orb is a see-through shell of glowing fragments, turning slowly, reacting to the voice."""
+class TestParticleSphere:
+    """The orb is a sphere of evenly spread points of light whose whole surface moves with the voice."""
 
-    def _frame(self, model):
-        import numpy as np
-        f = model.shell_frame()
-        mid_x, mid_y = (f.x1 + f.x2) / 2, (f.y1 + f.y2) / 2
-        return f, np.hypot(mid_x, mid_y)
+    def _radius(self, frame):
+        return np.hypot(frame.x, frame.y)
 
-    def test_the_fragment_set_is_fixed_not_regenerated(self):
-        from desktop_app.orb_widget import build_fragments
-        import numpy as np
+    def test_the_point_set_is_fixed_and_light(self):
+        from desktop_app.orb_widget import SPHERE_POINTS, build_sphere
 
-        a, b = build_fragments(), build_fragments()
-        assert len(a.kind) >= 600
-        assert np.array_equal(a.start, b.start) and np.array_equal(a.kind, b.kind)
+        a, b = build_sphere(), build_sphere()
+        assert np.array_equal(a.position, b.position)
+        assert len(a.position) == SPHERE_POINTS <= 5000      # kept light on the CPU
         model = OrbModel()
-        first = model.shell_frame()
-        _run(model, OrbState.IDLE, 0.5)
-        assert len(model.shell_frame().x1) == len(first.x1)
+        first = model.sphere_frame()
+        _run(model, OrbState.SPEAKING, 0.5)
+        assert len(model.sphere_frame().x) == len(first.x)
 
-    def test_shell_is_dense_at_the_rim_and_see_through_in_the_middle(self):
-        import math
+    def test_points_are_spread_evenly_over_the_surface(self):
+        from desktop_app.orb_widget import build_sphere
+
+        outer = build_sphere().position
+        outer = outer[np.linalg.norm(outer, axis=1) > 0.99]
+        # Equal-area bands of the sphere hold about the same number of points: no clumps, no gaps.
+        counts, _ = np.histogram(outer[:, 1], bins=10, range=(-1, 1))
+        assert counts.max() <= counts.min() * 1.05
+
+    def test_a_dimmer_inner_sphere_fills_the_middle(self):
         model = OrbModel()
         _run(model, OrbState.IDLE, 1)
-        frame, radius = self._frame(model)
-        # Light per unit of area: the rim glows, the middle is sparse enough to see through.
-        rim = frame.light[(radius > 0.72) & (radius <= 0.98)].sum() / (math.pi * (0.98 ** 2 - 0.72 ** 2))
-        middle = frame.light[radius < 0.4].sum() / (math.pi * 0.4 ** 2)
-        assert rim > middle * 1.5
-        assert (radius > 1.0).sum() > 0          # ragged fragments break the outline
+        f = model.sphere_frame()
+        r = self._radius(f)
+        inner = f.inner.astype(bool)
+        assert inner.sum() >= 500
+        assert r[inner].max() < 0.75
+        assert f.light[inner].mean() < f.light[~inner].mean()
 
-    def test_the_back_of_the_shell_shows_through_dimmer(self):
+    def test_the_rim_is_brighter_than_the_middle(self):
+        model = OrbModel()
+        _run(model, OrbState.IDLE, 1)
+        f = model.sphere_frame()
+        r = self._radius(f)
+        outer = ~f.inner.astype(bool)
+        assert f.light[outer & (r > 0.85)].mean() > f.light[outer & (r < 0.5)].mean() * 1.5
+
+    def test_the_back_shows_through_dimmer(self):
         model = OrbModel()
         _run(model, OrbState.LISTENING, 1)
-        f, _ = self._frame(model)
+        f = model.sphere_frame()
         front, back = f.light[f.depth > 0.3], f.light[f.depth < -0.3]
         assert len(back) and back.mean() > 0.02
         assert front.mean() > back.mean() * 1.5
 
-    def test_shell_turns_slowly_at_rest_and_faster_when_thinking(self):
+    def test_turns_slowly_at_rest_and_faster_when_thinking(self):
         resting, thinking = OrbModel(), OrbModel()
         _run(resting, OrbState.IDLE, 2)
         _run(thinking, OrbState.THINKING, 2)
-        assert 0 < resting.ring_angle < thinking.ring_angle
+        assert 0 < resting.spin < thinking.spin
 
-    def test_the_shell_swells_and_brightens_with_the_voice(self):
+    def test_the_whole_surface_swells_and_ripples_with_the_voice(self):
         quiet, loud = OrbModel(), OrbModel()
         _run(quiet, OrbState.LISTENING, 1, level=0.02)
         _run(loud, OrbState.LISTENING, 1, level=0.9)
-        fq, rq = self._frame(quiet)
-        fl, rl = self._frame(loud)
-        assert rl.mean() > rq.mean() * 1.02
-        assert fl.light.mean() > fq.light.mean()
+        fq, fl = quiet.sphere_frame(), loud.sphere_frame()
+        outer_q, outer_l = ~fq.inner.astype(bool), ~fl.inner.astype(bool)
+        rq, rl = self._radius(fq)[outer_q], self._radius(fl)[outer_l]
+        assert np.percentile(rl, 99) > np.percentile(rq, 99) * 1.08      # it bulges outward
+        assert fl.light.mean() > fq.light.mean()                         # and brightens
+        # The silhouette is reshaped, not just scaled: the rim's radius varies round the outline.
+        def rim_spread(f, outer):
+            angle = np.arctan2(f.y, f.x)[outer]
+            r = self._radius(f)[outer]
+            sector = ((angle + np.pi) / (2 * np.pi) * 36).astype(int) % 36
+            return np.std([r[sector == s].max() for s in range(36)])
+        assert rim_spread(fl, outer_l) > rim_spread(fq, outer_q) * 2
+
+    def test_the_surface_keeps_moving_while_the_voice_holds_steady(self):
+        model = OrbModel()
+        _run(model, OrbState.LISTENING, 1, level=0.7)
+        a = model.sphere_frame()
+        _run(model, OrbState.LISTENING, 0.3, level=0.7)
+        b = model.sphere_frame()
+        assert np.abs(self._radius(a) - self._radius(b)).mean() > 0.005
+
+    def test_thinking_sweeps_a_band_of_light_over_the_sphere(self):
+        model = OrbModel()
+        _run(model, OrbState.THINKING, 2)
+        bright = []
+        for _ in range(4):
+            f = model.sphere_frame()
+            outer = ~f.inner.astype(bool)
+            top = np.argsort(f.light[outer])[-200:]
+            bright.append(np.median(f.y[outer][top]))
+            _run(model, OrbState.THINKING, 0.25)
+        assert np.ptp(bright) > 0.3          # the brightest part of the sphere moves
 
 
 class TestWakeFlash:
@@ -342,7 +375,7 @@ class TestOrbWidget:
         w.tick(0.0)
         assert footer() == default
 
-    def test_there_is_no_core_the_interior_is_filled_by_the_shell(self, qapp):
+    def test_no_hot_core_and_the_rim_is_the_brightest_band(self, qapp):
         from desktop_app.orb_widget import OrbWidget
 
         w = OrbWidget(audio_source=AudioLevelSource())
@@ -353,7 +386,7 @@ class TestOrbWidget:
         image = w.grab().toImage()
         footer, header = min(40.0, 360 * 0.14), min(34.0, 360 * 0.12)
         cx, cy = 160, header + (360 - header - footer) / 2
-        radius = min(320, 360 - header - footer) / 2 * 0.86
+        radius = min(320, 360 - header - footer) / 2 * 0.80
 
         def brightness(x, y):
             c = image.pixelColor(int(x), int(y))
@@ -366,20 +399,10 @@ class TestOrbWidget:
 
         centre_mean, centre_peak = ring(0.0, 0.15)
         middle_mean, _ = ring(0.0, 0.45)
-        rim_mean, _ = ring(0.75, 1.0)
+        rim_mean, _ = ring(0.8, 1.0)
         assert centre_peak < 600          # no white-hot core
-        assert middle_mean > 25           # the inner layers fill the middle
-        assert rim_mean > middle_mean     # but the rim is still the brightest band
-
-    def test_the_shell_has_nested_inner_layers(self):
-        import numpy as np
-        from desktop_app.orb_widget import build_fragments
-
-        f = build_fragments()
-        radius = np.linalg.norm(f.start, axis=1)
-        for low, high in ((0.25, 0.5), (0.5, 0.75), (0.75, 0.9), (0.9, 1.0)):
-            assert ((radius >= low) & (radius < high)).sum() >= 200, (low, high)
-        assert len(f.kind) >= 2000
+        assert middle_mean > 25           # the middle is filled with light
+        assert rim_mean > middle_mean     # but the rim is the brightest band
 
     def test_a_frame_stays_cheap_to_paint(self, qapp):
         from PyQt6.QtGui import QImage
@@ -414,7 +437,7 @@ class TestOrbWidget:
 
         assert lit_after(0.25) > lit_after(3.0)
 
-    def test_injected_audio_source_drives_bars(self, qapp):
+    def test_injected_audio_source_drives_the_voice(self, qapp):
         from desktop_app.orb_widget import OrbWidget
 
         src = AudioLevelSource()
@@ -423,7 +446,7 @@ class TestOrbWidget:
         for _ in range(20):
             src.push(0.9, now=time.monotonic())
             w.tick(1.0 / 30)
-        assert max(w.model.bars) > 0.3
+        assert w.model.voice > 0.5
 
 
 class TestFaceWindowHostsOrb:
