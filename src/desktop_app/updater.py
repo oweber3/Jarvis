@@ -450,9 +450,14 @@ def _is_translocated(app_path: Path) -> bool:
     return "/AppTranslocation/" in app_path.as_posix()
 
 
+def running_translocated() -> bool:
+    """True when this Mac bundle runs from a translocated read-only copy."""
+    return sys.platform == "darwin" and is_frozen() and _is_translocated(get_app_path())
+
+
 def update_install_blocker() -> Optional[str]:
     """A message saying why this install cannot update itself, or None."""
-    if sys.platform == "darwin" and _is_translocated(get_app_path()):
+    if running_translocated():
         debug_log("Update blocked: app is translocated", "updater")
         return TRANSLOCATED_MESSAGE
     return None

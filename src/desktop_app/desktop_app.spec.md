@@ -46,8 +46,12 @@ flowchart TD
     B2 -->|User: Kill Existing| B3[Terminate Old Instance]
     B3 --> B4[Retry Lock]
     B4 -->|Failed| Z
-    B4 -->|OK| C
-    B -->|OK| C[Show Splash Screen]
+    B4 -->|OK| T
+    B -->|OK| T{Mac app translocated?}
+    T -->|Yes| T2[Show Move to Applications Warning]
+    T2 -->|User: Quit| Z
+    T2 -->|User: Continue Anyway| C
+    T -->|No| C[Show Splash Screen]
     C --> D{Setup Completed Before?}
     D -->|No| E[Show Setup Wizard]
     D -->|Yes| PR{Ollama in use?}
@@ -78,6 +82,7 @@ flowchart TD
 3a. **OpenAI-compatible reachability check** (`_check_openai_compat_reachable` in `app.py`): Jarvis cannot start a third-party server the way it starts Ollama, so on a pure OpenAI-compatible setup it checks the server answers `GET /v1/models` and, if not, shows a one-off warning naming the address (never the API key) and pointing to Settings, then continues. The user only otherwise discovers a down server when their first request fails.
 4. **Single Instance Lock**: Prevents multiple copies from running simultaneously. If another instance is detected, shows a dialog offering to close the existing instance and start fresh.
 5. **Crash Detection**: Detects previous crashes and offers to submit bug reports
+6. **Launch location check (macOS)** (`confirm_launch_location` in `app.py`): a bundled Mac app opened outside Applications runs from a randomised read-only App Translocation copy, where it cannot install updates and has proven unstable. On every launch from such a copy, before the splash screen and any setup wizard, a warning asks the user to quit and move Jarvis.app into Applications. Quit is the default and closing the warning counts as Quit; Continue Anyway starts normally. The check never appears on other platforms, in source runs, or when the app runs from its real location. It runs on every launch, not only in the setup wizard, because the wizard opens only when setup needs attention
 
 ### CLI Flags
 

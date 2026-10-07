@@ -1328,7 +1328,7 @@ class TestUpdateInstallBlocker:
     def test_translocated_mac_app_is_blocked_with_instructions(self):
         from desktop_app.updater import update_install_blocker
 
-        with patch("desktop_app.updater.sys.platform", "darwin"):
+        with patch("desktop_app.updater.sys.platform", "darwin"),              patch("desktop_app.updater.is_frozen", return_value=True):
             with patch("desktop_app.updater.get_app_path", return_value=TRANSLOCATED_APP):
                 message = update_install_blocker()
 
@@ -1339,7 +1339,7 @@ class TestUpdateInstallBlocker:
     def test_mac_app_in_applications_is_not_blocked(self):
         from desktop_app.updater import update_install_blocker
 
-        with patch("desktop_app.updater.sys.platform", "darwin"):
+        with patch("desktop_app.updater.sys.platform", "darwin"),              patch("desktop_app.updater.is_frozen", return_value=True):
             with patch("desktop_app.updater.get_app_path",
                        return_value=Path("/Applications/Jarvis.app")):
                 assert update_install_blocker() is None
