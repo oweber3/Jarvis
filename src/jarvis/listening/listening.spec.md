@@ -250,6 +250,8 @@ After TTS finishes, allow wake-word-free follow-up.
 
 **Expiry:** Timer-based, guaranteed to fire even if no audio
 
+**Cancellation:** a cancelled activation never opens the window, even when its timer had already fired as it was cancelled.
+
 ### 3. During TTS
 
 While TTS is playing, echo rejection and stop commands are handled with fast text-based checks (no LLM). This prevents self-loops where the mic picks up TTS output. After TTS finishes, the intent judge takes over. Audio captured while TTS was playing but transcribed only after it ended (common with Whisper on CPU) still goes through the early fuzzy echo check, whether or not it overlaps the hot window, before wake word detection and the intent judge. Pure echo is rejected, so a wake word inside Jarvis's own reply never engages it.

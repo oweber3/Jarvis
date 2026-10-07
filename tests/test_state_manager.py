@@ -533,3 +533,18 @@ class TestThreadSafety:
 
         assert len(errors) == 0, f"Thread safety errors: {errors}"
         sm.stop()
+
+
+class TestCancelledActivationNeverOpens:
+    """A cancelled activation stays cancelled even when its timer had already fired."""
+
+    def test_activation_that_fired_as_it_was_cancelled_does_not_open_the_window(self):
+        sm = StateManager(echo_tolerance=5.0)
+        sm.schedule_hot_window_activation()
+        fired = sm._hot_window_activation_timer.function  # the timer thread, already running
+        sm.cancel_hot_window_activation()
+
+        fired()
+
+        assert sm.get_state() == ListeningState.WAKE_WORD
+        sm.stop()
