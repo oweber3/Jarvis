@@ -4,6 +4,7 @@ The desktop (monitors, windows, launching and the placement call) is replaced by
 FancyZones data is the anonymised fixture folder. Geometry has its own tests in test_fancyzones.py.
 """
 import json
+import sys
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -13,7 +14,7 @@ import pytest
 from jarvis.platform.windows import displays, fancyzones
 from jarvis.platform.windows.displays import Monitor
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.skipif(sys.platform != "win32", reason="Windows desktop only")]
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'fancyzones'
 DESKTOP = uuid.UUID('{00000000-0000-0000-0000-0000FACE0001}')

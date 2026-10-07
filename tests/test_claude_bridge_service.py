@@ -441,6 +441,7 @@ class TestConfirmation:
         try:
             assert out.kind == "awaiting_confirmation" and "confirmation" in out.text
             session = claude.used()[0]
+            assert wait_for(lambda: session.turns[0].results)
             assert session.turns[0].results[0]["data"]["status"] == "awaiting_confirmation"
             assert "interrupt" in session.controls and not session.alive
             assert calls == ["systemVolume"]

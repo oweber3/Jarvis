@@ -106,7 +106,7 @@ def test_hung_device_call_is_bounded(monkeypatch):
 def test_com_lifecycle_order_drops_objects_before_uninitialize(monkeypatch):
     events = []
 
-    import comtypes
+    comtypes = pytest.importorskip("comtypes")
     monkeypatch.setattr(comtypes, "CoInitialize", lambda: events.append("CoInitialize"))
     monkeypatch.setattr(comtypes, "CoUninitialize", lambda: events.append("CoUninitialize"))
 
@@ -146,7 +146,7 @@ def test_com_lifecycle_order_drops_objects_before_uninitialize(monkeypatch):
 def test_com_lifecycle_drops_objects_on_action_exception(monkeypatch):
     events = []
 
-    import comtypes
+    comtypes = pytest.importorskip("comtypes")
     monkeypatch.setattr(comtypes, "CoInitialize", lambda: events.append("CoInitialize"))
     monkeypatch.setattr(comtypes, "CoUninitialize", lambda: events.append("CoUninitialize"))
 
