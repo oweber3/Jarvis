@@ -33,7 +33,7 @@ The orb is a see-through sphere made of evenly spread points of light. There are
 | idle | Dim but full cyan sphere, slow turning, the surface barely moving |
 | listening | Brighter; the surface swells and ripples with the input level |
 | thinking | Indigo, turns faster, the inner sphere glows and a band of light sweeps over it; it ignores sound (distinct from listening) |
-| speaking | Brightest; the surface and its haze move with the output level |
+| speaking | Brightest; the surface and its haze move with the output level, reshaping further and flowing faster than listening does at the same level |
 | dictating | Green, listening-style response |
 | muted / error | Slate / red, set via `set_state_override` |
 

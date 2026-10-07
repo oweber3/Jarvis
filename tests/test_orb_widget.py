@@ -191,6 +191,22 @@ class TestParticleSphere:
             return np.std([r[sector == s].max() for s in range(36)])
         assert rim_spread(fl, outer_l) > rim_spread(fq, outer_q) * 2
 
+    def test_speaking_reacts_more_strongly_than_listening_to_the_same_level(self):
+        listening, speaking = OrbModel(), OrbModel()
+        listening_reach, speaking_reach, listening_flow, speaking_flow = [], [], [], []
+        for _ in range(45):
+            prev_l, prev_s = self._radius(listening.sphere_frame()), self._radius(speaking.sphere_frame())
+            listening.step(1.0 / 30, OrbState.LISTENING, 0.6)
+            speaking.step(1.0 / 30, OrbState.SPEAKING, 0.6)
+            fl, fs = listening.sphere_frame(), speaking.sphere_frame()
+            listening_reach.append(np.percentile(self._radius(fl), 99))
+            speaking_reach.append(np.percentile(self._radius(fs), 99))
+            listening_flow.append(np.abs(self._radius(fl) - prev_l).mean())
+            speaking_flow.append(np.abs(self._radius(fs) - prev_s).mean())
+        # It bulges further past the rest radius (1.0).
+        assert np.mean(speaking_reach[15:]) - 1.0 > (np.mean(listening_reach[15:]) - 1.0) * 1.15
+        assert np.mean(speaking_flow[15:]) > np.mean(listening_flow[15:]) * 1.2      # and moves faster
+
     def test_the_surface_keeps_moving_while_the_voice_holds_steady(self):
         model = OrbModel()
         _run(model, OrbState.LISTENING, 1, level=0.7)

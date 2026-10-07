@@ -89,6 +89,7 @@ class _Look:
     colour: str
     accent: str
     label: str
+    swell: float = 1.0   # how strongly the voice reshapes the surface and speeds its flow
 
 
 _LOOKS = {
@@ -96,7 +97,8 @@ _LOOKS = {
     OrbState.IDLE: _Look(0.30, 0.25, 0.0, 0.0, 0.025, ORB_PALETTE["cyan"], ORB_PALETTE["sky"], "system online"),
     OrbState.LISTENING: _Look(0.70, 0.40, 0.0, 1.0, 0.045, ORB_PALETTE["cyan"], ORB_PALETTE["blue_light"], "listening"),
     OrbState.THINKING: _Look(0.60, 0.90, 1.0, 0.0, 0.03, ORB_PALETTE["indigo"], ORB_PALETTE["sky"], "thinking"),
-    OrbState.SPEAKING: _Look(0.92, 0.45, 0.0, 1.0, 0.03, ORB_PALETTE["cyan_light"], ORB_PALETTE["blue"], "speaking"),
+    OrbState.SPEAKING: _Look(0.92, 0.45, 0.0, 1.0, 0.03, ORB_PALETTE["cyan_light"], ORB_PALETTE["blue"], "speaking",
+                               swell=1.45),
     OrbState.DICTATING: _Look(0.75, 0.35, 0.0, 1.0, 0.045, ORB_PALETTE["green_light"], ORB_PALETTE["green"], "dictating"),
     OrbState.MUTED: _Look(0.14, 0.10, 0.0, 0.0, 0.01, ORB_PALETTE["slate_mid"], ORB_PALETTE["slate_light"], "muted"),
     OrbState.ERROR: _Look(0.45, 0.15, 0.0, 0.0, 0.02, ORB_PALETTE["red"], ORB_PALETTE["red_light"], "error"),
@@ -254,6 +256,7 @@ class OrbModel:
         self.time = 0.0
         self._spin_speed = 0.0
         self._stir = 0.0
+        self._swell = 1.0
         self._phase = 0.0                    # how far the surface shape has moved; faster with the voice
         self._previous_state: Optional[OrbState] = None
         self.sphere = shared_sphere()
@@ -280,6 +283,7 @@ class OrbModel:
         self.glow = _clamp01(_approach(self.glow, look.glow, 4.0, dt))
         self.think = _clamp01(_approach(self.think, look.think, 5.0, dt))
         self._stir = _approach(self._stir, look.stir, 3.0, dt)
+        self._swell = _approach(self._swell, look.swell, 3.0, dt)
         self._spin_speed = _approach(self._spin_speed, look.spin, 3.0, dt)
         self.spin += self._spin_speed * dt
 
@@ -288,7 +292,7 @@ class OrbModel:
         target = _clamp01(level) * look.voice_gain
         # Quick to rise, slower to fall, like a level meter.
         self.voice = _clamp01(_approach(self.voice, target, 18.0 if target > self.voice else 7.0, dt))
-        self._phase += dt * (0.6 + 5.0 * self.voice)
+        self._phase += dt * (0.6 + 5.0 * self._swell * self.voice)
 
     def sphere_frame(self) -> SphereFrame:
         """Project the sphere for this frame: the surface shaped by the voice, turned, see-through."""
@@ -297,7 +301,7 @@ class OrbModel:
         shape = _surface_field(self._direction, self._phase + self._phase_offset)
         breath = (1.0 + 0.015 * math.sin(t * 1.3) - 0.03 * self.think * (0.5 + 0.5 * math.sin(t * 4.0))
                   + 0.08 * self.flash)
-        amplitude = np.where(inner, 1.5, 1.0) * (self._stir + 0.22 * self.voice)
+        amplitude = np.where(inner, 1.5, 1.0) * (self._stir + 0.22 * self._swell * self.voice)
         ripple = 0.05 * self.think * np.sin(self._direction[:, 1] * 10.0 - t * 6.0)
         scale = breath * (1.0 + amplitude * shape + ripple)
         turned = (self.sphere.position * scale[:, None]) @ _view(self.spin).T
