@@ -356,7 +356,7 @@ content and the report-issue body, so these aborts become diagnosable.
 
 - **No Ollama**: Shows setup wizard or auto-starts
 - **No WebEngine**: Opens memory viewer in system browser
-- **Model not supported**: Warning dialog with option to change
+- **Model not supported**: Warning dialog with option to change. The check (`check_model_support`) accepts every chat model the app offers, `OFFERED_CHAT_MODELS` in `jarvis/config.py` (the wizard's catalogue `SUPPORTED_CHAT_MODELS` plus the tested tool-use models `TOOL_USE_CHAT_MODELS`, matched by base name), so a model picked in Settings or the setup wizard never triggers it. The dialog lists those same models
 - **Update failed**: Error dialog with details
 
 ## Platform-Specific Behavior

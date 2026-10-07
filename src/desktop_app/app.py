@@ -63,7 +63,7 @@ except ImportError:
     QWebEngineView = None
 
 from jarvis.debug import debug_log
-from jarvis.config import default_config_path, _default_db_path, SUPPORTED_CHAT_MODELS, get_supported_model_ids
+from jarvis.config import default_config_path, _default_db_path, OFFERED_CHAT_MODELS, get_supported_model_ids
 from desktop_app.diary_dialog import DiaryUpdateDialog
 from desktop_app.themes import (
     HUD_COLORS, ORB_PALETTE, apply_application_theme, apply_theme, divider, eyebrow, hud_heading, line_icon, line_icon_svg,
@@ -932,11 +932,16 @@ def show_crash_report_dialog(crash_content: str) -> None:
         debug_log(f"failed to show crash report dialog: {e}", "desktop")
 
 
+def tested_chat_models_text() -> str:
+    """Comma-separated IDs of every chat model the app offers, for the warning dialog."""
+    return ", ".join(sorted(OFFERED_CHAT_MODELS))
+
+
 def check_model_support() -> Optional[str]:
     """
-    Check if the configured chat model is officially supported.
+    Check if the configured chat model is one the app offers.
 
-    Returns the model name if unsupported, None if supported.
+    Returns the model name if it is not, None if it is.
     """
     try:
         from jarvis.config import load_config, DEFAULT_CHAT_MODEL
@@ -953,6 +958,7 @@ def check_model_support() -> Optional[str]:
             if model == supported or base_model == supported_base:
                 return None
 
+        debug_log("configured chat model is not one the app offers", "desktop")
         return model
     except Exception:
         return None
@@ -992,10 +998,10 @@ def show_unsupported_model_dialog(model_name: str) -> bool:
                 layout.addWidget(divider())
 
                 # Description
-                supported_list = ", ".join(sorted(SUPPORTED_CHAT_MODELS))
+                supported_list = tested_chat_models_text()
                 desc = QLabel(
                     f"You're using <b>{self.model}</b> which hasn't been tested with Jarvis.\n\n"
-                    f"Officially supported models: <b>{supported_list}</b>\n\n"
+                    f"Tested models: <b>{supported_list}</b>\n\n"
                     "Other models may work but could have issues with tool calling, "
                     "response formatting, or performance."
                 )

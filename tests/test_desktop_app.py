@@ -700,6 +700,30 @@ class TestModelSupportIntegration:
                 result = check_model_support()
                 assert result is None, f"Model {model_id} should be supported"
 
+    @pytest.mark.parametrize("key", ["ollama_chat_model", "fast_model", "tool_model"])
+    def test_every_model_settings_offers_passes_check(self, key):
+        """A model picked from a Settings model list never triggers the start-up warning."""
+        from desktop_app import check_model_support
+        from desktop_app.settings_window import FIELD_METADATA
+
+        field = next(f for f in FIELD_METADATA if f.key == key)
+        offered = [value for value, _ in field.choices if value]
+        assert offered
+        for model_id in offered:
+            with patch("jarvis.config.load_config") as mock_config:
+                mock_config.return_value = {"ollama_chat_model": model_id}
+                assert check_model_support() is None, f"{model_id} is offered in Settings but flagged"
+
+    def test_unsupported_model_dialog_names_every_offered_model(self):
+        """The warning's list of tested models matches what Settings offers."""
+        from desktop_app.app import tested_chat_models_text
+        from desktop_app.settings_window import FIELD_METADATA
+
+        field = next(f for f in FIELD_METADATA if f.key == "ollama_chat_model")
+        text = tested_chat_models_text()
+        for model_id, _ in field.choices:
+            assert model_id in text
+
 
 class TestLogViewerReportIssue:
     """Tests for report issue URL generation logic.

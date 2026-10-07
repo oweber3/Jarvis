@@ -27,7 +27,7 @@ from jarvis import credentials
 from jarvis.config import (
     get_default_config, load_config,
     default_config_path, _save_json, _load_json, _move_secrets_to_store,
-    SUPPORTED_CHAT_MODELS,
+    SUPPORTED_CHAT_MODELS, TOOL_USE_CHAT_MODELS,
 )
 from jarvis.debug import debug_log
 from desktop_app.themes import apply_theme, divider, hud_heading, link, set_role
@@ -157,13 +157,11 @@ def _build_field_metadata() -> List[FieldMeta]:
 
     # --- LLM & AI Models ---
     model_choices = [(mid, info["name"]) for mid, info in SUPPORTED_CHAT_MODELS.items()]
-    # GPT-OSS 20B is offered for every role so the tool model can also write replies without a second
-    # model loading on each request (reply.spec.md, Tool-Model Mode).
-    gpt_oss = ("gpt-oss:20b", "GPT-OSS 20B (best tool use, ~13GB)")
-    # Granite 4.2 8B is the light alternative measured for tool-model mode (docs/TOOL_MODEL_BENCHMARK.md).
-    granite = ("granite4.2:8b", "Granite 4.2 8B (light tool use, ~5GB)")
+    # The tested tool-use models are offered for every role so the tool model can also write replies
+    # without a second model loading on each request (reply.spec.md, Tool-Model Mode).
+    tool_use_choices = [(mid, info["name"]) for mid, info in TOOL_USE_CHAT_MODELS.items()]
     f("ollama_chat_model", "Chat Model", "Primary LLM for conversations",
-      "llm", "choice", choices=model_choices + [gpt_oss, granite])
+      "llm", "choice", choices=model_choices + tool_use_choices)
     f("ollama_embed_model", "Embedding Model", "Model for text embeddings",
       "llm", "str")
     f("ollama_base_url", "Ollama URL", "Ollama server base URL",
@@ -185,13 +183,13 @@ def _build_field_metadata() -> List[FieldMeta]:
     f("fast_model", "Fast Model",
       "Small, quick model for real-time work: voice intent, tool routing, "
       "quick classifications. Automatic picks the right default for your provider",
-      "llm", "choice", choices=[("", "Automatic (recommended)")] + model_choices + [gpt_oss, granite])
+      "llm", "choice", choices=[("", "Automatic (recommended)")] + model_choices + tool_use_choices)
     f("tool_model", "Tool Model",
       "Optional separate model that chooses and calls tools while the chat model writes the reply. "
       "GPT-OSS 20B chose tools best in testing but needs about 13 GB, so the two models load in turn "
       "unless both fit in your GPU memory. Off lets the chat model do both",
       "llm", "choice",
-      choices=[("", "Off (chat model uses tools)"), gpt_oss, granite] + model_choices)
+      choices=[("", "Off (chat model uses tools)")] + tool_use_choices + model_choices)
     f("intent_judge_timeout_sec", "Intent Judge Timeout",
       "Max seconds for intent judgement",
       "llm", "float", min_val=1, max_val=30, step=0.5, suffix="s")

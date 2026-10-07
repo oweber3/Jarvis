@@ -78,6 +78,10 @@ Each enabled local extension that declares settings adds one page after these, t
 
 `whisper_backend` offers Auto and Faster Whisper, plus MLX (Apple Silicon) only on macOS. Config validation accepts `mlx` everywhere; a value set by hand that the list does not offer is shown and kept, as for any `choice` field.
 
+### LLM & AI Models
+
+The Chat Model and Fast Model lists offer the wizard's catalogue (`SUPPORTED_CHAT_MODELS`) followed by the tested tool-use models (`TOOL_USE_CHAT_MODELS`); the Tool Model list puts the tool-use models first. Both come from `jarvis/config.py`, whose `OFFERED_CHAT_MODELS` is also what the desktop start-up check accepts (`desktop_app.spec.md`, Fallbacks), so no model these lists offer is ever reported as untested.
+
 ### LLM Provider
 
 Selects the local runtime that serves the LLM and holds the provider-aware
