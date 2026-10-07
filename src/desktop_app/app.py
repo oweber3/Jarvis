@@ -1070,7 +1070,13 @@ def get_existing_instance_pid() -> Optional[int]:
 
 def kill_existing_instance(pid: int) -> bool:
     """
-    Terminate an existing Jarvis instance by PID.
+    Terminate an existing Jarvis instance by PID, with every process it started.
+
+    On Windows ``terminate()`` ends the process at once, so its own clean-up
+    never runs. Its child processes (the memory viewer server, an Ollama it
+    launched and that Ollama's model runners) are therefore stopped here too;
+    an Ollama the user started is not a child and is left alone. The old
+    session's crash marker is removed, because a deliberate close is not a crash.
 
     Returns True if the process was terminated, False otherwise.
     """
@@ -1082,17 +1088,42 @@ def kill_existing_instance(pid: int) -> bool:
             debug_log(f"PID {pid} doesn't look like Jarvis (name: {proc_name}), not killing", "desktop")
             return False
 
-        debug_log(f"Terminating existing Jarvis instance (PID {pid})", "desktop")
-        process.terminate()
-
-        # Wait up to 5 seconds for graceful shutdown
+        # Collect the tree first: once the parent is gone its children can no longer be found from it.
         try:
-            process.wait(timeout=5)
-        except psutil.TimeoutExpired:
-            debug_log(f"Process {pid} didn't terminate gracefully, force killing", "desktop")
-            process.kill()
-            process.wait(timeout=2)
+            children = process.children(recursive=True)
+        except psutil.Error:
+            children = []
+        # Never this process or the processes that started it.
+        own = {os.getpid()}
+        try:
+            own.update(parent.pid for parent in psutil.Process(os.getpid()).parents())
+        except psutil.Error:
+            pass
+        children = [child for child in children if child.pid not in own]
+        debug_log(f"Terminating existing Jarvis instance (PID {pid}) and {len(children)} child process(es)", "desktop")
 
+        tree = [process] + children
+        for proc in tree:
+            try:
+                proc.terminate()
+            except psutil.NoSuchProcess:
+                pass
+
+        # Wait up to 5 seconds for graceful shutdown, then force the stragglers
+        for proc in tree:
+            try:
+                proc.wait(timeout=5)
+            except psutil.NoSuchProcess:
+                pass
+            except psutil.TimeoutExpired:
+                debug_log(f"Process {proc.pid} didn't terminate gracefully, force killing", "desktop")
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2)
+                except psutil.NoSuchProcess:
+                    pass
+
+        mark_session_clean_exit()
         return True
     except psutil.NoSuchProcess:
         # Process already gone
