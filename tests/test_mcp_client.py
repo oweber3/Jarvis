@@ -817,6 +817,8 @@ class TestConnectStdioPathInjection:
             fake_stdio_client,
         )
 
+        monkeypatch.setenv("JARVIS_TEST_PARENT_VAR", "inherited")
+
         client = MCPClient({"test": {"command": "npx", "args": ["-y", "server"]}})
         client._connect_stdio(client.server_configs["test"])
 
@@ -825,7 +827,7 @@ class TestConnectStdioPathInjection:
         path_dirs = env["PATH"].split(os.pathsep)
         assert str(tmp_path) == path_dirs[0], "Command dir should be first in PATH"
         # Full parent environment should also be present
-        assert "HOME" in env or "USER" in env, "Parent env vars should be inherited"
+        assert env.get("JARVIS_TEST_PARENT_VAR") == "inherited", "Parent env vars should be inherited"
 
     def test_user_env_preserved_alongside_path(self, monkeypatch, tmp_path):
         """User-supplied env vars should be preserved when PATH is injected."""
