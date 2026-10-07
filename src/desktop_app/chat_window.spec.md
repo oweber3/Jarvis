@@ -248,7 +248,8 @@ older than `dialogue_memory_timeout` that the window still shows. So a rewind
 is anchored on the message itself, never on its position. Clicking the button:
 
 1. Sends the message text and its `occurrence` (how many later messages in
-   the window have the same text) to the daemon:
+   the window are the same text once redacted, as memory holds them) to the
+   daemon:
    `daemon.regenerate_chat_reply(text, occurrence=…)` in bundled mode, a
    `__CHAT_REWIND__:` line in subprocess mode. The thinking indicator shows
    and the controls are disabled while the daemon answers.
@@ -261,8 +262,16 @@ is anchored on the message itself, never on its position. Clicking the button:
    query, so the model never sees the old turn.
 3. Only when the daemon reports the rewind applied does the window truncate
    its transcript to keep the message itself (its old reply and everything
-   after it are dropped). The fresh reply lands through the normal
-   `complete` path.
+   that followed it when the rewind was asked for are dropped; anything
+   added while waiting, after a Stop, stays). The fresh reply lands through
+   the normal `complete` path.
+
+One rewind awaits its answer at a time. Content anchoring is exact for a
+message whose text is unique in the conversation. Repeated identical
+messages are told apart by counting back, and that count can only be thrown
+off by a later identical message memory holds but the window does not (a
+voice request) or the window shows but memory never recorded (a request
+whose reply failed).
 
 When the message is no longer in memory, nothing changes and the window says
 so in a local notice ("That message is no longer in Jarvis's memory, so it

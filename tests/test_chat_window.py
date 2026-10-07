@@ -1171,6 +1171,56 @@ class TestChatRewind:
 
         assert commands == [{"text": "again?", "occurrence": 1}]
 
+    def test_occurrence_counts_messages_memory_holds_alike(self, qapp, monkeypatch):
+        """Messages that differ only in what redaction removes are one text to memory."""
+        commands = []
+        win = self._window(
+            qapp, monkeypatch, submit_fn=lambda t: None,
+            control_fn=lambda kind, payload: commands.append(payload),
+        )
+        for address in ("a@example.com", "b@example.com"):
+            self._send(qapp, win, f"email {address} please", wait=False)
+            win._on_complete("done")
+
+        self._rewind_button(win, 1).click()
+
+        assert commands == [{"text": "email a@example.com please", "occurrence": 1}]
+
+    def test_stop_during_a_rewind_keeps_what_was_typed_after_it(self, qapp, monkeypatch):
+        import json
+
+        from jarvis.daemon import CHAT_IPC_PREFIX
+
+        def event(kind, data):
+            return f"{CHAT_IPC_PREFIX}{json.dumps({'type': kind, 'data': data})}"
+
+        commands = []
+        win = self._window(
+            qapp, monkeypatch, submit_fn=lambda t: None,
+            control_fn=lambda kind, payload: commands.append(payload),
+        )
+        self._send(qapp, win, "question", wait=False)
+        win.process_ipc_line(event("complete", "old reply"))
+        self._rewind_button(win, 1).click()
+        win._stop()
+        self._rewind_button(win, 1).click()  # a second rewind waits for the first answer
+        self._send(qapp, win, "follow-up", wait=False)
+
+        win.process_ipc_line(event("rewind", True))
+
+        assert len(commands) == 1
+        assert win.transcript_text().splitlines() == ["question", "follow-up"]
+
+    def test_rewind_is_available_again_after_the_daemon_restarts(self, qapp, monkeypatch):
+        win = self._window(
+            qapp, monkeypatch, submit_fn=lambda t: None, control_fn=lambda kind, payload: None,
+        )
+        self._send(qapp, win, "question", wait=False)  # in flight: rewind disabled
+        win.set_daemon_status("crashed")
+        win.set_daemon_status("running")
+
+        assert self._rewind_button(win, 1).isEnabled()
+
     def test_rewind_does_nothing_while_a_query_is_in_flight(self, qapp, monkeypatch):
         commands = []
         win = self._window(

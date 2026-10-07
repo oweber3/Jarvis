@@ -256,8 +256,8 @@ class ChatWindow(QMainWindow):
         # after a cancel and its reply still arrives, so the window has to
         # decline the answer to an exchange the user walked away from.
         self._query_cancelled = False
-        # Transcript length to keep once the daemon accepts the rewind in flight, else None.
-        self._pending_rewind_keep: Optional[int] = None
+        # The rewind awaiting the daemon's answer: (messages to keep, end of the dropped run), else None.
+        self._pending_rewind: Optional[tuple[int, int]] = None
         self._daemon_available = daemon_available
         self._daemon_status = "running" if daemon_available else "stopped"
 
@@ -518,6 +518,9 @@ class ChatWindow(QMainWindow):
         """
         if self._query_in_flight or not self._daemon_available:
             return
+        if self._pending_rewind is not None:
+            # A rewind the user stopped still awaits its answer; one at a time.
+            return
         position = next(
             (i for i, m in enumerate(self._messages)
              if m.get("kind") == "user" and m.get("user_index") == user_index),
@@ -526,11 +529,15 @@ class ChatWindow(QMainWindow):
         if position is None:
             return
         text = self._messages[position]["text"]
+        # Memory holds turns redacted, so messages that redact alike are one text to it.
+        from jarvis.utils.redact import redact
+        stored = redact(text).strip()
         occurrence = sum(
             1 for m in self._messages[position + 1:]
-            if m.get("kind") == "user" and m.get("text") == text
+            if m.get("kind") == "user" and redact(m.get("text", "")).strip() == stored
         )
-        self._pending_rewind_keep = position + 1
+        # Keep the message itself; drop what followed it up to now (not what is added while waiting).
+        self._pending_rewind = (position + 1, len(self._messages))
         self._query_cancelled = False
         self._set_thinking(True)
         debug_log("chat rewind requested", "chat")
@@ -551,13 +558,14 @@ class ChatWindow(QMainWindow):
 
     def _on_rewound(self, applied: bool) -> None:
         """The daemon's answer to a rewind: truncate and await the new reply, or explain."""
-        keep = self._pending_rewind_keep
-        self._pending_rewind_keep = None
-        if keep is None:
+        pending = self._pending_rewind
+        self._pending_rewind = None
+        if pending is None:
             return
         if applied:
-            # Keep the message itself; the regenerated reply lands through the normal complete path.
-            self._messages = self._messages[:keep]
+            # The regenerated reply lands through the normal complete path.
+            keep, dropped_until = pending
+            self._messages = self._messages[:keep] + self._messages[dropped_until:]
             self._render_transcript(self._messages)
             return
         self._set_thinking(False)
@@ -583,7 +591,7 @@ class ChatWindow(QMainWindow):
         self._daemon_available = status == "running"
         if not self._daemon_available:
             self._query_in_flight = False
-            self._pending_rewind_keep = None
+            self._pending_rewind = None
             self.stop_button.setVisible(False)
         self.input_widget.setEnabled(self._daemon_available)
         self.input_widget.setPlaceholderText(
@@ -594,6 +602,7 @@ class ChatWindow(QMainWindow):
         )
         self._refresh_status_label()
         self._refresh_send_button()
+        self._refresh_rewind_buttons()
         self._refresh_header_status()
 
     # --- Daemon callback slots (run on the main thread via signals) -----
@@ -630,7 +639,7 @@ class ChatWindow(QMainWindow):
             self._append_assistant(reply)
 
     def _on_busy(self) -> None:
-        self._pending_rewind_keep = None
+        self._pending_rewind = None
         self._set_thinking(False)
         self._append_system("Jarvis is busy with another query already.")
 
