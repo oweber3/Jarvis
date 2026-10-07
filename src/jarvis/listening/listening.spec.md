@@ -243,9 +243,14 @@ After TTS finishes, allow wake-word-free follow-up.
 
 While TTS is playing, echo rejection and stop commands are handled with fast text-based checks (no LLM). This prevents self-loops where the mic picks up TTS output. After TTS finishes, the intent judge takes over. Audio captured while TTS was playing but transcribed only after it ended (common with Whisper on CPU) still goes through the early fuzzy echo check, whether or not it overlaps the hot window, before wake word detection and the intent judge. Pure echo is rejected, so a wake word inside Jarvis's own reply never engages it.
 
+**Utterance cap:** an utterance is cut at `tts_max_utterance_ms` (default 3 s) while TTS plays and at `max_utterance_ms` (default 12 s) otherwise, even while the VAD is still voiced. Jarvis's own echo keeps the VAD voiced for as long as it speaks, so without the cap a stop said over it would never reach Whisper.
+
 **Stop detection:**
-- Text-based: Check for "stop", "quiet", "shut up", etc.
-- Intent judge can also detect stop commands
+- Text-based, against the configured `stop_commands` ("stop", "quiet", "shut up", ...), for every utterance captured during TTS in the same TTS context, before any echo check. It applies whether the transcript arrives while TTS is still playing or after playback ended (slow Whisper), so a short "stop" is never rejected as echo of a reply that contains a similar word.
+- A stop is short: after the wake word is removed, at most 3 words. The stop phrase alone (with or without the wake word) always counts, even when the reply contains it. Other words with it count when the wake word is present or the words are not part of what Jarvis was saying (`_matches_tts_segment`), so Jarvis's own echo ("the nearest bus stop is…", "she stopped the car") never stops it. Longer utterances holding a stop word go to the intent judge.
+- Acting on it is the same as the orb's stop: TTS is interrupted if still playing, replies queued or being generated are cancelled with any bridge request or routine, the hot window activation is cancelled (an already open hot window closes) and the face returns to idle.
+- Intent judge can also detect stop commands in longer utterances while TTS plays; that stop acts the same way.
+- A stop captured during an earlier reply does not stop a later reply that started before the transcript arrived.
 
 **Echo handling:**
 - Transcripts during TTS are flagged with `is_during_tts=true`

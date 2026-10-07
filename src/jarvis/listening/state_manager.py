@@ -469,6 +469,21 @@ class StateManager:
             except Exception:
                 pass
 
+    def close_hot_window(self) -> None:
+        """End the hot window without touching the face state.
+
+        For when the window's speech has been acted on (a dispatched fast
+        command or a stop), so its expiry timer cannot later report a return
+        to wake word mode over whatever the face shows by then.
+        """
+        self._cancel_hot_window_expiry_timer()
+        with self._state_lock:
+            if self._state != ListeningState.HOT_WINDOW:
+                return
+            self._state = ListeningState.WAKE_WORD
+            self._hot_window_span_end = time.time()
+        debug_log("hot window closed (its speech was acted on)", "state")
+
     def stop(self) -> None:
         """Stop the state manager and cancel all timers."""
         self._should_stop = True

@@ -12,6 +12,7 @@ import time
 import queue
 import sys
 import platform
+import re
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -684,6 +685,17 @@ class VoiceListener(threading.Thread):
             and same_tts_context
         )
 
+        # A stop spoken while Jarvis talks is honoured whether or not playback
+        # has ended by the time Whisper finishes, before any echo check can
+        # mistake a short "stop" for Jarvis's own words. A later reply that
+        # started since the capture is not stopped by it.
+        if (received_during_tts and same_tts_context and self.tts and self.tts.enabled
+                and self._is_spoken_stop(text_lower, utterance_start_time)):
+            debug_log(f"stop command heard during TTS: {text_lower} (energy: {utterance_energy:.4f})", "voice")
+            self._transcript_buffer.mark_segment_processed(text_lower)
+            self._stop_after_spoken_stop()
+            return
+
         # --- Early echo check + early engagement ---
         # Check for echo BEFORE starting engagement and BEFORE intent judge.
         # This prevents: false engagement on echo, intent judge blocking the audio
@@ -772,23 +784,10 @@ class VoiceListener(threading.Thread):
                     self._set_face_state_listening()
                     debug_log("early engagement: wake word detected", "voice")
 
-        # Echo rejection & stop commands — only while TTS is actively playing.
+        # Echo rejection — only while TTS is actively playing.
         # After TTS finishes, the intent judge handles everything (echo detection,
         # hot window follow-ups, etc.) using full transcript context + last TTS text.
         if self.tts and self.tts.enabled and active_tts_overlapped:
-            # Stop command detection (fast, text-based)
-            stop_commands = getattr(self.cfg, "stop_commands", ["stop", "quiet", "shush", "silence", "enough", "shut up"])
-            if is_stop_command(text_lower, stop_commands):
-                debug_log(f"stop command detected during TTS: {text_lower} (energy: {utterance_energy:.4f})", "voice")
-                self.tts.interrupt()
-                self._barge_in_reset()  # interrupt() also restores a ducked volume
-                try:
-                    while not self._audio_q.empty():
-                        self._audio_q.get_nowait()
-                except Exception:
-                    pass
-                return
-
             # Echo rejection during active TTS
             should_reject = self.echo_detector.should_reject_as_echo(
                 text_lower, utterance_energy, True,
@@ -895,9 +894,7 @@ class VoiceListener(threading.Thread):
             )
             if _addressed:
                 _stop_query = extract_query_after_wake(text_lower, _wake_word, _aliases)
-                _stop_commands = getattr(self.cfg, "stop_commands",
-                                         ["stop", "quiet", "shush", "silence", "enough", "shut up"])
-                if is_stop_command(_stop_query, _stop_commands):
+                if is_stop_command(_stop_query, self._stop_commands()):
                     debug_log('stop command cancels the reply in flight', 'voice')
                     print("  🛑 Stopped", flush=True)
                     if _collecting:
@@ -1023,11 +1020,10 @@ class VoiceListener(threading.Thread):
                         return
 
             if intent_judgment is not None:
-                # If judge says stop command, interrupt TTS
+                # If judge says stop command, stop like a spoken stop
                 if intent_judgment.stop and active_tts_overlapped:
                     debug_log(f"🛑 Intent judge detected stop command", "voice")
-                    self.tts.interrupt()
-                    self._barge_in_reset()  # interrupt() also restores a ducked volume
+                    self._stop_after_spoken_stop()
                     return
 
                 # If directed with query, process it
@@ -1765,9 +1761,60 @@ class VoiceListener(threading.Thread):
         if speaking:
             self.tts.interrupt()
             self._barge_in_reset()  # interrupt() also restores a ducked volume
+            self.echo_detector.track_tts_finish()  # the echo tail after the cut is still Jarvis
         self.state_manager.cancel_hot_window_activation()
         set_state(AssistantState.IDLE)
         return True
+
+    # A spoken stop is short; a longer utterance holding a stop word is
+    # conversation or Jarvis's own echo, and the intent judge sees it instead.
+    _STOP_MAX_WORDS = 3
+
+    def _stop_commands(self) -> list:
+        return list(getattr(self.cfg, "stop_commands",
+                            ["stop", "quiet", "shush", "silence", "enough", "shut up"]))
+
+    def _is_spoken_stop(self, text_lower: str, utterance_start_time: float) -> bool:
+        """True when speech captured during TTS is the user telling Jarvis to stop.
+
+        The stop phrase alone (with or without the wake word) always counts,
+        even when Jarvis's reply contains it. A few more words count when the
+        wake word addressed them or Jarvis was not saying them itself, so its
+        own echo ("the nearest bus stop is...") never stops it.
+        """
+        wake_word = getattr(self.cfg, "wake_word", "jarvis")
+        aliases = list(set(getattr(self.cfg, "wake_aliases", [])) | {wake_word})
+        remainder = extract_query_after_wake(text_lower, wake_word, aliases)
+        stop_commands = self._stop_commands()
+        if not is_stop_command(remainder, stop_commands):
+            return False
+        if len(re.findall(r"\w+", remainder, re.UNICODE)) > self._STOP_MAX_WORDS:
+            debug_log("stop word in a longer utterance during TTS: not a stop", "voice")
+            return False
+        leftover = remainder
+        for command in stop_commands:
+            leftover = re.sub(rf"(?<!\w){re.escape(command.lower())}(?!\w)", " ", leftover)
+        if not re.search(r"\w", leftover, re.UNICODE):
+            return True
+        if is_wake_word_detected(text_lower, wake_word, aliases,
+                                 float(getattr(self.cfg, "wake_fuzzy_ratio", 0.78))):
+            return True
+        is_echo =self.echo_detector._matches_tts_segment(remainder, self._tts_rate(), utterance_start_time)
+        if is_echo:
+            debug_log(f"stop word heard in Jarvis's own words: '{remainder}'", "voice")
+        return not is_echo
+
+    def _stop_after_spoken_stop(self) -> None:
+        """Act on a stop heard during TTS, whether or not playback has ended since.
+
+        Jarvis falls silent, replies queued behind this one are dropped and the
+        follow-up window does not open (or closes if it already has).
+        """
+        if not self._stop_reply_in_progress():
+            print("  🛑 Stopped", flush=True)
+            self.state_manager.cancel_hot_window_activation()
+            set_state(AssistantState.IDLE)
+        self.state_manager.close_hot_window()
 
     def _apply_manual_wake_toggle(self) -> None:
         """Wake if idle; drop back to idle if waiting for a request or in the hot window."""
@@ -2993,11 +3040,16 @@ class VoiceListener(threading.Thread):
                     self._silence_frames = 0
                 else:
                     self._silence_frames += 1
-                    # Use shorter timeout during TTS for quick stop command detection
-                    current_max_frames = self._tts_max_utt_frames if (self.tts and self.tts.is_speaking()) else self._normal_max_utt_frames
-                    if self._silence_frames >= self._endpoint_silence_frames or len(self._utterance_frames) >= current_max_frames:
-                        self._finalize_utterance()
-                        self._pre_roll.clear()
+                # The length cap applies even while speech continues: Jarvis's own
+                # echo keeps the VAD voiced during TTS, and the shorter cap then
+                # gets a spoken stop to Whisper promptly.
+                current_max_frames = self._tts_max_utt_frames if (self.tts and self.tts.is_speaking()) else self._normal_max_utt_frames
+                at_cap = len(self._utterance_frames) >= current_max_frames
+                if self._silence_frames >= self._endpoint_silence_frames or at_cap:
+                    if at_cap and is_voice:
+                        debug_log(f"utterance cut at {current_max_frames * self._frame_ms} ms while speech continues", "voice")
+                    self._finalize_utterance()
+                    self._pre_roll.clear()
 
             self._barge_in_tick(is_voice)
 

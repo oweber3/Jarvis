@@ -625,7 +625,8 @@ def test_delayed_stop_only_interrupts_tts_that_overlapped_capture(
     obj.cfg.wake_aliases = []
     obj.tts = SimpleNamespace(enabled=True, is_speaking=lambda: True, interrupt=Mock())
     obj.echo_detector = SimpleNamespace(_tts_start_time=12.0, _last_tts_finish_time=0,
-                                        _last_tts_text="", echo_tolerance=0.3)
+                                        _last_tts_text="", echo_tolerance=0.3,
+                                        track_tts_finish=lambda: None)
     obj.state_manager = Mock()
     obj.state_manager.was_speech_during_hot_window.return_value = False
     obj.state_manager.is_collecting.return_value = False

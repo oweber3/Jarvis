@@ -27,6 +27,8 @@ def _create_mock_config(**kwargs):
     mock_cfg.voice_device = kwargs.get("voice_device", None)
     mock_cfg.voice_debug = kwargs.get("voice_debug", False)
     mock_cfg.vad_frame_ms = kwargs.get("vad_frame_ms", 20)
+    mock_cfg.max_utterance_ms = kwargs.get("max_utterance_ms", 12000)
+    mock_cfg.tts_max_utterance_ms = kwargs.get("tts_max_utterance_ms", 3000)
     return mock_cfg
 
 
