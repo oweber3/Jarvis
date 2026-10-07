@@ -1,8 +1,5 @@
 """The microphone and Jarvis's voice publish how loud they are, so the orb can follow them."""
 
-import threading
-from unittest.mock import MagicMock
-
 import numpy as np
 import pytest
 
@@ -50,9 +47,7 @@ class TestMicrophone:
     def test_dictation_publishes_how_loud_the_microphone_is(self, channel):
         from jarvis.dictation.dictation_engine import DictationEngine
 
-        engine = DictationEngine(whisper_model_ref=lambda: MagicMock(), whisper_backend_ref=lambda: "faster-whisper",
-                                 mlx_repo_ref=lambda: None, hotkey="ctrl+shift+d", sample_rate=16000,
-                                 on_dictation_start=None, on_dictation_end=None, transcribe_lock=threading.Lock())
+        engine = DictationEngine.__new__(DictationEngine)   # only the capture callback: no hotkey library needed
         engine._recording = True
         engine._audio_frames = []
         engine._audio_callback(_tone(0.3, 1600)[:, None], 1600, None, None)
@@ -61,9 +56,7 @@ class TestMicrophone:
     def test_dictation_publishes_nothing_while_not_recording(self, channel):
         from jarvis.dictation.dictation_engine import DictationEngine
 
-        engine = DictationEngine(whisper_model_ref=lambda: MagicMock(), whisper_backend_ref=lambda: "faster-whisper",
-                                 mlx_repo_ref=lambda: None, hotkey="ctrl+shift+d", sample_rate=16000,
-                                 on_dictation_start=None, on_dictation_end=None, transcribe_lock=threading.Lock())
+        engine = DictationEngine.__new__(DictationEngine)   # only the capture callback: no hotkey library needed
         engine._recording = False
         engine._audio_frames = []
         engine._audio_callback(_tone(0.3, 1600)[:, None], 1600, None, None)
