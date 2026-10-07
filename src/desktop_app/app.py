@@ -1068,15 +1068,62 @@ def get_existing_instance_pid() -> Optional[int]:
     return None
 
 
+# Executables of the helper processes a Jarvis instance runs: the daemon and memory viewer (Python),
+# an Ollama it launched and its model runners, the Codex and Claude CLIs, and MCP servers.
+_HELPER_PROCESS_STEMS = frozenset({
+    "jarvis", "python", "pythonw", "ollama", "ollama app", "llama-server",
+    "codex", "claude", "node", "npx", "uv", "uvx",
+})
+
+
+def _is_helper_process(name: str) -> bool:
+    """Whether a descendant of an old instance is one of its helpers rather than an app it opened for the user."""
+    stem = name.lower()
+    if stem.endswith(".exe"):
+        stem = stem[:-4]
+    return stem in _HELPER_PROCESS_STEMS or stem.startswith("python3")
+
+
+def _signal_process(proc, action: str) -> None:
+    """``terminate`` or ``kill`` a process; one already gone is fine."""
+    try:
+        getattr(proc, action)()
+    except psutil.NoSuchProcess:
+        pass
+
+
+def _signal_helper(proc, action: str) -> None:
+    """Like ``_signal_process`` for a helper, whose refusal (e.g. access denied) is logged and skipped."""
+    try:
+        _signal_process(proc, action)
+    except psutil.Error as e:
+        debug_log(f"Could not {action} helper process {proc.pid}: {e}", "desktop")
+
+
+def _wait_for_exit(proc, timeout: float) -> bool:
+    """True once the process has exited (or is gone), False when it is still running after ``timeout``."""
+    try:
+        proc.wait(timeout=timeout)
+    except psutil.NoSuchProcess:
+        pass
+    except psutil.TimeoutExpired:
+        return False
+    return True
+
+
 def kill_existing_instance(pid: int) -> bool:
     """
-    Terminate an existing Jarvis instance by PID, with every process it started.
+    Terminate an existing Jarvis instance by PID, with the helper processes it started.
 
     On Windows ``terminate()`` ends the process at once, so its own clean-up
-    never runs. Its child processes (the memory viewer server, an Ollama it
-    launched and that Ollama's model runners) are therefore stopped here too;
-    an Ollama the user started is not a child and is left alone. The old
-    session's crash marker is removed, because a deliberate close is not a crash.
+    never runs. Its helper processes (the daemon subprocess, the memory viewer
+    server, an Ollama it launched and that Ollama's model runners, the Codex
+    and Claude CLIs, MCP servers) are therefore stopped here too. Apps Jarvis
+    opened for the user (Word, a browser, a game) are its descendants as well
+    but are left running, since they may hold unsaved work; so is an Ollama
+    the user started, which is not a descendant. A helper that cannot be
+    stopped is skipped. The old session's crash marker is removed, because a
+    deliberate close is not a crash.
 
     Returns True if the process was terminated, False otherwise.
     """
@@ -1099,29 +1146,39 @@ def kill_existing_instance(pid: int) -> bool:
             own.update(parent.pid for parent in psutil.Process(os.getpid()).parents())
         except psutil.Error:
             pass
-        children = [child for child in children if child.pid not in own]
-        debug_log(f"Terminating existing Jarvis instance (PID {pid}) and {len(children)} child process(es)", "desktop")
-
-        tree = [process] + children
-        for proc in tree:
+        helpers = []
+        for child in children:
+            if child.pid in own:
+                continue
             try:
-                proc.terminate()
-            except psutil.NoSuchProcess:
-                pass
+                if _is_helper_process(child.name()):
+                    helpers.append(child)
+            except psutil.Error:
+                continue
+        debug_log(
+            f"Terminating existing Jarvis instance (PID {pid}), {len(helpers)} helper process(es) "
+            f"of {len(children)} descendant(s)", "desktop",
+        )
+
+        # The instance itself must stop (an error here fails the takeover); a helper that refuses
+        # is logged and skipped.
+        _signal_process(process, "terminate")
+        for helper in helpers:
+            _signal_helper(helper, "terminate")
 
         # Wait up to 5 seconds for graceful shutdown, then force the stragglers
-        for proc in tree:
+        if not _wait_for_exit(process, 5):
+            debug_log(f"Process {pid} didn't terminate gracefully, force killing", "desktop")
+            _signal_process(process, "kill")
+            _wait_for_exit(process, 2)
+        for helper in helpers:
             try:
-                proc.wait(timeout=5)
-            except psutil.NoSuchProcess:
-                pass
-            except psutil.TimeoutExpired:
-                debug_log(f"Process {proc.pid} didn't terminate gracefully, force killing", "desktop")
-                try:
-                    proc.kill()
-                    proc.wait(timeout=2)
-                except psutil.NoSuchProcess:
-                    pass
+                if not _wait_for_exit(helper, 5):
+                    debug_log(f"Helper process {helper.pid} didn't terminate gracefully, force killing", "desktop")
+                    _signal_helper(helper, "kill")
+                    _wait_for_exit(helper, 2)
+            except psutil.Error as e:
+                debug_log(f"Could not stop helper process {helper.pid}: {e}", "desktop")
 
         mark_session_clean_exit()
         return True

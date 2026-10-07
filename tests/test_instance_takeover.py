@@ -86,6 +86,44 @@ def test_closing_the_old_instance_stops_what_it_started(processes):
 
 
 @pytest.mark.unit
+def test_apps_jarvis_opened_for_the_user_keep_running(processes):
+    """Word, a browser or a game Jarvis launched are its children too, and may hold unsaved work."""
+    from desktop_app.app import kill_existing_instance
+
+    word = FakeProcess(40, "WINWORD.EXE")
+    game = FakeProcess(41, "game.exe")
+    mcp_server = FakeProcess(42, "node.exe")
+    daemon = FakeProcess(12, "python.exe", children=[word, mcp_server])
+    jarvis = FakeProcess(1, "Jarvis.exe", children=[daemon, game])
+    for proc in (jarvis, daemon, word, game, mcp_server):
+        processes[proc.pid] = proc
+
+    assert kill_existing_instance(jarvis.pid) is True
+    assert daemon.stopped and mcp_server.stopped
+    assert not word.terminated and not word.killed
+    assert not game.terminated and not game.killed
+
+
+@pytest.mark.unit
+def test_a_child_that_cannot_be_stopped_does_not_abort_the_takeover(processes, monkeypatch):
+    from desktop_app.app import get_crash_paths, kill_existing_instance
+
+    _, crash_marker, _ = get_crash_paths()
+    crash_marker.touch()
+    jarvis, viewer, owned_ollama, runner, _ = _old_instance(processes)
+
+    def denied():
+        raise psutil.AccessDenied(owned_ollama.pid)
+
+    monkeypatch.setattr(owned_ollama, "terminate", denied)
+    monkeypatch.setattr(owned_ollama, "kill", denied)
+
+    assert kill_existing_instance(jarvis.pid) is True
+    assert jarvis.stopped and viewer.stopped and runner.stopped
+    assert not crash_marker.exists()
+
+
+@pytest.mark.unit
 def test_a_child_that_ignores_terminate_is_killed(processes):
     from desktop_app.app import kill_existing_instance
 
