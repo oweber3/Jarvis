@@ -31,6 +31,10 @@ class TestCodexModels:
         models = codex_models(self.RECORDS)
         assert models[1].name == "gpt-6-sol"
 
+    def test_the_models_description_is_kept_for_the_picker(self):
+        models = codex_models([{"id": "m", "description": "Fast\n and cheap"}, {"id": "n"}])
+        assert models[0].description == "Fast and cheap" and models[1].description == ""
+
     def test_hidden_models_are_left_out(self):
         assert "internal-model" not in ids(codex_models(self.RECORDS))
 
@@ -90,6 +94,28 @@ class TestClaudeModels:
     @pytest.mark.parametrize("bad", [None, "x", [], [{}], [{"value": 3}], [{"value": "bad value"}]])
     def test_unusable_input_gives_no_models(self, bad):
         assert claude_models(bad) == []
+
+    # What Claude Code reports: the alias is the display name and the version is only in the description.
+    REAL = [
+        {"value": "default", "displayName": "Default (recommended)", "description": "Opus 5.5 · Best for everyday tasks"},
+        {"value": "sonnet", "displayName": "Sonnet", "description": "Sonnet 5.5 · Efficient for routine tasks"},
+        {"value": "haiku", "displayName": "Haiku", "description": "Haiku 4.5 · Fastest for quick answers"},
+        {"value": "plain", "displayName": "Plain", "description": "Just words, no version"},
+        {"value": "bare", "displayName": "Bare"},
+    ]
+
+    def test_the_version_in_the_description_names_the_model(self):
+        names = {m.id: m.name for m in claude_models(self.REAL)}
+        assert names["sonnet"] == "Sonnet 5.5" and names["haiku"] == "Haiku 4.5"
+
+    def test_a_default_alias_shows_the_model_it_points_at(self):
+        assert claude_models(self.REAL)[0].name == "Default (recommended) · Opus 5.5"
+
+    def test_the_rest_of_the_description_is_kept_for_the_picker(self):
+        by_id = {m.id: m for m in claude_models(self.REAL)}
+        assert by_id["sonnet"].description == "Efficient for routine tasks"
+        assert by_id["plain"].name == "Plain" and by_id["plain"].description == "Just words, no version"
+        assert by_id["bare"].description == ""
 
 
 class TestChooseEffort:

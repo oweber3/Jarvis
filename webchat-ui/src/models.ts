@@ -8,6 +8,16 @@ export const MODE_LABELS: Record<string, string> = {
   claude: "Claude",
 }
 
+// The short names on the mode switch; the full name is its tooltip.
+export const MODE_SHORT_LABELS: Record<string, string> = {
+  local: "Local",
+  codex: "Codex",
+  claude: "Claude",
+}
+
+// Local first, then the cloud modes in the order people read them.
+export const MODE_ORDER = ["local", "codex", "claude"]
+
 const WELL_KNOWN_EFFORTS: Record<string, string> = { xhigh: "Extra high", max: "Max", minimal: "Minimal", none: "None" }
 
 // The runtimes name their levels with ids ("xhigh"); this is what the owner reads.

@@ -45,7 +45,7 @@ A bridge is not an `LLMBackend`. Jarvis keeps speech recognition, speech output,
 
 ## Cloud models
 
-Each bridge records what its runtime reports at its readiness check: Codex's `model/list` (hidden models left out, efforts from `supportedReasoningEfforts`) and Claude Code's `initialize` answer (efforts only for a model with `supportsEffort` not false). `available_models()` returns them as `CloudModel` records (`bridge/model_catalog.py`) and is empty until the first check. The lists are untrusted data: at most 128 models and 12 efforts, identifiers matching a safe pattern, names stripped of control characters and bounded, duplicates dropped, and nothing invented for a missing field.
+Each bridge records what its runtime reports at its readiness check: Codex's `model/list` (hidden models left out, efforts from `supportedReasoningEfforts`) and Claude Code's `initialize` answer (efforts only for a model with `supportsEffort` not false). `available_models()` returns them as `CloudModel` records (`bridge/model_catalog.py`) and is empty until the first check. A Claude model is named with the version from its description ("Sonnet 5.5"), because the runtime's display name is only the alias; the rest of the description is kept as secondary text. The lists are untrusted data: at most 128 models and 12 efforts, identifiers matching a safe pattern, names stripped of control characters and bounded, duplicates dropped, and nothing invented for a missing field.
 
 The model and effort in use are `codex_model` / `codex_reasoning_effort` and `claude_model` / `claude_effort`. `daemon.set_cloud_model(model, effort)` changes them for the active cloud mode while Jarvis runs:
 

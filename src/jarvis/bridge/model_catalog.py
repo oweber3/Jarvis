@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional, Tuple
 MAX_MODELS = 128
 MAX_EFFORTS = 12
 MAX_NAME_CHARS = 120
+MAX_DESCRIPTION_CHARS = 200
+_DESCRIPTION_SEPARATOR = " · "
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-\[\]/]{0,199}$")
 
 
@@ -28,9 +30,10 @@ class CloudModel:
     name: str
     efforts: Tuple[Effort, ...] = ()
     is_default: bool = False
+    description: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"id": self.id, "name": self.name, "is_default": self.is_default,
+        return {"id": self.id, "name": self.name, "is_default": self.is_default, "description": self.description,
                 "efforts": [{"id": e.id, "is_default": e.is_default, "description": e.description}
                             for e in self.efforts]}
 
@@ -68,10 +71,23 @@ def codex_models(raw: Any) -> List[CloudModel]:
             efforts[effort_id] = Effort(effort_id, is_default=effort_id == default_effort,
                                         description=_clean_text(entry.get("description"), MAX_NAME_CHARS))
         models[model_id] = CloudModel(model_id, _clean_text(record.get("displayName"), MAX_NAME_CHARS) or model_id,
-                                      tuple(efforts.values()), is_default=record.get("isDefault") is True)
+                                      tuple(efforts.values()), is_default=record.get("isDefault") is True,
+                                      description=_clean_text(record.get("description"), MAX_DESCRIPTION_CHARS))
         if len(models) >= MAX_MODELS:
             break
     return list(models.values())
+
+
+def _claude_name(display: str, description: str) -> Tuple[str, str]:
+    """Claude Code names a model by its alias ("Sonnet") and puts the version in the description
+    ("Sonnet 5.5 · Efficient for routine tasks"). The name is the alias with that version, and the rest of
+    the description is kept as the picker's secondary text."""
+    head, separator, rest = description.partition(_DESCRIPTION_SEPARATOR)
+    if not separator or not head:
+        return display, description
+    if head.lower().startswith(display.lower()):
+        return head, rest
+    return f"{display}{_DESCRIPTION_SEPARATOR}{head}", rest
 
 
 def claude_models(raw: Any) -> List[CloudModel]:
@@ -88,8 +104,9 @@ def claude_models(raw: Any) -> List[CloudModel]:
                 level_id = _safe_id(level)
                 if level_id is not None and all(e.id != level_id for e in efforts) and len(efforts) < MAX_EFFORTS:
                     efforts.append(Effort(level_id))
-        models[model_id] = CloudModel(model_id, _clean_text(record.get("displayName"), MAX_NAME_CHARS) or model_id,
-                                      tuple(efforts))
+        name, description = _claude_name(_clean_text(record.get("displayName"), MAX_NAME_CHARS) or model_id,
+                                         _clean_text(record.get("description"), MAX_DESCRIPTION_CHARS))
+        models[model_id] = CloudModel(model_id, name, tuple(efforts), description=description)
         if len(models) >= MAX_MODELS:
             break
     return list(models.values())

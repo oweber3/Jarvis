@@ -7,6 +7,7 @@ const model = (id: string, efforts: string[], defaultEffort?: string): CloudMode
   id,
   name: id.toUpperCase(),
   is_default: false,
+  description: "",
   efforts: efforts.map((e) => effort(e, e === defaultEffort)),
 })
 

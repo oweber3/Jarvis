@@ -30,7 +30,7 @@ export type LocalModel = { id: string; name: string; installed: boolean }
 // The Claude or Codex mode in use: its model and effort, and whether its bridge has reported the models.
 export type CloudState = { mode: string; model: string; effort: string; ready: boolean }
 export type CloudEffort = { id: string; is_default: boolean; description: string }
-export type CloudModel = { id: string; name: string; is_default: boolean; efforts: CloudEffort[] }
+export type CloudModel = { id: string; name: string; is_default: boolean; description: string; efforts: CloudEffort[] }
 
 export type Library = { projects: Project[]; chats: Chat[]; active_chat_id: string | null }
 
