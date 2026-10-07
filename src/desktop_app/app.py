@@ -2305,11 +2305,12 @@ class JarvisSystemTray:
         Args:
             show_no_update_dialog: If True, shows a dialog even when no update is available.
         """
-        from desktop_app.updater import check_for_updates, is_frozen
+        from desktop_app.updater import check_for_updates, is_frozen, update_install_blocker
         from desktop_app.update_dialog import (
             UpdateAvailableDialog,
             UpdateProgressDialog,
             show_no_update_dialog as show_no_update,
+            show_update_blocked_dialog,
             show_update_error_dialog,
         )
 
@@ -2339,6 +2340,10 @@ class JarvisSystemTray:
                 # Show update available dialog
                 dialog = UpdateAvailableDialog(status)
                 if dialog.exec() == QDialog.DialogCode.Accepted:
+                    blocker = update_install_blocker()
+                    if blocker:
+                        show_update_blocked_dialog(blocker)
+                        return
                     # User chose to update - create callback to save diary before install
                     def save_session_before_update():
                         """Stop daemon and save diary before update installation."""

@@ -596,3 +596,14 @@ def show_update_error_dialog(error: str, parent=None) -> None:
     msg.setInformativeText(error)
     apply_theme(msg)
     msg.exec()
+
+
+def show_update_blocked_dialog(reason: str, parent=None) -> None:
+    """Explain why this install cannot update itself and what to do instead."""
+    msg = QMessageBox(parent)
+    msg.setIcon(QMessageBox.Icon.Warning)
+    msg.setWindowTitle("Update Not Possible Here")
+    msg.setText("Jarvis can't update itself from where it is running")
+    msg.setInformativeText(reason)
+    apply_theme(msg)
+    msg.exec()
