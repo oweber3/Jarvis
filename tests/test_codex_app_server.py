@@ -305,6 +305,14 @@ class TestMacExecutableResolution:
         exe = _touch(root / "Applications" / "ChatGPT.app" / "Contents" / "Resources" / "bin" / "codex")
         assert resolve_executable("codex") == str(exe)
 
+    def test_chatgpt_app_codex_cli_bundle_is_found(self, monkeypatch, tmp_path):
+        """The layout a real ChatGPT.app ships: a ``codex-cli`` folder with ``bin/codex`` and a nested app."""
+        root, _ = _mac(monkeypatch, tmp_path)
+        cli = root / "Applications" / "ChatGPT.app" / "Contents" / "Resources" / "codex-cli"
+        _touch(cli / "CodexCLI.app" / "Contents" / "MacOS" / "codex")
+        exe = _touch(cli / "bin" / "codex")
+        assert resolve_executable("codex") == str(exe)
+
     def test_standalone_install_wins_over_the_desktop_app_copy(self, monkeypatch, tmp_path):
         root, _ = _mac(monkeypatch, tmp_path)
         _touch(root / "Applications" / "ChatGPT.app" / "Contents" / "Resources" / "codex")

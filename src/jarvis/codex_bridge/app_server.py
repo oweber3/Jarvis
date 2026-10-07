@@ -129,7 +129,9 @@ def _macos_install() -> Optional[str]:
     for applications in (_FS_ROOT / "Applications", home / "Applications"):
         for app in _MACOS_APPS:
             resources = applications / app / "Contents" / "Resources"
-            for candidate in (resources / "codex", *sorted(resources.glob("*/codex"))):
+            # ChatGPT.app ships it as Resources/codex-cli/bin/codex.
+            for candidate in (resources / "codex", *sorted(resources.glob("*/codex")),
+                              *sorted(resources.glob("*/bin/codex"))):
                 if _is_executable(candidate):
                     return str(candidate)
     return None
