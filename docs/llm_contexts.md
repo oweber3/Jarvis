@@ -4,7 +4,7 @@ Every distinct LLM call in Jarvis, what feeds it, what consumes it, and how it i
 
 > **Request shape.** Every Ollama completion, including startup probes, uses backend-owned `llm_num_ctx` (default 8192), residency (`llm_keep_alive`, `1m` in low-power mode) and a `think: false` default. FAST and CHAT sharing a model share the same load shape. Callers supply generation settings; context sizes belong to backends and future model targets.
 
-> **Backend abstraction.** Every context below routes through `jarvis.llm` ([spec](../src/jarvis/llm/llm.spec.md)) via `get_llm_backend(cfg)` / `get_embedding_backend(cfg)`. Picking `llm_provider: openai_compatible` swaps the wire shape end-to-end without touching call sites. The active chat model is read directly from `cfg.llm_chat_model` (the `Settings` field that always carries the resolved value, populated by config-load from `ollama_chat_model` when the provider-aware key is left empty).
+> **Backend abstraction.** Every context below routes through `jarvis.llm` ([spec](../src/jarvis/llm/llm.spec.md)) via `get_llm_backend(cfg)` / `get_embedding_backend(cfg)`. Picking `llm_provider: openai_compatible` swaps the wire shape end-to-end without touching call sites. The active chat model is read directly from `cfg.llm_chat_model` (the `Settings` field that always carries the resolved value, populated by config-load from `ollama_chat_model` when the provider-aware key is left empty). On the Ollama provider the web chat's model picker can replace it while Jarvis runs (`daemon.set_local_chat_model`): the daemon's and the voice listener's settings are swapped, so every context below reads the new model from its next call and no context is added or removed ([spec](../src/jarvis/webchat/webchat.spec.md)).
 
 ---
 

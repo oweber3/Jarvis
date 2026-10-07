@@ -92,6 +92,8 @@ Every LLM context runs on one of two models, or a third when the opt-in tool mod
 | `Tier.BACKGROUND` | `cfg.llm_chat_model` in local reply mode, `cfg.fast_model` while Codex or Claude writes replies (`bridge.modes.active_mode()`) | conversation summariser, graph fact extraction, `logMeal` extraction and follow-ups, dictation filler removal: local work that runs whatever the reply mode, so a cloud session never pages in the chat model | follows the two fields |
 | `Tier.TOOL` | `cfg.tool_model` | the tool phase of a local reply in tool-model mode (`reply/reply.spec.md`, Tool-Model Mode) | empty: off, and no context runs on it |
 
+`cfg.llm_chat_model` can change while Jarvis runs: on the Ollama provider the web chat's model picker calls `daemon.set_local_chat_model`, which saves `ollama_chat_model`, replaces the daemon's and the voice listener's `Settings` (frozen, so by replacement), warms the new model and releases the old one unless the fast tier, the tool model or embeddings share it (`webchat/webchat.spec.md`, Models). Contexts keep reading the field, so they pick the new model up on their next call.
+
 Fast-tier contexts take a few thousand tokens in and emit tiny strict-JSON answers, so latency dominates; chat-tier contexts produce long-form output, so quality dominates. Contexts state their tier instead of defining a per-context fallback chain, and any future routing logic lands in exactly one place.
 
 ### Request-shape ownership

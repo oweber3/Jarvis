@@ -27,6 +27,8 @@ src/desktop_app/
 ├── repository.py        # Repository slug and pre-filled issue-report links
 ├── diary_dialog.py      # End-of-session diary update dialog
 ├── chat_window.py       # Text chat interface (see chat_window.spec.md)
+├── web_chat_window.py   # Window around the web chat page (see jarvis/webchat/webchat.spec.md)
+├── web_chat_theme.py    # Writes the web chat page's palette from themes.py
 ├── phone_access_dialog.py # Phone pairing and paired phones (see jarvis/remote/remote.spec.md)
 ├── memory_viewer.py     # Flask-based memory browser (palette from themes.py)
 ├── updater.py           # Update checking logic
@@ -118,6 +120,7 @@ The central controller that manages:
 | **SetupWizard** | First-run configuration (Ollama, models, profile) |
 | **DictationHistoryWindow** | Scrollable list of past dictations with copy/delete/clear actions |
 | **ChatWindow** | Text chat interface alongside voice; shares one conversation with the voice path and is enabled only while the daemon is running (see `chat_window.spec.md`) |
+| **WebChatWindow** | The web chat (projects, model picker) in an embedded browser on the page the daemon serves on the loopback interface; opened by the tray's `Chat` entry while `web_chat_enabled` is on, in place of `ChatWindow`. Shows a status page while the daemon is not running (see `jarvis/webchat/webchat.spec.md`) |
 | **PhoneAccessDialog** | `Phone Access` in the tray: turn phone access on, pair a phone with a one-time code, list and remove paired phones. Works on the shared device files, so it needs no daemon IPC (see `jarvis/remote/remote.spec.md`) |
 
 ### Activity log and downloads
@@ -329,7 +332,7 @@ A Flask-based web interface for browsing conversation history:
 - **Development mode**: Flask runs as subprocess (`python -m desktop_app.memory_viewer <port>`). Its stdout and stderr go to `memory_viewer.log` in the log directory (`get_log_dir()`, replaced on each start), never to a pipe, so however much it prints it keeps answering; when it fails to start, the tail of that file is printed to the console
 - **Request log off**: Werkzeug logs errors only (`quiet_request_log`, both modes), so request lines, which carry memory search terms, are never written anywhere
 - Opens in embedded QWebEngineView or system browser (macOS fallback)
-- **Request guard**: the server has no login, so a `before_request` hook answers only the viewer itself. A `Host` that is not `localhost`, `127.0.0.1` or `::1` (DNS rebinding) gets 403, and so does an `Origin` that differs from the request's own `Host` (cross-site requests, another local server). Requests with no `Origin` are served
+- **Request guard**: the server has no login, so a `before_request` hook answers only the viewer itself (`jarvis.utils.local_guard.refusal`, shared with the web chat). A `Host` that is not `localhost`, `127.0.0.1` or `::1` (DNS rebinding) gets 403, and so does an `Origin` that differs from the request's own `Host` (cross-site requests, another local server). Requests with no `Origin` are served
 
 ## Error Handling
 

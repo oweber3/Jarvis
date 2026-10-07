@@ -4,6 +4,11 @@ A text chat interface for Jarvis, alongside the existing voice path. Voice
 remains the primary modality; text is a first-class sibling that shares the
 same conversation, memory, and tools.
 
+The opt-in web chat (`src/jarvis/webchat/webchat.spec.md`) is a second interface onto the same daemon. While
+`web_chat_enabled` is on, the tray's `Chat` entry opens it instead of this window; this window is otherwise
+unchanged and stays until the owner decides to retire it. Both can receive the outcome of a confirmed action
+(`add_chat_result_listener`).
+
 ## Core principle: one conversation
 
 Voice and text are two views onto the **same** conversation. Both feed the
