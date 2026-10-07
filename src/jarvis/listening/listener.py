@@ -1350,7 +1350,8 @@ class VoiceListener(threading.Thread):
         if not answer.strip():
             return False
 
-        detected_lang = getattr(self, "_detected_language", "en") or "en"
+        # The answer is read in the language Whisper detected for it, as the typed and queued paths do.
+        detected_lang = self._last_detected_language or "en"
         voice_status = store.handle_voice_response(answer, language=detected_lang)
         if voice_status == VoiceResponseStatus.AFFIRMATIVE:
             debug_log("Voice confirmation approved by user", "safety")

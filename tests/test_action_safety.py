@@ -473,7 +473,7 @@ def test_listener_voice_confirmation_affirmative():
     listener._end_engagement = MagicMock()
     listener.track_tts_start = MagicMock()
     listener.activate_hot_window = MagicMock()
-    listener._detected_language = "en"
+    listener._last_detected_language = "en"
 
     store = get_confirmation_store()
     req = ConfirmationRequest(
@@ -512,7 +512,7 @@ def test_listener_voice_confirmation_negative():
     listener._end_engagement = MagicMock()
     listener.track_tts_start = MagicMock()
     listener.activate_hot_window = MagicMock()
-    listener._detected_language = "en"
+    listener._last_detected_language = "en"
 
     store = get_confirmation_store()
     req = ConfirmationRequest(

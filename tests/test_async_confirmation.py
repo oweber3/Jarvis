@@ -301,7 +301,7 @@ def _listener():
     listener.tts = MagicMock()
     listener.state_manager = MagicMock()
     listener.state_manager.was_speech_during_hot_window.return_value = True
-    listener._detected_language = "en"
+    listener._last_detected_language = "en"
     listener._wake_timestamp = None
     listener._end_engagement = MagicMock()
     listener.track_tts_start = MagicMock()
