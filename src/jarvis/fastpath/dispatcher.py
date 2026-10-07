@@ -5,6 +5,9 @@ from ..debug import debug_log
 from ..utils.redact import redact
 from .matcher import match, FastMatch
 
+# The reply when a tool raises instead of returning a result.
+UNEXPECTED_FAILURE = 'That did not work: the action failed with an unexpected error.'
+
 
 def match_command(text, cfg, language=None, addressed=True):
     """Check availability and the central policy before offering a routine route. ``addressed`` is false for a
@@ -63,9 +66,14 @@ def dispatch(result: FastMatch, db, cfg, text, language=None, *, executor=None, 
     else:
         args_log = json.dumps(sorted(result.args))
     debug_log(f'FAST_ROUTE family={result.family} tool={result.tool_name} args={args_log}', 'routing')
-    outcome = executor(db=db, cfg=cfg, tool_name=result.tool_name, tool_args=result.args,
-                       system_prompt='', original_prompt=text, redacted_text=redact(text),
-                       max_retries=1, language=language, quiet=quiet)
+    try:
+        outcome = executor(db=db, cfg=cfg, tool_name=result.tool_name, tool_args=result.args,
+                           system_prompt='', original_prompt=text, redacted_text=redact(text),
+                           max_retries=1, language=language, quiet=quiet)
+    except Exception as exc:  # noqa: BLE001 - a tool's unexpected error is a failed action, not a failed turn
+        # The message can carry paths or device details, so only its type is logged and none of it is said.
+        debug_log(f'FAST_ROUTE {result.command_id} raised {type(exc).__name__}; reporting failure.', 'routing')
+        return UNEXPECTED_FAILURE
     if not outcome.success:
         return redact(outcome.reply_text or outcome.error_message or 'Action failed.')
     if result.reply_template:

@@ -96,6 +96,13 @@ def test_list_windows_filters_cloaked_windows(monkeypatch):
                 callback(hwnd, lparam)
             return True
 
+        def GetShellWindow(self):
+            return 0
+
+        def GetClassNameW(self, hwnd, buf, max_len):
+            buf.value = 'AppWindow'
+            return len(buf.value)
+
     monkeypatch.setattr(wm, '_user32', lambda: FakeUser32())
     monkeypatch.setattr('psutil.Process', lambda pid: type('Proc', (), {'name': lambda self: 'app.exe'})())
 
@@ -137,6 +144,13 @@ def test_list_windows_dwm_failure_does_not_crash(monkeypatch):
             callback(101, lparam)
             return True
 
+        def GetShellWindow(self):
+            return 0
+
+        def GetClassNameW(self, hwnd, buf, max_len):
+            buf.value = 'AppWindow'
+            return len(buf.value)
+
     monkeypatch.setattr(wm, '_user32', lambda: FakeUser32())
     monkeypatch.setattr('psutil.Process', lambda pid: type('Proc', (), {'name': lambda self: 'app.exe'})())
 
@@ -151,6 +165,58 @@ def test_list_windows_dwm_failure_does_not_crash(monkeypatch):
     windows = wm.list_windows()
     assert len(windows) == 1
     assert windows[0].hwnd == 101
+
+
+def test_the_desktop_itself_is_never_an_application_window(monkeypatch):
+    """The shell's desktop windows belong to explorer.exe and are titled, but closing one opens the
+    Shut Down Windows dialog, so they are never listed or matched."""
+    from jarvis.platform.windows import windows_mgmt as wm
+    classes = {101: 'CabinetWClass', 404: 'Progman', 505: 'WorkerW', 606: 'Progman', 707: 'Chrome_WidgetWin_1'}
+    processes = {101: 'explorer.exe', 404: 'explorer.exe', 505: 'explorer.exe', 606: 'explorer.exe',
+                 707: 'chrome.exe'}
+
+    class FakeUser32:
+        def IsWindowVisible(self, hwnd):
+            return True
+
+        def GetWindow(self, hwnd, cmd):
+            return 0
+
+        def GetWindowTextLengthW(self, hwnd):
+            return 15
+
+        def GetWindowTextW(self, hwnd, buf, max_len):
+            buf.value = 'Program Manager' if classes[hwnd] == 'Progman' else f'Window {hwnd}'
+            return len(buf.value)
+
+        def GetWindowThreadProcessId(self, hwnd, pid_ptr):
+            pid_ptr._obj.value = hwnd
+            return hwnd
+
+        def GetShellWindow(self):
+            return 404
+
+        def GetClassNameW(self, hwnd, buf, max_len):
+            buf.value = classes[hwnd]
+            return len(buf.value)
+
+        def EnumWindows(self, callback, lparam):
+            for hwnd in classes:
+                callback(hwnd, lparam)
+            return True
+
+    monkeypatch.setattr(wm, '_user32', lambda: FakeUser32())
+    monkeypatch.setattr(wm, '_is_cloaked', lambda hwnd: False)
+    monkeypatch.setattr('psutil.Process', lambda pid: type('Proc', (), {'name': lambda self: processes[pid]})())
+    assert [w.hwnd for w in wm.list_windows()] == [101, 707]
+
+    # With no folder window open, closing explorer finds nothing rather than the desktop.
+    del classes[101]
+    closed = []
+    monkeypatch.setattr(wm, '_close_window', closed.append)
+    with pytest.raises(ValueError):
+        wm.control_window('close', 'explorer', process_only=True)
+    assert closed == []
 
 
 def test_window_matching_cannot_select_cloaked_window(monkeypatch):

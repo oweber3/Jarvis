@@ -139,6 +139,34 @@ def test_wmi_panel_is_used_for_an_internal_display(monkeypatch):
     assert wmi.level == 35 and reading.method == 'wmi' and reading.percent == 35
 
 
+class ComError(Exception):
+    """Stands in for pywintypes.com_error, which a laptop panel's WMI provider can raise."""
+
+
+def test_an_internal_panel_that_rejects_the_change_is_reported_not_raised(monkeypatch):
+    def refuse(*args):
+        raise ComError(-2147217407, 'Generic failure')
+
+    internal = brightness.WmiPanel('internal', 1, refuse, refuse)
+    external = FakePanel(DISPLAY2, 2, 40)
+    monkeypatch.setattr(brightness, '_open_panels', lambda: [internal, external])
+    readings = brightness.set_levels(50)
+    assert [(r.device, r.percent, r.verified) for r in readings] == [('internal', None, False), (DISPLAY2, 50, True)]
+    assert readings[0].error
+    [reading] = brightness.read_levels(device='internal')
+    assert reading.percent is None and reading.error
+
+
+def test_any_panel_failure_is_reported_against_that_panel(monkeypatch):
+    broken = FakePanel(DISPLAY1, 1)
+    broken.get = broken.set = lambda *args: (_ for _ in ()).throw(OSError('device gone'))
+    good = FakePanel(DISPLAY2, 2, 40)
+    monkeypatch.setattr(brightness, '_open_panels', lambda: [broken, good])
+    readings = brightness.set_levels(20)
+    assert [(r.percent, bool(r.error)) for r in readings] == [(None, True), (20, False)]
+    assert broken.closed and good.closed
+
+
 @pytest.mark.integration
 def test_real_brightness_can_be_read_without_changing_anything():
     readings = brightness.read_levels()

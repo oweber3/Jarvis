@@ -1,5 +1,5 @@
 """Installed application discovery and friendly-name resolution."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path, PureWindowsPath
@@ -14,9 +14,28 @@ from .steam import steam_applications
 
 @dataclass(frozen=True)
 class Application:
+    """One catalogue entry. A shortcut can run its executable with ``arguments`` (a script, a folder, an
+    uninstall); ``uninstaller`` marks an entry whose launch removes installed software."""
     name: str
     target: str
     executable: str = ''
+    arguments: str = ''
+    uninstaller: bool = False
+
+
+def launch_identity(app: Application) -> tuple[str, str]:
+    """What launching the entry runs: entries with the same identity are the same program run the same way."""
+    if not app.executable:
+        return app.target.casefold(), ''
+    return str(PureWindowsPath(app.executable)).casefold(), ' '.join(app.arguments.split()).casefold()
+
+
+def launcher_stem(app: Application) -> str:
+    """The executable stem that names this entry: none when the shortcut passes arguments, because it then
+    runs something more specific than the program (a script, a folder, an uninstall)."""
+    if not app.executable or app.arguments.strip():
+        return ''
+    return PureWindowsPath(app.executable).stem
 
 
 def name_tokens(value: str) -> set[str]:
@@ -31,7 +50,7 @@ def resolve_application(name: str, applications: list[Application], aliases: dic
     alias_map = {key.casefold(): value for key, value in aliases.items()}
     query = alias_map.get(query, query).strip().casefold()
     exact = [app for app in applications if app.name.casefold() == query or app.target.casefold() == query]
-    launchers = [app for app in applications if app.executable and PureWindowsPath(app.executable).stem.casefold() == query]
+    launchers = [app for app in applications if launcher_stem(app).casefold() == query]
     matches = exact or launchers or [app for app in applications if name_tokens(query) and
                                    name_tokens(query) <= name_tokens(app.name)]
     unique = {app.target.casefold(): app for app in matches}
@@ -92,7 +111,7 @@ $roots = @([Environment]::GetFolderPath('StartMenu'), [Environment]::GetFolderPa
 $links = @(foreach ($root in $roots) {
     Get-ChildItem -LiteralPath $root -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
         $shortcut = $shell.CreateShortcut($_.FullName)
-        @{Path=$_.FullName; Executable=$shortcut.TargetPath}
+        @{Path=$_.FullName; Executable=$shortcut.TargetPath; Arguments=$shortcut.Arguments}
     }
 })
 @{Apps=@(Get-StartApps); Links=$links} | ConvertTo-Json -Depth 4 -Compress
@@ -102,9 +121,10 @@ $links = @(foreach ($root in $roots) {
                                 capture_output=True, encoding='utf-8', timeout=8, check=True,
                                 creationflags=subprocess.CREATE_NO_WINDOW)
         catalogue = json.loads(result.stdout.lstrip('\ufeff') or '{}')
-        executables = {entry['Path'].casefold(): entry.get('Executable', '') for entry in catalogue.get('Links', [])}
-        applications = [Application(app.name, app.target, executables.get(app.target.casefold(), app.executable))
-                        for app in applications]
+        links = {entry['Path'].casefold(): entry for entry in catalogue.get('Links', [])
+                 if isinstance(entry, dict) and isinstance(entry.get('Path'), str)}
+        applications = _mark_uninstallers([_with_shortcut(app, links.get(app.target.casefold()))
+                                           for app in applications])
         entries = catalogue.get('Apps', [])
         # Shortcuts take precedence so the same app is not ambiguous across sources.
         names = {app.name.casefold() for app in applications}
@@ -115,6 +135,79 @@ $links = @(foreach ($root in $roots) {
     except (OSError, subprocess.SubprocessError, ValueError):
         debug_log('Packaged application discovery unavailable; using shortcuts and App Paths.', 'windows')
     return applications
+
+
+def _with_shortcut(app: Application, link) -> Application:
+    """The entry with the executable and arguments its shortcut runs, when PowerShell could read it."""
+    if not link:
+        return app
+    executable = link.get('Executable')
+    arguments = link.get('Arguments')
+    return Application(app.name, app.target, executable if isinstance(executable, str) else app.executable,
+                       arguments if isinstance(arguments, str) else '')
+
+
+_UNINSTALL_KEY = r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+# msiexec's own command-line switch for removing a product: installer syntax, not a word of any language.
+_MSI_REMOVE = re.compile(r'(?:^|\s)[/-](?:x|uninstall)(?=\s|\{|$)', re.IGNORECASE)
+
+
+def _registered_uninstall_commands() -> list[str]:
+    """The uninstall command lines installed programs registered with Windows (current user and machine,
+    both registry views)."""
+    import winreg
+    commands = []
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+            try:
+                with winreg.OpenKey(hive, _UNINSTALL_KEY, 0, winreg.KEY_READ | view) as parent:
+                    for i in range(winreg.QueryInfoKey(parent)[0]):
+                        try:
+                            with winreg.OpenKey(parent, winreg.EnumKey(parent, i)) as entry:
+                                for value in ('UninstallString', 'QuietUninstallString'):
+                                    try:
+                                        command, _kind = winreg.QueryValueEx(entry, value)
+                                    except OSError:
+                                        continue
+                                    if isinstance(command, str) and command.strip():
+                                        commands.append(command)
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+    return commands
+
+
+def _command_parts(command: str) -> tuple[str, str]:
+    """A registered command line split into its executable and its arguments."""
+    command = os.path.expandvars(command.strip())
+    if command.startswith('"'):
+        executable, _, rest = command[1:].partition('"')
+        return executable, rest
+    found = re.match(r'.+?\.exe(?=\s|$)', command, re.IGNORECASE)
+    executable = found.group(0) if found else command.split(' ', 1)[0]
+    return executable, command[len(executable):]
+
+
+def _mark_uninstallers(applications: list[Application]) -> list[Application]:
+    """Mark the shortcuts that run exactly a registered uninstall command, or msiexec's remove switch.
+
+    The signal is installer data, never a shortcut's name, so it holds in every language."""
+    try:
+        registered = {launch_identity(Application('', '', *_command_parts(command)))
+                      for command in _registered_uninstall_commands()}
+    except Exception as exc:  # noqa: BLE001 - installer data is optional and foreign input
+        debug_log(f'Uninstall commands unavailable ({type(exc).__name__}).', 'windows')
+        registered = set()
+    marked = []
+    for app in applications:
+        removes = bool(app.executable) and (
+            launch_identity(app) in registered
+            or (PureWindowsPath(app.executable).stem.casefold() == 'msiexec'
+                and bool(_MSI_REMOVE.search(app.arguments))))
+        marked.append(replace(app, uninstaller=True) if removes else app)
+    debug_log(f'Application index marks {sum(app.uninstaller for app in marked)} uninstallers.', 'windows')
+    return marked
 
 
 class ApplicationIndex:
@@ -149,6 +242,11 @@ class ApplicationIndex:
         if self._error:
             raise OSError('Application discovery failed.') from self._error
         return list(self._applications)
+
+    @property
+    def started(self) -> bool:
+        """Whether discovery has been started (it may still be running)."""
+        return self._started
 
     def snapshot(self):
         """Return the ready catalogue without starting discovery or waiting."""

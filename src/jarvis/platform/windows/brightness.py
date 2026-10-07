@@ -119,10 +119,19 @@ class WmiPanel:
         self._read, self._write = read, write
 
     def get(self) -> int:
-        return int(self._read())
+        try:
+            return int(self._read())
+        except Exception as exc:  # noqa: BLE001 - the WMI provider raises COM errors on panels it cannot drive
+            debug_log(f'WMI brightness read failed ({type(exc).__name__}).', 'windows')
+            raise BrightnessUnsupported('This display did not report its brightness through Windows.') from exc
 
     def set(self, percent: int) -> None:
-        self._write(percent)
+        try:
+            self._write(percent)
+        except Exception as exc:  # noqa: BLE001 - as above
+            debug_log(f'WMI brightness change failed ({type(exc).__name__}).', 'windows')
+            raise BrightnessUnsupported('This display did not accept the brightness change through '
+                                        'Windows.') from exc
 
     def close(self) -> None:
         pass
@@ -207,6 +216,10 @@ def _run(operation: Callable[[Panel], Reading], device: str | None) -> list[Read
                 results.append(operation(panel))
             except BrightnessUnsupported as exc:
                 results.append(Reading(panel.device, panel.number, panel.method, None, False, str(exc)))
+            except Exception as exc:  # noqa: BLE001 - one failing display never hides the others' results
+                debug_log(f'Brightness failed on one display ({type(exc).__name__}).', 'windows')
+                results.append(Reading(panel.device, panel.number, panel.method, None, False,
+                                       'This display did not respond to the brightness request.'))
         return results
     finally:
         for panel in panels:

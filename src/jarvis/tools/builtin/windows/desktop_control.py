@@ -230,6 +230,26 @@ def _window_target(target, cfg):
     return PureWindowsPath(app.executable).stem
 
 
+def _catalogue_entry(target, cfg):
+    """The catalogue entry a launch would use, or ``None`` when there is none to judge.
+
+    Uses the ready catalogue; while discovery is running it waits as the launch itself would. An unknown or
+    ambiguous name launches nothing, so it is not judged here."""
+    from ....platform.windows.apps import APP_INDEX, resolve_application
+    apps = APP_INDEX.snapshot()
+    if apps is None and APP_INDEX.started:
+        try:
+            apps = APP_INDEX.applications()
+        except OSError:
+            return None
+    if apps is None:
+        return None
+    try:
+        return resolve_application(target, list(apps), getattr(cfg, 'windows_app_aliases', {}))
+    except ValueError:
+        return None
+
+
 def _fancyzone_sets(cfg, monitors):
     """FancyZones zones per display, or none when the user switched them off or PowerToys has none."""
     if not cfg.windows_fancyzones_enabled:
@@ -261,10 +281,30 @@ class AppControlTool(WindowsTool):
                           'close; list shows open windows.')
     target_description = 'Friendly application name, e.g. Word, Chrome, MATLAB or Spotify. For existing windows a decimal handle is also accepted. Empty for list.'
 
+    def classify_safety(self, args, cfg):
+        """Opening an uninstaller removes software, so it needs desktop confirmation; every other action is
+        a routine local action."""
+        request = super().classify_safety(args, cfg)
+        if not isinstance(args, dict) or args.get('action') != 'open' or not isinstance(args.get('target'), str):
+            return request
+        app = _catalogue_entry(args['target'], cfg)
+        if app is None or not app.uninstaller:
+            return request
+        from ...confirmation import ConfirmationRequest, SafetyTier
+        debug_log('appControl open names an uninstaller; desktop confirmation required.', 'safety')
+        return ConfirmationRequest(
+            tool_name=self.name, tier=SafetyTier.CONFIRM_DIALOG, action='open', target=app.name,
+            parameters=dict(args), consequence='This opens an uninstaller, which removes installed software.')
+
     def fast_targets(self, cfg):
-        """Expose ready catalogue names to routing without OS calls or waiting."""
+        """Expose ready catalogue names to routing without OS calls or waiting.
+
+        Entries that run the same executable with the same arguments are one application. Entries that run a
+        shared executable differently (a script through cmd.exe, a folder through explorer.exe) are separate
+        applications, each launched under its own name, and none of them has a window route: the process
+        cannot tell their windows apart."""
         from ....fastpath.matcher import FastTarget
-        from ....platform.windows.apps import APP_INDEX, resolve_application
+        from ....platform.windows.apps import APP_INDEX, launch_identity, launcher_stem, resolve_application
         apps = APP_INDEX.snapshot()
         if apps is None:
             return ()
@@ -278,17 +318,19 @@ class AppControlTool(WindowsTool):
             except ValueError:
                 continue
         # Index the resolver's exact-name and executable precedence once.
-        exact_targets, launcher_targets = {}, {}
+        exact_targets, launcher_targets, launches_by_stem = {}, {}, {}
         for app in apps:
             for value in (app.name, app.target):
                 exact_targets.setdefault(value.casefold(), set()).add(app.target)
+            if launcher_stem(app):
+                launcher_targets.setdefault(launcher_stem(app).casefold(), set()).add(app.target)
             if app.executable:
                 stem = PureWindowsPath(app.executable).stem.casefold()
-                launcher_targets.setdefault(stem, set()).add(app.target)
+                launches_by_stem.setdefault(stem, set()).add(launch_identity(app))
         alias_keys = {key.casefold() for key in cfg.windows_app_aliases}
         grouped = {}
         for app in apps:
-            stem = PureWindowsPath(app.executable).stem if app.executable else ''
+            stem = launcher_stem(app)
             names = [app.name, *alias_names.get(app.target, [])]
             if stem:
                 names.append(stem)
@@ -306,12 +348,13 @@ class AppControlTool(WindowsTool):
                     faithful_names.append(name)
             launch_name = next((name for name in (app.name, stem)
                                 if name and name in faithful_names), '')
-            window_stem = stem
-            if stem.casefold() in alias_keys:
-                resolved = alias_targets.get(stem.casefold())
+            # A window route needs a process that only this application runs.
+            window_stem = stem if stem and len(launches_by_stem[stem.casefold()]) == 1 else ''
+            if window_stem.casefold() in alias_keys:
+                resolved = alias_targets.get(window_stem.casefold())
                 if resolved is None or resolved.executable.casefold() != app.executable.casefold():
                     window_stem = ''
-            identity = str(PureWindowsPath(app.executable or app.target)).casefold()
+            identity = launch_identity(app)
             if identity in grouped:
                 previous = grouped[identity]
                 grouped[identity] = FastTarget(previous.names + tuple(faithful_names),
