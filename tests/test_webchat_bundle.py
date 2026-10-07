@@ -74,3 +74,13 @@ def test_the_theme_stylesheet_imports_nothing_remote():
     css = (SOURCE / "index.css").read_text(encoding="utf-8")
     for line in re.findall(r"@import\s+[^;]+;", css):
         assert "http" not in line and "//" not in line, line
+
+
+def test_the_desktop_build_ships_the_page():
+    spec = (ROOT / "jarvis_desktop.spec").read_text(encoding="utf-8")
+    assert "'webchat' / 'static'" in spec and "'jarvis/webchat/static'" in spec
+
+
+def test_the_server_finds_the_page_where_the_build_puts_it():
+    from jarvis.webchat.server import STATIC_DIR
+    assert STATIC_DIR == STATIC
