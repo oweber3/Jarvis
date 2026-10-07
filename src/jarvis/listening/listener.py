@@ -607,6 +607,14 @@ class VoiceListener(threading.Thread):
         """Set the assistant state to LISTENING."""
         set_state(AssistantState.LISTENING)
 
+    def _tts_rate(self) -> float:
+        """Speech rate in words per minute for echo timing; an empty setting uses the default."""
+        rate = getattr(self.cfg, "tts_rate", None)
+        if isinstance(rate, (int, float)) and not isinstance(rate, bool) and rate > 0:
+            return float(rate)
+        from ..config import get_default_config
+        return float(get_default_config()["tts_rate"])
+
     def track_tts_start(self, tts_text: str) -> None:
         """Called when TTS starts speaking."""
         if self.tts and self.tts.enabled:
@@ -784,13 +792,13 @@ class VoiceListener(threading.Thread):
             # Echo rejection during active TTS
             should_reject = self.echo_detector.should_reject_as_echo(
                 text_lower, utterance_energy, True,
-                getattr(self.cfg, 'tts_rate', 200), utterance_start_time
+                self._tts_rate(), utterance_start_time
             )
             if should_reject:
                 # Try to salvage user speech appended after echo
                 salvaged = self.echo_detector.cleanup_leading_echo_during_tts(
                     text_lower,
-                    getattr(self.cfg, 'tts_rate', 200),
+                    self._tts_rate(),
                     utterance_start_time,
                 )
                 min_words = self.echo_detector.min_salvage_words
@@ -820,7 +828,7 @@ class VoiceListener(threading.Thread):
                 and utterance_start_time < last_tts_finish + echo_tol):
             salvaged = self.echo_detector._salvage_suffix_from_echo(
                 text_lower,
-                getattr(self.cfg, 'tts_rate', 200),
+                self._tts_rate(),
                 utterance_start_time,
             )
             # If the prefix-based salvage fails or truncates too aggressively
@@ -1945,8 +1953,14 @@ class VoiceListener(threading.Thread):
             debug_log("finished queued Whisper transcription work", "voice")
 
     def _handle_transcription_result(self, result: _TranscriptionResult) -> None:
+        """Process one transcript; a failure costs that utterance, never the listener loop."""
         try:
             self._apply_transcription_result(result)
+        except Exception as exc:
+            debug_log(f"transcript processing failed ({type(exc).__name__}: {exc}); still listening", "voice")
+            print("  ⚠️  Could not process that utterance; still listening.", flush=True)
+            if not self.state_manager.is_collecting():
+                self._end_engagement()
         finally:
             self._resolve_barge_in()
 

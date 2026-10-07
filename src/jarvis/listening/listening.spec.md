@@ -35,7 +35,9 @@ point users to PipeWire/PulseAudio recording-source routing.
 Audio-frame processing is limited to VAD and utterance assembly. Completed
 utterances are enqueued for a single FIFO Whisper worker. Transcription results
 return to the listener loop in order, where transcript storage and intent
-processing remain serialised. The bounded transcription backlog reports an
+processing remain serialised. An error while processing one transcript drops
+that utterance with a warning and a debug log; the loop keeps listening. Echo
+timing estimates use the default speech rate when `tts_rate` is empty. The bounded transcription backlog reports an
 explicit warning when full rather than blocking microphone-frame consumption
 or silently losing an utterance. A dictation pause clears captured audio and
 invalidates transcription work started before the pause, including a decode
