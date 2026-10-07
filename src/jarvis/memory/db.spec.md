@@ -21,3 +21,10 @@ controlled corpus. It exercises ranking, not a particular embedding model.
 The opt-in activity log keeps its `activity_sessions` table in the same SQLite
 file, created and owned by `ActivityStore` (`memory/activity_log.spec.md`), not by
 `Database`. It is never read by retrieval, the diary or the graph.
+
+## Web chat
+
+The opt-in web chat keeps `chat_projects`, `chats`, `chat_messages` and `chat_state`
+in the same SQLite file, created and owned by `ChatStore` (`webchat/webchat.spec.md`),
+not by `Database`. Messages hold redacted text only. The tables are never read by
+retrieval, the diary or the graph.
