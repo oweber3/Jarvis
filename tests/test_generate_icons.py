@@ -38,6 +38,22 @@ class TestIconGeneration:
         script = SCRIPT.read_text(encoding="utf-8")
         assert "ImageFont" not in script
 
+    def test_the_emblem_is_a_sphere_of_light_brightest_at_its_rim(self):
+        import numpy as np
+
+        mod = _load_module()
+        pixels = np.asarray(mod._emblem("#22d3ee", 256).convert("RGB"), dtype=float).sum(axis=2)
+        y, x = np.mgrid[0:256, 0:256]
+        r = np.hypot(x - 127.5, y - 127.5) / 256
+        centre, rim = pixels[r < 0.15].mean(), pixels[(r > 0.36) & (r < 0.44)].mean()
+        assert rim > centre * 1.4               # the outline is the brightest band
+        assert centre > 40                      # but the middle is filled with light, not empty
+        # Made of points of light: the middle has many small bright spots, not one smooth fill.
+        middle = pixels[96:160, 96:160]
+        peaks = ((middle[1:-1, 1:-1] > middle[:-2, 1:-1]) & (middle[1:-1, 1:-1] > middle[2:, 1:-1])
+                 & (middle[1:-1, 1:-1] > middle[1:-1, :-2]) & (middle[1:-1, 1:-1] > middle[1:-1, 2:]))
+        assert peaks.sum() > 40
+
     def test_generation_is_byte_deterministic(self, tmp_path):
         """Two runs in the same environment must produce identical bytes
         for every output file (png, sized pngs, ico)."""

@@ -24,7 +24,7 @@ Say “Jarvis” anywhere in a sentence and follow up naturally. Speech recognit
 Your conversation memory stays on your computer. Sensitive information is redacted before it reaches model context or the saved diary. Web search, weather and connected tools use the network when you ask for those capabilities; local conversation does not require a cloud AI account.
 
 <p align="center">
-  <img src="docs/img/face.png" alt="Jarvis's orb, a see-through holographic sphere of layered cyan and blue light filaments, listening, the desktop presence of your local voice assistant" width="460">
+  <img src="docs/img/face.png" alt="Jarvis's orb, a see-through sphere of evenly spread cyan points of light that swells and ripples with the voice, listening, the desktop presence of your local voice assistant" width="460">
 </p>
 
 <p align="center"><sub>A voice, a face, and a place in the conversation.</sub></p>

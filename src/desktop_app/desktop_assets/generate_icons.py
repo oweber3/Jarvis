@@ -1,13 +1,12 @@
 """
-Generate the tray icons for the Jarvis desktop app: the orb's data sphere as
-an emblem (nested broken shells of light filaments, brightest at the rim, on a
-dark disc) in the colour of each state (idle, listening, thinking), taken from the orb
-palette in ``themes.py`` and kept legible at 16 px.
+Generate the tray icons for the Jarvis desktop app: the orb's sphere of light as
+an emblem (evenly spread points of light, brightest at the rim, the back showing
+through dimmer, on a dark disc) in the colour of each state (idle, listening,
+thinking), taken from the orb palette in ``themes.py`` and kept legible at 16 px.
 """
 
 import importlib.util
 import math
-import random
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
@@ -34,10 +33,11 @@ ICON_STATES = {
 
 # Emblem geometry as fractions of the icon size.
 _DISC = 0.485          # dark backing disc, so the emblem reads on light and dark taskbars
-# Nested bands of filaments from the rim inward, as (inner, outer, brightness): the rim brightest,
-# the inner layers dimmer, filling the disc the way the orb's inner layers fill the sphere.
-_BANDS = ((0.405, 0.445, 1.0), (0.355, 0.395, 0.95), (0.305, 0.345, 0.78), (0.255, 0.295, 0.6),
-          (0.205, 0.245, 0.48), (0.155, 0.195, 0.4), (0.105, 0.145, 0.33), (0.06, 0.095, 0.28))
+_SPHERE = 0.40         # radius of the sphere of points
+_POINTS = 380          # points over the sphere, spread evenly (as the orb spreads its own); fewer, larger ones than the orb's read better as an icon
+_DOT = 0.0105          # radius of a point
+_SUPERSAMPLE = 4       # drawn this many times larger, then reduced, so the points are smooth
+_TILT = math.radians(20)   # seen from a little above, like the orb
 
 
 def _rgb(colour: str) -> tuple:
@@ -55,49 +55,60 @@ def _circle(draw: ImageDraw.ImageDraw, size: int, radius: float, **kwargs) -> No
     draw.ellipse([(c - r, c - r), (c + r, c + r)], **kwargs)
 
 
+def _sphere_points():
+    """The emblem's points, projected: (x, y) in sphere radii and how much light each gets, back to front."""
+    golden = math.pi * (3.0 - math.sqrt(5.0))
+    ct, st = math.cos(_TILT), math.sin(_TILT)
+    points = []
+    for i in range(_POINTS):
+        y = 1.0 - 2.0 * (i + 0.5) / _POINTS
+        ring = math.sqrt(1.0 - y * y)
+        x, z = math.cos(i * golden) * ring, math.sin(i * golden) * ring
+        y, z = y * ct - z * st, y * st + z * ct
+        front = (z + 1.0) / 2.0
+        limb = math.hypot(x, y)
+        # As in the orb: the front brighter than the back, the outline brightest.
+        points.append((z, x, y, (0.12 + 0.88 * front ** 1.7) * (0.4 + 0.6 * limb ** 4)))
+    points.sort()
+    return [(x, y, light) for _, x, y, light in points]
+
+
 def _emblem(colour: str, size: int) -> Image.Image:
-    """Draw the emblem at ``size`` px: the orb's data sphere as nested broken shells of light filaments."""
+    """Draw the emblem at ``size`` px: the orb's sphere of evenly spread points of light."""
     state = _rgb(colour)
     white = _rgb(_PALETTE["white"])
     backdrop = _rgb(_PALETTE["backdrop"])
-    light = _mix(state, white, 0.4)
-    rng = random.Random(7)   # seeded: the filaments are the same on every run
-    c = size / 2
+    big = size * _SUPERSAMPLE
+    c = big / 2
 
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    _circle(draw, size, _DISC, fill=backdrop + (255,))
+    _circle(draw, big, _DISC, fill=backdrop + (255,))
 
-    # Glow layer: the rim blurred under the sharp strokes, added as light.
-    glow = Image.new("RGB", (size, size), (0, 0, 0))
+    # Glow layer: a soft band of the state colour at the rim, added as light under the points.
+    glow = Image.new("RGB", (big, big), (0, 0, 0))
     glow_draw = ImageDraw.Draw(glow)
-    _circle(glow_draw, size, _BANDS[0][1], fill=_mix((0, 0, 0), state, 0.5))
-    _circle(glow_draw, size, _BANDS[1][0], fill=(0, 0, 0))
-    glow = glow.filter(ImageFilter.GaussianBlur(size * 0.03))
-    lit = ImageChops.add(img.convert("RGB"), glow)
-    img = Image.merge("RGBA", (*lit.split(), img.split()[3]))
-    draw = ImageDraw.Draw(img)
+    _circle(glow_draw, big, _SPHERE + 0.02, fill=_mix((0, 0, 0), state, 0.75))
+    _circle(glow_draw, big, _SPHERE - 0.07, fill=_mix((0, 0, 0), state, 0.12))
+    glow = glow.filter(ImageFilter.GaussianBlur(big * 0.02))
 
-    # Each band is a run of filament arcs of random length with narrow breaks, lighter towards
-    # the top where the light catches it, and dimmer the further in it lies.
-    for inner, outer, brightness in _BANDS:
-        width = max(1, round((outer - inner) * size))
-        radius = (inner + outer) / 2 * size
-        box = [(c - radius, c - radius), (c + radius, c + radius)]
-        angle = rng.uniform(0, 360)
-        end = angle + 360
-        while angle < end - 4:
-            span = min(rng.uniform(18, 60), end - angle - 3)
-            middle = math.radians(angle + span / 2)
-            shade = 0.5 - 0.5 * math.sin(middle)   # 1 at the top, 0 at the bottom (screen y runs down)
-            tone = _mix(backdrop, _mix(state, light, shade * rng.uniform(0.5, 1.0)), brightness)
-            draw.arc(box, angle, angle + span, fill=tone + (255,), width=width)
-            angle += span + rng.uniform(3, 7)
-    return img
+    # The points, as light added over the glow: brighter ones whiter, as the orb draws its brightest points.
+    points = Image.new("RGB", (big, big), (0, 0, 0))
+    points_draw = ImageDraw.Draw(points)
+    radius, dot = _SPHERE * big, _DOT * big
+    for x, y, light in _sphere_points():
+        tone = _mix((0, 0, 0), _mix(state, white, max(0.0, light - 0.5) * 0.9), min(1.0, 0.2 + light * 1.3))
+        px, py = c + x * radius, c - y * radius
+        r = dot * (0.75 + 0.5 * light)
+        points_draw.ellipse([(px - r, py - r), (px + r, py + r)], fill=tone)
+
+    lit = ImageChops.add(ImageChops.add(img.convert("RGB"), glow), points)
+    img = Image.merge("RGBA", (*lit.split(), img.split()[3]))
+    return img.resize((size, size), Image.Resampling.LANCZOS)
 
 
 def create_icon(color: str, filename: str, size: int = 256) -> None:
-    """Create the data sphere emblem icon in ``color``, with sized PNGs and a multi-size ICO."""
+    """Create the sphere emblem icon in ``color``, with sized PNGs and a multi-size ICO."""
     img = _emblem(color, size)
     img.save(filename)
 
