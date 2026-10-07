@@ -915,27 +915,32 @@ class DialogueMemory:
             self._hot_cache = OrderedDict()
             self._last_activity_time = time.time()
 
-    def rewind_before_user_message(self, user_index: int) -> bool:
-        """Drop every message from the ``user_index``-th user message on.
+    def rewind_before_user_text(self, content: str, occurrence: int = 0) -> bool:
+        """Drop the user turn holding ``content`` and every message after it.
 
-        ``user_index`` is 1-based: 1 rewinds to before the first user
-        message (dropping the whole conversation), 2 keeps everything up
-        to but excluding the second user message, and so on. The chosen
-        user message itself is dropped so a regenerate can re-add it
-        without duplicating. Conversation-scoped caches and tool
-        carryover are cleared: they describe state after the rewind
-        point. Returns True when a rewind happened, False when the given
-        user message is not in memory (nothing to rewind).
+        The turn is found by its content, counted back from the latest:
+        ``occurrence`` 0 is the most recent user turn with that content, 1
+        the one before it, and so on. Anchoring on content keeps the rewind
+        on the right turn however many turns the caller never saw (voice
+        turns) or memory has already let go (older than the dialogue
+        timeout). ``content`` is compared as stored turns are, without
+        surrounding whitespace, and must already be redacted. The turn
+        itself is dropped so a regenerate can re-add it without
+        duplicating. Conversation-scoped caches and tool carryover are
+        cleared: they describe state after the rewind point. Returns True
+        when a rewind happened, False when no such turn is in memory.
         """
+        wanted = content.strip()
         with self._lock:
-            seen = 0
+            remaining = occurrence
             keep_until: Optional[int] = None
-            for i, (_ts, role, _content) in enumerate(self._messages):
-                if role == "user":
-                    seen += 1
-                    if seen == user_index:
+            for i in range(len(self._messages) - 1, -1, -1):
+                _ts, role, stored = self._messages[i]
+                if role == "user" and stored == wanted:
+                    if remaining == 0:
                         keep_until = i
                         break
+                    remaining -= 1
             if keep_until is None:
                 return False
             self._messages = self._messages[:keep_until]

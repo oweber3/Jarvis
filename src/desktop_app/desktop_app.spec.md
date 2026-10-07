@@ -239,7 +239,7 @@ In bundled mode, the daemon runs in the same process, so callbacks can be set di
 In subprocess mode, the daemon runs as a separate process. IPC is achieved via stdout:
 - **Diary updates**: Daemon emits JSON events prefixed with `__DIARY__:` (e.g., `__DIARY__:{"type":"token","data":"Hello"}`)
 - **Reply mode**: the daemon emits `__REPLY_MODE_STATE__:{"type": "state", "data": {"mode", "enabled"}}` after start-up and every switch; the tray writes `__REPLY_MODE__:{"mode": ...}` to switch
-- **Chat events**: Daemon emits `__CHAT__:` events (start/complete/busy); the desktop app sends queries in via `__CHAT_QUERY__:` lines on the daemon's stdin, cancellation via a bare `__CHAT_CANCEL__` line, and rewind via `__CHAT_REWIND__:` lines (see `chat_window.spec.md`)
+- **Chat events**: Daemon emits `__CHAT__:` events (start/complete/busy/rewind); the desktop app sends queries in via `__CHAT_QUERY__:` lines on the daemon's stdin, cancellation via a bare `__CHAT_CANCEL__` line, and rewind via `__CHAT_REWIND__:` lines (see `chat_window.spec.md`). A chat window first created by a chat event gets the same pipe writers as one opened from the tray, and a daemon restart refreshes all three (submit, cancel, rewind)
 - Desktop app intercepts these lines from the log stream
 - DiaryUpdateDialog's `process_log_line()` parses and emits signals
 - Chat IPC lines are marshalled onto the Qt main thread via `ChatIpcSignals`, then `_on_chat_ipc_line()` forwards them to `ChatWindow.process_ipc_line()`

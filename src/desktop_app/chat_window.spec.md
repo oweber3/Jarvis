@@ -36,6 +36,13 @@ used for end-of-session UI updates.
   it is shared with the voice path. The redacted query is what the `start`
   event carries.
 
+### `regenerate_chat_reply(text: str, *, occurrence: int = 0) -> None` (in `jarvis.daemon`)
+
+The daemon side of **Rewind**: rolls the shared memory back to before the
+given user turn and runs the same text again as a fresh query, under one hold
+of the query lock. It takes the same callbacks as `submit_text_query` plus
+`on_rewind`, and reports first whether the turn was found.
+
 ### Concurrency: one query at a time
 
 A single `_chat_query_lock` guards the reply engine. The text path acquires
@@ -107,6 +114,7 @@ main thread. All are optional and default to `None`.
 | `on_tool_call` | `dict` | Not emitted by the current engine; reserved for future per-tool-call visibility |
 | `on_complete` | `Optional[str]` (final reply, or `None` on failure/stop/cancel) | Worker thread is done |
 | `on_busy` | `None` | A submission was rejected because a query is already running |
+| `on_rewind` | `bool` | `regenerate_chat_reply` only: whether the message was found and rolled back (see **Rewind**) |
 
 Callbacks fire from the worker thread. The desktop app must marshal them onto
 the Qt main thread via signals (same pattern as `DiaryUpdateDialog`).
@@ -126,6 +134,7 @@ Event shapes (mirrors the diary IPC):
 {"type": "tool",   "data": {"name": "...", "args": "...", "result": "..."}}  // reserved for future per-tool visibility; not emitted today
 {"type": "complete", "data": "<final reply or null>"}
 {"type": "busy",   "data": null}
+{"type": "rewind", "data": true}             // answer to __CHAT_REWIND__: true, or false when the message is no longer in memory
 ```
 
 `__CHAT__:` lines must never contain unredacted user text. The `start` event
@@ -154,13 +163,17 @@ Rewind travels the same pipe (the conversation lives in the daemon's memory,
 which the desktop process cannot touch in subprocess mode):
 
 ```json
-__CHAT_REWIND__:{"user_index": 2}        // roll memory back to before user turn #2
+__CHAT_REWIND__:{"text": "<the message>", "occurrence": 0}
 ```
 
-`user_index` is 1-based (the first user message is 1); the rewound message
-itself is dropped so a re-submission does not duplicate it. Malformed
-rewind lines are swallowed (consumed, ignored), mirroring
-`__CHAT_QUERY__:` handling.
+The daemon runs `regenerate_chat_reply(text, occurrence=…, use_ipc=True)`
+(see **Rewind**) and answers with a `rewind` event, followed by the usual
+`start` / `complete` events when the rewind applied, or a `busy` event when
+a query is already running. `occurrence` is optional (0 by default) and
+counts back from the latest user turn with that text. Malformed rewind
+lines (not JSON, `text` not a string, `occurrence` not a non-negative
+integer) are swallowed (consumed, ignored), mirroring `__CHAT_QUERY__:`
+handling.
 
 Chat IPC lines are routed to the chat window and then **not** emitted to the
 general log viewer. The ``complete`` event carries the whole assistant reply,
@@ -201,8 +214,8 @@ A `QMainWindow` styled as a futuristic phone with a single contact:
   messages additionally carry a subtle rewind button, a line icon (see **Rewind**
   below) to the left of the bubble. Whenever any user, assistant, or local
   notice message is added, the transcript scrolls to the bottom after layout
-  so the latest message stays visible. The transcript mirrors the single
-  conversation's message list and is rebuilt atomically on rewind.
+  so the latest message stays visible. The transcript is rebuilt atomically
+  when a rewind applies.
 - A multi-line input box with a round send button showing an up-arrow line
   icon. Enter sends; Shift+Enter inserts a newline (multi-line input).
 - The inset composer uses labelled, keyboard-accessible icon controls and a
@@ -229,23 +242,35 @@ window seeds recent voice turns on first show).
 ### Rewind
 
 Every sent message carries a subtle rewind button (a line icon, accessible name "Rewind") to the left of its bubble.
-Clicking it:
+The daemon's memory and the window's transcript do not hold the same turns:
+memory also holds voice turns the window never shows, and lets go of turns
+older than `dialogue_memory_timeout` that the window still shows. So a rewind
+is anchored on the message itself, never on its position. Clicking the button:
 
-1. Truncates the window's transcript to keep the message itself (its old
-   reply and everything after it are dropped).
-2. Rolls the shared daemon memory back to before that user turn
-   (`daemon.rewind_chat_to_user(user_index)`, or `__CHAT_REWIND__:`
-   subprocess line). The rewound message itself is dropped so the
-   regeneration does not duplicate it. Hot-window caches and tool carryover
-   are cleared with it.
-3. Re-submits the same message text, so the agent generates a fresh reply
-   that lands through the normal `complete` path.
+1. Sends the message text and its `occurrence` (how many later messages in
+   the window have the same text) to the daemon:
+   `daemon.regenerate_chat_reply(text, occurrence=…)` in bundled mode, a
+   `__CHAT_REWIND__:` line in subprocess mode. The thinking indicator shows
+   and the controls are disabled while the daemon answers.
+2. Under one hold of the query lock, the daemon finds that user turn in the
+   shared memory by its redacted content (or as given, for a turn seeded
+   already redacted), counting back from the latest
+   (`DialogueMemory.rewind_before_user_text`), drops it and everything after
+   it (hot-window caches and tool carryover go with it), reports the outcome
+   (`on_rewind` / `rewind` event), and runs the same text again as a fresh
+   query, so the model never sees the old turn.
+3. Only when the daemon reports the rewind applied does the window truncate
+   its transcript to keep the message itself (its old reply and everything
+   after it are dropped). The fresh reply lands through the normal
+   `complete` path.
+
+When the message is no longer in memory, nothing changes and the window says
+so in a local notice ("That message is no longer in Jarvis's memory, so it
+can't be rewound. Send it again instead."). When a query is already running,
+nothing changes and the usual busy notice shows.
 
 Rewind is disabled while a query is in flight and when the daemon is not
-running. Rewinding rolls back the voice context too (same shared memory), and
-the message-ordinal anchor assumes the transcript and the memory hold the
-same user turns — which holds in bundled mode and in subprocess mode when the
-window's transcript was not seeded from invisible voice turns.
+running. Rewinding rolls back the voice context too (same shared memory).
 
 ### Tray integration
 
@@ -320,7 +345,9 @@ colour. Controls show line icons, never emoji or glyphs.
   session end, and that path sees only the redacted query.
 - The `__CHAT__:` IPC lines carry only the redacted query (in the `start`
   event) and event metadata, so the subprocess stdout stream (which the
-  desktop app captures for the log viewer) never leaks raw user input.
+  desktop app captures for the log viewer) never leaks raw user input. The
+  `rewind` event carries only whether the rewind applied; the message text
+  of a rewind travels only on the daemon's stdin, like a query.
 
 ## What the system does not do
 

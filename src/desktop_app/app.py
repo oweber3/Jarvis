@@ -2795,9 +2795,10 @@ class JarvisSystemTray:
                     """Route a rewind command to the daemon's stdin.
 
                     ``kind`` is ``rewind``; the matching IPC line carries the
-                    payload as prefix+JSON. A broken pipe is not worth
-                    surfacing: the window has already updated its own
-                    transcript, and a dead daemon has no memory to rewind.
+                    payload as prefix+JSON, and the daemon answers with a
+                    ``rewind`` chat event. A broken pipe means no answer will
+                    come, so the window is told the daemon is gone instead of
+                    waiting for one.
                     """
                     import json as _json
                     from jarvis.daemon import CHAT_REWIND_IPC_PREFIX
@@ -2811,16 +2812,19 @@ class JarvisSystemTray:
                         _proc.stdin.flush()
                     except Exception as exc:
                         debug_log(f"chat stdin control failed: {exc}", "desktop")
+                        if self.chat_window is not None:
+                            self.chat_window.set_daemon_status("crashed")
 
                 self._chat_submit_fn = _submit_chat_subprocess
                 self._chat_cancel_fn = _cancel_chat_subprocess
                 self._chat_control_fn = _control_chat_subprocess
                 # If the chat window already exists (daemon restarted while
-                # the window was open), refresh its submit fn so it doesn't
+                # the window was open), refresh its pipe writers so it doesn't
                 # keep writing to the old (dead) subprocess stdin.
                 if self.chat_window is not None:
                     self.chat_window._submit_fn = self._chat_submit_fn
                     self.chat_window._cancel_fn = self._chat_cancel_fn
+                    self.chat_window._control_fn = self._chat_control_fn
                     self.chat_window.set_daemon_status("running")
 
                 # Start log reader thread
@@ -2928,6 +2932,7 @@ class JarvisSystemTray:
                 submit_fn=self._chat_submit_fn,
                 daemon_available=self.is_listening,
                 cancel_fn=getattr(self, "_chat_cancel_fn", None),
+                control_fn=getattr(self, "_chat_control_fn", None),
             )
             self.chat_window.set_reply_mode(self._reply_mode)
         self.chat_window.process_ipc_line(line)
