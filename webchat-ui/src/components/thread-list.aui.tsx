@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { useJarvis } from "@/useJarvis";
 import {
   AuiIf,
   ThreadListItemMorePrimitive,
@@ -13,7 +14,7 @@ import {
   useAuiState,
 } from "@assistant-ui/react";
 import {
-  ArchiveIcon,
+  FolderIcon,
   Loader2Icon,
   MoreHorizontalIcon,
   PencilIcon,
@@ -285,7 +286,7 @@ export const ThreadListNew = forwardRef<
               data-slot="aui_thread-list-new-label"
               className={cn("whitespace-nowrap", labelClassName)}
             >
-              New Thread
+              New chat
             </span>
           </>
         )}
@@ -432,6 +433,35 @@ const ThreadListItemRename: FC<{
   );
 };
 
+// Moves the chat into a project, or out of one. The picker lists every project, so no drag is needed.
+const MoveToProject: FC = () => {
+  const { library, actions } = useJarvis();
+  const chatId = useAuiState((s) => s.threadListItem.id);
+  const current = library.chats.find((c) => c.id === chatId)?.project_id ?? null;
+  const targets = [
+    ...(current === null ? [] : [{ id: null as string | null, name: "Remove from project" }]),
+    ...library.projects.filter((p) => p.id !== current),
+  ];
+
+  return (
+    <>
+      {targets.map((target) => (
+        <ThreadListItemMorePrimitive.Item
+          key={target.id ?? "none"}
+          data-slot="aui_thread-list-item-more-item"
+          className="hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
+          onSelect={() => void actions.moveChat(chatId, target.id)}
+        >
+          <FolderIcon className="size-4" />
+          <span className="truncate">
+            {target.id === null ? target.name : `Move to ${target.name}`}
+          </span>
+        </ThreadListItemMorePrimitive.Item>
+      ))}
+    </>
+  );
+};
+
 const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
   return (
     <ThreadListItemMorePrimitive.Root sharedFocusGroup>
@@ -461,15 +491,7 @@ const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
           <PencilIcon className="size-4" />
           Rename
         </ThreadListItemMorePrimitive.Item>
-        <ThreadListItemPrimitive.Archive asChild>
-          <ThreadListItemMorePrimitive.Item
-            data-slot="aui_thread-list-item-more-item"
-            className="hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
-          >
-            <ArchiveIcon className="size-4" />
-            Archive
-          </ThreadListItemMorePrimitive.Item>
-        </ThreadListItemPrimitive.Archive>
+        <MoveToProject />
         <ThreadListItemPrimitive.Delete asChild>
           <ThreadListItemMorePrimitive.Item
             data-slot="aui_thread-list-item-more-item"

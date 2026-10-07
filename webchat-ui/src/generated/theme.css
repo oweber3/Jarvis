@@ -1,0 +1,38 @@
+/* Generated from desktop_app/themes.py by `python -m desktop_app.web_chat_theme`. Do not edit. */
+:root {
+  --hud-bg-primary: #05070c;
+  --hud-bg-secondary: #0b1220;
+  --hud-bg-tertiary: #111c30;
+  --hud-bg-card: #0d1626;
+  --hud-bg-hover: #16233b;
+  --hud-panel-top: #0f1b2e;
+  --hud-accent-primary: #22d3ee;
+  --hud-accent-secondary: #67e8f9;
+  --hud-accent-deep: #3b82f6;
+  --hud-accent-indigo: #818cf8;
+  --hud-accent-glow: rgba(34, 211, 238, 0.15);
+  --hud-indigo-glow: rgba(129, 140, 248, 0.12);
+  --hud-accent-muted: #334155;
+  --hud-text-primary: #e2e8f0;
+  --hud-text-secondary: #cbd5e1;
+  --hud-text-muted: #94a3b8;
+  --hud-border: #1e293b;
+  --hud-border-strong: #475569;
+  --hud-border-glow: rgba(34, 211, 238, 0.3);
+  --hud-hairline: rgba(34, 211, 238, 0.16);
+  --hud-success: #22c55e;
+  --hud-success-light: #4ade80;
+  --hud-success-deep: #16a34a;
+  --hud-success-glow: rgba(34, 197, 94, 0.12);
+  --hud-success-border: rgba(34, 197, 94, 0.3);
+  --hud-warning: #f59e0b;
+  --hud-warning-light: #fbbf24;
+  --hud-warning-glow: rgba(245, 158, 11, 0.12);
+  --hud-warning-border: rgba(245, 158, 11, 0.3);
+  --hud-error: #ef4444;
+  --hud-error-light: #f87171;
+  --hud-error-glow: rgba(239, 68, 68, 0.15);
+  --hud-error-border: rgba(239, 68, 68, 0.35);
+  --hud-font-ui: 'Segoe UI', '.AppleSystemUIFont', sans-serif;
+  --hud-font-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, monospace;
+}

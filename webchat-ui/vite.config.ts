@@ -1,7 +1,7 @@
 import path from "node:path"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
+import { defineConfig } from "vitest/config"
 
 // The build is written next to the Python code that serves it and is committed, so running Jarvis
 // never needs Node. `npm run dev` proxies the API to a running Jarvis (port: web_chat_port).
