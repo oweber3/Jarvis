@@ -58,6 +58,28 @@ def state() -> Dict[str, Any]:
         return {"mode": _active, "enabled": enabled_modes(_cfg)}
 
 
+def recheck_active() -> None:
+    """Check the active bridge's model and effort again in the background (after they were changed),
+    reporting a problem the way the start-up check does."""
+    global _warm
+    with _lock:
+        mode, service = _active, _service
+    if mode not in CLOUD_MODES or service is None:
+        return
+    warm = threading.Thread(target=_warm_up, args=(mode, service), daemon=True, name=f"{mode}-recheck")
+    with _lock:
+        _warm = warm
+    warm.start()
+
+
+def update_cfg(cfg: Any) -> None:
+    """Use ``cfg`` from now on (the local model changed); the active mode and its service are untouched."""
+    global _cfg
+    with _lock:
+        if _cfg is not None:
+            _cfg = cfg
+
+
 def add_listener(callback: Callable[[str, List[str]], None]) -> None:
     """``callback(mode, enabled_modes)`` after the daemon starts and after every switch."""
     with _lock:

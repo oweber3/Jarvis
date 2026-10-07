@@ -4,6 +4,15 @@ import requests
 from urllib3.exceptions import ReadTimeoutError
 
 
+class RequestCancelled(BaseException):
+    """The user pressed Stop while a request was running.
+
+    Deliberately not an ``Exception``: the reply engine guards many model and tool calls with
+    ``except Exception`` so one failing step cannot end a reply, and a Stop must never be swallowed there.
+    ``run_reply_engine`` catches it at the top of the request.
+    """
+
+
 def is_timeout_error(error: BaseException) -> bool:
     """Recognise typed timeouts wrapped by Requests while reading a body.
 

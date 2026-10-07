@@ -11,6 +11,7 @@ import time
 import signal
 import threading
 import contextlib
+import dataclasses
 
 # Fix OpenBLAS threading crash in bundled apps (must be before numpy imports)
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
@@ -46,6 +47,7 @@ from .tools.registry import (start_mcp_discovery, configure_windows_tools, confi
 from .assistant_state import AssistantState, set_state
 from .extensions import load_extensions
 from .debug import debug_log
+from .llm.errors import RequestCancelled
 from .listening.listener import VoiceListener
 from .utils.location import get_location_context, is_location_available
 
@@ -180,6 +182,11 @@ def get_dialogue_memory():
     return _global_dialogue_memory
 
 
+def get_settings():
+    """The daemon's settings, or ``None`` before it has booted (the web chat reads the local model from it)."""
+    return _global_cfg
+
+
 def is_query_running() -> bool:
     """True while a voice or text query holds the reply engine."""
     return _chat_query_lock.locked()
@@ -238,6 +245,196 @@ def set_chat_messages(messages: list) -> bool:
         return True
     finally:
         _chat_query_lock.release()
+
+
+def switch_chat_conversation(messages: list) -> bool:
+    """Replace the shared conversation with a web chat's history (opening or starting a chat).
+
+    The outgoing turns the diary has not seen get a diary pass of their own on a worker
+    thread, so nothing is lost and the switch does not wait for the summary. The incoming
+    turns are redacted and count as already summarised. Turns flagged ``"diary": False``
+    stay private. Returns False, changing nothing, when a query is running or the daemon
+    has not booted.
+    """
+    dm = _global_dialogue_memory
+    if dm is None:
+        return False
+    if not _chat_query_lock.acquire(blocking=False):
+        debug_log("chat switch rejected: a query is in flight", "chat")
+        return False
+    try:
+        from .utils.redact import redact
+
+        outgoing = dm.detach_unsaved()
+        incoming = []
+        for m in messages:
+            if isinstance(m, dict) and m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str):
+                turn = {"role": m["role"], "content": redact(m["content"])}
+                if m.get("diary") is False:
+                    turn["diary"] = False
+                incoming.append(turn)
+        dm.set_messages(incoming, saved=True)
+    finally:
+        _chat_query_lock.release()
+    if outgoing.has_pending_chunks():
+        _flush_detached_conversation(outgoing)
+    return True
+
+
+@dataclasses.dataclass(frozen=True)
+class LocalModelResult:
+    ok: bool
+    model: str  # the local chat model in use after the call
+    reason: Optional[str] = None  # already | not_ready | unsupported_provider | not_offered | busy | not_installed | save_failed
+
+
+def set_local_chat_model(model: str) -> LocalModelResult:
+    """Make ``model`` the local chat model for the whole assistant, voice included.
+
+    Only a model Jarvis offers (``OFFERED_CHAT_MODELS``) that the runtime reports as installed is
+    accepted, and only on the Ollama provider. The daemon's settings, the voice listener's and the
+    reply-mode registry's are replaced, the choice is saved, the new model is warmed and the old
+    one released unless another role shares it. Refused while a query runs.
+    """
+    cfg = _global_cfg
+    if cfg is None:
+        return LocalModelResult(False, "", "not_ready")
+    current = str(getattr(cfg, "llm_chat_model", "") or "")
+    if getattr(cfg, "llm_provider", "ollama") != "ollama":
+        return LocalModelResult(False, current, "unsupported_provider")
+    wanted = str(model or "").strip()
+    if wanted and wanted == current:
+        return LocalModelResult(True, current, "already")
+    from .config import OFFERED_CHAT_MODELS
+    if wanted not in OFFERED_CHAT_MODELS:
+        return LocalModelResult(False, current, "not_offered")
+    if not _chat_query_lock.acquire(blocking=False):
+        debug_log("local model switch rejected: a query is in flight", "chat")
+        return LocalModelResult(False, current, "busy")
+    try:
+        from . import config as config_module, llm
+        backend = llm.get_llm_backend(cfg)
+        if wanted not in backend.list_models():
+            return LocalModelResult(False, current, "not_installed")
+        if not config_module.update_config_values({"ollama_chat_model": wanted}):
+            return LocalModelResult(False, current, "save_failed")
+        updated = dataclasses.replace(cfg, llm_chat_model=wanted, ollama_chat_model=wanted)
+        _adopt_settings(updated)
+    finally:
+        _chat_query_lock.release()
+    debug_log("local chat model switched", "chat")
+    print(f"🧠 Local chat model: {wanted}", flush=True)
+    threading.Thread(target=_swap_resident_models, args=(backend, cfg, updated, current), daemon=True,
+                     name="local-model-swap").start()
+    return LocalModelResult(True, wanted, None)
+
+
+def _adopt_settings(updated) -> None:
+    """Use ``updated`` as the settings of the running daemon, the voice listener and the reply-mode registry."""
+    global _global_cfg
+    _global_cfg = updated
+    listener = _global_voice_listener
+    if listener is not None:
+        listener.cfg = updated
+    from .bridge import modes
+    modes.update_cfg(updated)
+
+
+@dataclasses.dataclass(frozen=True)
+class CloudModelResult:
+    ok: bool
+    reason: Optional[str] = None  # already | not_ready | not_cloud | not_offered | effort_unsupported | busy | save_failed
+    mode: str = ""
+    model: str = ""
+    effort: str = ""
+
+
+_CLOUD_KEYS = {"codex": ("codex_model", "codex_reasoning_effort"), "claude": ("claude_model", "claude_effort")}
+
+
+def set_cloud_model(model: str, effort: Optional[str] = None) -> CloudModelResult:
+    """Make ``model`` (and ``effort``) the choice of the active Claude or Codex reply mode, voice included.
+
+    Only a model the bridge reported, with an effort that model offers, is accepted (an omitted effort keeps
+    the current one when the model offers it, otherwise the model's default). It is saved, applied to the
+    daemon's, the listener's and the bridge's settings, and checked again by the bridge in the background.
+    Refused while a query runs. See ``webchat/webchat.spec.md``, Models.
+    """
+    cfg = _global_cfg
+    if cfg is None:
+        return CloudModelResult(False, "not_ready")
+    from .bridge import modes, runtime as bridge_runtime
+    from .bridge.model_catalog import choose_effort
+    mode = modes.active_mode()
+    if mode not in _CLOUD_KEYS:
+        return CloudModelResult(False, "not_cloud")
+    service = bridge_runtime.get_service()
+    available = service.available_models() if service is not None else []
+    if not available:
+        return CloudModelResult(False, "not_ready", mode)
+    entry = next((m for m in available if m.id == model), None)
+    if entry is None:
+        return CloudModelResult(False, "not_offered", mode)
+    model_key, effort_key = _CLOUD_KEYS[mode]
+    if effort is None:
+        chosen = choose_effort(entry, getattr(cfg, effort_key, None)) or ""
+    elif (any(e.id == effort for e in entry.efforts) if entry.efforts else effort == ""):
+        chosen = effort
+    else:
+        return CloudModelResult(False, "effort_unsupported", mode, entry.id)
+    if model == getattr(cfg, model_key, None) and chosen == getattr(cfg, effort_key, None):
+        return CloudModelResult(True, "already", mode, model, chosen)
+    if not _chat_query_lock.acquire(blocking=False):
+        debug_log("cloud model switch rejected: a query is in flight", "chat")
+        return CloudModelResult(False, "busy", mode)
+    try:
+        from . import config as config_module
+        updated = dataclasses.replace(cfg, **{model_key: model, effort_key: chosen})
+        if not service.reconfigure(updated):
+            return CloudModelResult(False, "busy", mode)
+        if not config_module.update_config_values({model_key: model, effort_key: chosen}):
+            service.reconfigure(cfg)
+            return CloudModelResult(False, "save_failed", mode)
+        _adopt_settings(updated)
+    finally:
+        _chat_query_lock.release()
+    modes.recheck_active()
+    debug_log("cloud model settings switched", "chat")
+    print(f"🧠 {modes.LABELS[mode]} model: {model}" + (f" ({chosen} effort)" if chosen else ""), flush=True)
+    return CloudModelResult(True, None, mode, model, chosen)
+
+
+def _swap_resident_models(backend, before, after, old_model: str) -> None:
+    """Load the new chat model and unload the old one when nothing else uses it."""
+    from .llm.tiers import Tier, resolve_model
+    try:
+        from .bridge import modes
+        if modes.active_mode() == modes.LOCAL:
+            backend.warm_up(after.llm_chat_model, timeout_sec=60.0)
+            still_used = {resolve_model(after, Tier.FAST), resolve_model(after, Tier.TOOL),
+                          str(getattr(after, "embedding_model", "") or "")}
+            if old_model and old_model not in still_used and backend.release(old_model):
+                print(f"  🧹 Unloaded local model '{old_model}'", flush=True)
+    except Exception as exc:
+        debug_log(f"local model swap failed: {type(exc).__name__}", "chat")
+
+
+def _flush_detached_conversation(detached) -> None:
+    """Summarise turns detached from the shared memory into the diary, off the calling thread."""
+    cfg, db = _global_cfg, _global_db
+
+    def _run() -> None:
+        try:
+            update_diary_from_dialogue_memory(
+                db=db, dialogue_memory=detached, cfg=cfg,
+                source_app="stdin" if getattr(cfg, "use_stdin", False) else "voice",
+                voice_debug=getattr(cfg, "voice_debug", False),
+                timeout_sec=getattr(cfg, "llm_chat_timeout_sec", 30.0),
+                force=True, thinking=getattr(cfg, "llm_thinking_enabled", False))
+        except Exception as exc:
+            debug_log(f"diary pass for a closed chat failed: {type(exc).__name__}", "chat")
+
+    threading.Thread(target=_run, name="jarvis-chat-diary", daemon=True).start()
 
 
 # Diary IPC protocol prefix - desktop app intercepts lines starting with this
@@ -314,20 +511,27 @@ def _notify_chat(event_type: str, data, *, callbacks: dict, use_ipc: bool) -> No
         _emit_chat_event(event_type, data)
 
 
-_chat_result_callback = None
-_chat_result_callback_lock = threading.Lock()
+_chat_result_listeners: list = []
+_chat_result_listeners_lock = threading.Lock()
 
 
-def set_chat_result_callback(callback) -> None:
-    """Register the chat UI's receiver for confirmed-action results.
+def add_chat_result_listener(callback) -> None:
+    """Register a chat view's receiver for confirmed-action results.
 
     ``callback(reply: str)`` fires from the confirmed-action worker thread, so
     the desktop app passes a Qt signal emitter and the UI update happens on the
-    main thread. ``None`` unregisters.
+    main thread. Every registered view receives each result.
     """
-    global _chat_result_callback
-    with _chat_result_callback_lock:
-        _chat_result_callback = callback
+    with _chat_result_listeners_lock:
+        if callback not in _chat_result_listeners:
+            _chat_result_listeners.append(callback)
+
+
+def remove_chat_result_listener(callback) -> None:
+    """Unregister a receiver added by ``add_chat_result_listener``; unknown receivers are ignored."""
+    with _chat_result_listeners_lock:
+        if callback in _chat_result_listeners:
+            _chat_result_listeners.remove(callback)
 
 
 def deliver_chat_confirmed_result(reply: str, success: bool) -> None:
@@ -344,9 +548,9 @@ def deliver_chat_confirmed_result(reply: str, success: bool) -> None:
             dm.add_message("assistant", safe_reply)
         except Exception as exc:
             debug_log(f"recording confirmed chat result failed: {exc}", "chat")
-    with _chat_result_callback_lock:
-        callback = _chat_result_callback
-    if callback is not None:
+    with _chat_result_listeners_lock:
+        listeners = list(_chat_result_listeners)
+    for callback in listeners:
         try:
             callback(safe_reply)
         except Exception as exc:
@@ -521,8 +725,8 @@ def regenerate_chat_reply(
 
 def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc: bool, origin: str) -> None:
     """Run one text query on a worker thread. The caller holds ``_chat_query_lock``; the worker releases it."""
-    # Per-query cancellation flag. The Stop button sets this so the worker
-    # drops the reply instead of displaying it.
+    # Per-query cancellation flag. The Stop button sets this; the reply engine ends the request at its
+    # next step and drops the model call in flight, and the worker drops any reply that still arrives.
     global _chat_cancel_event
     cancel_event = threading.Event()
     _chat_cancel_event = cancel_event
@@ -538,17 +742,22 @@ def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc
             from .utils.redact import redact
             display_query = redact(text)
             _notify_chat("start", display_query, callbacks=callbacks, use_ipc=use_ipc)
+            from .reply.cancellation import cancel_scope
             from .reply.engine import run_reply_engine
-            reply = run_reply_engine(
-                db=db,
-                cfg=cfg,
-                tts=None,
-                text=text,
-                dialogue_memory=dm,
-                language=None,
-                quiet=True,
-                origin=origin,
-            )
+            try:
+                with cancel_scope(cancel_event):
+                    reply = run_reply_engine(
+                        db=db,
+                        cfg=cfg,
+                        tts=None,
+                        text=text,
+                        dialogue_memory=dm,
+                        language=None,
+                        quiet=True,
+                        origin=origin,
+                    )
+            except RequestCancelled:
+                reply = None
             if cancel_event.is_set():
                 debug_log("chat query cancelled, dropping reply", "chat")
                 reply = None
@@ -1309,6 +1518,10 @@ def main(smoke_test: bool = False) -> None:
     from .remote import runtime as remote_runtime
     remote_runtime.start(cfg)
 
+    # Opt-in web chat: serves nothing unless the user turned it on in Settings.
+    from .webchat import runtime as web_chat_runtime
+    web_chat_runtime.start(cfg)
+
     # Periodic diary update checking
     last_diary_check = time.time()
     diary_check_interval = 60.0
@@ -1386,6 +1599,7 @@ def main(smoke_test: bool = False) -> None:
 
         # No new phone requests once shutdown has begun.
         remote_runtime.stop()
+        web_chat_runtime.stop()
 
         # Clean shutdown - stop dictation first
         if dictation is not None:

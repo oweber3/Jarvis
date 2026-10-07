@@ -33,6 +33,8 @@ datas = [
     (str(src_path / 'jarvis' / 'tools' / 'builtin' / 'windows' / 'control_words' / '*.json'), 'jarvis/tools/builtin/windows/control_words'),
     (str(src_path / 'jarvis' / 'platform' / 'windows' / '*.json'), 'jarvis/platform/windows'),
     (str(src_path / 'jarvis' / 'memory' / 'activity_exclusions.json'), 'jarvis/memory'),
+    # The built web chat page, served by the daemon (webchat/webchat.spec.md)
+    (str(src_path / 'jarvis' / 'webchat' / 'static'), 'jarvis/webchat/static'),
 ]
 
 # Collect Piper TTS data files (espeak-ng-data is required for phonemization)

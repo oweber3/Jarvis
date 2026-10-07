@@ -12,8 +12,11 @@ plus the same args and forwards to the matching backend method.
 """
 
 from __future__ import annotations
+import threading
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional
+
+from .errors import RequestCancelled
 
 
 # Fields allowed per message ``role`` in the OpenAI Chat Completions schema.
@@ -135,6 +138,44 @@ class LLMBackend(ABC):
         ``tool_calls``. Raises :class:`ToolsNotSupportedError` when the
         model rejects the ``tools`` parameter so the caller can fall
         back to text-based tool calling without losing the turn."""
+
+    def chat_cancellable(
+        self,
+        chat_model: str,
+        messages: List[Dict[str, Any]],
+        cancel: threading.Event,
+        timeout_sec: float = 30.0,
+        extra_options: Optional[Dict[str, Any]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        thinking: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """``chat`` that ends with :class:`RequestCancelled` once ``cancel`` is set.
+
+        This default cannot drop the request already sent: it runs ``chat`` on a helper thread and stops
+        waiting for it, so the caller is free at once and the server finishes its answer for nobody. A
+        backend that can close its request overrides this to stop the server's work too.
+        """
+        if cancel.is_set():
+            raise RequestCancelled()
+        outcome: Dict[str, Any] = {}
+        finished = threading.Event()
+
+        def run() -> None:
+            try:
+                outcome["value"] = self.chat(chat_model, messages, timeout_sec=timeout_sec,
+                                             extra_options=extra_options, tools=tools, thinking=thinking)
+            except BaseException as exc:  # handed to the waiting caller below
+                outcome["error"] = exc
+            finally:
+                finished.set()
+
+        threading.Thread(target=run, daemon=True, name="llm-chat-cancellable").start()
+        while not finished.wait(0.1):
+            if cancel.is_set():
+                raise RequestCancelled()
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome.get("value")
 
     @abstractmethod
     def embed(

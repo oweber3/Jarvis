@@ -1574,6 +1574,17 @@ def read_log_tail(log_path: Optional[Path], max_chars: int = 4000) -> str:
     return text[-max_chars:].strip()
 
 
+def web_chat_port_if_enabled() -> Optional[int]:
+    """The port of the web chat when Settings turned it on, otherwise ``None`` (the classic chat opens)."""
+    try:
+        from jarvis.config import load_settings
+        cfg = load_settings()
+        return int(cfg.web_chat_port) if cfg.web_chat_enabled else None
+    except Exception as exc:
+        debug_log(f"web chat setting unreadable: {type(exc).__name__}", "desktop")
+        return None
+
+
 class MemoryViewerWindow(QMainWindow):
     """Window for viewing Jarvis memory using embedded web view."""
 
@@ -2003,6 +2014,9 @@ class JarvisSystemTray:
         # history window. ``self._chat_submit_fn`` is set when the daemon
         # starts so the window can route queries in subprocess mode.
         self.chat_window = None
+        # The web chat (jarvis/webchat/webchat.spec.md) replaces the tray's Chat window while Settings has it on.
+        self.web_chat_window = None
+        self._web_chat_port = web_chat_port_if_enabled()
         self._chat_submit_fn = None
         self._chat_control_fn = None
         self._daemon_stop_expected = False
@@ -2574,8 +2588,27 @@ class JarvisSystemTray:
         self.phone_access_dialog.raise_()
         self.phone_access_dialog.activateWindow()
 
+    def show_web_chat(self, port: int) -> None:
+        """Show the web chat window (created lazily on first open) on the page the daemon serves."""
+        from desktop_app.web_chat_window import WebChatWindow
+        if self.web_chat_window is None:
+            self.web_chat_window = WebChatWindow(port, "running" if self.is_listening else "stopped")
+        else:
+            self.web_chat_window.set_daemon_status("running" if self.is_listening else "stopped")
+        if not self.web_chat_window.has_embedded_view and self.is_listening:
+            import webbrowser
+            webbrowser.open(self.web_chat_window.url)
+            return
+        self.web_chat_window.show()
+        self.web_chat_window.raise_()
+        self.web_chat_window.activateWindow()
+
     def show_chat(self) -> None:
-        """Show the text chat window (created lazily on first open)."""
+        """Show the chat: the web chat when Settings turned it on, otherwise the text chat window."""
+        port = getattr(self, "_web_chat_port", None)
+        if port is not None:
+            self.show_web_chat(port)
+            return
         if self.chat_window is None:
             from desktop_app.chat_window import ChatWindow
             self.chat_window = ChatWindow(
@@ -2602,6 +2635,9 @@ class JarvisSystemTray:
 
     def _set_chat_daemon_status(self, status: str) -> None:
         """Update an existing chat window with daemon lifecycle state."""
+        web_chat = getattr(self, "web_chat_window", None)
+        if web_chat is not None:
+            web_chat.set_daemon_status(status)
         if self.chat_window is None:
             return
         self.chat_window._submit_fn = self._chat_submit_fn

@@ -27,6 +27,8 @@ src/desktop_app/
 ├── repository.py        # Repository slug and pre-filled issue-report links
 ├── diary_dialog.py      # End-of-session diary update dialog
 ├── chat_window.py       # Text chat interface (see chat_window.spec.md)
+├── web_chat_window.py   # Window around the web chat page (see jarvis/webchat/webchat.spec.md)
+├── web_chat_theme.py    # Writes the web chat page's palette from themes.py
 ├── phone_access_dialog.py # Phone pairing and paired phones (see jarvis/remote/remote.spec.md)
 ├── memory_viewer.py     # Flask-based memory browser (palette from themes.py)
 ├── updater.py           # Update checking logic
@@ -118,6 +120,7 @@ The central controller that manages:
 | **SetupWizard** | First-run configuration (Ollama, models, profile) |
 | **DictationHistoryWindow** | Scrollable list of past dictations with copy/delete/clear actions |
 | **ChatWindow** | Text chat interface alongside voice; shares one conversation with the voice path and is enabled only while the daemon is running (see `chat_window.spec.md`) |
+| **WebChatWindow** | The web chat (projects, model picker) in an embedded browser on the page the daemon serves on the loopback interface; opened by the tray's `Chat` entry while `web_chat_enabled` is on, in place of `ChatWindow`. Shows a status page while the daemon is not running (see `jarvis/webchat/webchat.spec.md`) |
 | **PhoneAccessDialog** | `Phone Access` in the tray: turn phone access on, pair a phone with a one-time code, list and remove paired phones. Works on the shared device files, so it needs no daemon IPC (see `jarvis/remote/remote.spec.md`) |
 
 ### Activity log and downloads
@@ -263,6 +266,8 @@ Every window, dialog, menu and the memory viewer page wears the orb's cinematic 
 - Dynamic properties for states that change at run time: `[compact="true"]` (small buttons, compact status rows), `[tone="success|warning|error|muted"]` (status text found by its own object name), `[selected="true"]`, `[active="true"]`, and the chat window's `[kind]`, `[busy]`, `[presence]` and `[chatRole]`.
 - `set_role(widget, role)` and `set_state(widget, name, value)` change a role or a state and restyle the widget at once.
 
+`HUD_COLORS_LIGHT` is the light variant of the same palette (same keys, every text and accent colour meeting WCAG AA on every surface, checked by `tests/test_webchat_theme.py`). Only the web chat's light mode uses it (`jarvis/webchat/webchat.spec.md`); the Qt windows stay dark. `desktop_app/web_chat_theme.py` writes both palettes into the web page's stylesheet.
+
 `HUD_COLORS[...]` lookups remain only where a widget paints itself (the orb, the splash panel, the chat avatar, the log timeline's coloured lines) and in the HTML of the memory viewer and its error page. Amber appears only as the warning status colour.
 
 **No emoji on screen.** Nothing the desktop app draws carries an emoji: tray and menu items, window titles, labels, buttons, dialogs, the setup wizard, Settings (category names, field labels and choices from the metadata, the MCP catalogue) and the memory viewer page use plain text. Where an icon helps, it is a line icon from `LINE_ICONS` (24-unit drawings stroked in a palette colour with round caps): `line_icon(name)` gives a `QIcon` in the secondary text colour that lights up light cyan when active and dims when disabled, or one fixed palette colour (`line_icon(name, colour_key)`, for a status dot); `icon_file(name, colour_key)` writes one for rich text. Console and log output keep their emojis (AGENTS.md); the log viewer shows log lines as they are.
@@ -329,7 +334,7 @@ A Flask-based web interface for browsing conversation history:
 - **Development mode**: Flask runs as subprocess (`python -m desktop_app.memory_viewer <port>`). Its stdout and stderr go to `memory_viewer.log` in the log directory (`get_log_dir()`, replaced on each start), never to a pipe, so however much it prints it keeps answering; when it fails to start, the tail of that file is printed to the console
 - **Request log off**: Werkzeug logs errors only (`quiet_request_log`, both modes), so request lines, which carry memory search terms, are never written anywhere
 - Opens in embedded QWebEngineView or system browser (macOS fallback)
-- **Request guard**: the server has no login, so a `before_request` hook answers only the viewer itself. A `Host` that is not `localhost`, `127.0.0.1` or `::1` (DNS rebinding) gets 403, and so does an `Origin` that differs from the request's own `Host` (cross-site requests, another local server). Requests with no `Origin` are served
+- **Request guard**: the server has no login, so a `before_request` hook answers only the viewer itself (`jarvis.utils.local_guard.refusal`, shared with the web chat). A `Host` that is not `localhost`, `127.0.0.1` or `::1` (DNS rebinding) gets 403, and so does an `Origin` that differs from the request's own `Host` (cross-site requests, another local server). Requests with no `Origin` are served
 
 ## Error Handling
 

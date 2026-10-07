@@ -430,6 +430,11 @@ class Settings:
     remote_access_allow_confirm: bool = True
     remote_access_quick_actions: list[str] = field(default_factory=lambda: list(REMOTE_QUICK_ACTIONS))
 
+    # Opt-in web chat (see src/jarvis/webchat/webchat.spec.md): chats grouped into projects, shown in the
+    # desktop app from a page the daemon serves on the loopback interface only. Off by default.
+    web_chat_enabled: bool = False
+    web_chat_port: int = 8766
+
 
 def _activity_defaults():
     from .memory.activity_log import default_excluded_processes, default_private_title_markers
@@ -906,6 +911,8 @@ def get_default_config() -> Dict[str, Any]:
         "remote_access_port": 8765,
         "remote_access_allow_confirm": True,
         "remote_access_quick_actions": list(REMOTE_QUICK_ACTIONS),
+        "web_chat_enabled": False,
+        "web_chat_port": 8766,
         # Database & Storage
         "db_path": _default_db_path(),
         "sqlite_vss_path": None,
@@ -1385,6 +1392,8 @@ def load_settings() -> Settings:
         remote_access_allow_confirm=bool(merged.get("remote_access_allow_confirm", True)),
         remote_access_quick_actions=_string_list(merged.get("remote_access_quick_actions"),
                                                  defaults["remote_access_quick_actions"]),
+        web_chat_enabled=merged.get("web_chat_enabled") is True,
+        web_chat_port=_port(merged.get("web_chat_port"), defaults["web_chat_port"]),
         fast_commands_enabled=bool(merged.get('fast_commands_enabled', True)),
         fast_commands_locales=[locale.casefold().replace('_', '-').split('-')[0]
                               for locale in merged.get('fast_commands_locales', ['en'])

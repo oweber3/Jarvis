@@ -87,6 +87,48 @@ HUD_COLORS = {
     "error_border": "rgba(239, 68, 68, 0.35)",
 }
 
+# The light variant of the UI palette, for the web chat's light mode (the Qt windows stay dark). It has
+# the same keys as ``HUD_COLORS``; text and accents meet WCAG AA (4.5:1) on the surfaces they sit on.
+HUD_COLORS_LIGHT = {
+    "bg_primary": "#f4f7fb",
+    "bg_secondary": "#ffffff",
+    "bg_tertiary": "#e6edf6",
+    "bg_card": "#ffffff",
+    "bg_hover": "#dbe6f3",
+    "panel_top": "#ffffff",
+
+    "accent_primary": "#0b6a84",
+    "accent_secondary": "#0b6f8a",
+    "accent_deep": "#1d4ed8",
+    "accent_indigo": "#4f46e5",
+    "accent_glow": "rgba(14, 116, 144, 0.12)",
+    "indigo_glow": "rgba(79, 70, 229, 0.08)",
+    "accent_muted": "#cbd5e1",
+
+    "text_primary": "#0f172a",
+    "text_secondary": "#334155",
+    "text_muted": "#475569",
+
+    "border": "#cbd5e1",
+    "border_strong": "#94a3b8",
+    "border_glow": "rgba(14, 116, 144, 0.35)",
+    "hairline": "rgba(14, 116, 144, 0.22)",
+
+    "success": "#15803d",
+    "success_light": "#16a34a",
+    "success_deep": "#166534",
+    "success_glow": "rgba(21, 128, 61, 0.10)",
+    "success_border": "rgba(21, 128, 61, 0.3)",
+    "warning": "#b45309",
+    "warning_light": "#d97706",
+    "warning_glow": "rgba(180, 83, 9, 0.10)",
+    "warning_border": "rgba(180, 83, 9, 0.3)",
+    "error": "#b91c1c",
+    "error_light": "#dc2626",
+    "error_glow": "rgba(185, 28, 28, 0.10)",
+    "error_border": "rgba(185, 28, 28, 0.35)",
+}
+
 # Type: the system UI face, and a monospace face for values, codes and logs.
 FONT_UI = "'Segoe UI', '.AppleSystemUIFont', sans-serif"
 FONT_MONO = "'Cascadia Mono', Consolas, 'SF Mono', Menlo, monospace"

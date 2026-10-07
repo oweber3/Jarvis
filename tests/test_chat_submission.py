@@ -304,6 +304,39 @@ class TestSubmitTextQueryContract:
         _wait_for_complete(events)
         assert events[-1] == ("complete", None)
 
+    def test_stop_ends_a_running_request_and_frees_the_chat_at_once(self, monkeypatch):
+        """Stop is not only a hidden reply: a request that is still working ends at its next check and the
+        next message is accepted straight away."""
+        from jarvis.reply.cancellation import check_cancelled
+
+        _install_dialogue_memory(cfg=object(), db=object())
+        started = threading.Event()
+
+        def working_engine(*a, **k):
+            started.set()
+            for _ in range(500):  # up to 25 s of work, checking for Stop as the real engine does
+                check_cancelled()
+                time.sleep(0.05)
+            return "finished anyway"
+
+        monkeypatch.setattr("jarvis.reply.engine.run_reply_engine", working_engine)
+        events = []
+        daemon.submit_text_query("hi", on_complete=lambda r: events.append(("complete", r)))
+        assert started.wait(timeout=2)
+        stopped_at = time.monotonic()
+        daemon.cancel_active_chat_query()
+        _wait_for_complete(events, timeout=3)
+        assert events[-1] == ("complete", None)
+        assert time.monotonic() - stopped_at < 2.0
+
+        monkeypatch.setattr("jarvis.reply.engine.run_reply_engine", lambda *a, **k: "next answer")
+        events.clear()
+        busy = []
+        daemon.submit_text_query("again", on_busy=lambda: busy.append(True),
+                                 on_complete=lambda r: events.append(("complete", r)))
+        _wait_for_complete(events)
+        assert busy == [] and events[-1] == ("complete", "next answer")
+
     def test_start_event_carries_redacted_query(self, monkeypatch):
         """on_start receives the redacted query, not the raw input. Verifies the
         privacy boundary with a redactable pattern (email)."""

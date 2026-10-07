@@ -1,0 +1,112 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "tw-shimmer";
+@import "./generated/theme.css";
+
+@custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));
+
+/* Tailwind's dark: variant follows the page's own switch (data-theme), not the operating system's. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@custom-variant data-closed (&:where([data-state="closed"], [data-closed]:not([data-closed="false"])));
+
+/*
+ * assistant-ui's components are styled with shadcn colour tokens. They are mapped here onto the Jarvis HUD
+ * palette (generated from desktop_app/themes.py), so the chat matches the desktop windows.
+ */
+:root {
+  color-scheme: dark;
+  --background: var(--hud-bg-primary);
+  --foreground: var(--hud-text-primary);
+  --card: var(--hud-bg-card);
+  --card-foreground: var(--hud-text-primary);
+  --popover: var(--hud-bg-secondary);
+  --popover-foreground: var(--hud-text-primary);
+  --primary: var(--hud-accent-primary);
+  --primary-foreground: var(--hud-ink-on-accent);
+  --secondary: var(--hud-bg-tertiary);
+  --secondary-foreground: var(--hud-text-primary);
+  --muted: var(--hud-bg-tertiary);
+  --muted-foreground: var(--hud-text-muted);
+  --accent: var(--hud-bg-hover);
+  --accent-foreground: var(--hud-text-primary);
+  --destructive: var(--hud-error);
+  --warning: var(--hud-warning);
+  --border: var(--hud-hairline);
+  --input: var(--hud-border);
+  --ring: var(--hud-accent-primary);
+  --radius: 0.625rem;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: var(--hud-font-ui);
+  --font-mono: var(--hud-font-mono);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    margin: 0;
+  }
+  /* The soft HUD glow behind the page, as in the Memory Viewer. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, var(--hud-accent-glow), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 100%, var(--hud-indigo-glow), transparent);
+    pointer-events: none;
+    z-index: -1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* The owner's messages: the orb's cyan-to-blue gradient with dark text, as in the desktop chat. */
+[data-slot="aui_user-message-root"] .aui-user-message-content {
+  background-image: linear-gradient(135deg, var(--hud-accent-secondary), var(--hud-accent-deep));
+  color: var(--hud-ink-on-accent);
+}

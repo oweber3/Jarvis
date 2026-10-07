@@ -23,6 +23,7 @@ from ..bridge.broker import (
     TurnOutcome,
 )
 from ..bridge.execution import ToolCallRunner
+from ..bridge.model_catalog import CloudModel, codex_models
 from ..bridge.settings import bridge_settings
 from ..bridge.tools import (
     ANSWER_SCHEMA,
@@ -183,6 +184,7 @@ class BridgeService:
         self._active_rid: Optional[str] = None
         self._session: Optional[_Session] = None
         self._ready_generation: Optional[int] = None
+        self._models: List[CloudModel] = []
         self._spare: Optional[_SpareThread] = None
         self._spare_lock = threading.Lock()
         self._spare_idle = threading.Event()
@@ -267,6 +269,25 @@ class BridgeService:
         with self._lock:
             return self._active_rid is not None
 
+    def available_models(self) -> List[CloudModel]:
+        """The models and efforts Codex reported at its last check (empty before the first one)."""
+        return list(self._models)
+
+    def reconfigure(self, cfg: Any) -> bool:
+        """Use the model and effort in ``cfg`` from the next request on. Returns False, changing nothing,
+        while a request is running. The next request checks the model and effort again, so one the account
+        does not offer fails clearly and is never substituted."""
+        if not self._turn_lock.acquire(blocking=False):
+            return False
+        try:
+            self._cfg = cfg
+            self._ready_generation = None
+            self._discard_spare()
+        finally:
+            self._turn_lock.release()
+        debug_log("codex model settings changed", "codex")
+        return True
+
     def cancel_active(self, reason: str) -> bool:
         with self._lock:
             rid, session = self._active_rid, self._session
@@ -300,6 +321,7 @@ class BridgeService:
         except AppServerError as exc:
             debug_log(f"app-server preflight failed ({exc.reason})", "codex")
             return "unsupported" if exc.reason == "rpc_error" else "start_failed"
+        self._models = codex_models(models)
         failure = account_failure(account) or self._check_model(models)
         if failure is not None:
             debug_log(f"app-server preflight refused ({failure})", "codex")
@@ -401,6 +423,18 @@ class BridgeService:
             with self._spare_lock:
                 self._spare = spare
                 self._spare_idle.set()
+
+    def _discard_spare(self) -> None:
+        """Close the spare thread: it was started with the model that has just been replaced."""
+        self._spare_idle.wait(_RPC_TIMEOUT_SEC)
+        with self._spare_lock:
+            spare, self._spare = self._spare, None
+        client = self._client
+        if spare is not None and client.alive and spare.generation == client.generation:
+            try:
+                client.request("thread/unsubscribe", {"threadId": spare.thread_id}, _CLOSE_TIMEOUT_SEC)
+            except AppServerError as exc:
+                debug_log(f"thread close failed ({exc.reason})", "codex")
 
     def _claim_spare(self, isolation: Dict[str, bool], tools: Dict[str, Dict[str, Any]]) -> Optional[str]:
         """The spare thread's ID when this process started it with the same isolation and tools."""

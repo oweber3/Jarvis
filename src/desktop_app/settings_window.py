@@ -74,6 +74,7 @@ CATEGORIES = [
     ("windows", "Windows Control"),
     ("activity", "Activity Log (optional)"),
     ("remote", "Phone Access (optional)"),
+    ("web_chat", "Web Chat (optional)"),
     ("features", "Features"),
     ("mcps", "MCP Servers"),
     ("advanced", "Advanced"),
@@ -657,6 +658,16 @@ def _build_field_metadata() -> List[FieldMeta]:
     f("remote_access_quick_actions", "Quick Actions",
       "Commands shown as one-tap buttons on the phone, one per line. Each is sent as if typed.",
       "remote", "list")
+
+    # --- Web chat (opt-in) ---
+    f("web_chat_enabled", "Web Chat",
+      "A chat window with projects and a model picker. Jarvis serves the page itself on this PC, on the "
+      "loopback address only, and keeps your chats (redacted text) in its own database. The tray's Chat "
+      "entry opens it instead of the classic chat. Restart Jarvis after changing it.",
+      "web_chat", "bool")
+    f("web_chat_port", "Web Chat Port",
+      "The local port the page is served on (127.0.0.1 only).",
+      "web_chat", "int", min_val=1024, max_val=65535, step=1)
 
     # --- Advanced ---
     f("echo_energy_threshold", "Echo Energy Threshold",

@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from ..bridge.broker import TERMINAL, Broker, BrokerLimits, BusyError, PayloadTooLargeError, State, TurnOutcome
 from ..bridge.execution import ToolCallRunner
+from ..bridge.model_catalog import CloudModel, claude_models
 from ..bridge.settings import bridge_settings
 from ..bridge.tools import (
     ANSWER_SCHEMA,
@@ -160,6 +161,7 @@ class ClaudeBridgeService:
                                       log_tag="claude")
         self._effort: Optional[str] = None
         self._ready = False
+        self._models: List[CloudModel] = []
         self._closed = False
         self._turn_lock = threading.Lock()
         self._lock = threading.Lock()
@@ -252,6 +254,29 @@ class ClaudeBridgeService:
         with self._lock:
             return self._active_rid is not None
 
+    def available_models(self) -> List[CloudModel]:
+        """The models and efforts Claude Code reported at its last check (empty before the first one)."""
+        return list(self._models)
+
+    def reconfigure(self, cfg: Any) -> bool:
+        """Use the model and effort in ``cfg`` from the next request on. Returns False, changing nothing,
+        while a request is running. The next request checks the model and effort again, so one the CLI
+        does not offer fails clearly and is never substituted."""
+        if not self._turn_lock.acquire(blocking=False):
+            return False
+        try:
+            self._cfg = cfg
+            self._ready, self._effort = False, None
+            self._spare_idle.wait(_CLOSE_TIMEOUT_SEC)
+            with self._spare_lock:
+                spare, self._spare = self._spare, None
+            if spare is not None:
+                self._stop(spare)
+        finally:
+            self._turn_lock.release()
+        debug_log("claude model settings changed", "claude")
+        return True
+
     def cancel_active(self, reason: str) -> bool:
         with self._lock:
             rid, live = self._active_rid, self._live
@@ -285,6 +310,7 @@ class ClaudeBridgeService:
         except ClaudeCliError as exc:
             return self._start_failure(exc)
         self._stop(probe)
+        self._models = claude_models(init.get("models") or [])
         failure, effort = self._check_model(init.get("models") or [])
         if failure is not None:
             debug_log(f"claude preflight refused ({failure})", "claude")

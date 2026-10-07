@@ -160,7 +160,7 @@ Choose models, tune speech recognition, configure tools and enable Low Power Mod
 
 ### A quiet companion to voice
 
-When speaking is inconvenient, open Chat from the tray. It picks up the same conversation and memory, without reading text replies aloud. Away from the desk, [phone access](#phone-access-optional) brings the orb and the same conversation to your phone's browser.
+When speaking is inconvenient, open Chat from the tray. It picks up the same conversation and memory, without reading text replies aloud. Away from the desk, [phone access](#phone-access-optional) brings the orb and the same conversation to your phone's browser. For several conversations at once, turn on the [web chat](#web-chat-optional): chats grouped into projects, with a model picker.
 
 <p align="center">
   <img src="docs/img/chat-window.png" alt="Jarvis companion chat in its rounded steel-blue phone-style window, showing illustrative messages in the orb's cyan and blue" width="480">
@@ -173,6 +173,7 @@ This fork is developed and tested on Windows 11, and the desktop controls are Wi
 - **macOS 26+ dictation is unavailable** because of a pynput incompatibility. This limitation concerns the global dictation hotkey.
 - **Stopping Jarvis by voice can lag over loud playback.** A plain “Stop” or “Jarvis, stop” stops it (say “Jarvis, stop” if Jarvis is saying the word “stop” at that moment). When the microphone hears Jarvis's own voice loudly, the stop can wait for a few seconds of audio, and a stop that Whisper merges with several of Jarvis's words, or phrased differently (“please stop”), depends on the intent judge. Headphones or a lower speaker volume help.
 - **No mobile app store app.** Phone access is a web page your PC serves to your phone's browser. It is text only (browsers allow the microphone only over HTTPS), works only while the PC is on, and needs the phone on your home network or your own VPN.
+- **The web chat is a first version.** It cannot rewind a message yet (the classic chat can), and it needs Jarvis running: with Jarvis stopped it shows a status page instead of your chats.
 - **First-run downloads can take time.** Whisper and language models can be large. Check Logs for progress before assuming startup is stuck.
 - **Whisper turbo needs a compatible backend.** The wizard hides it when the selected backend cannot load it; an existing unsupported selection uses `medium` instead.
 - **Codex and Claude modes are cloud inference.** They are opt-in, send requests to OpenAI or Anthropic using your own Codex or Claude sign-in, take a few seconds per request, and stop with a clear message if a Codex or Claude Code update changes the interface they use (Codex's is marked experimental).
@@ -287,6 +288,17 @@ Off by default. Turn it on in **Settings → Phone Access** (or from the tray's 
 - **Read replies aloud** (off by default) uses the phone's own voice.
 - Without the tray, `python -m jarvis.remote pair` prints a pairing code, `devices` lists paired phones and `revoke <id>` removes one.
 
+### Web chat (optional)
+
+Off by default. Turn it on in **Settings → Web Chat** and restart Jarvis; the tray's **Chat** then opens it in place of the classic chat. It is a chat window with a sidebar of **projects** (create, rename, move chats into them) and a **model picker** in the message box: your local models, plus Claude or ChatGPT (Codex) when you have allowed them in Settings. Pick Claude or ChatGPT and the picker lists the models your own sign-in offers, with an **effort** menu (how hard it thinks) for the models that have one. A switch in the corner changes between the dark look and a light one.
+
+- **Voice joins the open chat.** What you say to Jarvis is added to whichever chat is open, so speaking and typing stay one conversation. Opening another chat gives Jarvis that chat's history.
+- **Switching the model or effort changes it for voice too** and is saved in your settings. Each chat remembers the model it last used and offers one tap to switch back, but opening a chat never turns on a cloud mode by itself.
+- **Saved locally, redacted.** Chats are kept in Jarvis's own database as the redacted text Jarvis sees, never what you typed before redaction. Delete a chat from its menu.
+- **Nothing leaves your PC.** The page is served by Jarvis on `127.0.0.1` only, with no cloud service, CDN or analytics, and works without internet.
+
+Details: [`src/jarvis/webchat/webchat.spec.md`](src/jarvis/webchat/webchat.spec.md). Changing the page itself needs Node; see [`webchat-ui/README.md`](webchat-ui/README.md). Running Jarvis does not.
+
 ## Troubleshooting
 
 <details>
@@ -374,6 +386,7 @@ Local AI is the default, not a paid upgrade. No cloud AI service is required.
 - **Sensitive information:** redacted before model context and saved diary entries. The in-memory chat still shows what you typed.
 - **Activity log (opt-in, off by default):** foreground application names, redacted window titles and idle periods, in the same local database. Never sent anywhere unless you allow it for Codex or Claude, and never written to the diary or logs. Delete it any time from the tray.
 - **Phone access (opt-in, off by default):** your PC serves the conversation to phones you pair, over your own network or VPN only. Paired phones are stored as hashed keys next to the database; the phone's copy of the conversation is held in memory and gone when Jarvis stops.
+- **Web chat (opt-in, off by default):** your chats and projects are stored in the same local database as redacted text, served only on this PC's loopback address. Delete one chat from its menu.
 - **Network boundaries:** model downloads, web tools and enabled integrations can make network requests. An external model endpoint receives the requests you send to it.
 
 <details>

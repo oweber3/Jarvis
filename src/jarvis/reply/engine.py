@@ -15,6 +15,7 @@ from ..tools.builtin.stop import STOP_SIGNAL
 from ..tools.schema_validation import validate_arguments
 from ..assistant_state import AssistantState, set_state
 from ..debug import debug_log
+from .cancellation import check_cancelled, current_cancel
 from ..llm import (
     extract_text_from_response,
     get_embedding_backend,
@@ -23,6 +24,7 @@ from ..llm import (
     Tier,
     ToolsNotSupportedError,
 )
+from ..llm.errors import RequestCancelled
 
 
 def chat_with_messages(cfg, messages, *, timeout_sec=30.0, extra_options=None,
@@ -37,8 +39,19 @@ def chat_with_messages(cfg, messages, *, timeout_sec=30.0, extra_options=None,
     """
     backend = get_llm_backend(cfg)
     chat_model = model or cfg.llm_chat_model
+    visible = _with_visible_images(backend, chat_model, messages)
+    cancel = current_cancel()
+    if cancel is not None:
+        # A request Stop can end: the call is dropped the moment Stop is pressed (reply.spec.md, Stopping a reply).
+        return backend.chat_cancellable(
+            chat_model, visible, cancel,
+            timeout_sec=timeout_sec,
+            extra_options=extra_options,
+            tools=tools,
+            thinking=thinking,
+        )
     return backend.chat(
-        chat_model, _with_visible_images(backend, chat_model, messages),
+        chat_model, visible,
         timeout_sec=timeout_sec,
         extra_options=extra_options,
         tools=tools,
@@ -1003,8 +1016,13 @@ def run_reply_engine(db: "Database", cfg, tts: Optional[Any],
         Generated reply text or None
     """
     from ..tools.request_scope import request_scope
-    with request_scope():
-        return _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addressed, origin)
+    try:
+        with request_scope():
+            return _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addressed, origin)
+    except RequestCancelled:
+        # Stop was pressed: nothing is delivered and nothing is added to the conversation.
+        debug_log("reply stopped by the user", "planning")
+        return None
 
 
 def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addressed, origin) -> Optional[str]:
@@ -1106,6 +1124,7 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
             debug_log(f"⚠️ Failed to get cached MCP tools: {e}", "mcp")
             mcp_tools = {}
 
+    check_cancelled()
     # ── Step 3: Pre-flight planner ─────────────────────────────────────
     # The planner runs FIRST, before any memory lookup or tool routing.
     # Its job is to decide up front what preparation this turn needs:
@@ -2056,6 +2075,7 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
                   "reply phase on the chat model", "planning")
 
     while turn < max_turns:
+        check_cancelled()
         turn += 1
         debug_log(f"🔁 messages loop turn {turn}", "planning")
         print(f"  🔁 Turn {turn}/{max_turns}", flush=True)
@@ -2342,6 +2362,7 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
                     use_text_tools=True,
                     response=llm_resp,
                 )
+        check_cancelled()  # Stop pressed while the model was answering: its answer is not used
         if not llm_resp:
             debug_log("  ❌ LLM returned no response", "planning")
             break
@@ -2527,6 +2548,7 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
                 continue
 
             # Execute tool
+            check_cancelled()
             result = run_tool_with_retries(
                 db=db,
                 cfg=cfg,
