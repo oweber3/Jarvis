@@ -68,7 +68,7 @@ flowchart TD
     F -->|Yes| K
     K -->|Unsupported| L[Show Warning Dialog]
     K -->|OK| M[Initialize Tray]
-    L --> M
+    L -->|Continue Anyway, or Setup Wizard accepted or cancelled| M
     M --> N[Start Daemon Thread]
     N --> O[Close Splash]
     O --> P[Enter Qt Event Loop]
@@ -76,7 +76,7 @@ flowchart TD
 
 ### Key Startup Features
 
-1. **Splash Screen**: Shows immediately to provide visual feedback while loading. It stays hidden throughout the unreachable-server warning and any setup wizard opened from that warning, then resumes when startup continues (whether the wizard is accepted or cancelled).
+1. **Splash Screen**: Shows immediately to provide visual feedback while loading. It stays hidden throughout the unreachable-server warning, the unsupported-model warning (`_warn_if_unsupported_model`) and any setup wizard opened from either, then resumes when startup continues. Both warnings are advice: startup always continues to the tray, whether the wizard is accepted or cancelled.
 2. **Provider-aware Ollama gating** (`_ollama_runtime_flags` in `app.py`): The Ollama server-start and model-verification steps run only when a local provider actually uses Ollama. A pure OpenAI-compatible setup (chat and embeddings both remote) skips them entirely. `get_required_models()` is provider-aware, so model verification pulls exactly the models that run locally: chat + intent-judge when chat is on Ollama, and the embedding model when embeddings are on Ollama. When chat is on Ollama, a missing model opens the setup wizard; when only embeddings are local (remote chat), a missing embedding model surfaces a clear non-blocking instruction (memory search falls back to keyword matching until it is pulled). The unsupported-chat-model check runs only on the Ollama chat path. `should_show_setup_wizard()` returns False for an OpenAI-compatible chat provider.
 3. **Ollama Auto-Start**: When Ollama is in use and not running, automatically starts it (up to 15s wait). If the wait times out, the setup wizard opens so the user can diagnose connectivity; cancelling the wizard exits the app. The desktop app records ownership only for an Ollama runtime it launches in this session. On app exit, it stops that owned runtime (on Windows the whole process tree, so Ollama's `llama-server.exe` model runners do not outlive the server) and leaves any pre-existing user-managed Ollama process running.
 3a. **OpenAI-compatible reachability check** (`_check_openai_compat_reachable` in `app.py`): Jarvis cannot start a third-party server the way it starts Ollama, so on a pure OpenAI-compatible setup it checks the server answers `GET /v1/models` and, if not, shows a one-off warning naming the address (never the API key) and pointing to Settings, then continues. The user only otherwise discovers a down server when their first request fails.

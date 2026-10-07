@@ -686,6 +686,54 @@ class TestCheckModelSupport:
         assert result is None
 
 
+class TestUnsupportedModelStartup:
+    """The unsupported-model warning never stops Jarvis starting."""
+
+    @pytest.mark.parametrize("open_wizard", [False, True])
+    @pytest.mark.parametrize("wizard_accepted", [False, True])
+    def test_start_up_continues_whatever_the_user_picks(
+        self, qapp, monkeypatch, open_wizard, wizard_accepted
+    ):
+        from PyQt6.QtWidgets import QWidget
+        from desktop_app import app as app_mod
+
+        splash = QWidget()
+        splash.show()
+        qapp.processEvents()
+        visited = []
+
+        def show_dialog(model):
+            assert not splash.isVisible()
+            visited.append("warning")
+            return open_wizard
+
+        def run_wizard():
+            assert not splash.isVisible()
+            visited.append("wizard")
+            return wizard_accepted
+
+        monkeypatch.setattr(app_mod, "check_model_support", lambda: "mystery-model:7b")
+        monkeypatch.setattr(app_mod, "show_unsupported_model_dialog", show_dialog)
+        monkeypatch.setattr(app_mod, "_run_setup_wizard", run_wizard)
+        try:
+            app_mod._warn_if_unsupported_model(splash)
+            assert visited == (["warning", "wizard"] if open_wizard else ["warning"])
+            assert splash.isVisible(), "start-up resumes after the warning"
+        finally:
+            splash.close()
+
+    def test_offered_model_shows_no_warning(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QWidget
+        from desktop_app import app as app_mod
+
+        splash = QWidget()
+        shown = []
+        monkeypatch.setattr(app_mod, "check_model_support", lambda: None)
+        monkeypatch.setattr(app_mod, "show_unsupported_model_dialog", lambda m: shown.append(m))
+        app_mod._warn_if_unsupported_model(splash)
+        assert shown == []
+
+
 class TestModelSupportIntegration:
     """Integration tests for model support checking."""
 

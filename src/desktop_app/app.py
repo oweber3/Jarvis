@@ -3282,6 +3282,32 @@ def _show_openai_unreachable_dialog(cfg, splash: QWidget) -> None:
         splash.setVisible(splash_was_visible)
 
 
+def _warn_if_unsupported_model(splash: QWidget) -> bool:
+    """Warn about a chat model the app does not offer, then let start-up continue.
+
+    The splash is hidden while the warning and any setup wizard opened from it
+    are up. Start-up continues whether the wizard is accepted or cancelled: the
+    warning is advice, and the configured model still runs. Returns True when
+    the warning was shown.
+    """
+    unsupported_model = check_model_support()
+    if not unsupported_model:
+        return False
+    splash_was_visible = splash.isVisible()
+    splash.hide()
+    QApplication.processEvents()
+    print(f"⚠️ Unsupported model detected: {unsupported_model}", flush=True)
+    try:
+        if show_unsupported_model_dialog(unsupported_model):
+            print("🔧 Opening setup wizard to change model...", flush=True)
+            if not _run_setup_wizard():
+                print("   ↩️ Setup wizard cancelled, continuing with the configured model", flush=True)
+                debug_log("unsupported-model wizard cancelled; start-up continues", "startup")
+    finally:
+        splash.setVisible(splash_was_visible)
+    return True
+
+
 def _run_setup_wizard() -> bool:
     """Create and show the SetupWizard modally. Returns True if accepted."""
     try:
@@ -3866,16 +3892,7 @@ def main() -> int:
             # on the Ollama path — an OpenAI-compatible model name is not in the
             # Ollama catalogue and must not be flagged here.
             splash.set_status("Checking model compatibility...")
-            unsupported_model = check_model_support()
-            if unsupported_model:
-                splash.hide()
-                print(f"⚠️ Unsupported model detected: {unsupported_model}", flush=True)
-                if show_unsupported_model_dialog(unsupported_model):
-                    print("🔧 Opening setup wizard to change model...", flush=True)
-                    if not _run_setup_wizard():
-                        print("Setup wizard cancelled - exiting", flush=True)
-                        return 0
-                splash.show()
+            if _warn_if_unsupported_model(splash):
                 splash.set_status("Model check complete!")
                 app.processEvents()
 
