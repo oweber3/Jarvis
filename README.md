@@ -290,10 +290,10 @@ Off by default. Turn it on in **Settings → Phone Access** (or from the tray's 
 
 ### Web chat (optional)
 
-Off by default. Turn it on in **Settings → Web Chat** and restart Jarvis; the tray's **Chat** then opens it in place of the classic chat. It is a chat window with a sidebar of **projects** (create, rename, move chats into them) and a **model picker** in the message box: your local models, plus Claude or ChatGPT (Codex) when you have allowed them in Settings.
+Off by default. Turn it on in **Settings → Web Chat** and restart Jarvis; the tray's **Chat** then opens it in place of the classic chat. It is a chat window with a sidebar of **projects** (create, rename, move chats into them) and a **model picker** in the message box: your local models, plus Claude or ChatGPT (Codex) when you have allowed them in Settings. Pick Claude or ChatGPT and the picker lists the models your own sign-in offers, with an **effort** menu (how hard it thinks) for the models that have one. A switch in the corner changes between the dark look and a light one.
 
 - **Voice joins the open chat.** What you say to Jarvis is added to whichever chat is open, so speaking and typing stay one conversation. Opening another chat gives Jarvis that chat's history.
-- **Switching the local model changes it for voice too** and is saved in your settings. Each chat remembers the model it last used and offers one tap to switch back, but opening a chat never turns on a cloud mode by itself.
+- **Switching the model or effort changes it for voice too** and is saved in your settings. Each chat remembers the model it last used and offers one tap to switch back, but opening a chat never turns on a cloud mode by itself.
 - **Saved locally, redacted.** Chats are kept in Jarvis's own database as the redacted text Jarvis sees, never what you typed before redaction. Delete a chat from its menu.
 - **Nothing leaves your PC.** The page is served by Jarvis on `127.0.0.1` only, with no cloud service, CDN or analytics, and works without internet.
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { ChatMessage, Notice } from "@/api"
-import { buildThreadMessages, chatTitle, lastMessageId, mergeMessages } from "@/conversion"
+import { buildThreadMessages, chatTitle, lastMessageId, mergeMessages, pendingDone } from "@/conversion"
 
 const message = (id: number, role: "user" | "assistant", text: string, source: ChatMessage["source"] = "typed"): ChatMessage => ({
   id,
@@ -36,7 +36,7 @@ describe("buildThreadMessages", () => {
   })
 
   it("gives every message its own id", () => {
-    const out = buildThreadMessages([message(1, "user", "a")], [notice(1, "failed", "b")], { text: "c", accepted: true })
+    const out = buildThreadMessages([message(1, "user", "a")], [notice(1, "failed", "b")], { text: "c", accepted: true, afterId: 0 })
     const ids = out.map((m) => m.id)
     expect(new Set(ids).size).toBe(ids.length)
   })
@@ -52,7 +52,7 @@ describe("buildThreadMessages", () => {
   })
 
   it("shows the message being sent and a thinking placeholder until the reply arrives", () => {
-    const out = buildThreadMessages([], [], { text: "hello", accepted: false })
+    const out = buildThreadMessages([], [], { text: "hello", accepted: false, afterId: 0 })
     expect(out.map((m) => m.role)).toEqual(["user", "assistant"])
     expect(out[1]?.status).toEqual({ type: "running" })
     expect(out[1]?.content).toEqual([])
@@ -84,5 +84,29 @@ describe("chatTitle", () => {
   it("names an untitled chat", () => {
     expect(chatTitle({ title: "   " })).toBe("New chat")
     expect(chatTitle({ title: "Rome essay" })).toBe("Rome essay")
+  })
+})
+
+describe("pendingDone", () => {
+  const sent = { text: "hi", accepted: false, afterId: 4 }
+
+  it("waits while Jarvis is still working on the request", () => {
+    expect(pendingDone({ ...sent, accepted: true }, true, [])).toBe(false)
+  })
+
+  it("is done once the send was confirmed and Jarvis has finished", () => {
+    expect(pendingDone({ ...sent, accepted: true }, false, [])).toBe(true)
+  })
+
+  it("is done when a fast reply is already stored, even before the send was confirmed", () => {
+    expect(pendingDone(sent, false, [message(5, "user", "hi"), message(6, "assistant", "hello")])).toBe(true)
+  })
+
+  it("does not take an older reply for the answer", () => {
+    expect(pendingDone(sent, false, [message(3, "assistant", "earlier")])).toBe(false)
+  })
+
+  it("has nothing to clear without a message being sent", () => {
+    expect(pendingDone(null, false, [])).toBe(false)
   })
 })

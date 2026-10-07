@@ -3,7 +3,9 @@ import type { Chat, ChatMessage, Notice } from "@/api"
 
 // Turns what the server stores into messages the thread renders. Pure functions, covered by tests.
 
-export type Pending = { text: string; accepted: boolean }
+// A message being sent: shown at once with a thinking placeholder. ``afterId`` is the newest stored message
+// when it was sent, so a reply stored since then can be told from older turns.
+export type Pending = { text: string; accepted: boolean; afterId: number }
 
 export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
   return {
@@ -79,4 +81,11 @@ export function mergeMessages(current: readonly ChatMessage[], incoming: readonl
 
 export function lastMessageId(messages: readonly ChatMessage[]): number {
   return messages.reduce((highest, m) => Math.max(highest, m.id), 0)
+}
+
+// The placeholder goes once Jarvis is no longer working on the request and either the send was confirmed
+// or a reply newer than the message is already stored (a fast answer can land before the confirmation).
+export function pendingDone(pending: Pending | null, busyQuery: boolean, messages: readonly ChatMessage[]): boolean {
+  if (!pending || busyQuery) return false
+  return pending.accepted || messages.some((m) => m.role === "assistant" && m.id > pending.afterId)
 }

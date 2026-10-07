@@ -1,41 +1,26 @@
-import { CloudIcon, CpuIcon } from "lucide-react"
-import { useMemo, type FC } from "react"
+import { CheckIcon, ChevronDownIcon, CloudIcon, CpuIcon, GaugeIcon } from "lucide-react"
+import { useMemo, useState, type FC } from "react"
 import { ModelSelector, type ModelOption } from "@/components/model-selector.aui"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { MODE_LABELS, cloudValue, currentValue, effortName, localValue, modeValue, pickEffort } from "@/models"
+import { cn } from "@/lib/utils"
 import { useJarvis } from "@/useJarvis"
 
-export const MODE_LABELS: Record<string, string> = {
-  local: "Local",
-  codex: "ChatGPT (Codex)",
-  claude: "Claude",
-}
+// The picker in the message box: which model answers (on this PC, or Claude or ChatGPT in the cloud) and,
+// for a cloud model that has effort levels, how hard it thinks.
 
-// The picker's option ids: a reply mode ("mode:claude") or a local model on this PC ("local:gemma4:12b").
-export const modeValue = (mode: string) => `mode:${mode}`
-export const localValue = (model: string) => `local:${model}`
+export const ModelPicker: FC = () => (
+  <>
+    <ModelMenu />
+    <EffortMenu />
+  </>
+)
 
-export function currentValue(mode: string | undefined, model: string | null): string | undefined {
-  if (!mode) return undefined
-  return mode === "local" ? (model ? localValue(model) : undefined) : modeValue(mode)
-}
+const ModelMenu: FC = () => {
+  const { mode, modelState, models, cloud, cloudModels, actions } = useJarvis()
 
-// What a chat last used, as a picker value (a chat that never ran has none).
-export function chatValue(lastMode: string, lastModel: string): string | undefined {
-  if (!lastMode) return undefined
-  return lastMode === "local" ? (lastModel ? localValue(lastModel) : undefined) : modeValue(lastMode)
-}
-
-export function describeValue(value: string, models: readonly { id: string; name: string }[]): string {
-  const [kind, ...rest] = value.split(":")
-  const target = rest.join(":")
-  if (kind === "mode") return MODE_LABELS[target] ?? target
-  return models.find((m) => m.id === target)?.name ?? target
-}
-
-export const ModelPicker: FC = () => {
-  const { mode, modelState, models, actions } = useJarvis()
-
-  const { options, local, cloud } = useMemo(() => {
-    const localOptions: ModelOption[] = models.map((m) => ({
+  const { options, groups } = useMemo(() => {
+    const local: ModelOption[] = models.map((m) => ({
       id: localValue(m.id),
       name: m.name,
       description: m.installed ? "Runs on this PC" : "Not installed",
@@ -43,7 +28,7 @@ export const ModelPicker: FC = () => {
       disabled: !m.installed || !modelState.switchable,
     }))
     if (modelState.current && !models.some((m) => m.id === modelState.current)) {
-      localOptions.unshift({
+      local.unshift({
         id: localValue(modelState.current),
         name: modelState.current,
         description: "Runs on this PC",
@@ -51,18 +36,45 @@ export const ModelPicker: FC = () => {
         disabled: !modelState.switchable,
       })
     }
-    const cloudOptions: ModelOption[] = (mode?.enabled ?? [])
-      .filter((m) => m !== "local")
+
+    const active = mode?.mode && mode.mode !== "local" ? mode.mode : undefined
+    const activeLabel = active ? (MODE_LABELS[active] ?? active) : ""
+    const activeModels: ModelOption[] = []
+    if (active && cloud?.ready) {
+      for (const m of cloudModels) activeModels.push({ id: cloudValue(m.id), name: m.name, icon: <CloudIcon /> })
+      if (cloud.model && !cloudModels.some((m) => m.id === cloud.model)) {
+        activeModels.unshift({ id: cloudValue(cloud.model), name: cloud.model, icon: <CloudIcon />, disabled: true })
+      }
+    } else if (active) {
+      activeModels.push({
+        id: modeValue(active),
+        name: activeLabel,
+        description: "Checking the available models…",
+        icon: <CloudIcon />,
+        disabled: true,
+      })
+    }
+
+    const others: ModelOption[] = (mode?.enabled ?? [])
+      .filter((m) => m !== "local" && m !== active)
       .map((m) => ({
         id: modeValue(m),
         name: MODE_LABELS[m] ?? m,
-        description: "Sends requests to the cloud",
+        description: "Switch to it. Sends requests to the cloud",
         icon: <CloudIcon />,
       }))
-    return { options: [...localOptions, ...cloudOptions], local: localOptions, cloud: cloudOptions }
-  }, [mode, modelState, models])
 
-  const value = currentValue(mode?.mode, modelState.current)
+    return {
+      options: [...local, ...activeModels, ...others],
+      groups: [
+        { heading: "On this PC", items: local },
+        { heading: `${activeLabel} (cloud)`, items: activeModels },
+        { heading: "Other cloud modes (allowed in Settings)", items: others },
+      ].filter((g) => g.items.length > 0),
+    }
+  }, [cloud, cloudModels, mode, modelState, models])
+
+  const value = currentValue(mode?.mode, modelState.current, cloud)
   if (options.length === 0) return null
 
   return (
@@ -74,25 +86,68 @@ export const ModelPicker: FC = () => {
       <ModelSelector.Trigger variant="ghost" size="sm" aria-label="Model" className="max-w-56" />
       <ModelSelector.Content align="start" side="top">
         <ModelSelector.List>
-          {local.length > 0 && (
-            <ModelSelector.Group heading="On this PC">
-              {local.map((model) => (
-                <ModelSelector.Item key={model.id} model={model} />
-              ))}
-            </ModelSelector.Group>
-          )}
-          {cloud.length > 0 && (
-            <>
-              <ModelSelector.Separator />
-              <ModelSelector.Group heading="Cloud (needs your permission in Settings)">
-                {cloud.map((model) => (
+          {groups.map((group, index) => (
+            <div key={group.heading}>
+              {index > 0 && <ModelSelector.Separator />}
+              <ModelSelector.Group heading={group.heading}>
+                {group.items.map((model) => (
                   <ModelSelector.Item key={model.id} model={model} />
                 ))}
               </ModelSelector.Group>
-            </>
-          )}
+            </div>
+          ))}
         </ModelSelector.List>
       </ModelSelector.Content>
     </ModelSelector.Root>
+  )
+}
+
+// A separate control beside the model, as in most chat apps. It exists only for a cloud model that
+// reports effort levels; switching model keeps the effort when the new model offers it.
+const EffortMenu: FC = () => {
+  const { cloud, cloudModels, actions } = useJarvis()
+  const [open, setOpen] = useState(false)
+  const model = cloudModels.find((m) => m.id === cloud?.model)
+  if (!cloud?.ready || !model || model.efforts.length === 0) return null
+  const selected = pickEffort(model, cloud.effort)
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        aria-label={`Effort: ${selected ? effortName(selected) : "default"}`}
+        className="text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring/50 flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs whitespace-nowrap outline-none focus-visible:ring-1"
+      >
+        <GaugeIcon className="size-3.5" aria-hidden />
+        <span>{selected ? effortName(selected) : "Effort"}</span>
+        <ChevronDownIcon className="size-3.5 opacity-50" aria-hidden />
+      </PopoverTrigger>
+      <PopoverContent align="start" side="top" sideOffset={6} className="w-60 rounded-xl p-1.5">
+        <div role="menu" aria-label="Effort" className="flex flex-col gap-0.5">
+          <p className="text-muted-foreground px-2.5 pt-1 pb-1.5 text-xs font-medium">How hard it thinks</p>
+          {model.efforts.map((effort) => (
+            <button
+              key={effort.id}
+              type="button"
+              role="menuitemradio"
+              aria-checked={effort.id === selected}
+              onClick={() => {
+                setOpen(false)
+                void actions.chooseCloudModel(model.id, effort.id)
+              }}
+              className={cn(
+                "hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent flex items-start gap-2 rounded-lg px-2.5 py-1.5 text-start text-sm outline-none",
+                effort.id === selected && "bg-accent/60",
+              )}
+            >
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="font-medium">{effortName(effort.id)}</span>
+                {effort.description && <span className="text-muted-foreground text-xs leading-snug">{effort.description}</span>}
+              </span>
+              {effort.id === selected && <CheckIcon className="mt-0.5 size-4 shrink-0" aria-hidden />}
+            </button>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }

@@ -27,6 +27,11 @@ export type ReplyModes = { mode: string; enabled: string[] }
 export type LocalModelState = { current: string | null; switchable: boolean }
 export type LocalModel = { id: string; name: string; installed: boolean }
 
+// The Claude or Codex mode in use: its model and effort, and whether its bridge has reported the models.
+export type CloudState = { mode: string; model: string; effort: string; ready: boolean }
+export type CloudEffort = { id: string; is_default: boolean; description: string }
+export type CloudModel = { id: string; name: string; is_default: boolean; efforts: CloudEffort[] }
+
 export type Library = { projects: Project[]; chats: Chat[]; active_chat_id: string | null }
 
 export type Snapshot = {
@@ -42,6 +47,7 @@ export type Snapshot = {
   notices: Notice[]
   mode: ReplyModes | null
   model: LocalModelState
+  cloud: CloudState | null
 }
 
 export type ModelsResponse = {
@@ -49,6 +55,7 @@ export type ModelsResponse = {
   current: string | null
   switchable: boolean
   models: LocalModel[]
+  cloud: (CloudState & { models: CloudModel[] }) | null
 }
 
 export class ApiError extends Error {
@@ -104,6 +111,8 @@ export const api = {
   send: (text: string) => request<{ query_id: number; status: string }>("POST", "/api/chat", { text }),
   stop: () => request<unknown>("POST", "/api/stop"),
   setModel: (kind: "mode" | "local", value: string) => request<unknown>("POST", "/api/model", { kind, value }),
+  setCloudModel: (model: string, effort?: string) =>
+    request<unknown>("POST", "/api/model", { kind: "cloud", value: model, ...(effort !== undefined ? { effort } : {}) }),
   clear: () => request<unknown>("POST", "/api/clear", { confirm: true }),
 }
 
@@ -119,6 +128,12 @@ export function describeError(error: unknown): string {
       return "That reply mode isn't allowed in Settings."
     case "start_failed":
       return "That reply mode could not start."
+    case "not_ready":
+      return "Jarvis hasn't finished checking the available models. Try again in a moment."
+    case "effort_unsupported":
+      return "That model doesn't offer that effort level."
+    case "not_cloud":
+      return "Choose Claude or ChatGPT (Codex) first."
     case "not_installed":
       return "That model isn't installed. Install it with Ollama first."
     case "not_offered":

@@ -33,6 +33,43 @@
   --hud-error-light: #f87171;
   --hud-error-glow: rgba(239, 68, 68, 0.15);
   --hud-error-border: rgba(239, 68, 68, 0.35);
+  --hud-ink-on-accent: #05070c;
   --hud-font-ui: 'Segoe UI', '.AppleSystemUIFont', sans-serif;
   --hud-font-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, monospace;
+}
+:root[data-theme="light"] {
+  --hud-bg-primary: #f4f7fb;
+  --hud-bg-secondary: #ffffff;
+  --hud-bg-tertiary: #e6edf6;
+  --hud-bg-card: #ffffff;
+  --hud-bg-hover: #dbe6f3;
+  --hud-panel-top: #ffffff;
+  --hud-accent-primary: #0b6a84;
+  --hud-accent-secondary: #0b6f8a;
+  --hud-accent-deep: #1d4ed8;
+  --hud-accent-indigo: #4f46e5;
+  --hud-accent-glow: rgba(14, 116, 144, 0.12);
+  --hud-indigo-glow: rgba(79, 70, 229, 0.08);
+  --hud-accent-muted: #cbd5e1;
+  --hud-text-primary: #0f172a;
+  --hud-text-secondary: #334155;
+  --hud-text-muted: #475569;
+  --hud-border: #cbd5e1;
+  --hud-border-strong: #94a3b8;
+  --hud-border-glow: rgba(14, 116, 144, 0.35);
+  --hud-hairline: rgba(14, 116, 144, 0.22);
+  --hud-success: #15803d;
+  --hud-success-light: #16a34a;
+  --hud-success-deep: #166534;
+  --hud-success-glow: rgba(21, 128, 61, 0.10);
+  --hud-success-border: rgba(21, 128, 61, 0.3);
+  --hud-warning: #b45309;
+  --hud-warning-light: #d97706;
+  --hud-warning-glow: rgba(180, 83, 9, 0.10);
+  --hud-warning-border: rgba(180, 83, 9, 0.3);
+  --hud-error: #b91c1c;
+  --hud-error-light: #dc2626;
+  --hud-error-glow: rgba(185, 28, 28, 0.10);
+  --hud-error-border: rgba(185, 28, 28, 0.35);
+  --hud-ink-on-accent: #ffffff;
 }

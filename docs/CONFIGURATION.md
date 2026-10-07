@@ -727,7 +727,8 @@ An opt-in chat window with projects and a model picker, served by the daemon on 
 
 - `web_chat_port` must be from 1024 to 65535 and differ from `remote_access_port`. If it is taken, Jarvis prints a warning and runs without the web chat.
 - Chats, projects and messages (redacted text) live in the Jarvis database file, in the tables `chat_projects`, `chats`, `chat_messages` and `chat_state`. Delete one chat from its menu in the chat.
-- The model picker lists the reply modes allowed by `codex_enabled` and `claude_enabled`, and the chat models Jarvis offers that Ollama has installed. Choosing a local model saves `ollama_chat_model`; choosing a reply mode saves `reply_mode`, as the tray does.
+- The model picker lists the reply modes allowed by `codex_enabled` and `claude_enabled`, and the chat models Jarvis offers that Ollama has installed. Choosing a local model saves `ollama_chat_model`; choosing a reply mode saves `reply_mode`, as the tray does. While Claude or Codex is active the picker lists the models that runtime reports, and an effort menu lists the levels the chosen model offers. Choosing one saves `claude_model` and `claude_effort`, or `codex_model` and `codex_reasoning_effort`, and applies from the next request (voice too). The same keys are in Settings; a value the runtime does not offer is refused, never substituted.
+- Light or dark mode is a preference of the page, remembered in the browser; it is not a Jarvis setting.
 - Voice goes into whichever chat is open.
 
 Details: [`src/jarvis/webchat/webchat.spec.md`](../src/jarvis/webchat/webchat.spec.md).

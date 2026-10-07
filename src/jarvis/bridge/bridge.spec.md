@@ -20,6 +20,7 @@ A bridge is not an `LLMBackend`. Jarvis keeps speech recognition, speech output,
 | `bridge/tools.py` | The `jarvis_execute` definition, the per-request tool snapshot, the answer schema and its parser, the shared outcome type |
 | `bridge/execution.py` | One `jarvis_execute` call through the central tool path, on the request's query thread |
 | `bridge/settings.py` | The per-mode bounds and sharing switches read from the `<mode>_*` keys |
+| `bridge/model_catalog.py` | The models and effort levels a runtime reports, cleaned for a picker (`CloudModel`, `codex_models`, `claude_models`, `choose_effort`) |
 | `bridge/adapter.py` | Background reply path used by the reply engine; context packaging; delivery |
 | `bridge/runtime.py` | Process-wide handle to the running bridge service, used by the engine and stop handling |
 | `bridge/modes.py` | The active reply mode: start from configuration, switch at runtime among the allowed modes, persist, notify |
@@ -41,6 +42,19 @@ A bridge is not an `LLMBackend`. Jarvis keeps speech recognition, speech output,
 - Listeners hear `(mode, allowed modes)` after start-up and after every switch. In subprocess mode the daemon forwards them to the desktop app as `__REPLY_MODE_STATE__:` events.
 - The `replyMode` tool (`set` or `get`) is registered only when at least one cloud mode is allowed, so the default catalogue is unchanged. It is a routine (`SAFE`) action and is never offered to a cloud model (see Tool contract).
 - Deterministic fast commands run before any bridge, so "go local" works in every mode without reaching the cloud.
+
+## Cloud models
+
+Each bridge records what its runtime reports at its readiness check: Codex's `model/list` (hidden models left out, efforts from `supportedReasoningEfforts`) and Claude Code's `initialize` answer (efforts only for a model with `supportsEffort` not false). `available_models()` returns them as `CloudModel` records (`bridge/model_catalog.py`) and is empty until the first check. The lists are untrusted data: at most 128 models and 12 efforts, identifiers matching a safe pattern, names stripped of control characters and bounded, duplicates dropped, and nothing invented for a missing field.
+
+The model and effort in use are `codex_model` / `codex_reasoning_effort` and `claude_model` / `claude_effort`. `daemon.set_cloud_model(model, effort)` changes them for the active cloud mode while Jarvis runs:
+
+- the model must be one `available_models()` reported and the effort one that model offers (a model with none takes only an empty effort); an omitted effort keeps the current one when the model offers it, otherwise the model's default, otherwise its first;
+- it is refused (nothing changed) before the daemon has booted, in local mode, before the models are known, for a model or effort that is not offered, and while a query or the bridge is busy;
+- the service's `reconfigure(cfg)` takes the new settings from the next request: the readiness check runs again, so a model or effort the account no longer offers fails with the bridge's usual explicit message and is never substituted; a spare session or thread started with the old model is closed and never used; a request in flight is never touched (`reconfigure` returns false);
+- the choice is saved with `config.update_config_values` (a failed save puts the old settings back), the daemon's, the voice listener's and the reply-mode registry's settings are replaced, and the bridge's check runs again in the background (`modes.recheck_active`), printing its result like the start-up check.
+
+The other mode's choice is untouched. The web chat's model picker is the interface (`webchat/webchat.spec.md`, Models).
 
 ## Per-mode settings
 

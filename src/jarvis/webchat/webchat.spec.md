@@ -79,9 +79,11 @@ The hub mirrors every turn the memory gains into the open chat (`DialogueMemory.
 The model selector in the composer lists:
 
 - for Local, every offered chat model (`OFFERED_CHAT_MODELS`), disabled with "Not installed" when the runtime does not report it (`list_models`, cached for 30 seconds), plus the current one when it is not on the list. On an OpenAI-compatible provider only the current model is listed and it cannot be switched;
-- the cloud reply modes allowed in Settings (`bridge.modes.enabled_modes`): ChatGPT (Codex) and Claude, marked as sending requests to the cloud.
+- the cloud reply modes allowed in Settings (`bridge.modes.enabled_modes`): ChatGPT (Codex) and Claude, marked as sending requests to the cloud. While one of them is active its entry becomes a group of the models its bridge reports (`bridge/bridge.spec.md`, Cloud models), and the other allowed mode stays a single entry that switches to it. Until the bridge has reported its models the active mode shows "Checking the available models". Models of a mode that is not active are never listed, because that would mean starting its bridge.
 
 Choosing a reply mode calls `bridge.modes.switch` (a mode that is not allowed is refused, a request in flight is cancelled, the choice is persisted, as the tray does). Choosing a local model while in a cloud mode returns to Local first.
+
+**Effort.** A separate menu beside the picker, shown only while a cloud model that reports effort levels is selected, lists exactly the levels that model offers ("Extra high" for `xhigh`, a runtime's description as secondary text). Choosing a model keeps the current effort when the new model offers it, otherwise uses the model's default. Both are changed with `daemon.set_cloud_model` for the whole assistant, voice included, and saved (`claude_model`, `claude_effort`, `codex_model`, `codex_reasoning_effort`); the other cloud mode's choice is untouched. It is refused while a query runs.
 
 Choosing a local model (`jarvis.daemon.set_local_chat_model`) changes it for the whole assistant, voice included, and saves `ollama_chat_model`, because one model is loaded and shared. It is refused while a query runs, on a model Jarvis does not offer, on one that is not installed and on a provider other than Ollama. The daemon's settings, the voice listener's and the reply-mode registry's are replaced, the new model is warmed and the old one released unless the fast tier, the tool model or embeddings share it.
 
@@ -93,8 +95,8 @@ All JSON. Errors are `{"error": "<code>"}`.
 
 | Method and path | Body | Result |
 |-----------------|------|--------|
-| `GET /api/state` | | `ready`, `state`, `busy`, `active_chat_id`, `mode`, `model` |
-| `GET /api/models` | | `mode`, `current`, `switchable`, `models` |
+| `GET /api/state` | | `ready`, `state`, `busy`, `active_chat_id`, `mode`, `model`, `cloud` |
+| `GET /api/models` | | `mode`, `current`, `switchable`, `models`, and `cloud` (the active cloud mode's model, effort, `ready` and `models` with their `efforts`, or `null` in local mode) |
 | `GET /api/library` | | `projects`, `chats` (newest first) and `active_chat_id` |
 | `POST /api/projects` | `{"name"}` | `201` the project; `400` for an empty name |
 | `PATCH /api/projects/<id>` / `DELETE` | `{"name"}` | Rename / delete (chats are unfiled); `404` unknown |
@@ -105,11 +107,11 @@ All JSON. Errors are `{"error": "<code>"}`.
 | `POST /api/chats/<id>/open` | | `{"chat"}`; `404` unknown, `409` busy |
 | `POST /api/chat` | `{"text"}` | Send to the open chat (starting one when none is open): `202 {"query_id"}`, `409` busy, `503` not ready, `400` empty or over 4000 characters |
 | `POST /api/stop` | | `cancel_active_chat_query` |
-| `POST /api/model` | `{"kind": "mode"\|"local", "value"}` | Switch; `409` with the reason (`not_enabled`, `busy`, `not_installed`, ...), `400` malformed |
+| `POST /api/model` | `{"kind": "mode"\|"local"\|"cloud", "value", "effort"?}` | Switch a reply mode, a local model, or the active cloud mode's model (and optionally its effort); `409` with the reason (`not_enabled`, `busy`, `not_installed`, `not_ready`, `not_offered`, `effort_unsupported`, ...), `400` malformed |
 | `POST /api/clear` | `{"confirm": true}` | Delete every project, chat and message and empty the conversation |
 | `GET /api/poll?rev=<rev>&after=<id>` | | Long poll (25 s): the changed snapshot |
 
-The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`; never the private flag), `notices`, `mode` and `model`.
+The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`; never the private flag), `notices`, `mode`, `model` and `cloud`.
 
 ## The page
 
@@ -119,7 +121,9 @@ The page follows the server. An assistant-ui `ExternalStoreRuntime` holds the op
 
 **Projects.** A sidebar groups the chats under projects (collapsible, remembered in the browser's storage when it allows) with the unfiled chats below. Projects are created, renamed (inline) and deleted (a second tap confirms; chats stay) from the sidebar; a chat moves with its menu ("Move to ..."); each project has a button for a new chat inside it. A search box filters chats by title.
 
-**Look.** The server serves the palette generated from `HUD_COLORS` (`generated/theme.css`); the page maps assistant-ui's colour tokens onto it, so the chat and the Qt windows share one source of colour. Owner messages use the orb's cyan-to-blue gradient. Icons are bundled (`lucide-react`), fonts are the system's, and nothing animates under reduced motion.
+**Look.** The palettes are generated from `HUD_COLORS` and `HUD_COLORS_LIGHT` in `themes.py` (`generated/theme.css`); the page maps assistant-ui's colour tokens onto them, so the chat and the Qt windows share one source of colour. Owner messages use the orb's cyan-to-blue gradient. Icons are bundled (`lucide-react`), fonts are the system's, and nothing animates under reduced motion.
+
+**Light and dark.** A switch in the header changes between the dark HUD look (the default) and a light variant of the same palette. The choice is remembered in the browser's storage when it allows, and applied before the first paint. Text, accents and status colours meet WCAG AA (4.5:1) on every surface in both palettes, which `tests/test_webchat_theme.py` checks.
 
 **No outside calls.** The page calls only its own origin. `tests/test_webchat_bundle.py` fails if the build or the copied source names an outside address, a hosted service (assistant-ui Cloud included) or any analytics, beacon, socket or event-stream use.
 
@@ -139,4 +143,10 @@ Desktop confirmations still appear as the desktop dialog, as in the Qt chat, and
 - **Rewind** (re-asking a message from the past), which the Qt chat has, until the owner decides the web chat should replace it.
 - Streaming: the engine returns whole replies.
 - File or image attachments, voice input in the page, sharing and search inside message text.
-- Phone access: the phone app keeps its own conversation view.
+- Phone access: the phone app keeps its own conversation view. A request from a paired phone joins the open chat like any other turn and shows as a spoken one, because the dialogue memory does not record where a turn came from.
+
+## Known limits
+
+- The server has no sign-in. Anything else running as the same user on this PC can read and send chats, as with the Memory Viewer; the Host, Origin and fetch-site checks stop web pages, not local programs.
+- A chat switch during the periodic diary pass can summarise the turns of that pass a second time, because the pass saves its progress only when its summary is done.
+- A confirmed action's outcome that lands in the instant a chat is switched can miss the new chat's history.

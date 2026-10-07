@@ -1,19 +1,26 @@
-import { useExternalStoreRuntime, type AppendMessage, type ThreadMessageLike } from "@assistant-ui/react"
+import {
+  AssistantRuntimeProvider,
+  useExternalStoreRuntime,
+  type AppendMessage,
+  type ThreadMessageLike,
+} from "@assistant-ui/react"
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
+  ApiError,
   api,
   describeError,
   type Chat,
   type ChatMessage,
+  type CloudModel,
+  type CloudState,
   type Library,
   type LocalModel,
   type LocalModelState,
-  type Project,
+  type Notice,
   type ReplyModes,
   type Snapshot,
-  type Notice,
 } from "@/api"
-import { buildThreadMessages, chatTitle, lastMessageId, mergeMessages, type Pending } from "@/conversion"
+import { buildThreadMessages, chatTitle, lastMessageId, mergeMessages, pendingDone, type Pending } from "@/conversion"
 
 // All of the page's state. The server owns the conversation (voice and typed turns land in the open chat
 // the same way), so this follows it with a long poll and sends only what the owner does.
@@ -25,7 +32,10 @@ export type JarvisActions = {
   createProject: (name: string) => Promise<void>
   renameProject: (id: string, name: string) => Promise<void>
   deleteProject: (id: string) => Promise<void>
+  /** A picker option: "mode:<name>", "local:<model>" or "cloud:<model>" (a model of the active cloud mode). */
   chooseModel: (value: string) => Promise<void>
+  /** A model and effort of the active Claude or Codex mode; an omitted effort keeps the current one when offered. */
+  chooseCloudModel: (model: string, effort?: string) => Promise<void>
   clearHistory: () => Promise<void>
   dismissToast: () => void
 }
@@ -38,6 +48,8 @@ export type JarvisView = {
   mode: ReplyModes | null
   modelState: LocalModelState
   models: LocalModel[]
+  cloud: CloudState | null
+  cloudModels: CloudModel[]
   toast: string | null
   actions: JarvisActions
 }
@@ -62,20 +74,25 @@ function textOf(message: AppendMessage): string {
     .trim()
 }
 
+// A busy or unready Jarvis arrives as a notice from the server, so it is not also told as an error.
+const toldByNotice = (error: unknown) => error instanceof ApiError && ["busy", "unavailable"].includes(error.code)
+
 export function JarvisProvider({ children }: { children: ReactNode }) {
   const [library, setLibrary] = useState<Library>(EMPTY_LIBRARY)
   const [chat, setChat] = useState<Chat | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [notices, setNotices] = useState<Notice[]>([])
   const [pending, setPending] = useState<Pending | null>(null)
-  const [meta, setMeta] = useState<Pick<Snapshot, "ready" | "busy" | "busy_query" | "mode" | "model">>({
+  const [meta, setMeta] = useState<Pick<Snapshot, "ready" | "busy" | "busy_query" | "mode" | "model" | "cloud">>({
     ready: false,
     busy: false,
     busy_query: false,
     mode: null,
     model: NO_MODEL,
+    cloud: null,
   })
   const [models, setModels] = useState<LocalModel[]>([])
+  const [cloudModels, setCloudModels] = useState<CloudModel[]>([])
   const [reachable, setReachable] = useState(true)
   const [loadingChat, setLoadingChat] = useState(true)
   const [toast, setToast] = useState<string | null>(null)
@@ -83,8 +100,17 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   const afterRef = useRef(0)
   const activeRef = useRef<string | null>(null)
   const libraryRevRef = useRef(-1)
+  const messagesRef = useRef<ChatMessage[]>([])
   const pendingRef = useRef<Pending | null>(null)
   pendingRef.current = pending
+  const chatRef = useRef<Chat | null>(null)
+  chatRef.current = chat
+
+  const showMessages = useCallback((next: ChatMessage[]) => {
+    messagesRef.current = next
+    afterRef.current = lastMessageId(next)
+    setMessages(next)
+  }, [])
 
   const refreshLibrary = useCallback(async () => {
     setLibrary(await api.library())
@@ -92,25 +118,29 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
 
   const refreshModels = useCallback(async () => {
     try {
-      setModels((await api.models()).models)
+      const listed = await api.models()
+      setModels(listed.models)
+      setCloudModels(listed.cloud?.models ?? [])
     } catch {
-      /* the selector keeps what it had */
+      /* the picker keeps what it had */
     }
   }, [])
 
-  const loadChat = useCallback(async (id: string) => {
-    setLoadingChat(true)
-    try {
-      const loaded = await api.chat(id)
-      activeRef.current = id
-      setChat(loaded.chat)
-      setMessages(loaded.messages)
-      setNotices([])
-      afterRef.current = lastMessageId(loaded.messages)
-    } finally {
-      setLoadingChat(false)
-    }
-  }, [])
+  const loadChat = useCallback(
+    async (id: string) => {
+      setLoadingChat(true)
+      try {
+        const loaded = await api.chat(id)
+        activeRef.current = id
+        setChat(loaded.chat)
+        setNotices([])
+        showMessages(loaded.messages)
+      } finally {
+        setLoadingChat(false)
+      }
+    },
+    [showMessages],
+  )
 
   const fail = useCallback((error: unknown) => setToast(describeError(error)), [])
 
@@ -122,7 +152,14 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
 
     const apply = async (snap: Snapshot) => {
       rev = snap.rev
-      setMeta({ ready: snap.ready, busy: snap.busy, busy_query: snap.busy_query, mode: snap.mode, model: snap.model })
+      setMeta({
+        ready: snap.ready,
+        busy: snap.busy,
+        busy_query: snap.busy_query,
+        mode: snap.mode,
+        model: snap.model,
+        cloud: snap.cloud,
+      })
       setNotices(snap.notices)
       if (snap.library_rev !== libraryRevRef.current) {
         libraryRevRef.current = snap.library_rev
@@ -133,20 +170,15 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
         else {
           activeRef.current = null
           setChat(null)
-          setMessages([])
-          afterRef.current = 0
+          showMessages([])
           setLoadingChat(false)
         }
       } else {
         if (snap.chat) setChat(snap.chat)
-        setMessages((current) => {
-          const merged = mergeMessages(current, snap.messages)
-          afterRef.current = lastMessageId(merged)
-          return merged
-        })
+        showMessages(mergeMessages(messagesRef.current, snap.messages))
       }
       // The reply is stored before the query reads done, so the thinking placeholder can go.
-      if (!snap.busy_query && pendingRef.current?.accepted) setPending(null)
+      if (pendingDone(pendingRef.current, snap.busy_query, messagesRef.current)) setPending(null)
     }
 
     ;(async () => {
@@ -164,92 +196,98 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       }
     })()
     return () => abort.abort()
-  }, [loadChat, refreshLibrary])
+  }, [loadChat, refreshLibrary, showMessages])
 
   const mode = meta.mode?.mode
   const current = meta.model.current
+  const cloudKey = meta.cloud ? `${meta.cloud.mode}|${meta.cloud.model}|${meta.cloud.effort}|${meta.cloud.ready}` : ""
   useEffect(() => {
     void refreshModels()
-  }, [mode, current, refreshModels])
+  }, [mode, current, cloudKey, refreshModels])
 
-  const actions = useMemo<JarvisActions>(
-    () => ({
+  const actions = useMemo<JarvisActions>(() => {
+    const guarded = (work: () => Promise<unknown>) => async () => {
+      try {
+        await work()
+      } catch (error) {
+        fail(error)
+      }
+    }
+    return {
       async newChat(projectId = null) {
-        try {
+        const open = chatRef.current
+        if (open && !open.title && messagesRef.current.length === 0 && pendingRef.current === null) {
+          // Already in an empty chat: use it, in the project asked for, instead of piling up empty ones.
+          if (open.project_id !== projectId) {
+            await guarded(async () => {
+              await api.moveChat(open.id, projectId)
+              await refreshLibrary()
+            })()
+          }
+          return
+        }
+        await guarded(async () => {
           const created = await api.createChat(projectId)
           await Promise.all([loadChat(created.chat.id), refreshLibrary()])
-        } catch (error) {
-          fail(error)
-        }
+        })()
       },
       async openChat(id) {
-        try {
+        await guarded(async () => {
           await api.openChat(id)
           await loadChat(id)
-        } catch (error) {
-          fail(error)
-        }
+        })()
       },
       async moveChat(id, projectId) {
-        try {
+        await guarded(async () => {
           await api.moveChat(id, projectId)
           await refreshLibrary()
-        } catch (error) {
-          fail(error)
-        }
+        })()
       },
       async createProject(name) {
-        try {
+        await guarded(async () => {
           await api.createProject(name)
           await refreshLibrary()
-        } catch (error) {
-          fail(error)
-        }
+        })()
       },
       async renameProject(id, name) {
-        try {
+        await guarded(async () => {
           await api.renameProject(id, name)
           await refreshLibrary()
-        } catch (error) {
-          fail(error)
-        }
+        })()
       },
       async deleteProject(id) {
-        try {
+        await guarded(async () => {
           await api.deleteProject(id)
           await refreshLibrary()
-        } catch (error) {
-          fail(error)
-        }
+        })()
       },
       async chooseModel(value) {
-        // Options are "mode:<name>" for a reply mode and "local:<model>" for a local model on this PC.
         const [kind, ...rest] = value.split(":")
         const target = rest.join(":")
-        try {
+        await guarded(async () => {
           if (kind === "mode") await api.setModel("mode", target)
+          else if (kind === "cloud") await api.setCloudModel(target)
           else if (kind === "local") {
             if (meta.mode?.mode !== "local") await api.setModel("mode", "local")
             if (meta.model.current !== target) await api.setModel("local", target)
           }
-        } catch (error) {
-          fail(error)
-        }
+        })()
+        await refreshModels()
+      },
+      async chooseCloudModel(model, effort) {
+        await guarded(() => api.setCloudModel(model, effort))()
         await refreshModels()
       },
       async clearHistory() {
-        try {
+        await guarded(async () => {
           await api.clear()
           setPending(null)
           await refreshLibrary()
-        } catch (error) {
-          fail(error)
-        }
+        })()
       },
       dismissToast: () => setToast(null),
-    }),
-    [fail, loadChat, meta.mode, meta.model.current, refreshLibrary, refreshModels],
-  )
+    }
+  }, [fail, loadChat, meta.mode, meta.model.current, refreshLibrary, refreshModels])
 
   const threadMessages = useMemo(() => buildThreadMessages(messages, notices, pending), [messages, notices, pending])
 
@@ -262,14 +300,13 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     onNew: async (message) => {
       const text = textOf(message)
       if (!text) return
-      setPending({ text, accepted: false })
+      setPending({ text, accepted: false, afterId: lastMessageId(messagesRef.current) })
       try {
         await api.send(text)
-        setPending({ text, accepted: true })
+        setPending((current) => (current ? { ...current, accepted: true } : current))
       } catch (error) {
         setPending(null)
-        // A busy or unready Jarvis arrives as a notice from the server; anything else is told here.
-        if (!(error instanceof Error && ["busy", "unavailable"].includes(error.message))) fail(error)
+        if (!toldByNotice(error)) fail(error)
       }
     },
     onCancel: async () => {
@@ -314,23 +351,17 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       mode: meta.mode,
       modelState: meta.model,
       models,
+      cloud: meta.cloud,
+      cloudModels,
       toast,
       actions,
     }),
-    [actions, chat, library, meta.mode, meta.model, meta.ready, models, reachable, toast],
+    [actions, chat, cloudModels, library, meta.cloud, meta.mode, meta.model, meta.ready, models, reachable, toast],
   )
 
   return (
     <JarvisContext.Provider value={view}>
-      <RuntimeBridge runtime={runtime}>{children}</RuntimeBridge>
+      <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>
     </JarvisContext.Provider>
   )
 }
-
-import { AssistantRuntimeProvider, type AssistantRuntime } from "@assistant-ui/react"
-
-function RuntimeBridge({ runtime, children }: { runtime: AssistantRuntime; children: ReactNode }) {
-  return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>
-}
-
-export type { Project }

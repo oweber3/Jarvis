@@ -5,6 +5,9 @@
 
 @custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));
 
+/* Tailwind's dark: variant follows the page's own switch (data-theme), not the operating system's. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 @custom-variant data-closed (&:where([data-state="closed"], [data-closed]:not([data-closed="false"])));
 
 /*
@@ -20,7 +23,7 @@
   --popover: var(--hud-bg-secondary);
   --popover-foreground: var(--hud-text-primary);
   --primary: var(--hud-accent-primary);
-  --primary-foreground: var(--hud-bg-primary);
+  --primary-foreground: var(--hud-ink-on-accent);
   --secondary: var(--hud-bg-tertiary);
   --secondary-foreground: var(--hud-text-primary);
   --muted: var(--hud-bg-tertiary);
@@ -33,6 +36,10 @@
   --input: var(--hud-border);
   --ring: var(--hud-accent-primary);
   --radius: 0.625rem;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 @theme inline {
@@ -101,5 +108,5 @@
 /* The owner's messages: the orb's cyan-to-blue gradient with dark text, as in the desktop chat. */
 [data-slot="aui_user-message-root"] .aui-user-message-content {
   background-image: linear-gradient(135deg, var(--hud-accent-secondary), var(--hud-accent-deep));
-  color: var(--hud-bg-primary);
+  color: var(--hud-ink-on-accent);
 }

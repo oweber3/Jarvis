@@ -25,7 +25,7 @@ Metadata-driven like every setting. The bounds and sharing switches are the shar
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `claude_model` | `sonnet` | A model value the CLI lists (an alias such as `sonnet`, `opus`, `haiku` or a listed ID). Another model is never substituted. Settings offers it as a dropdown of the values the CLI lists; a hand-set value is shown and kept |
-| `claude_effort` | `low` | Must be one of the model's effort levels; another value is never substituted. A model that lists no effort levels gets no effort flag. Empty means the model default |
+| `claude_effort` | `low` | Must be one of the model's effort levels; another value is never substituted. A model that lists no effort levels gets no effort flag. Empty means the model default. Changeable while Jarvis runs (`bridge/bridge.spec.md`, Cloud models) |
 | `claude_executable` | `claude` | A bare name is looked up on `PATH`; when it is the default name and not on `PATH`, the native installer's copy for the current user (`%USERPROFILE%\.local\bin\claude.exe`) is used. An explicit path is used as given. Nothing is downloaded or upgraded. A missing executable is `not_found` |
 
 ## Runtime

@@ -1,10 +1,12 @@
-import { MicIcon, PanelLeftIcon, XIcon } from "lucide-react"
-import { useState, type FC } from "react"
-import { ModelPicker, chatValue, currentValue, describeValue } from "@/components/ModelPicker"
+import { MicIcon, MoonIcon, PanelLeftIcon, SunIcon, XIcon } from "lucide-react"
+import { useEffect, useState, type FC } from "react"
+import { ModelPicker } from "@/components/ModelPicker"
 import { ProjectsSidebar } from "@/components/ProjectsSidebar"
 import { Thread } from "@/components/thread.aui"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { chatTitle } from "@/conversion"
+import { chatValue, currentValue, describeValue } from "@/models"
+import { applyTheme, nextTheme, readStoredTheme, storeTheme, type Theme } from "@/theme"
 import { JarvisProvider, useJarvis } from "@/useJarvis"
 
 export const App: FC = () => (
@@ -66,7 +68,31 @@ const Header: FC<{ onToggleSidebar: () => void }> = ({ onToggleSidebar }) => {
         <MicIcon className="text-primary size-3.5" aria-hidden />
         Voice joins this chat
       </span>
+      <ThemeSwitch />
     </header>
+  )
+}
+
+// Light or dark, remembered in the browser. Dark is the Jarvis look.
+const ThemeSwitch: FC = () => {
+  const [theme, setTheme] = useState<Theme>(() => readStoredTheme())
+  useEffect(() => {
+    applyTheme(theme)
+    storeTheme(theme)
+  }, [theme])
+  const light = theme === "light"
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={light}
+      aria-label="Light mode"
+      title={light ? "Switch to dark mode" : "Switch to light mode"}
+      onClick={() => setTheme(nextTheme(theme))}
+      className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-8 shrink-0 items-center justify-center rounded-md"
+    >
+      {light ? <SunIcon className="size-4" /> : <MoonIcon className="size-4" />}
+    </button>
   )
 }
 
@@ -84,7 +110,7 @@ const ModelReminder: FC = () => {
   const { chat, mode, modelState, models, actions } = useJarvis()
   if (!chat) return null
   const last = chatValue(chat.last_mode, chat.last_model)
-  const now = currentValue(mode?.mode, modelState.current)
+  const now = currentValue(mode?.mode, modelState.current, null)
   if (!last || !now || last === now) return null
   const allowed = last.startsWith("mode:") ? mode?.enabled.includes(last.slice(5)) : modelState.switchable
   return (
