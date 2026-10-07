@@ -24,6 +24,11 @@ class FakeWebChatBackend:
         self.local_model = {"current": "gemma4:12b", "switchable": True}
         self.models = [{"id": "gemma4:12b", "name": "Gemma 4 12B", "installed": True},
                        {"id": "qwen3.5:9b", "name": "Qwen 3.5 9B", "installed": True}]
+        # The active cloud mode's choice (None in local mode) and the models its bridge reported.
+        self.cloud: Optional[dict] = None
+        self.cloud_options: List[dict] = []
+        self.refuse_cloud: Optional[str] = None
+        self.cloud_calls: List[tuple] = []
         self.refuse_mode: Optional[str] = None
         self.refuse_model: Optional[str] = None
         self.switch_calls: List[list] = []
@@ -92,6 +97,19 @@ class FakeWebChatBackend:
 
     def local_models(self) -> list:
         return self.models
+
+    def cloud_model_state(self) -> Optional[dict]:
+        return self.cloud
+
+    def cloud_models(self) -> List[dict]:
+        return self.cloud_options
+
+    def set_cloud_model(self, model: str, effort: Optional[str]) -> Tuple[bool, Optional[str]]:
+        self.cloud_calls.append((model, effort))
+        if self.refuse_cloud:
+            return False, self.refuse_cloud
+        self.cloud = {**(self.cloud or {}), "model": model, "effort": effort or ""}
+        return True, None
 
     def set_local_model(self, model: str) -> Tuple[bool, Optional[str]]:
         if self.refuse_model:

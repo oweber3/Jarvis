@@ -177,6 +177,8 @@ class ChatHub:
             source = "voice"
         self._store.append_message(chat_id, turn.role, turn.content, ts=turn.ts, source=source,
                                    private=bool(turn.private))
+        if turn.role == "assistant":
+            self._remember_model()
 
     def _restore_payload(self, chat_id: str) -> List[dict]:
         return [{"role": m.role, "content": m.content, **({"diary": False} if m.private else {})}
@@ -189,8 +191,10 @@ class ChatHub:
     def _signature_now(self):
         mode = self._backend.reply_mode_state() or {}
         model = self._backend.local_model_state() or {}
+        cloud = self._backend.cloud_model_state() or {}
         return (self._effective_state(), bool(self._backend.is_busy()), mode.get("mode"),
-                tuple(mode.get("enabled") or ()), model.get("current"), self._backend.is_ready())
+                tuple(mode.get("enabled") or ()), model.get("current"), self._backend.is_ready(),
+                tuple(sorted(cloud.items())))
 
     def _bump_locked(self) -> None:
         self._rev += 1
@@ -207,6 +211,8 @@ class ChatHub:
                 return OpResult("unknown")
             if not self._backend.is_ready():
                 return OpResult("unavailable")
+            if self._typed_in_flight():
+                return OpResult("busy")
             if not self._backend.switch_conversation(self._restore_payload(chat_id)):
                 return OpResult("busy")
             self._opened(chat_id)
@@ -220,7 +226,7 @@ class ChatHub:
                 return OpResult("unknown")
             if not self._backend.is_ready():
                 return OpResult("unavailable")
-            if not self._backend.switch_conversation([]):
+            if self._typed_in_flight() or not self._backend.switch_conversation([]):
                 return OpResult("busy")
             chat = self._store.create_chat(project_id=project_id)
             self._opened(chat.id)
@@ -232,10 +238,15 @@ class ChatHub:
             if self._store.get_chat(chat_id) is None:
                 return "unknown"
             if self._store.get_active_chat_id() == chat_id:
-                if not self._backend.switch_conversation([]):
+                # The next chat becomes the open one with its conversation, so what the page shows is
+                # what Jarvis remembers; with no other chat the conversation starts empty.
+                remaining = [c for c in self._store.list_chats(ANY_PROJECT) if c.id != chat_id]
+                target = remaining[0].id if remaining else None
+                if self._typed_in_flight() or not self._backend.switch_conversation(
+                        self._restore_payload(target) if target else []):
                     return "busy"
                 self._store.delete_chat(chat_id)
-                self._opened(None)
+                self._opened(target)
             else:
                 self._store.delete_chat(chat_id)
                 self._bump_library()
@@ -245,7 +256,7 @@ class ChatHub:
         """Remove every project, chat and message, and empty the conversation."""
         with self._sync_lock:
             self.sync()
-            if not self._backend.switch_conversation([]):
+            if self._typed_in_flight() or not self._backend.switch_conversation([]):
                 return "busy"
             self._store.delete_all()
             self._opened(None)
@@ -276,11 +287,12 @@ class ChatHub:
         with self._sync_lock:
             self.sync()
             self._ensure_open_chat()
-        with self._cond:
-            query_id = self._next_query_id
-            self._next_query_id += 1
-            self._pending[query_id] = {"display": None, "started": False, "cancel": False, "status": "pending"}
-            self._bump_locked()
+            # Registered before the lock is released, so no chat can be opened between here and the daemon.
+            with self._cond:
+                query_id = self._next_query_id
+                self._next_query_id += 1
+                self._pending[query_id] = {"display": None, "started": False, "cancel": False, "status": "pending"}
+                self._bump_locked()
         debug_log(f"webchat: query {query_id} submitted", "webchat")
 
         def on_start(display: str) -> None:
@@ -339,7 +351,8 @@ class ChatHub:
         if chat_id is None:
             return
         mode = (self._backend.reply_mode_state() or {}).get("mode") or ""
-        model = (self._backend.local_model_state() or {}).get("current") or ""
+        cloud = self._backend.cloud_model_state()
+        model = (cloud["model"] if cloud else (self._backend.local_model_state() or {}).get("current")) or ""
         self._store.set_last_model(chat_id, mode, model)
 
     def cancel(self) -> None:
@@ -353,6 +366,12 @@ class ChatHub:
 
     def switch_mode(self, mode: str) -> ModelResult:
         ok, reason = self._backend.switch_reply_mode(mode)
+        self._wake.set()
+        self.sync()
+        return ModelResult(ok, reason)
+
+    def set_cloud_model(self, model: str, effort: Optional[str]) -> ModelResult:
+        ok, reason = self._backend.set_cloud_model(model, effort)
         self._wake.set()
         self.sync()
         return ModelResult(ok, reason)
@@ -372,8 +391,10 @@ class ChatHub:
     def models(self) -> Dict[str, Any]:
         """What the model selector offers: the allowed reply modes and the local models."""
         state = self._backend.local_model_state() or {}
+        cloud = self._backend.cloud_model_state()
         return {"mode": self._backend.reply_mode_state(), "current": state.get("current"),
-                "switchable": bool(state.get("switchable")), "models": self._backend.local_models()}
+                "switchable": bool(state.get("switchable")), "models": self._backend.local_models(),
+                "cloud": {**cloud, "models": self._backend.cloud_models()} if cloud else None}
 
     def library(self) -> Dict[str, Any]:
         if self._backend.is_ready():
@@ -405,6 +426,7 @@ class ChatHub:
             "notices": notices,
             "mode": self._backend.reply_mode_state(),
             "model": self._backend.local_model_state(),
+            "cloud": self._backend.cloud_model_state(),
         }
 
     def wait(self, rev: int, after: int, timeout_sec: float) -> Dict[str, Any]:

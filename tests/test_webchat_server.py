@@ -250,11 +250,13 @@ class TestSending:
         assert call(parts, "POST", "/api/chat", body)[0] == 400
         assert parts.backend.submitted == []
 
-    def test_busy_is_409_and_unready_is_503(self, parts):
+    def test_busy_is_409_and_unready_is_503_with_the_reason_as_the_error(self, parts):
         parts.backend.mode = "busy"
-        assert call(parts, "POST", "/api/chat", {"text": "hi"})[0] == 409
+        status, body, _ = call(parts, "POST", "/api/chat", {"text": "hi"})
+        assert (status, body["error"]) == (409, "busy")
         parts.backend.mode = "unavailable"
-        assert call(parts, "POST", "/api/chat", {"text": "hi"})[0] == 503
+        status, body, _ = call(parts, "POST", "/api/chat", {"text": "hi"})
+        assert (status, body["error"]) == (503, "unavailable")
 
     def test_stop_cancels_the_request(self, parts):
         assert call(parts, "POST", "/api/stop", {})[0] == 200
@@ -275,7 +277,31 @@ class TestModelSelector:
         status, body, _ = call(parts, "POST", "/api/model", {"kind": "mode", "value": "codex"})
         assert status == 409 and body["error"] == "not_enabled"
 
-    @pytest.mark.parametrize("body", [{}, {"kind": "mode"}, {"kind": "other", "value": "x"}, {"kind": "local", "value": 3}])
+    def test_a_cloud_model_and_effort_are_switched(self, parts):
+        status, _, _ = call(parts, "POST", "/api/model", {"kind": "cloud", "value": "sonnet", "effort": "high"})
+        assert status == 200 and parts.backend.cloud_calls == [("sonnet", "high")]
+
+    def test_a_cloud_model_without_an_effort_is_allowed(self, parts):
+        assert call(parts, "POST", "/api/model", {"kind": "cloud", "value": "haiku"})[0] == 200
+        assert parts.backend.cloud_calls == [("haiku", None)]
+
+    def test_a_cloud_refusal_is_409_with_the_reason(self, parts):
+        parts.backend.refuse_cloud = "effort_unsupported"
+        status, body, _ = call(parts, "POST", "/api/model", {"kind": "cloud", "value": "sonnet", "effort": "max"})
+        assert status == 409 and body["error"] == "effort_unsupported"
+
+    def test_the_model_list_includes_the_cloud_models(self, parts):
+        parts.backend.cloud = {"mode": "claude", "model": "sonnet", "effort": "low", "ready": True}
+        parts.backend.cloud_options = [{"id": "sonnet", "name": "Sonnet", "is_default": False, "efforts": []}]
+        body = call(parts, "GET", "/api/models")[1]
+        assert body["cloud"]["mode"] == "claude" and body["cloud"]["models"][0]["id"] == "sonnet"
+
+    def test_the_state_includes_the_cloud_choice(self, parts):
+        parts.backend.cloud = {"mode": "claude", "model": "sonnet", "effort": "low", "ready": True}
+        assert call(parts, "GET", "/api/state")[1]["cloud"]["effort"] == "low"
+
+    @pytest.mark.parametrize("body", [{}, {"kind": "mode"}, {"kind": "other", "value": "x"}, {"kind": "local", "value": 3},
+                                      {"kind": "cloud", "value": "x", "effort": 5}, {"kind": "cloud", "value": 3}])
     def test_bad_requests_are_refused(self, parts, body):
         assert call(parts, "POST", "/api/model", body)[0] == 400
 

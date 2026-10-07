@@ -295,7 +295,6 @@ def set_local_chat_model(model: str) -> LocalModelResult:
     reply-mode registry's are replaced, the choice is saved, the new model is warmed and the old
     one released unless another role shares it. Refused while a query runs.
     """
-    global _global_cfg
     cfg = _global_cfg
     if cfg is None:
         return LocalModelResult(False, "", "not_ready")
@@ -319,12 +318,7 @@ def set_local_chat_model(model: str) -> LocalModelResult:
         if not config_module.update_config_values({"ollama_chat_model": wanted}):
             return LocalModelResult(False, current, "save_failed")
         updated = dataclasses.replace(cfg, llm_chat_model=wanted, ollama_chat_model=wanted)
-        _global_cfg = updated
-        listener = _global_voice_listener
-        if listener is not None:
-            listener.cfg = updated
-        from .bridge import modes
-        modes.update_cfg(updated)
+        _adopt_settings(updated)
     finally:
         _chat_query_lock.release()
     debug_log("local chat model switched", "chat")
@@ -332,6 +326,81 @@ def set_local_chat_model(model: str) -> LocalModelResult:
     threading.Thread(target=_swap_resident_models, args=(backend, cfg, updated, current), daemon=True,
                      name="local-model-swap").start()
     return LocalModelResult(True, wanted, None)
+
+
+def _adopt_settings(updated) -> None:
+    """Use ``updated`` as the settings of the running daemon, the voice listener and the reply-mode registry."""
+    global _global_cfg
+    _global_cfg = updated
+    listener = _global_voice_listener
+    if listener is not None:
+        listener.cfg = updated
+    from .bridge import modes
+    modes.update_cfg(updated)
+
+
+@dataclasses.dataclass(frozen=True)
+class CloudModelResult:
+    ok: bool
+    reason: Optional[str] = None  # already | not_ready | not_cloud | not_offered | effort_unsupported | busy | save_failed
+    mode: str = ""
+    model: str = ""
+    effort: str = ""
+
+
+_CLOUD_KEYS = {"codex": ("codex_model", "codex_reasoning_effort"), "claude": ("claude_model", "claude_effort")}
+
+
+def set_cloud_model(model: str, effort: Optional[str] = None) -> CloudModelResult:
+    """Make ``model`` (and ``effort``) the choice of the active Claude or Codex reply mode, voice included.
+
+    Only a model the bridge reported, with an effort that model offers, is accepted (an omitted effort keeps
+    the current one when the model offers it, otherwise the model's default). It is saved, applied to the
+    daemon's, the listener's and the bridge's settings, and checked again by the bridge in the background.
+    Refused while a query runs. See ``webchat/webchat.spec.md``, Models.
+    """
+    cfg = _global_cfg
+    if cfg is None:
+        return CloudModelResult(False, "not_ready")
+    from .bridge import modes, runtime as bridge_runtime
+    from .bridge.model_catalog import choose_effort
+    mode = modes.active_mode()
+    if mode not in _CLOUD_KEYS:
+        return CloudModelResult(False, "not_cloud")
+    service = bridge_runtime.get_service()
+    available = service.available_models() if service is not None else []
+    if not available:
+        return CloudModelResult(False, "not_ready", mode)
+    entry = next((m for m in available if m.id == model), None)
+    if entry is None:
+        return CloudModelResult(False, "not_offered", mode)
+    model_key, effort_key = _CLOUD_KEYS[mode]
+    if effort is None:
+        chosen = choose_effort(entry, getattr(cfg, effort_key, None)) or ""
+    elif (any(e.id == effort for e in entry.efforts) if entry.efforts else effort == ""):
+        chosen = effort
+    else:
+        return CloudModelResult(False, "effort_unsupported", mode, entry.id)
+    if model == getattr(cfg, model_key, None) and chosen == getattr(cfg, effort_key, None):
+        return CloudModelResult(True, "already", mode, model, chosen)
+    if not _chat_query_lock.acquire(blocking=False):
+        debug_log("cloud model switch rejected: a query is in flight", "chat")
+        return CloudModelResult(False, "busy", mode)
+    try:
+        from . import config as config_module
+        updated = dataclasses.replace(cfg, **{model_key: model, effort_key: chosen})
+        if not service.reconfigure(updated):
+            return CloudModelResult(False, "busy", mode)
+        if not config_module.update_config_values({model_key: model, effort_key: chosen}):
+            service.reconfigure(cfg)
+            return CloudModelResult(False, "save_failed", mode)
+        _adopt_settings(updated)
+    finally:
+        _chat_query_lock.release()
+    modes.recheck_active()
+    debug_log("cloud model settings switched", "chat")
+    print(f"🧠 {modes.LABELS[mode]} model: {model}" + (f" ({chosen} effort)" if chosen else ""), flush=True)
+    return CloudModelResult(True, None, mode, model, chosen)
 
 
 def _swap_resident_models(backend, before, after, old_model: str) -> None:

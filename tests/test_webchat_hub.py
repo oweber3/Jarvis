@@ -100,6 +100,13 @@ class TestTypedMessages:
         chat = store.get_chat(open_id(store))
         assert (chat.last_mode, chat.last_model) == ("claude", "gemma4:12b")
 
+    def test_a_spoken_answer_updates_what_the_chat_last_used(self, hub, backend, store):
+        backend.reply_mode = {"mode": "claude", "enabled": ["local", "claude"]}
+        backend.speak("what time is it", "Ten past three")
+        hub.sync()
+        chat = store.get_chat(open_id(store))
+        assert (chat.last_mode, chat.last_model) == ("claude", "gemma4:12b")
+
     def test_a_busy_jarvis_stores_nothing_and_says_so(self, hub, backend, store):
         backend.mode = "busy"
         result = hub.submit("hello")
@@ -188,6 +195,19 @@ class TestOpeningChats:
         hub.sync()
         assert len(store.messages(trains)) == 2
 
+    def test_nothing_is_opened_while_a_typed_request_is_in_flight_even_before_jarvis_reports_busy(self, hub, backend, store):
+        hub.submit("about trains")
+        trains = open_id(store)
+        other = hub.new_chat().chat
+        backend.mode = "hold"
+        hub.submit("slow one")
+        assert backend.busy is False
+        assert hub.open_chat(trains).status == "busy"
+        assert hub.new_chat().status == "busy"
+        assert hub.delete_chat(other.id) == "busy"
+        assert open_id(store) == other.id
+        backend.release()
+
     def test_opening_is_refused_while_a_request_runs(self, hub, backend, store):
         hub.submit("about trains")
         trains = open_id(store)
@@ -244,6 +264,18 @@ class TestDeleting:
         assert hub.delete_chat(chat) == "ok"
         assert store.get_chat(chat) is None and backend.memory.all_messages() == []
 
+    def test_deleting_the_open_chat_opens_the_next_one_with_its_conversation(self, hub, backend, store):
+        hub.submit("about trains")
+        trains = open_id(store)
+        hub.new_chat()
+        hub.submit("about boats")
+        boats = open_id(store)
+        assert hub.delete_chat(boats) == "ok"
+        assert open_id(store) == trains
+        assert [m["content"] for m in backend.memory.all_messages()] == ["about trains", "Done."]
+        hub.sync()
+        assert len(store.messages(trains)) == 2  # the restored turns are not stored again
+
     def test_deleting_another_chat_leaves_the_open_one_alone(self, hub, backend, store):
         hub.submit("about trains")
         trains = open_id(store)
@@ -284,6 +316,43 @@ class TestModels:
         backend.refuse_model = "busy"
         result = hub.set_local_model("qwen3.5:9b")
         assert not result.ok and result.reason == "busy"
+
+    def test_choosing_a_cloud_model_and_effort_is_passed_to_jarvis(self, hub, backend):
+        result = hub.set_cloud_model("sonnet", "high")
+        assert result.ok and backend.cloud_calls == [("sonnet", "high")]
+
+    def test_a_refused_cloud_choice_reports_why(self, hub, backend):
+        backend.refuse_cloud = "effort_unsupported"
+        result = hub.set_cloud_model("sonnet", "max")
+        assert not result.ok and result.reason == "effort_unsupported"
+
+    def test_the_model_list_includes_the_active_cloud_modes_models(self, hub, backend):
+        backend.cloud = {"mode": "claude", "model": "sonnet", "effort": "low", "ready": True}
+        backend.cloud_options = [{"id": "sonnet", "name": "Sonnet", "is_default": False, "efforts": []}]
+        cloud = hub.models()["cloud"]
+        assert cloud["mode"] == "claude" and cloud["models"][0]["id"] == "sonnet"
+
+    def test_local_mode_has_no_cloud_section(self, hub):
+        assert hub.models()["cloud"] is None and hub.snapshot(0)["cloud"] is None
+
+    def test_the_snapshot_carries_the_cloud_choice(self, hub, backend):
+        backend.cloud = {"mode": "codex", "model": "gpt-6-luna", "effort": "low", "ready": True}
+        assert hub.snapshot(0)["cloud"]["model"] == "gpt-6-luna"
+
+    def test_a_cloud_chat_remembers_the_model_that_answered(self, hub, backend, store):
+        backend.reply_mode = {"mode": "claude", "enabled": ["local", "claude"]}
+        backend.cloud = {"mode": "claude", "model": "sonnet", "effort": "low", "ready": True}
+        hub.submit("hi")
+        chat = store.get_chat(open_id(store))
+        assert (chat.last_mode, chat.last_model) == ("claude", "sonnet")
+
+    def test_the_page_is_told_when_the_cloud_choice_changes(self, hub, backend):
+        backend.cloud = {"mode": "claude", "model": "sonnet", "effort": "low", "ready": True}
+        hub.sync()
+        before = hub.snapshot(0)["rev"]
+        backend.cloud = {"mode": "claude", "model": "sonnet", "effort": "high", "ready": True}
+        hub.sync()
+        assert hub.snapshot(0)["rev"] != before
 
     def test_opening_a_chat_never_changes_the_model_or_mode(self, hub, backend, store):
         backend.reply_mode = {"mode": "claude", "enabled": ["local", "claude"]}

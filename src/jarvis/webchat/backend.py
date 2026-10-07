@@ -8,6 +8,8 @@ from .. import assistant_state
 from ..debug import debug_log
 
 INSTALLED_CACHE_SEC = 30.0
+# The settings keys of each cloud reply mode: (model, effort).
+CLOUD_KEYS = {"codex": ("codex_model", "codex_reasoning_effort"), "claude": ("claude_model", "claude_effort")}
 
 
 class DaemonBackend:
@@ -65,6 +67,36 @@ class DaemonBackend:
     def switch_reply_mode(self, mode: str) -> Tuple[bool, Optional[str]]:
         from .. import daemon
         result = daemon.set_reply_mode(mode)
+        return (True, None) if result.ok else (False, result.reason)
+
+    # -- cloud models ------------------------------------------------------------
+
+    def cloud_model_state(self) -> Optional[dict]:
+        """The active Claude or Codex mode's model and effort, or ``None`` in local mode. ``ready`` says
+        whether the bridge has reported the models it offers."""
+        from .. import daemon
+        from ..bridge import modes, runtime
+        mode = modes.active_mode()
+        cfg = daemon.get_settings()
+        if mode not in CLOUD_KEYS or cfg is None:
+            return None
+        model_key, effort_key = CLOUD_KEYS[mode]
+        service = runtime.get_service()
+        return {"mode": mode, "model": str(getattr(cfg, model_key, "") or ""),
+                "effort": str(getattr(cfg, effort_key, "") or ""),
+                "ready": service is not None and bool(service.available_models())}
+
+    def cloud_models(self) -> List[dict]:
+        """The models (with their efforts) the active cloud bridge reported; empty in local mode."""
+        from ..bridge import modes, runtime
+        service = runtime.get_service()
+        if modes.active_mode() not in CLOUD_KEYS or service is None:
+            return []
+        return [model.to_dict() for model in service.available_models()]
+
+    def set_cloud_model(self, model: str, effort: Optional[str]) -> Tuple[bool, Optional[str]]:
+        from .. import daemon
+        result = daemon.set_cloud_model(model, effort)
         return (True, None) if result.ok else (False, result.reason)
 
     # -- local models ------------------------------------------------------------

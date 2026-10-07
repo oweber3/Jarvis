@@ -269,7 +269,8 @@ def _make_handler(server: WebChatServer):
 
         def _state(self, _body) -> None:
             snapshot = hub.snapshot(2 ** 62)
-            self._json(200, {key: snapshot[key] for key in ("ready", "state", "busy", "active_chat_id", "mode", "model")})
+            self._json(200, {key: snapshot[key] for key in
+                             ("ready", "state", "busy", "active_chat_id", "mode", "model", "cloud")})
 
         def _models(self, _body) -> None:
             self._json(200, hub.models())
@@ -374,18 +375,25 @@ def _make_handler(server: WebChatServer):
             if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
                 raise _Refused(400, "bad_text")
             result = hub.submit(text)
-            status = {"accepted": 202, "busy": 409}.get(result.status, 503)
-            self._json(status, {"query_id": result.query_id, "status": result.status})
+            if result.status != "accepted":
+                raise _Refused({"busy": 409}.get(result.status, 503), result.status)
+            self._json(202, {"query_id": result.query_id, "status": result.status})
 
         def _stop(self, _body) -> None:
             hub.cancel()
             self._json(200, {"ok": True})
 
         def _model(self, body) -> None:
-            kind, value = body.get("kind"), body.get("value")
-            if kind not in ("mode", "local") or not isinstance(value, str) or not value.strip():
+            kind, value, effort = body.get("kind"), body.get("value"), body.get("effort")
+            if (kind not in ("mode", "local", "cloud") or not isinstance(value, str) or not value.strip()
+                    or not (effort is None or isinstance(effort, str))):
                 raise _Refused(400, "bad_model")
-            result = hub.switch_mode(value) if kind == "mode" else hub.set_local_model(value)
+            if kind == "mode":
+                result = hub.switch_mode(value)
+            elif kind == "local":
+                result = hub.set_local_model(value)
+            else:
+                result = hub.set_cloud_model(value, effort)
             if not result.ok:
                 raise _Refused(409, result.reason or "refused")
             self._json(200, {"ok": True})

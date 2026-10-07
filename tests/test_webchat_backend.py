@@ -91,6 +91,65 @@ class TestReplyModes:
         assert DaemonBackend().switch_reply_mode("claude") == (False, "not_enabled")
 
 
+class TestCloudModels:
+    def active(self, monkeypatch, mode="claude", models=("sonnet",), effort="low"):
+        from jarvis.bridge import runtime
+        from jarvis.bridge.model_catalog import CloudModel, Effort
+        monkeypatch.setattr(modes, "active_mode", lambda: mode)
+        service = type("S", (), {"available_models": lambda self: [
+            CloudModel(m, m.title(), (Effort("low"), Effort("high"))) for m in models]})()
+        monkeypatch.setattr(runtime, "get_service", lambda: service)
+
+        @dataclasses.dataclass(frozen=True)
+        class C(Cfg):
+            claude_model: str = "sonnet"
+            claude_effort: str = effort
+            codex_model: str = "gpt-6-luna"
+            codex_reasoning_effort: str = "medium"
+
+        monkeypatch.setattr(daemon, "_global_cfg", C())
+
+    def test_local_mode_has_no_cloud_choice(self, world, monkeypatch):
+        monkeypatch.setattr(modes, "active_mode", lambda: "local")
+        assert DaemonBackend().cloud_model_state() is None
+        assert DaemonBackend().cloud_models() == []
+
+    def test_the_active_cloud_choice_is_reported_with_whether_the_models_are_known(self, world, monkeypatch):
+        self.active(monkeypatch, "claude", effort="high")
+        assert DaemonBackend().cloud_model_state() == {"mode": "claude", "model": "sonnet", "effort": "high",
+                                                       "ready": True}
+
+    def test_codex_reads_its_own_settings(self, world, monkeypatch):
+        self.active(monkeypatch, "codex")
+        state = DaemonBackend().cloud_model_state()
+        assert (state["mode"], state["model"], state["effort"]) == ("codex", "gpt-6-luna", "medium")
+
+    def test_the_models_are_not_ready_until_the_bridge_has_reported_them(self, world, monkeypatch):
+        self.active(monkeypatch, "claude", models=())
+        assert DaemonBackend().cloud_model_state()["ready"] is False
+
+    def test_the_reported_models_are_listed_with_their_efforts(self, world, monkeypatch):
+        self.active(monkeypatch, "claude", models=("sonnet", "haiku"))
+        listed = DaemonBackend().cloud_models()
+        assert [m["id"] for m in listed] == ["sonnet", "haiku"]
+        assert [e["id"] for e in listed[0]["efforts"]] == ["low", "high"]
+
+    def test_a_switch_is_the_daemons(self, world, monkeypatch):
+        monkeypatch.setattr(daemon, "set_cloud_model",
+                            lambda model, effort: daemon.CloudModelResult(True, None, "claude", model, effort or ""))
+        assert DaemonBackend().set_cloud_model("sonnet", "high") == (True, None)
+
+    def test_choosing_what_is_already_in_use_is_a_success(self, world, monkeypatch):
+        monkeypatch.setattr(daemon, "set_cloud_model",
+                            lambda model, effort: daemon.CloudModelResult(True, "already", "claude", model, ""))
+        assert DaemonBackend().set_cloud_model("sonnet", None) == (True, None)
+
+    def test_a_refusal_carries_its_reason(self, world, monkeypatch):
+        monkeypatch.setattr(daemon, "set_cloud_model",
+                            lambda model, effort: daemon.CloudModelResult(False, "effort_unsupported", "claude"))
+        assert DaemonBackend().set_cloud_model("sonnet", "max") == (False, "effort_unsupported")
+
+
 class TestLocalModels:
     def test_the_current_model_is_reported(self, world):
         assert DaemonBackend().local_model_state() == {"current": "gemma4:12b", "switchable": True}

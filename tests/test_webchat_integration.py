@@ -100,6 +100,8 @@ def test_a_typed_message_runs_the_real_text_path_and_is_stored(world):
 
 def test_voice_and_typed_turns_land_in_the_same_open_chat(world):
     call(world, "POST", "/api/chat", {"text": "typed one"})
+    assert wait_for(lambda: len(open_chat_texts(world)) == 2)
+    assert wait_for(lambda: not call(world, "GET", "/api/poll?rev=-1&after=0")[1]["busy_query"])
     world.memory.add_message("user", "a spoken request")
     world.memory.add_message("assistant", "a spoken answer")
     assert wait_for(lambda: len(open_chat_texts(world)) == 4)
