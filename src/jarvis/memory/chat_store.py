@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   role    TEXT NOT NULL,
   content TEXT NOT NULL,
   ts      REAL NOT NULL,
-  source  TEXT NOT NULL DEFAULT 'typed'
+  source  TEXT NOT NULL DEFAULT 'typed',
+  private INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_chat ON chat_messages(chat_id, id);
 CREATE TABLE IF NOT EXISTS chat_state (
@@ -87,6 +88,7 @@ class Message:
     content: str
     ts: float
     source: str
+    private: bool = False
 
 
 def _new_id() -> str:
@@ -233,8 +235,13 @@ class ChatStore:
 
     # -- messages ----------------------------------------------------------------------------
 
-    def append_message(self, chat_id: str, role: str, content: str, *, ts: float, source: str = "typed") -> Message:
-        """Add a message. The first user message titles a chat that has no title yet."""
+    def append_message(self, chat_id: str, role: str, content: str, *, ts: float, source: str = "typed",
+                       private: bool = False) -> Message:
+        """Add a message. The first user message titles a chat that has no title yet.
+
+        ``private`` marks a turn that quotes the activity log: it stays out of the diary and of any
+        context that leaves the PC, also when the chat is opened again.
+        """
         if role not in ROLES:
             raise ValueError("unknown role")
         if source not in SOURCES:
@@ -244,22 +251,26 @@ class ChatStore:
             if chat is None:
                 raise ValueError("unknown chat")
             cur = self.conn.execute(
-                "INSERT INTO chat_messages(chat_id, role, content, ts, source) VALUES (?,?,?,?,?)",
-                (chat_id, role, content, ts, source))
+                "INSERT INTO chat_messages(chat_id, role, content, ts, source, private) VALUES (?,?,?,?,?,?)",
+                (chat_id, role, content, ts, source, 1 if private else 0))
             title = chat.title or (_title_from(content) if role == "user" else "")
             self.conn.execute("UPDATE chats SET updated_at = ?, title = ? WHERE id = ?",
                               (max(ts, time.time()), title, chat_id))
             self.conn.commit()
-            return Message(int(cur.lastrowid), chat_id, role, content, ts, source)
+            return Message(int(cur.lastrowid), chat_id, role, content, ts, source, private)
 
-    _MESSAGE_COLUMNS = "id, chat_id, role, content, ts, source"
+    _MESSAGE_COLUMNS = "id, chat_id, role, content, ts, source, private"
+
+    @staticmethod
+    def _message(row) -> Message:
+        return Message(row[0], row[1], row[2], row[3], row[4], row[5], bool(row[6]))
 
     def messages(self, chat_id: str, after_id: int = 0) -> List[Message]:
         with self._lock:
             rows = self.conn.execute(
                 f"SELECT {self._MESSAGE_COLUMNS} FROM chat_messages WHERE chat_id = ? AND id > ? ORDER BY id",
                 (chat_id, after_id)).fetchall()
-        return [Message(*r) for r in rows]
+        return [self._message(r) for r in rows]
 
     def last_messages(self, chat_id: str, limit: int) -> List[Message]:
         """The newest ``limit`` messages, oldest first."""
@@ -267,7 +278,7 @@ class ChatStore:
             rows = self.conn.execute(
                 f"SELECT {self._MESSAGE_COLUMNS} FROM chat_messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?",
                 (chat_id, max(0, limit))).fetchall()
-        return [Message(*r) for r in reversed(rows)]
+        return [self._message(r) for r in reversed(rows)]
 
     # -- state -------------------------------------------------------------------------------
 

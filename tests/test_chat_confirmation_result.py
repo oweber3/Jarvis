@@ -102,12 +102,12 @@ def clean_state():
     store.clear_pending()
     for origin in (confirmation.ORIGIN_VOICE, confirmation.ORIGIN_CHAT):
         set_result_handler(None, origin=origin)
-    daemon.set_chat_result_callback(None)
+    daemon._chat_result_listeners.clear()
     yield
     store.clear_pending()
     for origin in (confirmation.ORIGIN_VOICE, confirmation.ORIGIN_CHAT):
         set_result_handler(None, origin=origin)
-    daemon.set_chat_result_callback(None)
+    daemon._chat_result_listeners.clear()
 
 
 @pytest.fixture

@@ -92,7 +92,7 @@ the query has finished. The pending request records its origin (text chat runs
 the engine with `quiet=True`, so the origin is `chat`); chat-origin outcomes go
 to `jarvis.daemon.deliver_chat_confirmed_result`, which records the redacted
 outcome in the shared dialogue memory and forwards it to the callback the
-bundled `ChatWindow` registers with `set_chat_result_callback`. The window's
+bundled `ChatWindow` registers with `add_chat_result_listener` (every chat view receives each result). The window's
 callback emits a Qt signal, so the transcript is only touched on the main
 thread, and it skips a torn-down signal bridge (emitting on a deleted Qt object
 from a worker thread crashes the process). The result is shown as an ordinary

@@ -880,14 +880,15 @@ class DialogueMemory:
             return [StoredTurn(stamp, role, content, stamp in self._diary_excluded)
                     for stamp, role, content in self._messages if stamp > ts]
 
-    def set_messages(self, messages: List[dict]) -> None:
+    def set_messages(self, messages: List[dict], *, saved: bool = False) -> None:
         """Replace the stored conversation with ``messages`` (session restore).
 
         ``messages`` must be ``{"role", "content"}`` dicts as produced by
         ``all_messages``. Caches and tool carryover are cleared: the
         restored conversation starts fresh. Timestamps are regenerated
         with a monotonic epsilon so the restored turns count as recent
-        and keep their order.
+        and keep their order. ``saved=True`` marks the restored turns as
+        already in the diary, for a conversation that was summarised before.
         """
         with self._lock:
             now = time.time()
@@ -905,6 +906,28 @@ class DialogueMemory:
             self._last_activity_time = self._last_ts
             self._tool_turns = []
             self._hot_cache = OrderedDict()
+            if saved:
+                self._last_saved_timestamp = max(self._last_saved_timestamp, self._last_ts)
+
+    def last_timestamp(self) -> float:
+        """Timestamp of the newest turn ever stored (0.0 for none): the cursor ``messages_after`` mirrors from."""
+        with self._lock:
+            return self._last_ts
+
+    def detach_unsaved(self) -> "DialogueMemory":
+        """A new memory holding copies of the turns the diary has not seen, for a diary pass of their own.
+
+        Turns kept out of the diary are left behind. This memory is not changed.
+        """
+        with self._lock:
+            detached = DialogueMemory(self._inactivity_timeout)
+            detached._messages = [
+                (ts, role, content) for ts, role, content in self._messages
+                if ts > self._last_saved_timestamp and ts not in self._diary_excluded
+            ]
+            if detached._messages:
+                detached._last_ts = detached._messages[-1][0]
+            return detached
 
     def clear(self) -> None:
         """Drop the entire conversation and its caches (new session)."""

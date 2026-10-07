@@ -240,6 +240,58 @@ def set_chat_messages(messages: list) -> bool:
         _chat_query_lock.release()
 
 
+def switch_chat_conversation(messages: list) -> bool:
+    """Replace the shared conversation with a web chat's history (opening or starting a chat).
+
+    The outgoing turns the diary has not seen get a diary pass of their own on a worker
+    thread, so nothing is lost and the switch does not wait for the summary. The incoming
+    turns are redacted and count as already summarised. Turns flagged ``"diary": False``
+    stay private. Returns False, changing nothing, when a query is running or the daemon
+    has not booted.
+    """
+    dm = _global_dialogue_memory
+    if dm is None:
+        return False
+    if not _chat_query_lock.acquire(blocking=False):
+        debug_log("chat switch rejected: a query is in flight", "chat")
+        return False
+    try:
+        from .utils.redact import redact
+
+        outgoing = dm.detach_unsaved()
+        incoming = []
+        for m in messages:
+            if isinstance(m, dict) and m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str):
+                turn = {"role": m["role"], "content": redact(m["content"])}
+                if m.get("diary") is False:
+                    turn["diary"] = False
+                incoming.append(turn)
+        dm.set_messages(incoming, saved=True)
+    finally:
+        _chat_query_lock.release()
+    if outgoing.has_pending_chunks():
+        _flush_detached_conversation(outgoing)
+    return True
+
+
+def _flush_detached_conversation(detached) -> None:
+    """Summarise turns detached from the shared memory into the diary, off the calling thread."""
+    cfg, db = _global_cfg, _global_db
+
+    def _run() -> None:
+        try:
+            update_diary_from_dialogue_memory(
+                db=db, dialogue_memory=detached, cfg=cfg,
+                source_app="stdin" if getattr(cfg, "use_stdin", False) else "voice",
+                voice_debug=getattr(cfg, "voice_debug", False),
+                timeout_sec=getattr(cfg, "llm_chat_timeout_sec", 30.0),
+                force=True, thinking=getattr(cfg, "llm_thinking_enabled", False))
+        except Exception as exc:
+            debug_log(f"diary pass for a closed chat failed: {type(exc).__name__}", "chat")
+
+    threading.Thread(target=_run, name="jarvis-chat-diary", daemon=True).start()
+
+
 # Diary IPC protocol prefix - desktop app intercepts lines starting with this
 DIARY_IPC_PREFIX = "__DIARY__:"
 
@@ -314,20 +366,27 @@ def _notify_chat(event_type: str, data, *, callbacks: dict, use_ipc: bool) -> No
         _emit_chat_event(event_type, data)
 
 
-_chat_result_callback = None
-_chat_result_callback_lock = threading.Lock()
+_chat_result_listeners: list = []
+_chat_result_listeners_lock = threading.Lock()
 
 
-def set_chat_result_callback(callback) -> None:
-    """Register the chat UI's receiver for confirmed-action results.
+def add_chat_result_listener(callback) -> None:
+    """Register a chat view's receiver for confirmed-action results.
 
     ``callback(reply: str)`` fires from the confirmed-action worker thread, so
     the desktop app passes a Qt signal emitter and the UI update happens on the
-    main thread. ``None`` unregisters.
+    main thread. Every registered view receives each result.
     """
-    global _chat_result_callback
-    with _chat_result_callback_lock:
-        _chat_result_callback = callback
+    with _chat_result_listeners_lock:
+        if callback not in _chat_result_listeners:
+            _chat_result_listeners.append(callback)
+
+
+def remove_chat_result_listener(callback) -> None:
+    """Unregister a receiver added by ``add_chat_result_listener``; unknown receivers are ignored."""
+    with _chat_result_listeners_lock:
+        if callback in _chat_result_listeners:
+            _chat_result_listeners.remove(callback)
 
 
 def deliver_chat_confirmed_result(reply: str, success: bool) -> None:
@@ -344,9 +403,9 @@ def deliver_chat_confirmed_result(reply: str, success: bool) -> None:
             dm.add_message("assistant", safe_reply)
         except Exception as exc:
             debug_log(f"recording confirmed chat result failed: {exc}", "chat")
-    with _chat_result_callback_lock:
-        callback = _chat_result_callback
-    if callback is not None:
+    with _chat_result_listeners_lock:
+        listeners = list(_chat_result_listeners)
+    for callback in listeners:
         try:
             callback(safe_reply)
         except Exception as exc:

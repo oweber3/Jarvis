@@ -277,8 +277,9 @@ class ChatWindow(QMainWindow):
             # Bundled mode: the daemon shares this process, so confirmed-action
             # results reach the chat through the signal (queued to the GUI thread).
             from jarvis import daemon
-            daemon.set_chat_result_callback(self._post_confirmed_result)
-            self.destroyed.connect(lambda *_: daemon.set_chat_result_callback(None))
+            receiver = self._post_confirmed_result
+            daemon.add_chat_result_listener(receiver)
+            self.destroyed.connect(lambda *_: daemon.remove_chat_result_listener(receiver))
 
         # --- Layout -----------------------------------------------------
         central = PhoneShell()

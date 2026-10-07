@@ -128,6 +128,12 @@ class TestMessages:
             store.append_message(chat.id, "user", f"m{i}", ts=float(i))
         assert [m.content for m in store.last_messages(chat.id, 3)] == ["m2", "m3", "m4"]
 
+    def test_private_turns_stay_marked_private(self, store):
+        chat = store.create_chat()
+        store.append_message(chat.id, "assistant", "you used Code for 2h", ts=1.0, private=True)
+        store.append_message(chat.id, "user", "hi", ts=2.0)
+        assert [m.private for m in store.messages(chat.id)] == [True, False]
+
     def test_unknown_roles_and_chats_are_refused(self, store):
         chat = store.create_chat()
         with pytest.raises(ValueError):
