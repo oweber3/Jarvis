@@ -14,9 +14,10 @@ from ..debug import debug_log
 from ..memory import activity_runtime
 
 EXECUTE_TOOL = "jarvis_execute"
-# Local routing helpers and the reply-mode switch are never offered: a cloud model must not widen
-# its own catalogue or move the conversation to another provider.
-ALWAYS_EXCLUDED_TOOLS = frozenset({"toolSearchTool", "refreshMCPTools", "replyMode"})
+# Local routing helpers, the reply-mode switch and the conversation-ending ``stop`` tool are never
+# offered: a cloud model must not widen its own catalogue, move the conversation to another provider
+# or end a turn without a reply (dismissals are handled locally before a request reaches a bridge).
+ALWAYS_EXCLUDED_TOOLS = frozenset({"toolSearchTool", "refreshMCPTools", "replyMode", "stop"})
 PERSONAL_DATA_TOOLS = frozenset({"logMeal", "fetchMeals", "deleteMeal"})
 # Offered to a cloud model only while ``activity_runtime.shared_with_cloud`` allows it.
 ACTIVITY_TOOLS = frozenset({"activityLog"})
