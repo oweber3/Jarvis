@@ -95,6 +95,10 @@ def resolve_executable(executable: str) -> Optional[str]:
         return found
     if name.lower() not in ("codex", "codex.exe"):
         return None
+    if sys.platform == "darwin":
+        found = _macos_install()
+        debug_log(f"codex executable {'found in a standard macOS location' if found else 'not found'}", "codex")
+        return found
     base = os.environ.get("LOCALAPPDATA")
     if not base:
         return None
@@ -102,6 +106,33 @@ def resolve_executable(executable: str) -> Optional[str]:
     if not candidates:
         return None
     return str(max(candidates, key=lambda p: p.stat().st_mtime))
+
+
+_FS_ROOT = Path("/")
+# Desktop apps that bundle the Codex CLI: the ChatGPT app, and the Codex app it replaced.
+_MACOS_APPS = ("ChatGPT.app", "Codex.app")
+
+
+def _is_executable(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+def _macos_install() -> Optional[str]:
+    """A Codex CLI in a standard macOS location. Apps started from the Dock or Finder get a short
+    ``PATH`` without Homebrew or the user's bin folders. Standalone installs come before the copy a
+    desktop app bundles."""
+    home = Path.home()
+    for folder in (_FS_ROOT / "opt" / "homebrew" / "bin", _FS_ROOT / "usr" / "local" / "bin",
+                   home / ".local" / "bin", home / ".npm-global" / "bin"):
+        if _is_executable(folder / "codex"):
+            return str(folder / "codex")
+    for applications in (_FS_ROOT / "Applications", home / "Applications"):
+        for app in _MACOS_APPS:
+            resources = applications / app / "Contents" / "Resources"
+            for candidate in (resources / "codex", *sorted(resources.glob("*/codex"))):
+                if _is_executable(candidate):
+                    return str(candidate)
+    return None
 
 
 class _Pending:

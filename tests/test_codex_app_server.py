@@ -251,6 +251,87 @@ class TestExecutableResolution:
         assert resolve_executable("other-codex") is None
 
 
+def _mac(monkeypatch, tmp_path):
+    """A macOS layout under tmp_path: filesystem root and home folder, nothing on PATH."""
+    root, home = tmp_path / "root", tmp_path / "home"
+    root.mkdir()
+    home.mkdir()
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr("jarvis.codex_bridge.app_server.sys.platform", "darwin")
+    monkeypatch.setattr("jarvis.codex_bridge.app_server._FS_ROOT", root)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return root, home
+
+
+def _touch(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"")
+    path.chmod(0o755)
+    return path
+
+
+@pytest.mark.unit
+class TestMacExecutableResolution:
+    """A Mac app started from the Dock gets a short PATH without Homebrew or the user's bin folders."""
+
+    def test_homebrew_install_is_found_without_path(self, monkeypatch, tmp_path):
+        root, _ = _mac(monkeypatch, tmp_path)
+        exe = _touch(root / "opt" / "homebrew" / "bin" / "codex")
+        assert resolve_executable("codex") == str(exe)
+
+    def test_intel_homebrew_install_is_found_without_path(self, monkeypatch, tmp_path):
+        root, _ = _mac(monkeypatch, tmp_path)
+        exe = _touch(root / "usr" / "local" / "bin" / "codex")
+        assert resolve_executable("codex") == str(exe)
+
+    def test_user_bin_install_is_found_without_path(self, monkeypatch, tmp_path):
+        _, home = _mac(monkeypatch, tmp_path)
+        exe = _touch(home / ".local" / "bin" / "codex")
+        assert resolve_executable("codex") == str(exe)
+
+    @pytest.mark.parametrize("app", ["ChatGPT.app", "Codex.app"])
+    def test_desktop_app_copy_is_found(self, monkeypatch, tmp_path, app):
+        root, _ = _mac(monkeypatch, tmp_path)
+        exe = _touch(root / "Applications" / app / "Contents" / "Resources" / "codex")
+        assert resolve_executable("codex") == str(exe)
+
+    def test_desktop_app_in_user_applications_is_found(self, monkeypatch, tmp_path):
+        _, home = _mac(monkeypatch, tmp_path)
+        exe = _touch(home / "Applications" / "ChatGPT.app" / "Contents" / "Resources" / "codex")
+        assert resolve_executable("codex") == str(exe)
+
+    def test_desktop_app_copy_in_a_resources_subfolder_is_found(self, monkeypatch, tmp_path):
+        root, _ = _mac(monkeypatch, tmp_path)
+        exe = _touch(root / "Applications" / "ChatGPT.app" / "Contents" / "Resources" / "bin" / "codex")
+        assert resolve_executable("codex") == str(exe)
+
+    def test_standalone_install_wins_over_the_desktop_app_copy(self, monkeypatch, tmp_path):
+        root, _ = _mac(monkeypatch, tmp_path)
+        _touch(root / "Applications" / "ChatGPT.app" / "Contents" / "Resources" / "codex")
+        brew = _touch(root / "opt" / "homebrew" / "bin" / "codex")
+        assert resolve_executable("codex") == str(brew)
+
+    def test_a_folder_named_codex_is_not_an_executable(self, monkeypatch, tmp_path):
+        root, _ = _mac(monkeypatch, tmp_path)
+        (root / "Applications" / "ChatGPT.app" / "Contents" / "Resources" / "codex").mkdir(parents=True)
+        assert resolve_executable("codex") is None
+
+    def test_nothing_installed_is_not_found(self, monkeypatch, tmp_path):
+        _mac(monkeypatch, tmp_path)
+        assert resolve_executable("codex") is None
+
+    def test_other_bare_names_do_not_fall_back(self, monkeypatch, tmp_path):
+        root, _ = _mac(monkeypatch, tmp_path)
+        _touch(root / "opt" / "homebrew" / "bin" / "codex")
+        assert resolve_executable("other-codex") is None
+
+    def test_path_still_wins(self, monkeypatch, tmp_path):
+        root, _ = _mac(monkeypatch, tmp_path)
+        _touch(root / "opt" / "homebrew" / "bin" / "codex")
+        monkeypatch.setattr("shutil.which", lambda name: "/elsewhere/codex" if name == "codex" else None)
+        assert resolve_executable("codex") == "/elsewhere/codex"
+
+
 LIVE = os.environ.get("JARVIS_CODEX_LIVE") == "1"
 
 

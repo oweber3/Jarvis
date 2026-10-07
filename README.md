@@ -228,7 +228,7 @@ If the local model is too slow or misreads you, Jarvis can let **Codex**, alread
 <summary>Turn it on, and switch back</summary>
 
 1. **Sign in to Codex with ChatGPT** (open the Codex app once and sign in). Jarvis uses that sign-in and refuses to run with an API-key sign-in, so it never switches you to API billing.
-2. **Allow the mode.** In Settings, open **Reply Mode**, tick **Allow Codex Mode** and restart Jarvis when asked. Then say "use ChatGPT" or choose it in the tray (or make it the start-up mode on the same page). The model (`gpt-6-luna` by default), reasoning effort (`low`) and Codex executable are on the **Codex** page. Jarvis finds the Codex command line on `PATH` or the copy installed with the Codex app; if neither exists, set the full path to `codex.exe`.
+2. **Allow the mode.** In Settings, open **Reply Mode**, tick **Allow Codex Mode** and restart Jarvis when asked. Then say "use ChatGPT" or choose it in the tray (or make it the start-up mode on the same page). The model (`gpt-6-luna` by default), reasoning effort (`low`) and Codex executable are on the **Codex** page. Jarvis finds the Codex command line on `PATH` or the copy installed with the Codex app (on a Mac also Homebrew and the copy inside the ChatGPT app); if none exists, set the full path to `codex` (on Windows, `codex.exe`).
 3. **Check the start-up output.** Jarvis prints `✓ Codex is ready in the background`, or the reason it is not (not signed in, model or effort not available, Codex not found or too old).
 
 To go back, say "go local" or choose **Local** in the tray. Nothing from this mode runs in local mode, and Jarvis stops only the Codex process it started.
