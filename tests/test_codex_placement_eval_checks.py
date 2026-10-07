@@ -159,6 +159,7 @@ class TestPlacementFixtures:
         assert {entry["device"].casefold() for entry in fixture} <= dr.KNOWN_DISPLAYS
         assert {alias for entry in fixture for alias in entry["aliases"]} <= dr.KNOWN_DISPLAYS
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows tools register on Windows only")
     def test_placement_cases_use_the_real_tool_schemas(self):
         snapshot = dr.tool_snapshot(None)
         assert {"displays", "place"} <= set(snapshot["windowControl"]["inputSchema"]["properties"]["action"]["enum"])

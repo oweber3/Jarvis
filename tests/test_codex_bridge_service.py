@@ -1,6 +1,7 @@
 """Behavioural tests for the background Codex bridge service (fake app-server, inert tools)."""
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from pathlib import Path
@@ -729,6 +730,7 @@ class TestPlacementThroughTheBridge:
         service, _, _, _ = build(script, tools=_snapshot(), executor=executor)
         return service, desk
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows desktop only")
     def test_a_replayed_open_and_place_launches_and_moves_only_once(self, windows_tools, monkeypatch):
         args = {"action": "open", "target": "Word", "monitor": "side", "zone": "left"}
 
@@ -744,6 +746,7 @@ class TestPlacementThroughTheBridge:
         assert [r["data"]["status"] for r in script.out] == ["ok", "ok", "ok"]
         assert desk.launches == ["word.lnk"] and list(desk.placed) == [300]
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows desktop only")
     def test_a_partial_failure_is_reported_with_its_structure_and_not_retried(self, windows_tools, monkeypatch):
         import json
         args = {"action": "open", "target": "Word", "monitor": "side"}
