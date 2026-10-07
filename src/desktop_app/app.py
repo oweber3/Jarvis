@@ -1451,6 +1451,41 @@ class LogViewerWindow(QMainWindow):
         webbrowser.open(url)
 
 
+MEMORY_VIEWER_LOG_NAME = "memory_viewer.log"
+
+
+def memory_viewer_log_path() -> Path:
+    """Where the source-run memory viewer server writes its output."""
+    from desktop_app.paths import get_log_dir
+    return get_log_dir() / MEMORY_VIEWER_LOG_NAME
+
+
+def launch_logged_process(cmd: list[str], log_path: Path, *, env=None, creationflags: int = 0) -> subprocess.Popen:
+    """Start ``cmd`` with stdout and stderr written to ``log_path`` (replaced on each start)."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "w", encoding="utf-8", errors="replace") as log_file:
+        # The child holds its own handle to the file; ours closes when Popen returns.
+        return subprocess.Popen(
+            cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            creationflags=creationflags,
+        )
+
+
+def read_log_tail(log_path: Optional[Path], max_chars: int = 4000) -> str:
+    """The last ``max_chars`` characters of a child's log file, or "" when there is none."""
+    if log_path is None:
+        return ""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text[-max_chars:].strip()
+
+
 class MemoryViewerWindow(QMainWindow):
     """Window for viewing Jarvis memory using embedded web view."""
 
@@ -1465,6 +1500,7 @@ class MemoryViewerWindow(QMainWindow):
         apply_theme(self)
 
         self.server_process: Optional[subprocess.Popen] = None
+        self.server_log_path: Optional[Path] = None
         self.server_thread: Optional[threading.Thread] = None
         self.is_server_running = False
 
@@ -1526,6 +1562,10 @@ class MemoryViewerWindow(QMainWindow):
 
             layout.addWidget(fallback_container)
 
+    def _server_command(self) -> list[str]:
+        """Command line of the source-run server child."""
+        return [sys.executable, "-m", "desktop_app.memory_viewer", str(self.MEMORY_VIEWER_PORT)]
+
     def start_server(self) -> bool:
         """Start the memory viewer Flask server."""
         if self.is_server_running:
@@ -1562,9 +1602,8 @@ class MemoryViewerWindow(QMainWindow):
 
                 def run_flask_server():
                     try:
-                        # Suppress Werkzeug's development server warning in bundled apps
-                        import logging
-                        logging.getLogger('werkzeug').setLevel(logging.ERROR)
+                        from desktop_app.memory_viewer import quiet_request_log
+                        quiet_request_log()
 
                         # Disable Flask's reloader and debug mode
                         flask_app.run(
@@ -1607,19 +1646,15 @@ class MemoryViewerWindow(QMainWindow):
                 if sys.platform == 'win32':
                     creationflags = subprocess.CREATE_NO_WINDOW
 
-                print(f"   -> Python: {python_exe}", flush=True)
-                print(f"   -> PYTHONPATH: {env.get('PYTHONPATH', 'not set')}", flush=True)
+                print(f"   → Python: {python_exe}", flush=True)
+                print(f"   → PYTHONPATH: {env.get('PYTHONPATH', 'not set')}", flush=True)
 
-                self.server_process = subprocess.Popen(
-                    [python_exe, "-m", "desktop_app.memory_viewer"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    stdin=subprocess.PIPE,
-                    text=True,
-                    encoding='utf-8',
-                    errors='replace',
-                    env=env,
-                    creationflags=creationflags,
+                # Output goes to a log file, never a pipe: nothing reads a pipe here, and once
+                # its buffer fills the server blocks on its next write and stops answering.
+                self.server_log_path = memory_viewer_log_path()
+                self.server_process = launch_logged_process(
+                    self._server_command(), self.server_log_path,
+                    env=env, creationflags=creationflags,
                 )
                 print(f"   → Subprocess PID: {self.server_process.pid}", flush=True)
                 debug_log("memory viewer server started in subprocess (development mode)", "desktop")
@@ -1635,15 +1670,12 @@ class MemoryViewerWindow(QMainWindow):
             while time.time() - start_time < max_wait:
                 # Check if subprocess died
                 if self.server_process and self.server_process.poll() is not None:
-                    # Process exited - read any error output
+                    # Process exited - show what it printed
                     print(f"   ✗ Subprocess exited with code {self.server_process.returncode}", flush=True)
-                    try:
-                        stdout, _ = self.server_process.communicate(timeout=1)
-                        if stdout:
-                            print(f"   → Output:\n{stdout}", flush=True)
-                        debug_log(f"memory viewer subprocess exited: {stdout}", "desktop")
-                    except Exception as e:
-                        print(f"   → Error reading output: {e}", flush=True)
+                    output = read_log_tail(self.server_log_path)
+                    if output:
+                        print(f"   → Output:\n{output}", flush=True)
+                    debug_log(f"memory viewer subprocess exited with code {self.server_process.returncode}", "desktop")
                     self.server_process = None
                     return False
 
@@ -1664,19 +1696,18 @@ class MemoryViewerWindow(QMainWindow):
             print(f"   ✗ Server failed to start within {max_wait}s", flush=True)
             debug_log(f"memory viewer server failed to start within {max_wait}s", "desktop")
             if self.server_process:
-                # Try to get any output
                 try:
                     poll_result = self.server_process.poll()
                     print(f"   → Process poll result: {poll_result}", flush=True)
                     self.server_process.terminate()
-                    stdout, _ = self.server_process.communicate(timeout=2)
-                    if stdout:
-                        print(f"   → Server output:\n{stdout}", flush=True)
-                        debug_log(f"memory viewer subprocess output: {stdout}", "desktop")
-                    else:
-                        print("   → No output from server process", flush=True)
+                    self.server_process.wait(timeout=2)
                 except Exception as e:
-                    print(f"   → Error getting output: {e}", flush=True)
+                    print(f"   → Error stopping server process: {e}", flush=True)
+                output = read_log_tail(self.server_log_path)
+                if output:
+                    print(f"   → Server output:\n{output}", flush=True)
+                else:
+                    print("   → No output from server process", flush=True)
                 self.server_process = None
             return False
 

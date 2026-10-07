@@ -326,7 +326,8 @@ A Flask-based web interface for browsing conversation history:
 
 - Runs on `localhost:5050`
 - **Bundled mode**: Flask runs in a daemon thread
-- **Development mode**: Flask runs as subprocess
+- **Development mode**: Flask runs as subprocess (`python -m desktop_app.memory_viewer <port>`). Its stdout and stderr go to `memory_viewer.log` in the log directory (`get_log_dir()`, replaced on each start), never to a pipe, so however much it prints it keeps answering; when it fails to start, the tail of that file is printed to the console
+- **Request log off**: Werkzeug logs errors only (`quiet_request_log`, both modes), so request lines, which carry memory search terms, are never written anywhere
 - Opens in embedded QWebEngineView or system browser (macOS fallback)
 - **Request guard**: the server has no login, so a `before_request` hook answers only the viewer itself. A `Host` that is not `localhost`, `127.0.0.1` or `::1` (DNS rebinding) gets 403, and so does an `Origin` that differs from the request's own `Host` (cross-site requests, another local server). Requests with no `Origin` are served
 
