@@ -14,6 +14,8 @@ PLACEMENT_TOLERANCE_PX = 2
 _PLACEMENT_ATTEMPTS = 3
 _PLACEMENT_BUDGET_SEC = 8.0
 _SETTLE_SEC = 0.25
+# Window classes of the desktop behind every application window.
+DESKTOP_WINDOW_CLASSES = frozenset({'Progman', 'WorkerW'})
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,8 @@ def _user32():
         'GetWindowTextW': ([wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
         'GetWindowThreadProcessId': ([wintypes.HWND, ctypes.POINTER(wintypes.DWORD)], wintypes.DWORD),
         'GetForegroundWindow': ([], wintypes.HWND),
+        'GetShellWindow': ([], wintypes.HWND),
+        'GetClassNameW': ([wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
         'SetForegroundWindow': ([wintypes.HWND], wintypes.BOOL),
         'ShowWindowAsync': ([wintypes.HWND, ctypes.c_int], wintypes.BOOL),
         'PostMessageW': ([wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM], wintypes.BOOL),
@@ -86,14 +90,28 @@ def _is_cloaked(hwnd: int) -> bool:
         return False
 
 
+def _is_desktop(user, hwnd, shell) -> bool:
+    """The shell's desktop (``GetShellWindow``, ``Progman``, ``WorkerW``): titled windows of explorer.exe that
+    are not applications. Closing one opens the Shut Down Windows dialog."""
+    if shell and int(hwnd) == int(shell):
+        return True
+    name = ctypes.create_unicode_buffer(64)
+    user.GetClassNameW(hwnd, name, len(name))
+    return name.value in DESKTOP_WINDOW_CLASSES
+
+
 def list_windows() -> list[Window]:
+    """Visible, unowned, titled, non-cloaked application windows; never the desktop itself."""
     import psutil
     user = _user32()
     windows = []
     callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    shell = user.GetShellWindow()
 
     def visit(hwnd, _):
         if not user.IsWindowVisible(hwnd) or user.GetWindow(hwnd, 4) or _is_cloaked(hwnd):
+            return True
+        if _is_desktop(user, hwnd, shell):
             return True
         length = user.GetWindowTextLengthW(hwnd)
         if not length:

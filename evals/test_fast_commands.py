@@ -84,6 +84,12 @@ CASES = [
     ('How hot is it outside?', None, None),
     ('What song is this from?', None, None),
     ('What time is it now in Paris?', None, None),
+    # Several Start Menu entries run cmd.exe, explorer.exe or msiexec.exe (see the catalogue below).
+    ('Open Command Prompt', 'appControl', 'open'),
+    ('Launch Stop Dashboard', 'appControl', 'open'),
+    ('Close Command Prompt', None, None),
+    ('Open explorer', None, None),
+    ('Open Uninstall Node.js', None, None),
 ]
 
 
@@ -102,6 +108,13 @@ def test_fast_versus_fallthrough_corpus(query, tool, action, monkeypatch):
         Application('Google Chrome', 'chrome.lnk', 'C:/apps/chrome.exe'),
         Application('MATLAB', 'matlab.lnk', 'C:/apps/matlab.exe'),
         Application('Spotify', 'spotify.lnk', 'C:/apps/spotify.exe'),
+        Application('Command Prompt', 'cmd.lnk', 'C:/Windows/System32/cmd.exe'),
+        Application('RGB Lighting Control', 'rgb.lnk', 'C:/Windows/System32/cmd.exe', '/c rgb.bat'),
+        Application('Start Dashboard', 'start.lnk', 'C:/Python/pythonw.exe', 'dashboard.py start'),
+        Application('Stop Dashboard', 'stop.lnk', 'C:/Python/pythonw.exe', 'dashboard.py stop'),
+        Application('Windows Software Development Kit', 'sdk.lnk', 'C:/Windows/explorer.exe', 'C:/Kits/10'),
+        Application('Uninstall Node.js', 'node.lnk', 'C:/Windows/System32/msiexec.exe', '/x {GUID}',
+                    uninstaller=True),
     ))
     route = match_command(query, cfg, 'en')
     if tool is None:

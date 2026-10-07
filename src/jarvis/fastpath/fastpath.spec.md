@@ -46,15 +46,24 @@ Locale tables are in normalised form (case folded, no apostrophes) so lookups ma
 - Percentages are numeric and between 0 and 100 before execution. The volume
   and brightness tools round to whole percentages and report the resulting device state.
 - Application names come from the ready local application catalogue and user
-  aliases. Discovery is never started or awaited by matching. Duplicate entries
-  with the same executable share an identity. Names need a similarity score of
+  aliases. Discovery is never started or awaited by matching. Entries that run
+  the same executable with the same arguments share an identity; entries that
+  run a shared executable differently (a script through `cmd.exe` or
+  `pythonw.exe`, a folder through `explorer.exe`, an uninstall through
+  `msiexec.exe`) are separate applications, each launched under its own name.
+  An executable stem is offered as a name only for the one entry that runs it
+  without arguments. Names need a similarity score of
   at least 92 per word and a margin of at least 8 over the next distinct tool
   target. Spelling tolerance preserves word count and version digits. Every
   emitted launch name resolves to the same application under the tool's alias
   rules. Window actions require a discovered executable stem that identifies
-  one installed application; stems shared by distinct versions fall through.
+  one installed application: stems shared by distinct versions, or run by
+  entries with different arguments, fall through, and an entry that passes
+  arguments has no window route.
 - The selected tool must be registered and enabled. Central `evaluate_safety`
-  must classify the call as `SAFE`; destructive calls are not eligible.
+  must classify the call as `SAFE`; destructive calls are not eligible. Opening
+  an application the catalogue marks as an uninstaller is `CONFIRM_DIALOG`
+  (`platform/windows/apps_paths.spec.md`), so it falls through.
 - A rule marked `needs_wake_word` in the locale table is offered only to an
   addressed request: one spoken with the wake word, started from the orb, or
   typed. A voice request engaged only by the hot window does not get it and
@@ -114,7 +123,11 @@ skipped. Routine OS results are not added to tool carryover. Every execution
 still passes central validation, confirmation and denial, including safety
 reclassification after matching. Failed actions and confirmation requests are
 returned verbatim after redaction, never replaced by success acknowledgements
-or silently retried through a model.
+or silently retried through a model. A tool that raises instead of returning a
+result is a failed action: the reply says the action failed with an unexpected
+error (none of the exception's text, which can hold paths or device details),
+the turn is delivered and recorded like any other, and only the exception type
+is logged.
 
 Successful application/window/folder actions use short locale templates.
 Read-only, volume and media commands use the existing tool result. Output uses

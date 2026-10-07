@@ -232,6 +232,23 @@ def test_failed_application_action_returns_error_not_success_template(mock_confi
     assert dispatch(route, None, mock_config, 'Open Word') == 'Application launch was refused.'
 
 
+def test_a_tool_that_raises_gives_an_honest_failure_and_the_turn_is_recorded(mock_config, db, dialogue_memory,
+                                                                             monkeypatch):
+    from jarvis.reply import engine
+    from jarvis.tools.registry import BUILTIN_TOOLS
+
+    def broken(self, args, context):
+        raise RuntimeError('COM object went away C:/Users/me/secret.txt')
+    monkeypatch.setattr(type(BUILTIN_TOOLS['getTime']), 'run', broken)
+    route = FastMatch('time.now', 'time', 'getTime', {'local_only': True}, 'It is {time}.', {'time': 'now'})
+    reply = dispatch(route, None, mock_config, 'What time is it?', 'en')
+    assert reply and 'It is' not in reply and 'secret' not in reply
+    reply = engine.run_reply_engine(db, mock_config, None, 'What time is it?', dialogue_memory, quiet=True)
+    assert reply and 'secret' not in reply
+    messages = dialogue_memory.get_recent_messages()
+    assert [(m['role'], m['content']) for m in messages] == [('user', 'What time is it?'), ('assistant', reply)]
+
+
 def test_dialog_confirmation_can_authorise_central_execution(mock_config, monkeypatch):
     from jarvis.tools.registry import BUILTIN_TOOLS
     tool = BUILTIN_TOOLS['appControl']
