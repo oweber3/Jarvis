@@ -96,8 +96,9 @@ CHAT_QUERY_IPC_PREFIX = "__CHAT_QUERY__:"
 # function over there sets a flag nobody in this process reads.
 CHAT_CANCEL_IPC_PREFIX = "__CHAT_CANCEL__"
 # Session control (subprocess mode): new session (bare line), rewind to a
-# user turn, and restore an archived session. All operate on the daemon's
-# shared dialogue memory, which is where the conversation actually lives.
+# typed message and regenerate its reply, and restore an archived session.
+# All operate on the daemon's shared dialogue memory, which is where the
+# conversation actually lives.
 CHAT_NEW_SESSION_IPC_PREFIX = "__CHAT_NEW_SESSION__"
 CHAT_REWIND_IPC_PREFIX = "__CHAT_REWIND__:"
 CHAT_RESTORE_IPC_PREFIX = "__CHAT_RESTORE__:"
@@ -207,28 +208,6 @@ def new_chat_session() -> bool:
         _chat_query_lock.release()
 
 
-def rewind_chat_to_user(user_index: int) -> bool:
-    """Roll the shared dialogue memory back to before a given user turn.
-
-    ``user_index`` is 1-based (the first user message is 1). Every turn
-    from that user message on is dropped — including the message itself,
-    so the caller can re-submit it and get a fresh reply. Returns True
-    when a rewind happened, False when the turn is not in memory or a
-    query is currently running (the engine's late turn-append would
-    resurrect turns past the rewind point).
-    """
-    global _global_dialogue_memory
-    if _global_dialogue_memory is None:
-        return False
-    if not _chat_query_lock.acquire(blocking=False):
-        debug_log("chat rewind rejected: a query is in flight", "chat")
-        return False
-    try:
-        return _global_dialogue_memory.rewind_before_user_message(user_index)
-    finally:
-        _chat_query_lock.release()
-
-
 def set_chat_messages(messages: list) -> bool:
     """Restore an archived session into the shared dialogue memory.
 
@@ -236,7 +215,7 @@ def set_chat_messages(messages: list) -> bool:
     in-memory list. Redaction is applied here, on the daemon side, so the
     diary (written at session end from this memory) never sees raw user
     text even if the window's archive holds it. Returns False when a
-    query is currently running (see ``rewind_chat_to_user``).
+    query is currently running (see ``new_chat_session``).
     """
     global _global_dialogue_memory
     if _global_dialogue_memory is None:
@@ -313,6 +292,7 @@ def _notify_chat(event_type: str, data, *, callbacks: dict, use_ipc: bool) -> No
     not a module global. ``busy`` takes no argument; all others take ``data``.
     """
     callback_map = {
+        "rewind": "on_rewind",
         "start": "on_start",
         "token": "on_token",
         "tool": "on_tool_call",
@@ -474,6 +454,73 @@ def submit_text_query(
         debug_log("chat query rejected: another query is running", "chat")
         return
 
+    _start_text_query_worker(text, dm, cfg, db, callbacks=callbacks, use_ipc=use_ipc, origin=origin)
+
+
+def regenerate_chat_reply(
+    text: str,
+    *,
+    occurrence: int = 0,
+    on_rewind=None,
+    on_start=None,
+    on_token=None,
+    on_tool_call=None,
+    on_complete=None,
+    on_busy=None,
+    use_ipc: bool = False,
+) -> None:
+    """Rewind the conversation to before a typed message and ask it again (chat Rewind).
+
+    The message is found in the shared dialogue memory by its redacted
+    content (or as given, for a turn the window seeded already redacted),
+    ``occurrence`` counting back from the latest user turn with that content
+    (``DialogueMemory.rewind_before_user_text``). The turn and
+    everything after it are dropped, then ``text`` is run again as a fresh
+    query, all under one hold of the query lock so no other query can slip
+    in between. A ``rewind`` event reports first whether the turn was found:
+    ``True`` is followed by the usual ``start`` / ``complete`` events, and
+    ``False`` (the turn is no longer in memory, or the daemon is not
+    running) changes nothing. A query already running answers ``busy``.
+    """
+    callbacks = {
+        "on_rewind": on_rewind,
+        "on_start": on_start,
+        "on_token": on_token,
+        "on_tool_call": on_tool_call,
+        "on_complete": on_complete,
+        "on_busy": on_busy,
+    }
+    dm = _global_dialogue_memory
+    cfg = _global_cfg
+    db = _global_db
+    if not text or not text.strip() or dm is None or cfg is None or db is None or is_stop_requested():
+        _notify_chat("rewind", False, callbacks=callbacks, use_ipc=use_ipc)
+        return
+    if not _chat_query_lock.acquire(blocking=False):
+        _notify_chat("busy", None, callbacks=callbacks, use_ipc=use_ipc)
+        debug_log("chat rewind rejected: a query is in flight", "chat")
+        return
+    try:
+        from .utils.redact import redact
+        # Memory holds turns redacted. A typed message is matched by its
+        # redaction; one the window seeded from the hot window is shown as
+        # stored, already redacted, and redaction is not idempotent.
+        rewound = (dm.rewind_before_user_text(redact(text), occurrence)
+                   or dm.rewind_before_user_text(text, occurrence))
+    except Exception as exc:
+        debug_log(f"chat rewind failed: {exc}", "chat")
+        rewound = False
+    _notify_chat("rewind", rewound, callbacks=callbacks, use_ipc=use_ipc)
+    if not rewound:
+        debug_log("chat rewind: the message is no longer in memory", "chat")
+        _chat_query_lock.release()
+        return
+    debug_log("chat rewind applied, regenerating the reply", "chat")
+    _start_text_query_worker(text, dm, cfg, db, callbacks=callbacks, use_ipc=use_ipc, origin="chat")
+
+
+def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc: bool, origin: str) -> None:
+    """Run one text query on a worker thread. The caller holds ``_chat_query_lock``; the worker releases it."""
     # Per-query cancellation flag. The Stop button sets this so the worker
     # drops the reply instead of displaying it.
     global _chat_cancel_event
@@ -685,9 +732,11 @@ def handle_chat_new_session_stdin_line(line: str) -> bool:
 def handle_chat_rewind_stdin_line(line: str) -> bool:
     """Parse a stdin line as a chat rewind instruction (subprocess mode).
 
-    Payload is ``{"user_index": N}`` with N 1-based. Returns True when
-    the line was a rewind instruction and was handled (whether or not a
-    rewind actually happened), False for anything else.
+    Payload is ``{"text": "<the message>", "occurrence": N}`` (``occurrence``
+    optional, 0 by default; see ``regenerate_chat_reply``). The outcome comes
+    back as ``__CHAT__:`` events. Returns True when the line was a rewind
+    instruction and was handled (whether or not a rewind actually happened),
+    False for anything else.
     """
     line = line.strip()
     if not line.startswith(CHAT_REWIND_IPC_PREFIX):
@@ -695,14 +744,15 @@ def handle_chat_rewind_stdin_line(line: str) -> bool:
     import json
     try:
         payload = json.loads(line[len(CHAT_REWIND_IPC_PREFIX):])
-        user_index = int(payload.get("user_index"))
+        text = payload.get("text")
+        occurrence = payload.get("occurrence", 0)
     except Exception:
         debug_log("malformed __CHAT_REWIND__ line ignored", "chat_ipc")
         return True
-    if user_index < 1:
-        debug_log("__CHAT_REWIND__ user_index out of range, ignored", "chat_ipc")
+    if not isinstance(text, str) or not isinstance(occurrence, int) or isinstance(occurrence, bool) or occurrence < 0:
+        debug_log("__CHAT_REWIND__ payload not usable, ignored", "chat_ipc")
         return True
-    rewind_chat_to_user(user_index)
+    regenerate_chat_reply(text, occurrence=occurrence, use_ipc=True)
     return True
 
 

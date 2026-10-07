@@ -67,11 +67,18 @@ class TestGetSupportedModelIds:
         result = get_supported_model_ids()
         assert isinstance(result, set)
 
-    def test_returns_model_ids(self):
-        """get_supported_model_ids() should return the model IDs from SUPPORTED_CHAT_MODELS."""
+    def test_returns_every_offered_model_id(self):
+        """get_supported_model_ids() covers the catalogue and the tested tool-use models."""
+        from jarvis.config import OFFERED_CHAT_MODELS, TOOL_USE_CHAT_MODELS
         result = get_supported_model_ids()
-        expected = set(SUPPORTED_CHAT_MODELS.keys())
-        assert result == expected
+        assert result == set(OFFERED_CHAT_MODELS)
+        assert set(SUPPORTED_CHAT_MODELS) <= result
+        assert set(TOOL_USE_CHAT_MODELS) <= result
+
+    def test_tool_use_models_stay_out_of_the_wizard_catalogue(self):
+        """The VRAM-tiered catalogue the wizard recommends from holds no tool-use extras."""
+        from jarvis.config import TOOL_USE_CHAT_MODELS
+        assert not set(TOOL_USE_CHAT_MODELS) & set(SUPPORTED_CHAT_MODELS)
 
     def test_contains_default_model(self):
         """get_supported_model_ids() should include DEFAULT_CHAT_MODEL."""

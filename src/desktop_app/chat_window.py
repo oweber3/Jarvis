@@ -164,6 +164,8 @@ class ChatSignals(QObject):
     started = pyqtSignal(str)
     completed = pyqtSignal(object)  # Optional[str]
     busy = pyqtSignal()
+    # Whether the daemon found the message a rewind asked for (True: it was rolled back and is being asked again).
+    rewound = pyqtSignal(bool)
     # Outcome of a dialog-confirmed action requested from this chat.
     confirmed_result = pyqtSignal(str)
 
@@ -218,10 +220,10 @@ class ChatWindow(QMainWindow):
     rewind line. In bundled mode the window calls the daemon directly.
 
     There is a single conversation, displayed like an SMS thread: no session
-    list, no new-session button. The transcript maps 1:1 to the daemon's
-    shared dialogue memory, so the voice path sees the same turns. Every
-    sent message carries a subtle rewind button that truncates the
-    conversation to before that message and regenerates a fresh reply.
+    list, no new-session button. The daemon's shared dialogue memory holds
+    the conversation, so the voice path sees the same turns. Every sent
+    message carries a subtle rewind button that rolls the conversation back
+    to that message and regenerates a fresh reply.
     """
 
     def __init__(
@@ -254,6 +256,8 @@ class ChatWindow(QMainWindow):
         # after a cancel and its reply still arrives, so the window has to
         # decline the answer to an exchange the user walked away from.
         self._query_cancelled = False
+        # The rewind awaiting the daemon's answer: (messages to keep, end of the dropped run), else None.
+        self._pending_rewind: Optional[tuple[int, int]] = None
         self._daemon_available = daemon_available
         self._daemon_status = "running" if daemon_available else "stopped"
 
@@ -267,6 +271,7 @@ class ChatWindow(QMainWindow):
         self.signals.started.connect(self._on_start)
         self.signals.completed.connect(self._on_complete)
         self.signals.busy.connect(self._on_busy)
+        self.signals.rewound.connect(self._on_rewound)
         self.signals.confirmed_result.connect(self._on_confirmed_result)
         if self._submit_fn is None:
             # Bundled mode: the daemon shares this process, so confirmed-action
@@ -500,55 +505,73 @@ class ChatWindow(QMainWindow):
         # feedback without waiting for the engine to finish.
         self._set_thinking(False)
 
-    def _rewind_to_user(self, user_index: int, text: str) -> None:
-        """Roll the conversation back to before ``user_index``-th user
-        message and regenerate a fresh reply to it.
+    def _rewind_to_user(self, user_index: int) -> None:
+        """Roll the conversation back to the ``user_index``-th sent message
+        in this window and regenerate a fresh reply to it.
 
-        The transcript is truncated to keep the message itself; the daemon
-        memory is rewound past it and the same text is re-submitted, so the
-        old reply (and everything after it) is replaced. Rewinding is
-        disabled while a query is in flight.
+        The daemon finds the message in its memory by content (counted back
+        from the latest message with the same text), drops it and everything
+        after it, and asks it again. The transcript is truncated only once
+        the daemon reports the rewind applied (``_on_rewound``); when the
+        message is no longer in memory the user is told and nothing changes.
+        Rewinding is disabled while a query is in flight.
         """
         if self._query_in_flight or not self._daemon_available:
             return
-        messages = self._messages
-        keep_until = None
-        for i, m in enumerate(messages):
-            if m.get("kind") == "user" and m.get("user_index") == user_index:
-                keep_until = i + 1
-                break
-        if keep_until is None:
+        if self._pending_rewind is not None:
+            # A rewind the user stopped still awaits its answer; one at a time.
             return
-        # Ask the daemon first. Bundled mode: a refusal (query in flight)
-        # leaves both transcript and memory untouched. Subprocess mode is
-        # fire-and-forget; the daemon enforces its own lock guard.
-        if self._control_fn is not None:
-            self._control_fn("rewind", {"user_index": user_index})
-        else:
-            from jarvis import daemon
-            if not daemon.rewind_chat_to_user(user_index):
-                debug_log(
-                    f"chat rewind rejected for user message {user_index}", "chat"
-                )
-                return
-        self._messages = messages[:keep_until]
-        self._render_transcript(self._messages)
-
-        # Regenerate: re-submit the same message for a fresh reply. The
-        # message is already displayed, so no new echo is added.
+        position = next(
+            (i for i, m in enumerate(self._messages)
+             if m.get("kind") == "user" and m.get("user_index") == user_index),
+            None,
+        )
+        if position is None:
+            return
+        text = self._messages[position]["text"]
+        # Memory holds turns redacted, so messages that redact alike are one text to it.
+        from jarvis.utils.redact import redact
+        stored = redact(text).strip()
+        occurrence = sum(
+            1 for m in self._messages[position + 1:]
+            if m.get("kind") == "user" and redact(m.get("text", "")).strip() == stored
+        )
+        # Keep the message itself; drop what followed it up to now (not what is added while waiting).
+        self._pending_rewind = (position + 1, len(self._messages))
         self._query_cancelled = False
         self._set_thinking(True)
-        if self._submit_fn is not None:
-            self._submit_fn(text)
+        debug_log("chat rewind requested", "chat")
+        if self._control_fn is not None:
+            # Subprocess mode: the daemon answers with a ``rewind`` event.
+            self._control_fn("rewind", {"text": text, "occurrence": occurrence})
         else:
             from jarvis import daemon
 
-            daemon.submit_text_query(
+            daemon.regenerate_chat_reply(
                 text,
+                occurrence=occurrence,
+                on_rewind=self.signals.rewound.emit,
                 on_start=self.signals.started.emit,
                 on_complete=self.signals.completed.emit,
                 on_busy=self.signals.busy.emit,
             )
+
+    def _on_rewound(self, applied: bool) -> None:
+        """The daemon's answer to a rewind: truncate and await the new reply, or explain."""
+        pending = self._pending_rewind
+        self._pending_rewind = None
+        if pending is None:
+            return
+        if applied:
+            # The regenerated reply lands through the normal complete path.
+            keep, dropped_until = pending
+            self._messages = self._messages[:keep] + self._messages[dropped_until:]
+            self._render_transcript(self._messages)
+            return
+        self._set_thinking(False)
+        self._append_system(
+            "That message is no longer in Jarvis's memory, so it can't be rewound. Send it again instead."
+        )
 
     def set_daemon_available(self, available: bool) -> None:
         """Enable or disable chat submission based on daemon availability."""
@@ -568,6 +591,7 @@ class ChatWindow(QMainWindow):
         self._daemon_available = status == "running"
         if not self._daemon_available:
             self._query_in_flight = False
+            self._pending_rewind = None
             self.stop_button.setVisible(False)
         self.input_widget.setEnabled(self._daemon_available)
         self.input_widget.setPlaceholderText(
@@ -578,6 +602,7 @@ class ChatWindow(QMainWindow):
         )
         self._refresh_status_label()
         self._refresh_send_button()
+        self._refresh_rewind_buttons()
         self._refresh_header_status()
 
     # --- Daemon callback slots (run on the main thread via signals) -----
@@ -614,6 +639,7 @@ class ChatWindow(QMainWindow):
             self._append_assistant(reply)
 
     def _on_busy(self) -> None:
+        self._pending_rewind = None
         self._set_thinking(False)
         self._append_system("Jarvis is busy with another query already.")
 
@@ -645,6 +671,8 @@ class ChatWindow(QMainWindow):
             self.signals.completed.emit(data)
         elif kind == "busy":
             self.signals.busy.emit()
+        elif kind == "rewind":
+            self.signals.rewound.emit(data is True)
         return True
 
     # --- Rendering helpers ----------------------------------------------
@@ -750,8 +778,8 @@ class ChatWindow(QMainWindow):
                 user_index = m.get("user_index")
                 if user_index is not None:
                     rewind_btn.clicked.connect(
-                        lambda _checked=False, idx=user_index, txt=text:
-                        self._rewind_to_user(idx, txt)
+                        lambda _checked=False, idx=user_index:
+                        self._rewind_to_user(idx)
                     )
                 row.addStretch(1)
                 row.addWidget(

@@ -60,6 +60,30 @@ SUPPORTED_CHAT_MODELS: Dict[str, Dict[str, str]] = {
     },
 }
 
+# Tested tool-use models (docs/TOOL_MODEL_BENCHMARK.md) offered beside the
+# catalogue above for the chat, fast and tool roles. They are kept out of
+# SUPPORTED_CHAT_MODELS because that catalogue is the VRAM-tiered set the
+# setup wizard recommends from, and these are deliberate picks, not
+# recommendations for a given amount of graphics memory.
+TOOL_USE_CHAT_MODELS: Dict[str, Dict[str, str]] = {
+    "gpt-oss:20b": {
+        "name": "GPT-OSS 20B (best tool use, ~13GB)",
+        "description": "Chose tools best in testing; ~13.8GB, so it suits running every role on its own",
+        "size": "~13.8GB",
+        "vram": "16GB+",
+    },
+    "granite4.2:8b": {
+        "name": "Granite 4.2 8B (light tool use, ~5GB)",
+        "description": "Light alternative for tool use; ~5.3GB",
+        "size": "~5.3GB",
+        "vram": "8GB+",
+    },
+}
+
+# Every chat model the app offers (Settings lists, the start-up model check).
+# Single source of truth: anything offered here is never flagged as untested.
+OFFERED_CHAT_MODELS: Dict[str, Dict[str, str]] = {**SUPPORTED_CHAT_MODELS, **TOOL_USE_CHAT_MODELS}
+
 # The default chat model (first in the supported list)
 DEFAULT_CHAT_MODEL = "qwen3.5:9b"
 # Ollama-path default for the fast tier (voice intent, tool routing, and the
@@ -75,8 +99,8 @@ REMOTE_QUICK_ACTIONS = (
 
 
 def get_supported_model_ids() -> set[str]:
-    """Get set of supported model IDs for quick lookup."""
-    return set(SUPPORTED_CHAT_MODELS.keys())
+    """Get the IDs of every chat model the app offers, for quick lookup."""
+    return set(OFFERED_CHAT_MODELS.keys())
 
 
 def _default_dictation_hotkey() -> str:

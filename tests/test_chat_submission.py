@@ -650,18 +650,88 @@ class TestChatSessionControls:
         # Globals are None; must not raise.
         daemon.new_chat_session()
 
-    def test_rewind_chat_to_user_truncates_shared_memory(self):
-        dm = self._seeded_memory()
-        assert daemon.rewind_chat_to_user(2) is True
-        assert dm.all_messages() == [
-            {"role": "user", "content": "remind me to buy oat milk"},
-            {"role": "assistant", "content": "Noted."},
-        ]
+    def _fake_engine(self, monkeypatch, seen):
+        def fake_engine(db, cfg, tts, text, dialogue_memory, language=None, **kwargs):
+            seen.append((text, [m["content"] for m in dialogue_memory.all_messages()]))
+            return "fresh reply"
+        monkeypatch.setattr("jarvis.reply.engine.run_reply_engine", fake_engine)
 
-    def test_rewind_chat_to_unknown_user_returns_false(self):
+    def test_regenerate_rewinds_memory_then_asks_again(self, monkeypatch):
+        self._seeded_memory()
+        seen, events = [], []
+        self._fake_engine(monkeypatch, seen)
+
+        daemon.regenerate_chat_reply(
+            "what about eggs?",
+            on_rewind=lambda ok: events.append(("rewind", ok)),
+            on_complete=lambda r: events.append(("complete", r)),
+        )
+        _wait_for_complete(events)
+
+        assert events == [("rewind", True), ("complete", "fresh reply")]
+        assert seen == [("what about eggs?", ["remind me to buy oat milk", "Noted."])], (
+            "the model must see the conversation before the message, without the old turn"
+        )
+
+    def test_regenerate_matches_the_redacted_turn_memory_holds(self, monkeypatch):
+        from jarvis.utils.redact import redact
+
+        dm = _install_dialogue_memory(cfg=object(), db=object())
+        raw = "my email is test@example.com, remember it"
+        dm.add_message("user", redact(raw))
+        dm.add_message("assistant", "Remembered.")
+        seen, events = [], []
+        self._fake_engine(monkeypatch, seen)
+
+        daemon.regenerate_chat_reply(
+            raw,
+            on_rewind=lambda ok: events.append(("rewind", ok)),
+            on_complete=lambda r: events.append(("complete", r)),
+        )
+        _wait_for_complete(events)
+
+        assert events[0] == ("rewind", True)
+        assert seen[0][1] == []
+
+    def test_regenerate_finds_a_turn_the_window_seeded_already_redacted(self, monkeypatch):
+        """Turns seeded from the hot window are shown as memory holds them, already redacted."""
+        from jarvis.utils.redact import redact
+
+        dm = _install_dialogue_memory(cfg=object(), db=object())
+        stored = redact("my password: hunter2")
+        dm.add_message("user", stored)
+        dm.add_message("assistant", "I won't keep that.")
+        seen, events = [], []
+        self._fake_engine(monkeypatch, seen)
+
+        daemon.regenerate_chat_reply(
+            stored,
+            on_rewind=lambda ok: events.append(("rewind", ok)),
+            on_complete=lambda r: events.append(("complete", r)),
+        )
+        _wait_for_complete(events)
+
+        assert events[0] == ("rewind", True)
+
+    def test_regenerate_for_a_turn_no_longer_in_memory_says_so(self, monkeypatch):
         dm = self._seeded_memory()
-        assert daemon.rewind_chat_to_user(9) is False
-        assert len(dm.all_messages()) == 4
+        seen, events = [], []
+        self._fake_engine(monkeypatch, seen)
+
+        daemon.regenerate_chat_reply(
+            "a message pruned long ago",
+            on_rewind=lambda ok: events.append(("rewind", ok)),
+            on_complete=lambda r: events.append(("complete", r)),
+        )
+
+        assert events == [("rewind", False)]
+        assert seen == [] and len(dm.all_messages()) == 4
+        assert not daemon.is_query_running(), "a refused rewind must release the query lock"
+
+    def test_regenerate_before_the_daemon_has_booted_says_so(self):
+        events = []
+        daemon.regenerate_chat_reply("hello", on_rewind=lambda ok: events.append(ok))
+        assert events == [False]
 
     def test_set_chat_messages_restores_and_redacts(self):
         _install_dialogue_memory(cfg=object(), db=object())
@@ -685,22 +755,35 @@ class TestChatSessionControls:
         assert daemon.handle_chat_new_session_stdin_line("SHUTDOWN") is False
         assert daemon.handle_chat_new_session_stdin_line("") is False
 
-    def test_rewind_stdin_line_valid(self):
-        dm = self._seeded_memory()
-        line = f'{daemon.CHAT_REWIND_IPC_PREFIX}{{"user_index": 2}}'
+    def test_rewind_stdin_line_reports_then_regenerates(self, monkeypatch, capsys):
+        self._seeded_memory()
+        seen = []
+        self._fake_engine(monkeypatch, seen)
+        line = f'{daemon.CHAT_REWIND_IPC_PREFIX}{json.dumps({"text": "what about eggs?"})}'
+
         assert daemon.handle_chat_rewind_stdin_line(line) is True
-        assert len(dm.all_messages()) == 2
+        chat_lines = _wait_for_ipc_complete(capsys)
+
+        kinds = [json.loads(ln[len(daemon.CHAT_IPC_PREFIX):]) for ln in chat_lines]
+        assert kinds[0] == {"type": "rewind", "data": True}
+        assert [k["type"] for k in kinds] == ["rewind", "start", "complete"]
+        assert seen[0][1] == ["remind me to buy oat milk", "Noted."]
+
+    def test_rewind_stdin_line_for_a_missing_turn_reports_false(self, capsys):
+        dm = self._seeded_memory()
+        line = f'{daemon.CHAT_REWIND_IPC_PREFIX}{json.dumps({"text": "never said"})}'
+
+        assert daemon.handle_chat_rewind_stdin_line(line) is True
+
+        out = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith(daemon.CHAT_IPC_PREFIX)]
+        assert [json.loads(ln[len(daemon.CHAT_IPC_PREFIX):]) for ln in out] == [{"type": "rewind", "data": False}]
+        assert len(dm.all_messages()) == 4
 
     def test_rewind_stdin_line_malformed_is_swallowed(self):
         dm = self._seeded_memory()
-        assert daemon.handle_chat_rewind_stdin_line(
-            f"{daemon.CHAT_REWIND_IPC_PREFIX}not json"
-        ) is True
-        assert len(dm.all_messages()) == 4
-        assert daemon.handle_chat_rewind_stdin_line(
-            f'{daemon.CHAT_REWIND_IPC_PREFIX}{{"user_index": 0}}'
-        ) is True
-        assert len(dm.all_messages()) == 4
+        for payload in ("not json", '{"text": 3}', '{"user_index": 2}', '{"text": "eggs", "occurrence": "x"}'):
+            assert daemon.handle_chat_rewind_stdin_line(f"{daemon.CHAT_REWIND_IPC_PREFIX}{payload}") is True
+            assert len(dm.all_messages()) == 4
         assert daemon.handle_chat_rewind_stdin_line("SHUTDOWN") is False
 
     def test_restore_stdin_line_valid(self):
@@ -750,8 +833,14 @@ class TestChatSessionControlsLockGuard:
         # Simulate an in-flight query (voice or text) holding the lock.
         assert daemon._chat_query_lock.acquire(blocking=False)
 
+        events = []
         try:
-            assert daemon.rewind_chat_to_user(2) is False
+            daemon.regenerate_chat_reply(
+                "q2",
+                on_rewind=lambda ok: events.append(("rewind", ok)),
+                on_busy=lambda: events.append(("busy",)),
+            )
+            assert events == [("busy",)], "a rewind while busy is refused as busy"
             assert daemon.new_chat_session() is False
             assert daemon.set_chat_messages([{"role": "user", "content": "x"}]) is False
             assert len(dm.all_messages()) == 4, "memory must be untouched"
@@ -759,5 +848,5 @@ class TestChatSessionControlsLockGuard:
             daemon._chat_query_lock.release()
 
         # Once the lock is free the same calls apply.
-        assert daemon.rewind_chat_to_user(2) is True
-        assert len(dm.all_messages()) == 2
+        assert daemon.new_chat_session() is True
+        assert dm.all_messages() == []

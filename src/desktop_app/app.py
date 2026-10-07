@@ -63,7 +63,7 @@ except ImportError:
     QWebEngineView = None
 
 from jarvis.debug import debug_log
-from jarvis.config import default_config_path, _default_db_path, SUPPORTED_CHAT_MODELS, get_supported_model_ids
+from jarvis.config import default_config_path, _default_db_path, OFFERED_CHAT_MODELS, get_supported_model_ids
 from desktop_app.diary_dialog import DiaryUpdateDialog
 from desktop_app.themes import (
     HUD_COLORS, ORB_PALETTE, apply_application_theme, apply_theme, divider, eyebrow, hud_heading, line_icon, line_icon_svg,
@@ -932,11 +932,16 @@ def show_crash_report_dialog(crash_content: str) -> None:
         debug_log(f"failed to show crash report dialog: {e}", "desktop")
 
 
+def tested_chat_models_text() -> str:
+    """Comma-separated IDs of every chat model the app offers, for the warning dialog."""
+    return ", ".join(sorted(OFFERED_CHAT_MODELS))
+
+
 def check_model_support() -> Optional[str]:
     """
-    Check if the configured chat model is officially supported.
+    Check if the configured chat model is one the app offers.
 
-    Returns the model name if unsupported, None if supported.
+    Returns the model name if it is not, None if it is.
     """
     try:
         from jarvis.config import load_config, DEFAULT_CHAT_MODEL
@@ -953,6 +958,7 @@ def check_model_support() -> Optional[str]:
             if model == supported or base_model == supported_base:
                 return None
 
+        debug_log("configured chat model is not one the app offers", "desktop")
         return model
     except Exception:
         return None
@@ -992,10 +998,10 @@ def show_unsupported_model_dialog(model_name: str) -> bool:
                 layout.addWidget(divider())
 
                 # Description
-                supported_list = ", ".join(sorted(SUPPORTED_CHAT_MODELS))
+                supported_list = tested_chat_models_text()
                 desc = QLabel(
                     f"You're using <b>{self.model}</b> which hasn't been tested with Jarvis.\n\n"
-                    f"Officially supported models: <b>{supported_list}</b>\n\n"
+                    f"Tested models: <b>{supported_list}</b>\n\n"
                     "Other models may work but could have issues with tool calling, "
                     "response formatting, or performance."
                 )
@@ -1062,9 +1068,62 @@ def get_existing_instance_pid() -> Optional[int]:
     return None
 
 
+# Executables of the helper processes a Jarvis instance runs: the daemon and memory viewer (Python),
+# an Ollama it launched and its model runners, the Codex and Claude CLIs, and MCP servers.
+_HELPER_PROCESS_STEMS = frozenset({
+    "jarvis", "python", "pythonw", "ollama", "ollama app", "llama-server",
+    "codex", "claude", "node", "npx", "uv", "uvx",
+})
+
+
+def _is_helper_process(name: str) -> bool:
+    """Whether a descendant of an old instance is one of its helpers rather than an app it opened for the user."""
+    stem = name.lower()
+    if stem.endswith(".exe"):
+        stem = stem[:-4]
+    return stem in _HELPER_PROCESS_STEMS or stem.startswith("python3")
+
+
+def _signal_process(proc, action: str) -> None:
+    """``terminate`` or ``kill`` a process; one already gone is fine."""
+    try:
+        getattr(proc, action)()
+    except psutil.NoSuchProcess:
+        pass
+
+
+def _signal_helper(proc, action: str) -> None:
+    """Like ``_signal_process`` for a helper, whose refusal (e.g. access denied) is logged and skipped."""
+    try:
+        _signal_process(proc, action)
+    except psutil.Error as e:
+        debug_log(f"Could not {action} helper process {proc.pid}: {e}", "desktop")
+
+
+def _wait_for_exit(proc, timeout: float) -> bool:
+    """True once the process has exited (or is gone), False when it is still running after ``timeout``."""
+    try:
+        proc.wait(timeout=timeout)
+    except psutil.NoSuchProcess:
+        pass
+    except psutil.TimeoutExpired:
+        return False
+    return True
+
+
 def kill_existing_instance(pid: int) -> bool:
     """
-    Terminate an existing Jarvis instance by PID.
+    Terminate an existing Jarvis instance by PID, with the helper processes it started.
+
+    On Windows ``terminate()`` ends the process at once, so its own clean-up
+    never runs. Its helper processes (the daemon subprocess, the memory viewer
+    server, an Ollama it launched and that Ollama's model runners, the Codex
+    and Claude CLIs, MCP servers) are therefore stopped here too. Apps Jarvis
+    opened for the user (Word, a browser, a game) are its descendants as well
+    but are left running, since they may hold unsaved work; so is an Ollama
+    the user started, which is not a descendant. A helper that cannot be
+    stopped is skipped. The old session's crash marker is removed, because a
+    deliberate close is not a crash.
 
     Returns True if the process was terminated, False otherwise.
     """
@@ -1076,17 +1135,52 @@ def kill_existing_instance(pid: int) -> bool:
             debug_log(f"PID {pid} doesn't look like Jarvis (name: {proc_name}), not killing", "desktop")
             return False
 
-        debug_log(f"Terminating existing Jarvis instance (PID {pid})", "desktop")
-        process.terminate()
-
-        # Wait up to 5 seconds for graceful shutdown
+        # Collect the tree first: once the parent is gone its children can no longer be found from it.
         try:
-            process.wait(timeout=5)
-        except psutil.TimeoutExpired:
-            debug_log(f"Process {pid} didn't terminate gracefully, force killing", "desktop")
-            process.kill()
-            process.wait(timeout=2)
+            children = process.children(recursive=True)
+        except psutil.Error:
+            children = []
+        # Never this process or the processes that started it.
+        own = {os.getpid()}
+        try:
+            own.update(parent.pid for parent in psutil.Process(os.getpid()).parents())
+        except psutil.Error:
+            pass
+        helpers = []
+        for child in children:
+            if child.pid in own:
+                continue
+            try:
+                if _is_helper_process(child.name()):
+                    helpers.append(child)
+            except psutil.Error:
+                continue
+        debug_log(
+            f"Terminating existing Jarvis instance (PID {pid}), {len(helpers)} helper process(es) "
+            f"of {len(children)} descendant(s)", "desktop",
+        )
 
+        # The instance itself must stop (an error here fails the takeover); a helper that refuses
+        # is logged and skipped.
+        _signal_process(process, "terminate")
+        for helper in helpers:
+            _signal_helper(helper, "terminate")
+
+        # Wait up to 5 seconds for graceful shutdown, then force the stragglers
+        if not _wait_for_exit(process, 5):
+            debug_log(f"Process {pid} didn't terminate gracefully, force killing", "desktop")
+            _signal_process(process, "kill")
+            _wait_for_exit(process, 2)
+        for helper in helpers:
+            try:
+                if not _wait_for_exit(helper, 5):
+                    debug_log(f"Helper process {helper.pid} didn't terminate gracefully, force killing", "desktop")
+                    _signal_helper(helper, "kill")
+                    _wait_for_exit(helper, 2)
+            except psutil.Error as e:
+                debug_log(f"Could not stop helper process {helper.pid}: {e}", "desktop")
+
+        mark_session_clean_exit()
         return True
     except psutil.NoSuchProcess:
         # Process already gone
@@ -1445,6 +1539,41 @@ class LogViewerWindow(QMainWindow):
         webbrowser.open(url)
 
 
+MEMORY_VIEWER_LOG_NAME = "memory_viewer.log"
+
+
+def memory_viewer_log_path() -> Path:
+    """Where the source-run memory viewer server writes its output."""
+    from desktop_app.paths import get_log_dir
+    return get_log_dir() / MEMORY_VIEWER_LOG_NAME
+
+
+def launch_logged_process(cmd: list[str], log_path: Path, *, env=None, creationflags: int = 0) -> subprocess.Popen:
+    """Start ``cmd`` with stdout and stderr written to ``log_path`` (replaced on each start)."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "w", encoding="utf-8", errors="replace") as log_file:
+        # The child holds its own handle to the file; ours closes when Popen returns.
+        return subprocess.Popen(
+            cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            creationflags=creationflags,
+        )
+
+
+def read_log_tail(log_path: Optional[Path], max_chars: int = 4000) -> str:
+    """The last ``max_chars`` characters of a child's log file, or "" when there is none."""
+    if log_path is None:
+        return ""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text[-max_chars:].strip()
+
+
 class MemoryViewerWindow(QMainWindow):
     """Window for viewing Jarvis memory using embedded web view."""
 
@@ -1459,6 +1588,7 @@ class MemoryViewerWindow(QMainWindow):
         apply_theme(self)
 
         self.server_process: Optional[subprocess.Popen] = None
+        self.server_log_path: Optional[Path] = None
         self.server_thread: Optional[threading.Thread] = None
         self.is_server_running = False
 
@@ -1520,6 +1650,10 @@ class MemoryViewerWindow(QMainWindow):
 
             layout.addWidget(fallback_container)
 
+    def _server_command(self) -> list[str]:
+        """Command line of the source-run server child."""
+        return [sys.executable, "-m", "desktop_app.memory_viewer", str(self.MEMORY_VIEWER_PORT)]
+
     def start_server(self) -> bool:
         """Start the memory viewer Flask server."""
         if self.is_server_running:
@@ -1556,9 +1690,8 @@ class MemoryViewerWindow(QMainWindow):
 
                 def run_flask_server():
                     try:
-                        # Suppress Werkzeug's development server warning in bundled apps
-                        import logging
-                        logging.getLogger('werkzeug').setLevel(logging.ERROR)
+                        from desktop_app.memory_viewer import quiet_request_log
+                        quiet_request_log()
 
                         # Disable Flask's reloader and debug mode
                         flask_app.run(
@@ -1601,19 +1734,15 @@ class MemoryViewerWindow(QMainWindow):
                 if sys.platform == 'win32':
                     creationflags = subprocess.CREATE_NO_WINDOW
 
-                print(f"   -> Python: {python_exe}", flush=True)
-                print(f"   -> PYTHONPATH: {env.get('PYTHONPATH', 'not set')}", flush=True)
+                print(f"   → Python: {python_exe}", flush=True)
+                print(f"   → PYTHONPATH: {env.get('PYTHONPATH', 'not set')}", flush=True)
 
-                self.server_process = subprocess.Popen(
-                    [python_exe, "-m", "desktop_app.memory_viewer"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    stdin=subprocess.PIPE,
-                    text=True,
-                    encoding='utf-8',
-                    errors='replace',
-                    env=env,
-                    creationflags=creationflags,
+                # Output goes to a log file, never a pipe: nothing reads a pipe here, and once
+                # its buffer fills the server blocks on its next write and stops answering.
+                self.server_log_path = memory_viewer_log_path()
+                self.server_process = launch_logged_process(
+                    self._server_command(), self.server_log_path,
+                    env=env, creationflags=creationflags,
                 )
                 print(f"   → Subprocess PID: {self.server_process.pid}", flush=True)
                 debug_log("memory viewer server started in subprocess (development mode)", "desktop")
@@ -1629,15 +1758,12 @@ class MemoryViewerWindow(QMainWindow):
             while time.time() - start_time < max_wait:
                 # Check if subprocess died
                 if self.server_process and self.server_process.poll() is not None:
-                    # Process exited - read any error output
+                    # Process exited - show what it printed
                     print(f"   ✗ Subprocess exited with code {self.server_process.returncode}", flush=True)
-                    try:
-                        stdout, _ = self.server_process.communicate(timeout=1)
-                        if stdout:
-                            print(f"   → Output:\n{stdout}", flush=True)
-                        debug_log(f"memory viewer subprocess exited: {stdout}", "desktop")
-                    except Exception as e:
-                        print(f"   → Error reading output: {e}", flush=True)
+                    output = read_log_tail(self.server_log_path)
+                    if output:
+                        print(f"   → Output:\n{output}", flush=True)
+                    debug_log(f"memory viewer subprocess exited with code {self.server_process.returncode}", "desktop")
                     self.server_process = None
                     return False
 
@@ -1658,19 +1784,18 @@ class MemoryViewerWindow(QMainWindow):
             print(f"   ✗ Server failed to start within {max_wait}s", flush=True)
             debug_log(f"memory viewer server failed to start within {max_wait}s", "desktop")
             if self.server_process:
-                # Try to get any output
                 try:
                     poll_result = self.server_process.poll()
                     print(f"   → Process poll result: {poll_result}", flush=True)
                     self.server_process.terminate()
-                    stdout, _ = self.server_process.communicate(timeout=2)
-                    if stdout:
-                        print(f"   → Server output:\n{stdout}", flush=True)
-                        debug_log(f"memory viewer subprocess output: {stdout}", "desktop")
-                    else:
-                        print("   → No output from server process", flush=True)
+                    self.server_process.wait(timeout=2)
                 except Exception as e:
-                    print(f"   → Error getting output: {e}", flush=True)
+                    print(f"   → Error stopping server process: {e}", flush=True)
+                output = read_log_tail(self.server_log_path)
+                if output:
+                    print(f"   → Server output:\n{output}", flush=True)
+                else:
+                    print("   → No output from server process", flush=True)
                 self.server_process = None
             return False
 
@@ -2727,9 +2852,10 @@ class JarvisSystemTray:
                     """Route a rewind command to the daemon's stdin.
 
                     ``kind`` is ``rewind``; the matching IPC line carries the
-                    payload as prefix+JSON. A broken pipe is not worth
-                    surfacing: the window has already updated its own
-                    transcript, and a dead daemon has no memory to rewind.
+                    payload as prefix+JSON, and the daemon answers with a
+                    ``rewind`` chat event. A broken pipe means no answer will
+                    come, so the window is told the daemon is gone instead of
+                    waiting for one.
                     """
                     import json as _json
                     from jarvis.daemon import CHAT_REWIND_IPC_PREFIX
@@ -2743,16 +2869,19 @@ class JarvisSystemTray:
                         _proc.stdin.flush()
                     except Exception as exc:
                         debug_log(f"chat stdin control failed: {exc}", "desktop")
+                        if self.chat_window is not None:
+                            self.chat_window.set_daemon_status("crashed")
 
                 self._chat_submit_fn = _submit_chat_subprocess
                 self._chat_cancel_fn = _cancel_chat_subprocess
                 self._chat_control_fn = _control_chat_subprocess
                 # If the chat window already exists (daemon restarted while
-                # the window was open), refresh its submit fn so it doesn't
+                # the window was open), refresh its pipe writers so it doesn't
                 # keep writing to the old (dead) subprocess stdin.
                 if self.chat_window is not None:
                     self.chat_window._submit_fn = self._chat_submit_fn
                     self.chat_window._cancel_fn = self._chat_cancel_fn
+                    self.chat_window._control_fn = self._chat_control_fn
                     self.chat_window.set_daemon_status("running")
 
                 # Start log reader thread
@@ -2860,6 +2989,7 @@ class JarvisSystemTray:
                 submit_fn=self._chat_submit_fn,
                 daemon_available=self.is_listening,
                 cancel_fn=getattr(self, "_chat_cancel_fn", None),
+                control_fn=getattr(self, "_chat_control_fn", None),
             )
             self.chat_window.set_reply_mode(self._reply_mode)
         self.chat_window.process_ipc_line(line)
@@ -3243,6 +3373,32 @@ def _show_openai_unreachable_dialog(cfg, splash: QWidget) -> None:
             _run_setup_wizard()
     finally:
         splash.setVisible(splash_was_visible)
+
+
+def _warn_if_unsupported_model(splash: QWidget) -> bool:
+    """Warn about a chat model the app does not offer, then let start-up continue.
+
+    The splash is hidden while the warning and any setup wizard opened from it
+    are up. Start-up continues whether the wizard is accepted or cancelled: the
+    warning is advice, and the configured model still runs. Returns True when
+    the warning was shown.
+    """
+    unsupported_model = check_model_support()
+    if not unsupported_model:
+        return False
+    splash_was_visible = splash.isVisible()
+    splash.hide()
+    QApplication.processEvents()
+    print(f"⚠️ Unsupported model detected: {unsupported_model}", flush=True)
+    try:
+        if show_unsupported_model_dialog(unsupported_model):
+            print("🔧 Opening setup wizard to change model...", flush=True)
+            if not _run_setup_wizard():
+                print("   ↩️ Setup wizard cancelled, continuing with the configured model", flush=True)
+                debug_log("unsupported-model wizard cancelled; start-up continues", "startup")
+    finally:
+        splash.setVisible(splash_was_visible)
+    return True
 
 
 def _run_setup_wizard() -> bool:
@@ -3829,16 +3985,7 @@ def main() -> int:
             # on the Ollama path — an OpenAI-compatible model name is not in the
             # Ollama catalogue and must not be flagged here.
             splash.set_status("Checking model compatibility...")
-            unsupported_model = check_model_support()
-            if unsupported_model:
-                splash.hide()
-                print(f"⚠️ Unsupported model detected: {unsupported_model}", flush=True)
-                if show_unsupported_model_dialog(unsupported_model):
-                    print("🔧 Opening setup wizard to change model...", flush=True)
-                    if not _run_setup_wizard():
-                        print("Setup wizard cancelled - exiting", flush=True)
-                        return 0
-                splash.show()
+            if _warn_if_unsupported_model(splash):
                 splash.set_status("Model check complete!")
                 app.processEvents()
 

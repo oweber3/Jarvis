@@ -43,7 +43,7 @@ flowchart TD
     A[Launch App] --> B[Single Instance Check]
     B -->|Already Running| B2[Show Conflict Dialog]
     B2 -->|User: Exit| Z[Exit]
-    B2 -->|User: Kill Existing| B3[Terminate Old Instance]
+    B2 -->|User: Kill Existing| B3[Terminate Old Instance and Its Helper Processes]
     B3 --> B4[Retry Lock]
     B4 -->|Failed| Z
     B4 -->|OK| T
@@ -68,7 +68,7 @@ flowchart TD
     F -->|Yes| K
     K -->|Unsupported| L[Show Warning Dialog]
     K -->|OK| M[Initialize Tray]
-    L --> M
+    L -->|Continue Anyway, or Setup Wizard accepted or cancelled| M
     M --> N[Start Daemon Thread]
     N --> O[Close Splash]
     O --> P[Enter Qt Event Loop]
@@ -76,11 +76,11 @@ flowchart TD
 
 ### Key Startup Features
 
-1. **Splash Screen**: Shows immediately to provide visual feedback while loading. It stays hidden throughout the unreachable-server warning and any setup wizard opened from that warning, then resumes when startup continues (whether the wizard is accepted or cancelled).
+1. **Splash Screen**: Shows immediately to provide visual feedback while loading. It stays hidden throughout the unreachable-server warning, the unsupported-model warning (`_warn_if_unsupported_model`) and any setup wizard opened from either, then resumes when startup continues. Both warnings are advice: startup always continues to the tray, whether the wizard is accepted or cancelled.
 2. **Provider-aware Ollama gating** (`_ollama_runtime_flags` in `app.py`): The Ollama server-start and model-verification steps run only when a local provider actually uses Ollama. A pure OpenAI-compatible setup (chat and embeddings both remote) skips them entirely. `get_required_models()` is provider-aware, so model verification pulls exactly the models that run locally: chat + intent-judge when chat is on Ollama, and the embedding model when embeddings are on Ollama. When chat is on Ollama, a missing model opens the setup wizard; when only embeddings are local (remote chat), a missing embedding model surfaces a clear non-blocking instruction (memory search falls back to keyword matching until it is pulled). The unsupported-chat-model check runs only on the Ollama chat path. `should_show_setup_wizard()` returns False for an OpenAI-compatible chat provider.
 3. **Ollama Auto-Start**: When Ollama is in use and not running, automatically starts it (up to 15s wait). If the wait times out, the setup wizard opens so the user can diagnose connectivity; cancelling the wizard exits the app. The desktop app records ownership only for an Ollama runtime it launches in this session. On app exit, it stops that owned runtime (on Windows the whole process tree, so Ollama's `llama-server.exe` model runners do not outlive the server) and leaves any pre-existing user-managed Ollama process running.
 3a. **OpenAI-compatible reachability check** (`_check_openai_compat_reachable` in `app.py`): Jarvis cannot start a third-party server the way it starts Ollama, so on a pure OpenAI-compatible setup it checks the server answers `GET /v1/models` and, if not, shows a one-off warning naming the address (never the API key) and pointing to Settings, then continues. The user only otherwise discovers a down server when their first request fails.
-4. **Single Instance Lock**: Prevents multiple copies from running simultaneously. If another instance is detected, shows a dialog offering to close the existing instance and start fresh.
+4. **Single Instance Lock**: Prevents multiple copies from running simultaneously. If another instance is detected, shows a dialog offering to close the existing instance and start fresh. Closing it (`kill_existing_instance`) ends it at once, so its own clean-up never runs: the helper processes among its descendants (the daemon subprocess, the memory viewer server, an Ollama it launched and that Ollama's model runners, the Codex and Claude CLIs, MCP servers; recognised by executable name) are stopped with it. Apps it opened for the user (Word, a browser, a game) are descendants too but keep running, since they may hold unsaved work; an Ollama the user started, which is not a descendant, and the new instance itself are left alone as well. A helper that cannot be stopped (access denied) is skipped and does not fail the takeover. A deliberate close is not a crash, so the old session's crash marker is removed and the next start shows no crash dialog.
 5. **Crash Detection**: Detects previous crashes and offers to submit bug reports
 6. **Launch location check (macOS)** (`confirm_launch_location` in `app.py`): a bundled Mac app opened outside Applications runs from a randomised read-only App Translocation copy, where it cannot install updates and has proven unstable. On every launch from such a copy, before the splash screen and any setup wizard, a warning asks the user to quit and move Jarvis.app into Applications. Quit is the default and closing the warning counts as Quit; Continue Anyway starts normally. The check never appears on other platforms, in source runs, or when the app runs from its real location. It runs on every launch, not only in the setup wizard, because the wizard opens only when setup needs attention
 
@@ -239,7 +239,7 @@ In bundled mode, the daemon runs in the same process, so callbacks can be set di
 In subprocess mode, the daemon runs as a separate process. IPC is achieved via stdout:
 - **Diary updates**: Daemon emits JSON events prefixed with `__DIARY__:` (e.g., `__DIARY__:{"type":"token","data":"Hello"}`)
 - **Reply mode**: the daemon emits `__REPLY_MODE_STATE__:{"type": "state", "data": {"mode", "enabled"}}` after start-up and every switch; the tray writes `__REPLY_MODE__:{"mode": ...}` to switch
-- **Chat events**: Daemon emits `__CHAT__:` events (start/complete/busy); the desktop app sends queries in via `__CHAT_QUERY__:` lines on the daemon's stdin, cancellation via a bare `__CHAT_CANCEL__` line, and rewind via `__CHAT_REWIND__:` lines (see `chat_window.spec.md`)
+- **Chat events**: Daemon emits `__CHAT__:` events (start/complete/busy/rewind); the desktop app sends queries in via `__CHAT_QUERY__:` lines on the daemon's stdin, cancellation via a bare `__CHAT_CANCEL__` line, and rewind via `__CHAT_REWIND__:` lines (see `chat_window.spec.md`). A chat window first created by a chat event gets the same pipe writers as one opened from the tray, and a daemon restart refreshes all three (submit, cancel, rewind)
 - Desktop app intercepts these lines from the log stream
 - DiaryUpdateDialog's `process_log_line()` parses and emits signals
 - Chat IPC lines are marshalled onto the Qt main thread via `ChatIpcSignals`, then `_on_chat_ipc_line()` forwards them to `ChatWindow.process_ipc_line()`
@@ -326,7 +326,8 @@ A Flask-based web interface for browsing conversation history:
 
 - Runs on `localhost:5050`
 - **Bundled mode**: Flask runs in a daemon thread
-- **Development mode**: Flask runs as subprocess
+- **Development mode**: Flask runs as subprocess (`python -m desktop_app.memory_viewer <port>`). Its stdout and stderr go to `memory_viewer.log` in the log directory (`get_log_dir()`, replaced on each start), never to a pipe, so however much it prints it keeps answering; when it fails to start, the tail of that file is printed to the console
+- **Request log off**: Werkzeug logs errors only (`quiet_request_log`, both modes), so request lines, which carry memory search terms, are never written anywhere
 - Opens in embedded QWebEngineView or system browser (macOS fallback)
 - **Request guard**: the server has no login, so a `before_request` hook answers only the viewer itself. A `Host` that is not `localhost`, `127.0.0.1` or `::1` (DNS rebinding) gets 403, and so does an `Origin` that differs from the request's own `Host` (cross-site requests, another local server). Requests with no `Origin` are served
 
@@ -356,7 +357,7 @@ content and the report-issue body, so these aborts become diagnosable.
 
 - **No Ollama**: Shows setup wizard or auto-starts
 - **No WebEngine**: Opens memory viewer in system browser
-- **Model not supported**: Warning dialog with option to change
+- **Model not supported**: Warning dialog with option to change. The check (`check_model_support`) accepts every chat model the app offers, `OFFERED_CHAT_MODELS` in `jarvis/config.py` (the wizard's catalogue `SUPPORTED_CHAT_MODELS` plus the tested tool-use models `TOOL_USE_CHAT_MODELS`, matched by base name), so a model picked in Settings or the setup wizard never triggers it. The dialog lists those same models
 - **Update failed**: Error dialog with details
 
 ## Platform-Specific Behavior

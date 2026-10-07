@@ -709,28 +709,58 @@ class TestDialogueMemorySessions:
 
     def test_rewind_before_first_user_message_drops_everything(self):
         dm = self._conversation()
-        assert dm.rewind_before_user_message(1) is True
+        assert dm.rewind_before_user_text("remind me to buy oat milk") is True
         assert dm.all_messages() == []
 
     def test_rewind_before_second_user_message_keeps_first_turn(self):
         dm = self._conversation()
-        assert dm.rewind_before_user_message(2) is True
+        assert dm.rewind_before_user_text("what about eggs?") is True
         assert dm.all_messages() == [
             {"role": "user", "content": "remind me to buy oat milk"},
             {"role": "assistant", "content": "Noted."},
         ]
 
-    def test_rewind_to_unknown_user_index_is_a_noop(self):
+    def test_rewind_to_text_not_in_memory_is_a_noop(self):
         dm = self._conversation()
-        assert dm.rewind_before_user_message(5) is False
+        assert dm.rewind_before_user_text("something never said") is False
+        assert dm.rewind_before_user_text("Noted.") is False, "only user turns are anchors"
         assert len(dm.all_messages()) == 4
+
+    def test_rewind_anchors_on_the_turn_not_its_position(self):
+        """Turns the chat window never showed (voice, or pruned history) do not shift the anchor."""
+        dm = DialogueMemory()
+        dm.add_message("user", "typed question")
+        dm.add_message("assistant", "typed answer")
+        dm.add_message("user", "spoken question")
+        dm.add_message("assistant", "spoken answer")
+        dm.add_message("user", "second typed question")
+        dm.add_message("assistant", "second typed answer")
+
+        assert dm.rewind_before_user_text("second typed question") is True
+        assert [m["content"] for m in dm.all_messages()] == [
+            "typed question", "typed answer", "spoken question", "spoken answer",
+        ]
+
+    def test_repeated_text_rewinds_the_chosen_occurrence_from_the_end(self):
+        dm = DialogueMemory()
+        for answer in ("first", "second", "third"):
+            dm.add_message("user", "again?")
+            dm.add_message("assistant", answer)
+
+        assert dm.rewind_before_user_text("again?", occurrence=1) is True
+        assert [m["content"] for m in dm.all_messages()] == ["again?", "first"]
+
+    def test_rewind_matches_surrounding_whitespace_like_stored_turns(self):
+        dm = self._conversation()
+        assert dm.rewind_before_user_text("  what about eggs?\n") is True
+        assert len(dm.all_messages()) == 2
 
     def test_rewind_clears_tool_carryover_and_hot_cache(self):
         dm = self._conversation()
         dm.hot_cache_put("router", "cached")
         dm.record_tool_turn([{"role": "tool", "content": "x"}])
 
-        dm.rewind_before_user_message(2)
+        dm.rewind_before_user_text("what about eggs?")
 
         assert dm.hot_cache_get("router") is None
         turns = dm.get_recent_turns_with_tools()

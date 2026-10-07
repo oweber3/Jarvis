@@ -686,6 +686,54 @@ class TestCheckModelSupport:
         assert result is None
 
 
+class TestUnsupportedModelStartup:
+    """The unsupported-model warning never stops Jarvis starting."""
+
+    @pytest.mark.parametrize("open_wizard", [False, True])
+    @pytest.mark.parametrize("wizard_accepted", [False, True])
+    def test_start_up_continues_whatever_the_user_picks(
+        self, qapp, monkeypatch, open_wizard, wizard_accepted
+    ):
+        from PyQt6.QtWidgets import QWidget
+        from desktop_app import app as app_mod
+
+        splash = QWidget()
+        splash.show()
+        qapp.processEvents()
+        visited = []
+
+        def show_dialog(model):
+            assert not splash.isVisible()
+            visited.append("warning")
+            return open_wizard
+
+        def run_wizard():
+            assert not splash.isVisible()
+            visited.append("wizard")
+            return wizard_accepted
+
+        monkeypatch.setattr(app_mod, "check_model_support", lambda: "mystery-model:7b")
+        monkeypatch.setattr(app_mod, "show_unsupported_model_dialog", show_dialog)
+        monkeypatch.setattr(app_mod, "_run_setup_wizard", run_wizard)
+        try:
+            app_mod._warn_if_unsupported_model(splash)
+            assert visited == (["warning", "wizard"] if open_wizard else ["warning"])
+            assert splash.isVisible(), "start-up resumes after the warning"
+        finally:
+            splash.close()
+
+    def test_offered_model_shows_no_warning(self, qapp, monkeypatch):
+        from PyQt6.QtWidgets import QWidget
+        from desktop_app import app as app_mod
+
+        splash = QWidget()
+        shown = []
+        monkeypatch.setattr(app_mod, "check_model_support", lambda: None)
+        monkeypatch.setattr(app_mod, "show_unsupported_model_dialog", lambda m: shown.append(m))
+        app_mod._warn_if_unsupported_model(splash)
+        assert shown == []
+
+
 class TestModelSupportIntegration:
     """Integration tests for model support checking."""
 
@@ -699,6 +747,30 @@ class TestModelSupportIntegration:
                 mock_config.return_value = {"ollama_chat_model": model_id}
                 result = check_model_support()
                 assert result is None, f"Model {model_id} should be supported"
+
+    @pytest.mark.parametrize("key", ["ollama_chat_model", "fast_model", "tool_model"])
+    def test_every_model_settings_offers_passes_check(self, key):
+        """A model picked from a Settings model list never triggers the start-up warning."""
+        from desktop_app import check_model_support
+        from desktop_app.settings_window import FIELD_METADATA
+
+        field = next(f for f in FIELD_METADATA if f.key == key)
+        offered = [value for value, _ in field.choices if value]
+        assert offered
+        for model_id in offered:
+            with patch("jarvis.config.load_config") as mock_config:
+                mock_config.return_value = {"ollama_chat_model": model_id}
+                assert check_model_support() is None, f"{model_id} is offered in Settings but flagged"
+
+    def test_unsupported_model_dialog_names_every_offered_model(self):
+        """The warning's list of tested models matches what Settings offers."""
+        from desktop_app.app import tested_chat_models_text
+        from desktop_app.settings_window import FIELD_METADATA
+
+        field = next(f for f in FIELD_METADATA if f.key == "ollama_chat_model")
+        text = tested_chat_models_text()
+        for model_id, _ in field.choices:
+            assert model_id in text
 
 
 class TestLogViewerReportIssue:

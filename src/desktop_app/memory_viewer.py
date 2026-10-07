@@ -3865,9 +3865,17 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 # Main entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
+def quiet_request_log() -> None:
+    """Keep Werkzeug to errors: its per-request lines carry memory search terms into the log file."""
+    import logging
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+
+
 def main() -> None:
     """Run the memory viewer server."""
     import sys
+
+    quiet_request_log()
 
     port = 5050
     if len(sys.argv) > 1:
