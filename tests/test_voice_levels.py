@@ -85,8 +85,11 @@ class TestLevelChannel:
         finally:
             writer.kill()                     # it writes until stopped, so every read above is fresh
             writer.wait(timeout=30)
-        assert len(seen) > 1000
-        assert set(seen) <= {0.25, 0.75}, {v for v in seen if v not in (0.25, 0.75)}
+        # A busy machine can pause the writer past MAX_AGE_S, and a stale level rightly reads as absent;
+        # but every level read is one that was written whole, never a mix of two writes.
+        values = [v for v in seen if v is not None]
+        assert len(values) > 1000
+        assert set(values) <= {0.25, 0.75}, set(values) - {0.25, 0.75}
 
 
 class TestLoudness:
