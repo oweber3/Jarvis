@@ -181,6 +181,11 @@ def get_dialogue_memory():
     return _global_dialogue_memory
 
 
+def get_settings():
+    """The daemon's settings, or ``None`` before it has booted (the web chat reads the local model from it)."""
+    return _global_cfg
+
+
 def is_query_running() -> bool:
     """True while a voice or text query holds the reply engine."""
     return _chat_query_lock.locked()
@@ -1438,6 +1443,10 @@ def main(smoke_test: bool = False) -> None:
     from .remote import runtime as remote_runtime
     remote_runtime.start(cfg)
 
+    # Opt-in web chat: serves nothing unless the user turned it on in Settings.
+    from .webchat import runtime as web_chat_runtime
+    web_chat_runtime.start(cfg)
+
     # Periodic diary update checking
     last_diary_check = time.time()
     diary_check_interval = 60.0
@@ -1515,6 +1524,7 @@ def main(smoke_test: bool = False) -> None:
 
         # No new phone requests once shutdown has begun.
         remote_runtime.stop()
+        web_chat_runtime.stop()
 
         # Clean shutdown - stop dictation first
         if dictation is not None:

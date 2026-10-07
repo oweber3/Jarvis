@@ -12,51 +12,23 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlsplit
 
 from flask import Flask, jsonify, request, Response
 
 from jarvis.config import load_settings
 from jarvis.debug import debug_log
 from jarvis.memory.graph import FIXED_BRANCH_IDS, GraphMemoryStore
+from jarvis.utils.local_guard import refusal
 
 
 app = Flask(__name__)
 
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
-
-
-def _host_of(netloc: str) -> str:
-    """Lower-case hostname of a ``host[:port]`` string, without brackets or port."""
-    try:
-        return (urlsplit(f"//{netloc}").hostname or "").lower()
-    except ValueError:
-        return ""
-
-
-def _origin_netloc(origin: str) -> str:
-    try:
-        return urlsplit(origin).netloc.lower()
-    except ValueError:
-        return ""
-
-
 @app.before_request
 def _only_answer_the_viewer_itself() -> Optional[Response]:
-    """Refuse requests that did not come from the viewer page on this machine.
-
-    The server has no login, so other web pages must not be able to reach it:
-    a rebound DNS name arrives with a foreign Host, and a cross-site request
-    carries a foreign Origin. Requests with no Origin (same-origin GETs, other
-    local clients) are served.
-    """
-    host = request.headers.get("Host", "")
-    if _host_of(host) not in _LOOPBACK_HOSTS:
-        debug_log("memory viewer refused a request with a non-loopback Host", "desktop")
-        return Response("Forbidden", status=403)
-    origin = request.headers.get("Origin")
-    if origin is not None and _origin_netloc(origin) != host.lower():
-        debug_log("memory viewer refused a cross-origin request", "desktop")
+    """Refuse requests that did not come from the viewer page on this machine (``jarvis.utils.local_guard``)."""
+    why = refusal(request.headers.get("Host", ""), request.headers.get("Origin"))
+    if why is not None:
+        debug_log(f"memory viewer refused a request with a foreign {why}", "desktop")
         return Response("Forbidden", status=403)
     return None
 
