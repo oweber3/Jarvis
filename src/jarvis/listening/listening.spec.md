@@ -32,6 +32,12 @@ Warnings are transition-based; dictation pauses suspend health checks. With
 peak level and capture rate, without saving microphone audio. Linux warnings
 point users to PipeWire/PulseAudio recording-source routing.
 
+The capture queue between the audio callback and the listener thread holds
+`intent_judge_timeout_sec` (counted up to the Settings maximum of 30 s) plus
+2 s of audio, at least 64 blocks. The intent judge runs on the listener thread,
+so speech the user starts while it decides is kept; anything beyond that bound
+is dropped and reported by the health check.
+
 Audio-frame processing is limited to VAD and utterance assembly. Completed
 utterances are enqueued for a single FIFO Whisper worker. Transcription results
 return to the listener loop in order, where transcript storage and intent

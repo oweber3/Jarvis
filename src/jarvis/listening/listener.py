@@ -494,7 +494,7 @@ class VoiceListener(threading.Thread):
         self._mlx_model_repo: Optional[str] = None  # For MLX backend
         self.model: Optional[Any] = None  # WhisperModel for faster-whisper, None for MLX
         self.transcribe_lock = threading.Lock()  # Shared lock for Whisper model access
-        self._audio_q: queue.Queue = queue.Queue(maxsize=64)
+        self._audio_q: queue.Queue = queue.Queue(maxsize=self._capture_backlog_blocks())
         self._transcription_jobs_q: queue.Queue = queue.Queue(maxsize=8)
         self._transcription_results_q: queue.Queue = queue.Queue()
         self._transcription_worker_thread: Optional[threading.Thread] = None
@@ -563,6 +563,32 @@ class VoiceListener(threading.Thread):
         # Speaker verification: None unless enabled, enrolled and loadable.
         self._speaker_verifier = create_verifier(self.cfg)
         self._barge_in_reset()
+
+    # The intent judge runs on the listener thread, so capture blocks wait in
+    # the queue for up to its timeout. The queue holds that long plus a margin
+    # (request overhead, the Whisper hand-off); the timeout counted is capped
+    # at the Settings maximum so memory stays bounded.
+    _CAPTURE_BACKLOG_MARGIN_SEC = 2.0
+    _CAPTURE_BACKLOG_MAX_JUDGE_SEC = 30.0
+    _CAPTURE_BACKLOG_MIN_BLOCKS = 64
+
+    def _capture_backlog_blocks(self) -> int:
+        """Capture blocks the audio queue holds while the listener is busy judging an utterance."""
+        try:
+            frame_ms = int(getattr(self.cfg, "vad_frame_ms", 20))
+        except (TypeError, ValueError):
+            frame_ms = 20
+        if frame_ms not in (10, 20, 30):
+            frame_ms = 20
+        try:
+            judge_sec = float(getattr(self.cfg, "intent_judge_timeout_sec", 6.0))
+        except (TypeError, ValueError):
+            judge_sec = 6.0
+        judge_sec = min(max(judge_sec, 0.0), self._CAPTURE_BACKLOG_MAX_JUDGE_SEC)
+        backlog_ms = (judge_sec + self._CAPTURE_BACKLOG_MARGIN_SEC) * 1000
+        blocks = max(self._CAPTURE_BACKLOG_MIN_BLOCKS, int(-(-backlog_ms // frame_ms)))
+        debug_log(f"capture queue holds {blocks} blocks ({blocks * frame_ms / 1000:.1f}s of audio)", "voice")
+        return blocks
 
     def stop(self) -> None:
         """Stop the voice listener."""
