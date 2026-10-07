@@ -922,7 +922,7 @@ class VoiceListener(threading.Thread):
             )
             if _addressed:
                 _stop_query = extract_query_after_wake(text_lower, _wake_word, _aliases)
-                if is_stop_command(_stop_query, self._stop_commands()):
+                if self._is_bare_stop(_stop_query):
                     debug_log('stop command cancels the reply in flight', 'voice')
                     print("  🛑 Stopped", flush=True)
                     if _collecting:
@@ -968,8 +968,11 @@ class VoiceListener(threading.Thread):
 
         # Use the upgraded intent judge if available (with full transcript context)
         # Allow during TTS for longer utterances (>3 words) that might be user responses
+        # A short utterance holding a stop phrase with other words ("please stop",
+        # "stop the music") is not a bare stop, so the judge decides it.
         word_count = len(text_lower.split())
-        skip_intent_judge_during_tts = is_speaking_now and word_count <= 3
+        holds_stop_phrase = self._without_phrases(text_lower, self._stop_commands()) != text_lower
+        skip_intent_judge_during_tts = is_speaking_now and word_count <= 3 and not holds_stop_phrase
 
         # Gate the intent judge on an engagement signal. Without this check the
         # judge was called on every ambient utterance, blocking the audio loop
@@ -1794,43 +1797,53 @@ class VoiceListener(threading.Thread):
         set_state(AssistantState.IDLE)
         return True
 
-    # A spoken stop is short; a longer utterance holding a stop word is
-    # conversation or Jarvis's own echo, and the intent judge sees it instead.
-    _STOP_MAX_WORDS = 3
-
     def _stop_commands(self) -> list:
-        return list(getattr(self.cfg, "stop_commands",
-                            ["stop", "quiet", "shush", "silence", "enough", "shut up"]))
+        stop_commands = getattr(self.cfg, "stop_commands", None)
+        if isinstance(stop_commands, (list, tuple)) and stop_commands:
+            return [str(command).lower() for command in stop_commands if str(command).strip()]
+        from ..config import get_default_config
+        return list(get_default_config()["stop_commands"])
+
+    @staticmethod
+    def _without_phrases(text: str, phrases: list) -> str:
+        """``text`` with every whole-word occurrence of ``phrases`` removed."""
+        for phrase in phrases:
+            text = re.sub(rf"(?<!\w){re.escape(phrase)}(?!\w)", " ", text)
+        return text
+
+    def _is_bare_stop(self, text: str) -> bool:
+        """True when ``text`` (the wake word already removed) is configured stop phrases and nothing else."""
+        if not re.search(r"\w", text, re.UNICODE):
+            return False
+        return not re.search(r"\w", self._without_phrases(text, self._stop_commands()), re.UNICODE)
 
     def _is_spoken_stop(self, text_lower: str, utterance_start_time: float) -> bool:
-        """True when speech captured during TTS is the user telling Jarvis to stop.
+        """True when speech captured during TTS is nothing but a stop phrase (and the wake word).
 
-        The stop phrase alone (with or without the wake word) always counts,
-        even when Jarvis's reply contains it. A few more words count when the
-        wake word addressed them or Jarvis was not saying them itself, so its
-        own echo ("the nearest bus stop is...") never stops it.
+        Anything more ("stop the music", "please stop") is left to normal
+        processing and the intent judge, so a command is never swallowed. A
+        bare stop phrase without the wake word does not count while Jarvis is
+        saying that very word, since it is then most likely its own echo.
         """
         wake_word = getattr(self.cfg, "wake_word", "jarvis")
         aliases = list(set(getattr(self.cfg, "wake_aliases", [])) | {wake_word})
         remainder = extract_query_after_wake(text_lower, wake_word, aliases)
         stop_commands = self._stop_commands()
-        if not is_stop_command(remainder, stop_commands):
+        if not self._is_bare_stop(remainder):
             return False
-        if len(re.findall(r"\w+", remainder, re.UNICODE)) > self._STOP_MAX_WORDS:
-            debug_log("stop word in a longer utterance during TTS: not a stop", "voice")
-            return False
-        leftover = remainder
-        for command in stop_commands:
-            leftover = re.sub(rf"(?<!\w){re.escape(command.lower())}(?!\w)", " ", leftover)
-        if not re.search(r"\w", leftover, re.UNICODE):
-            return True
         if is_wake_word_detected(text_lower, wake_word, aliases,
                                  float(getattr(self.cfg, "wake_fuzzy_ratio", 0.78))):
             return True
-        is_echo =self.echo_detector._matches_tts_segment(remainder, self._tts_rate(), utterance_start_time)
-        if is_echo:
-            debug_log(f"stop word heard in Jarvis's own words: '{remainder}'", "voice")
-        return not is_echo
+        heard_word_count = len(remainder.split())
+        jarvis_was_saying = self.echo_detector.tts_words_near(
+            self._tts_rate(), utterance_start_time, heard_word_count).lower()
+        said_by_jarvis = [phrase for phrase in stop_commands
+                          if self._without_phrases(remainder, [phrase]) != remainder
+                          and self._without_phrases(jarvis_was_saying, [phrase]) != jarvis_was_saying]
+        if said_by_jarvis:
+            debug_log("bare stop phrase heard while Jarvis was saying it: treated as echo", "voice")
+            return False
+        return True
 
     def _stop_after_spoken_stop(self) -> None:
         """Act on a stop heard during TTS, whether or not playback has ended since.

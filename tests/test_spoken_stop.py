@@ -13,7 +13,7 @@ import pytest
 
 from jarvis.listening.state_manager import ListeningState
 from tests.audio_harness import ListenerHarness, white_noise
-from tests.test_hot_window_input import _create_listener
+from tests.test_hot_window_input import _create_listener, _install_intent_judge, _make_judgment
 
 pytestmark = pytest.mark.unit
 
@@ -77,7 +77,7 @@ def test_utterances_during_tts_never_outgrow_the_cap_while_echo_continues():
 @pytest.mark.parametrize("reply", [
     "Tomorrow will be mostly sunny with a top temperature of 21 degrees.",
     "Here is the story of the Apollo missions and how they stopped in 1972.",
-    "The nearest bus stop is two hundred metres away.",
+    "It was a quietly confident performance from the whole team.",
 ])
 @pytest.mark.parametrize("heard", ["stop", "stop.", "jarvis stop"])
 def test_stop_transcribed_after_playback_ended_cancels_what_follows(reply, heard, capsys):
@@ -159,11 +159,112 @@ def test_echo_containing_a_stop_word_transcribed_after_playback_cancels_nothing(
     listener.state_manager.stop()
 
 
-@pytest.mark.parametrize("heard", ["stop", "stop.", "jarvis stop", "shut up", "stop it please"])
-def test_a_short_stop_still_stops_a_reply_that_contains_a_stop_word(heard):
-    listener, tts = _speaking_listener("The nearest bus stop is two hundred metres away, past the quiet park.")
+LONG_REPLY_WITH_STOP_EARLY = (
+    "The nearest bus stop is two hundred metres away, and from there the number twelve runs every "
+    "ten minutes into the centre of town, where the museum, the library and the covered market are "
+    "all within a short walk of each other along the river path past the old bridge and the park."
+)
+
+
+@pytest.mark.parametrize("heard", ["stop", "stop.", "jarvis stop", "shut up"])
+def test_a_bare_stop_stops_a_reply_that_contains_the_word_elsewhere(heard):
+    listener, tts = _speaking_listener(LONG_REPLY_WITH_STOP_EARLY)
+    listener.echo_detector._tts_start_time -= 12.0  # Jarvis is well past "bus stop" by now
 
     _hear_captured_during_tts(listener, heard, started_ago=0.8, ended_ago=0.1)
+
+    tts.interrupt.assert_called()
+    listener.state_manager.stop()
+
+
+def test_a_bare_stop_word_heard_while_jarvis_says_it_is_echo():
+    listener, tts = _speaking_listener(LONG_REPLY_WITH_STOP_EARLY)
+
+    _hear_captured_during_tts(listener, "stop.", started_ago=0.8, ended_ago=0.1)
+
+    tts.interrupt.assert_not_called()
+    listener.state_manager.stop()
+
+
+def test_the_wake_word_makes_a_stop_count_even_while_jarvis_says_it():
+    listener, tts = _speaking_listener(LONG_REPLY_WITH_STOP_EARLY)
+
+    _hear_captured_during_tts(listener, "jarvis stop", started_ago=0.8, ended_ago=0.1)
+
+    tts.interrupt.assert_called()
+    listener.state_manager.stop()
+
+
+@pytest.mark.parametrize("heard", ["top", "stops", "quite"])
+def test_words_that_only_sound_like_a_stop_do_not_stop_jarvis(heard):
+    listener, tts = _speaking_listener("Here is the weather for the rest of the week in London.")
+
+    _hear_captured_during_tts(listener, heard, started_ago=0.8, ended_ago=0.1)
+
+    tts.interrupt.assert_not_called()
+    listener.state_manager.stop()
+
+
+# ---------------------------------------------------------------------------
+# A stop word with more to it is a request, not a bare stop
+# ---------------------------------------------------------------------------
+
+COMMANDS_WITH_STOP_WORDS = ["stop the music", "jarvis stop the music", "stop the timer", "please stop"]
+
+
+@pytest.mark.parametrize("heard", COMMANDS_WITH_STOP_WORDS)
+def test_a_command_holding_a_stop_word_goes_to_the_judge_while_jarvis_speaks(heard):
+    listener, tts = _speaking_listener("Here is the weather for the rest of the week in London.")
+    judge = _install_intent_judge(listener, _make_judgment(directed=False, confidence="low"))
+    queued_reply = threading.Event()
+    listener._pending_replies = (queued_reply,)
+
+    _hear_captured_during_tts(listener, heard, started_ago=0.8, ended_ago=0.1)
+
+    tts.interrupt.assert_not_called()
+    assert not queued_reply.is_set()
+    assert judge.judge.called, "the utterance never reached the intent judge"
+    listener.state_manager.stop()
+
+
+@pytest.mark.parametrize("heard", COMMANDS_WITH_STOP_WORDS)
+def test_a_command_holding_a_stop_word_after_playback_cancels_nothing(heard):
+    listener, _tts = _speaking_listener("Here is the weather for the rest of the week in London.",
+                                        speaking=False)
+    queued_reply = threading.Event()
+    listener._pending_replies = (queued_reply,)
+    listener.activate_hot_window()
+
+    _hear_captured_during_tts(listener, heard, started_ago=0.8, ended_ago=0.1)
+
+    assert not queued_reply.is_set()
+    if heard.startswith("jarvis"):
+        assert listener.state_manager.get_pending_query() == heard.removeprefix("jarvis ")
+    else:
+        time.sleep(0.15)
+        assert listener.state_manager.is_hot_window_active()
+    listener.state_manager.stop()
+
+
+@pytest.mark.parametrize("heard", ["jarvis stop the music", "jarvis stop the timer"])
+def test_an_addressed_command_holding_a_stop_word_does_not_cancel_the_reply_being_generated(heard):
+    listener, _tts = _create_listener()
+    generating = threading.Event()
+    listener._pending_replies = (generating,)
+    now = time.time()
+
+    listener._process_transcript(heard, 0.01, now - 1.0, now - 0.5,
+                                 captured_during_tts=False, captured_tts_start_time=0.0)
+
+    assert not generating.is_set()
+    listener.state_manager.stop()
+
+
+def test_the_judge_can_still_hear_a_polite_stop_while_jarvis_speaks():
+    listener, tts = _speaking_listener("Here is the weather for the rest of the week in London.")
+    _install_intent_judge(listener, _make_judgment(directed=True, stop=True))
+
+    _hear_captured_during_tts(listener, "please stop", started_ago=0.8, ended_ago=0.1)
 
     tts.interrupt.assert_called()
     listener.state_manager.stop()
