@@ -1,6 +1,6 @@
-# Gestures: hand tracking
+# Gestures: hand tracking and the air mouse
 
-Webcam hand tracking that turns camera frames into hand landmarks for gesture control. This spec covers the hand-tracking pipeline, landmark recordings and the diagnostic command. Gestures are built on the `HandFrame` stream it produces.
+Webcam hand tracking that turns camera frames into hand landmarks for gesture control. This spec covers the hand-tracking pipeline, landmark recordings, the diagnostic command and the air mouse, which drives the pointer from the user's hand. Gestures are built on the `HandFrame` stream the pipeline produces.
 
 ## Principles
 
@@ -17,6 +17,10 @@ Webcam hand tracking that turns camera frames into hand landmarks for gesture co
 | `gestures/hand_tracking.py` | Data model (`Landmark`, `Point`, `Hand`, `HandFrame`), the MediaPipe adapter, the OpenCV camera and `HandTracker` |
 | `gestures/recording.py` | Writing a `HandFrame` stream to a JSON Lines file and reading it back |
 | `gestures/__main__.py` | `python -m jarvis.gestures`: the diagnostic command |
+| `gestures/air_mouse.py` | The air mouse's pure gesture model: hand measures (pinch, open palm), the One Euro filter, desktop clamping and `AirMouse`, which turns `HandFrame`s into pointer moves and button presses |
+| `gestures/air_mouse_service.py` | `AirMouseService`: one `HandTracker`, one `AirMouse` and a watchdog, started and stopped together |
+| `tools/builtin/gesture_control.py` | The `gestureControl` tool: start, stop and status, wiring the service to the Windows pointer |
+| `platform/windows/pointer.py` | The Windows pointer output: monitor rectangles, cursor position and left button (see `platform/windows/windows.spec.md`) |
 | `utils/model_files.py` | Downloading a model file once and verifying it against a pinned SHA-256 (shared with face tracking) |
 
 ## Data model
@@ -85,8 +89,105 @@ Recordings capture landmark streams for building and testing gesture logic witho
 `python -m jarvis.gestures` shows the pipeline's output so tracking can be checked on the real webcam.
 
 - **Live (default):** `--camera N` (default 0) starts a `HandTracker` and prints a status line about once a second: frames per second, and for each hand its side, confidence and index fingertip position (or that it is waiting while no frame has arrived yet). It also prints when hands appear and disappear. `--seconds S` stops after `S` seconds; otherwise Ctrl+C stops it. `--record PATH` also writes a recording.
+- **Air mouse:** `--air-mouse` runs the air mouse on the real pointer (Windows only) with the thresholds from the user's config file, whether or not `air_mouse_enabled` is on, so it can be tried and tuned without restarting Jarvis. The camera is `--camera N` when given, otherwise `air_mouse_camera`. It prints the same on and off lines as the tool and, about once a second, the frame rate, the side of the hand in view, its pinch ratio and whether it reads as an open palm, to help choose the thresholds. `--seconds` or Ctrl+C stop it, and stopping always releases the button and the camera. `--record PATH` also writes a recording.
 - **Photo:** `--image PATH` runs detection once on a photo, treated as a camera frame (so it is mirrored), prints what was found and exits.
 - Failures to start print the same one-time reason as `start()` and exit with status 1.
+
+## Air mouse
+
+The air mouse moves the pointer with the user's index fingertip and clicks and drags with a pinch, so the PC can be used from a distance without touching the mouse.
+
+### Input from the user's own hand: an exception to "Jarvis never synthesises input"
+
+Jarvis's automation never moves the pointer or sends mouse input on its own (`platform/windows/ui_automation.spec.md`): it acts through UI Automation patterns, never through coordinates. The air mouse is a deliberate exception, and a narrow one. It is not Jarvis acting: it is an input device, like a trackpad, that the user drives directly with their own hand in real time. Every pointer move and button press comes from a hand movement the camera saw a fraction of a second earlier; no model, tool result, routine or other code chooses a position or a click. Nothing outside `AirMouse` sends pointer input, and `AirMouse` sends it only from `HandFrame`s while the user has the mode on. The Windows code that injects the input (`platform/windows/pointer.py`) is used by the air mouse only and offers no tool action that moves or clicks at a given place.
+
+### Turning it on and off
+
+- **Off by default.** `air_mouse_enabled` (default `false`, Settings > Air Mouse) offers the `gestureControl` tool and its fast-path phrases. With it off the tool is not registered, nothing can start the camera for the air mouse, and the phrases fall through to the model, which has no tool for them.
+- **Started only when asked.** The setting does not start the camera. The user starts the mode by voice or text ("start gesture control", "turn on the air mouse") and stops it the same way ("stop gesture control"). Both go through `gestureControl`, the normal tool path and central safety. Both actions are routine (`SAFE`), so the phrases are fast-routed. The camera runs only while the mode is on.
+- **Windows only.** The tool is registered only on Windows, where the pointer output exists.
+- **Not offered to cloud models.** `gestureControl` is never in a Codex or Claude tool snapshot (`bridge/bridge.spec.md`): a cloud model cannot turn the camera on. The fast-path phrases work in every reply mode because the fast path runs before any bridge.
+- **Stop always releases.** `stop()` releases the left button if the air mouse pressed it, then stops the hand tracker, which releases the camera. It is safe to call at any time and returns once both are done. The daemon calls it on shutdown, and the service also registers it to run when the process exits, so a held button is released on every way out.
+
+### Gestures
+
+| Gesture | Effect |
+|---|---|
+| Point (index finger out, other fingers curled or relaxed) and move | The pointer follows the index fingertip (landmark 8) |
+| Open palm (index, middle, ring and little fingers all extended) | Clutch: the pointer stays where it is, so the hand can be moved back to a comfortable spot |
+| Hand out of view | Clutch, as for an open palm |
+| Quick pinch (thumb tip to index tip, released within `air_mouse_hold_ms`) | Left click where the pointer was when the pinch began |
+| Held pinch (longer than `air_mouse_hold_ms`) | Left button down where the pinch began, then the pointer follows the hand with the button held (drag); opening the pinch releases the button where the pointer is. Dragging a title bar moves the window |
+
+Only one hand drives the pointer. `air_mouse_hand` chooses it: `right`, `left` or `any` (default). With `any`, the hand already in use keeps control while it is in view; otherwise the hand with the highest confidence is used.
+
+### Measures
+
+All measures use the `world` landmarks (metres), so they do not change with the hand's distance from the camera.
+
+- **Hand size** is the distance from the wrist (0) to the middle finger's base (`MIDDLE_MCP`, 9).
+- **Pinch ratio** is the distance from the thumb tip (4) to the index tip (8) divided by the hand size.
+- **A finger is extended** when its tip is farther from the wrist than its middle joint (PIP) by a factor of more than 1.2. An **open palm** has all four fingers extended.
+
+### Pinch: hysteresis and debounce
+
+- A pinch starts when the pinch ratio stays below `air_mouse_pinch_start` (default 0.25) for `air_mouse_debounce_ms` (default 50 ms), and ends when it stays above `air_mouse_pinch_release` (default 0.40) for the same time. Between the two thresholds the pinch keeps its state, so a ratio that hovers near one threshold cannot flicker a click.
+- `air_mouse_pinch_release` must be greater than `air_mouse_pinch_start`; a configuration where it is not is corrected on load to `air_mouse_pinch_start + 0.1`.
+- **The click target is frozen.** As soon as the pinch ratio falls below `air_mouse_pinch_release` (the fingers closing in), the pointer stops at its current position, the anchor. It stays there until the fingers open again without a pinch, a click is sent at the anchor, or a drag starts from the anchor. The fingers' own movement while pinching or letting go therefore never moves the click target. During a drag the pointer also stays still while a release is being confirmed, so letting go does not shift the drop point.
+- A pinch released before `air_mouse_hold_ms` (default 350 ms, timed from the start of the pinch) is a click: the pointer is put at the anchor and the left button is pressed and released. A pinch held that long presses the left button at the anchor and the drag begins.
+
+### Moving the pointer
+
+- **Comfort box.** The pointer moves like a mouse or trackpad: each fingertip movement moves the pointer by the same movement scaled up. The scale is set so that moving the fingertip across `air_mouse_comfort_box` of the camera's width (default 0.5, half of it) carries the pointer across the whole virtual desktop, from the left edge of the leftmost monitor to the right edge of the rightmost. Up and down use the same scale, so a movement has the same size in every direction; the comfort box's height follows the desktop's shape. Small arm movements therefore cover every monitor.
+- **Starting point.** When the hand starts driving the pointer (on starting the mode, after a clutch or after the hand returns) the pointer continues from where it is, read from the system, so it never jumps, and moving the real mouse in between is respected.
+- **Smoothing.** The fingertip position (scaled to desktop pixels) is smoothed with a One Euro filter: strong smoothing when the hand is still, little lag when it moves fast. `air_mouse_smoothing` (default 1.0) is the filter's minimum cutoff in hertz (lower is steadier but slower) and `air_mouse_speed_response` (default 0.005) its speed coefficient (higher reacts faster during quick movements). The filter restarts when the hand is lost.
+- **Bounds.** The pointer is kept inside the desktop: a position outside every monitor is moved to the nearest point of the nearest monitor, so on desktops whose monitors do not form a rectangle the pointer never lands in a gap. Pushing against an edge works like a mouse: moving back starts moving the pointer straight away. The monitor layout is read when the mode starts.
+
+### Losing the hand
+
+- A frame without the driving hand stops the pointer. If the hand stays out of view for 0.25 s the air mouse returns to the clutch state: a pinch in progress is cancelled without a click, and a held button is released.
+- The air mouse never relies on frames arriving to release the button. A watchdog thread checks every 50 ms and releases a held button once no frame with the hand has arrived for 0.25 s, so a camera that stops, unplugs or freezes cannot leave the button down.
+
+### `AirMouse` and `AirMouseService`
+
+- **`AirMouse(output, settings, clock)`** is the gesture model. `output` is the pointer output (`desktop()` returning monitor rectangles `(left, top, right, bottom)` with exclusive right and bottom edges, `position()`, `move_to(x, y)`, `press()` and `release()`); tests use a fake. `on_frame(frame)` handles one `HandFrame`, `tick()` runs the watchdog check, and `close()` releases a held button. It is thread safe: frames arrive on the detection thread, ticks on the watchdog thread and `close` on whichever thread stops the mode.
+- **`AirMouseService(cfg, output_factory, tracker_factory=HandTracker)`** owns one tracker, one `AirMouse` and the watchdog thread. `start()` reads the monitors, starts the tracker on `air_mouse_camera` (default 0) and subscribes the air mouse; it returns `True` when running and `False` (with the tracker's one-line reason on the console) when tracking cannot start, in which case nothing is left running. `stop()` is described above. `running` says whether the mode is on. A failure from the pointer output is reported once on the console and logged; the air mouse keeps running and tries again on the next frame.
+- One service exists per daemon (`air_mouse_service.get_service`).
+
+### The `gestureControl` tool
+
+| Action | Behaviour |
+|---|---|
+| `start` | Starts the air mouse. Reports success with a one-line reminder of the gestures, or that it was already on, or why it could not start (hand tracking unavailable, camera busy) |
+| `stop` | Stops it, releasing the button and the camera. Reports that it is off (also when it was already off) |
+| `status` | Whether the air mouse is on |
+
+Console output: `🖐️ Air mouse on` with the gestures indented below, and `🖐️ Air mouse off`.
+
+### Fast path
+
+The `gesture_control` family in `fastpath/phrases/<language>.json` maps whole utterances such as "start gesture control", "turn on the air mouse", "stop gesture control" and "turn off the air mouse" to `gestureControl` `start` and `stop` (`fastpath/fastpath.spec.md`). It is available only while the tool is registered.
+
+### Privacy and logs
+
+The air mouse adds nothing that leaves the machine and nothing written to disk. Debug logs (category `gestures`) mark starting and stopping, clutch, click, drag start and drag release, and a button released because the hand was lost or the mode stopped. They never contain coordinates, pinch values or anything about the screen.
+
+### Settings
+
+| Key | Default | Meaning |
+|---|---|---|
+| `air_mouse_enabled` | `false` | Offer the air mouse (the camera still starts only when asked) |
+| `air_mouse_camera` | `0` | Webcam index |
+| `air_mouse_hand` | `any` | `any`, `right` or `left` |
+| `air_mouse_comfort_box` | `0.5` | Fraction of the camera's width that spans the whole desktop (0.15 to 1.0) |
+| `air_mouse_pinch_start` | `0.25` | Pinch ratio below which a pinch starts (0.05 to 1.0) |
+| `air_mouse_pinch_release` | `0.40` | Pinch ratio above which a pinch ends (0.1 to 1.5, greater than the start) |
+| `air_mouse_debounce_ms` | `50` | How long a pinch or release must last to count (0 to 500 ms) |
+| `air_mouse_hold_ms` | `350` | A pinch held this long drags; a shorter one clicks (100 to 2000 ms) |
+| `air_mouse_smoothing` | `1.0` | One Euro minimum cutoff in hertz (0.05 to 10) |
+| `air_mouse_speed_response` | `0.005` | One Euro speed coefficient (0 to 0.1) |
+
+Values outside the range are clamped on load; values of the wrong type use the default. All are shown in Settings > Air Mouse. Changes take effect after Jarvis restarts.
 
 ## Dependencies
 
@@ -95,4 +196,5 @@ Recordings capture landmark streams for building and testing gesture logic witho
 ## Tests
 
 - **Unit** (`tests/test_hand_tracking.py`, `tests/test_hand_recording.py`, `tests/test_model_files.py`): the pipeline against a fake camera and a fake detector (delivery order, newest-frame-only, failing subscribers, camera failure and recovery, start-up failures, stop releasing the camera), recordings round-tripping, and the model file helper.
+- **Air mouse** (`tests/test_air_mouse.py`, `tests/test_air_mouse_service.py`, `tests/test_gesture_control_tool.py`, `tests/test_windows_pointer.py`): the gesture model on synthetic `HandFrame`s against a fake pointer output (pinch hysteresis and debounce, click versus drag, the frozen anchor, clutch, the button released on hand loss and by the watchdog, the comfort-box scale and bounds across several monitors), the service and tool against a fake tracker, and the Windows pointer's input encoding without sending input. Recorded clips in `tests/fixtures/gestures/` are replayed through `read_recording` to check that real pinches click and real pointing moves the pointer.
 - **Integration** (`tests/test_hand_tracking_mediapipe.py`): the real model on photos of hands from MediaPipe's test assets in `tests/fixtures/hands/`. Skipped when MediaPipe or the cached model is missing; tests never download.

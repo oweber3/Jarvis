@@ -56,3 +56,41 @@ class TestLive:
 
         assert cli.main(["--seconds", "0.2"], make_tracker=broken) == 1
         assert "mediapipe" in capsys.readouterr().out.lower()
+
+
+def _pinching_tracker(camera_index):
+    from tests.synthetic_hands import hand
+    tracker = HandTracker(camera_index, hands_factory=lambda: lambda frame, t: (hand(0.5, 0.5, pinch=0.1),),
+                          camera_factory=lambda index: _Camera(), max_fps=50)
+    return tracker
+
+
+@pytest.mark.unit
+class TestAirMouse:
+    def test_the_air_mouse_runs_reports_the_pinch_and_lets_go_when_it_stops(self, capsys):
+        from tests.synthetic_hands import FakePointer
+        pointer = FakePointer()
+        made = []
+
+        def tracker(camera_index):
+            made.append(camera_index)
+            return _pinching_tracker(camera_index)
+
+        assert cli.main(["--air-mouse", "--camera", "3", "--seconds", "1.3"], make_tracker=tracker,
+                        make_pointer=lambda: pointer) == 0
+        out = capsys.readouterr().out
+        assert made == [3]
+        assert "Air mouse on" in out and "pinch 0.10" in out and "Air mouse off" in out
+        assert pointer.buttons() and not pointer.down  # the held pinch pressed, stopping released
+
+    def test_an_air_mouse_that_cannot_start_exits_with_an_error(self, capsys):
+        from tests.synthetic_hands import FakePointer
+
+        def no_mediapipe():
+            raise ImportError("No module named 'mediapipe'")
+
+        def broken(camera_index):
+            return HandTracker(camera_index, hands_factory=no_mediapipe, camera_factory=lambda index: _Camera())
+
+        assert cli.main(["--air-mouse", "--seconds", "0.2"], make_tracker=broken, make_pointer=FakePointer) == 1
+        assert "could not start" in capsys.readouterr().out

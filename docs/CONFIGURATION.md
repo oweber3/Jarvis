@@ -290,6 +290,27 @@ A workspace is a named desk set-up that Jarvis opens in one go: "open my study w
 
 Spec: `src/jarvis/devices/roku.spec.md`.
 
+### Air mouse
+
+The air mouse moves the pointer with your hand through the webcam. It is off by default: turn on **Allow Air Mouse** in Settings → Air Mouse (`air_mouse_enabled`) and restart Jarvis. That only makes it available; the camera turns on when you say "start gesture control" (or "turn on the air mouse") and off when you say "stop gesture control".
+
+- **Point** with your index finger to move the pointer. Moving your fingertip across the comfort box (half the camera's width by default) crosses the whole desktop, every monitor included, so small arm movements are enough.
+- **Pinch** your thumb and index fingertips together and let go quickly to click. **Hold** the pinch to press and drag (drag a title bar to move a window); open the pinch to drop.
+- **Open your hand**, or take it out of view, to pause the pointer and move your hand back to a comfortable spot.
+- If your hand disappears during a drag, or Jarvis stops, the button is released.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `air_mouse_camera` | `0` | Webcam index (`python -m jarvis.gestures --camera N` tries one) |
+| `air_mouse_hand` | `any` | `any`, `right` or `left` |
+| `air_mouse_comfort_box` | `0.5` | Share of the camera's width that spans the whole desktop; smaller is more sensitive |
+| `air_mouse_pinch_start` / `air_mouse_pinch_release` | `0.25` / `0.40` | Thumb-to-index distance, as a share of hand size, that starts and ends a pinch |
+| `air_mouse_debounce_ms` | `50` | How long a pinch or release must last to count |
+| `air_mouse_hold_ms` | `350` | A pinch held this long drags; shorter clicks |
+| `air_mouse_smoothing` / `air_mouse_speed_response` | `1.0` / `0.005` | Steadiness when still, and how fast smoothing gives way when you move quickly |
+
+Hand tracking runs on this PC with MediaPipe; frames are never stored and nothing is sent anywhere. Codex and Claude modes cannot turn the camera on. Spec: `src/jarvis/gestures/gestures.spec.md`.
+
 ### Safety and Confirmation Policy
 
 Tool actions follow a centralised safety policy in `src/jarvis/tools/confirmation.py`:

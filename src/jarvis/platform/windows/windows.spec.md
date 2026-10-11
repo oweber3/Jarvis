@@ -1,12 +1,12 @@
 # Windows control spec
 
-Native Windows control is two layers. `jarvis.platform.windows` holds OS functions and knows nothing about tools, the reply engine or the LLM. `jarvis.tools.builtin.windows` holds thin `Tool` adapters that turn those functions into the strings the model sees. This spec covers audio, media, system information, Windows Settings pages, display brightness, power plans, the default audio output and keyboard and clipboard input. Applications, windows, virtual desktops and paths are in `apps_paths.spec.md`.
+Native Windows control is two layers. `jarvis.platform.windows` holds OS functions and knows nothing about tools, the reply engine or the LLM. `jarvis.tools.builtin.windows` holds thin `Tool` adapters that turn those functions into the strings the model sees. This spec covers audio, media, system information, Windows Settings pages, display brightness, power plans, the default audio output, keyboard and clipboard input, and the pointer output the air mouse drives. Applications, windows, virtual desktops and paths are in `apps_paths.spec.md`.
 
 ## Boundaries
 
 - `platform.windows` imports nothing from `jarvis.tools`, `jarvis.reply` or `jarvis.llm`.
 - OS libraries (`pycaw`, `comtypes`, `winrt`, `pyvda`, `pywin32`) are imported lazily inside functions, so both layers import on any platform. Tools are added to `BUILTIN_TOOLS` only when `sys.platform == "win32"`.
-- Every blocking OS call runs on a daemon worker thread with a hard timeout (`_bounded.run_bounded`). A hung COM or WinRT call surfaces as an error; it never blocks the listener thread. The clipboard actions are bounded to 3 seconds (a hung owner can block `GetClipboardData`). The one exception is sending a hotkey: `SendInput` returns at once, and abandoning a worker part way through a chord could leave a modifier held, so it runs on the calling thread.
+- Every blocking OS call runs on a daemon worker thread with a hard timeout (`_bounded.run_bounded`). A hung COM or WinRT call surfaces as an error; it never blocks the listener thread. The clipboard actions are bounded to 3 seconds (a hung owner can block `GetClipboardData`). The exceptions are sending a hotkey and the air mouse's pointer output: `SendInput` and `SetCursorPos` return at once, and abandoning a worker part way through a chord or between a button press and its release could leave a key or button held, so they run on the calling thread.
 - COM is initialised on the worker thread that uses it. Temporary COM interface and device objects are explicitly closed and dropped before garbage collection and `CoUninitialize()`, guaranteeing valid teardown ordering even on exceptions.
 - Tools return raw facts. Wording, tone and spoken formatting belong to the unified system prompt.
 - All tools in this spec are routine local actions and need no confirmation, with two exceptions: an `inputControl` hotkey that closes or deletes (see below) needs voice confirmation, and `uiControl` (`ui_automation.spec.md`) needs voice confirmation to act on a control named for an irreversible action and denies typing into or reading a password field.
@@ -94,6 +94,15 @@ One tool for settings that sit behind the Windows Settings app and a few OS cont
 - **Safety.** A chord that contains any destructive pattern (`alt+f4`, `ctrl+w`, `ctrl+f4`, `ctrl+q`, `ctrl+d` (moves the selection to the Recycle Bin in File Explorer, so the browser bookmark shortcut also asks first), `shift+delete`, `delete`, `ctrl+shift+delete`, `win+ctrl+f4`), whatever the key order, is classed `CONFIRM_VOICE` with the chord named in the confirmation's action (a key name is not a target path), whatever casing or padding the `action` argument has, so it is never fast-routed and runs only after confirmation. Other hotkeys and both clipboard actions are routine.
 - The clipboard sits behind a backend interface so tests never touch the real clipboard. Reading it can expose whatever the user last copied to the reply model, which is why the result is redacted.
 - The clipboard's content type (`files`, `text`, `image`, `other` or `empty`) is recorded as a desktop referent (`memory/desktop_referents.spec.md`) after `clipboard_write` and `clipboard_read`, and after a hotkey once the clipboard's change counter shows it changed. The type comes from the formats Windows lists (`IsClipboardFormatAvailable`, `GetClipboardSequenceNumber`): the clipboard is not opened and its data is not read for this, and nothing waits after the chord.
+
+## Pointer output for the air mouse
+
+`platform/windows/pointer.py` is the output the air mouse drives (`gestures/gestures.spec.md`, Air mouse). It is not a tool and has no action that moves or clicks at a place chosen by anything other than the user's hand: the air mouse is its only caller.
+
+- `WindowsPointer.desktop()` returns the monitor rectangles from `displays.list_monitors()` in physical pixels.
+- `position()` and `move_to(x, y)` use `GetCursorPos` and `SetCursorPos` inside `displays.per_monitor_dpi()`, so coordinates are physical pixels on every monitor whatever their scaling, without changing the process's DPI mode.
+- `press()` and `release()` send one left-button down or up event with `SendInput` at the current pointer position. When the user has swapped the primary and secondary buttons (`SM_SWAPBUTTON`), the right-button events are sent instead, so the press is always the primary click the user expects. A refused event (a higher-privilege window under the pointer) raises `OSError`.
+- Like a hotkey, these calls run on the calling thread rather than a bounded worker: they return at once, and abandoning a worker between a press and its release could leave the button held.
 
 ## Dependencies
 

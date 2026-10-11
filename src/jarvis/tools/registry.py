@@ -107,6 +107,22 @@ def configure_activity_log_tool(cfg, *, platform=None):
         BUILTIN_TOOLS['activityLog'] = ActivityLogTool()
 
 
+def configure_gesture_tool(cfg, *, platform=None):
+    """Offer ``gestureControl`` (the air mouse) only on Windows when ``air_mouse_enabled`` is on.
+
+    The service is created here with the Windows pointer as its output; the camera starts only when asked."""
+    from ..gestures import air_mouse_service
+    BUILTIN_TOOLS.pop('gestureControl', None)
+    if (platform or sys.platform) != 'win32' or getattr(cfg, 'air_mouse_enabled', False) is not True:
+        air_mouse_service.stop_service()
+        return
+    from ..platform.windows.pointer import WindowsPointer
+    from .builtin.gesture_control import GestureControlTool
+    if air_mouse_service.get_service() is None:
+        air_mouse_service.set_service(air_mouse_service.AirMouseService(cfg, output_factory=WindowsPointer))
+    BUILTIN_TOOLS['gestureControl'] = GestureControlTool()
+
+
 def configure_tv_tool(cfg, *, warm=True):
     """Offer ``tvControl`` only when ``roku_host`` is a private network address.
 

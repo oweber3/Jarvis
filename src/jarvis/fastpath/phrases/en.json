@@ -1075,6 +1075,56 @@
       ]
     },
     {
+      "id": "gesture_control.start",
+      "family": "gesture_control",
+      "tool": "gestureControl",
+      "args": {
+        "action": "start"
+      },
+      "reply": null,
+      "phrases": [
+        "start gesture control",
+        "turn on gesture control",
+        "turn gesture control on",
+        "switch on gesture control",
+        "enable gesture control",
+        "gesture control on",
+        "start the air mouse",
+        "start air mouse",
+        "turn on the air mouse",
+        "turn the air mouse on",
+        "turn on air mouse",
+        "switch on the air mouse",
+        "enable the air mouse",
+        "enable air mouse"
+      ]
+    },
+    {
+      "id": "gesture_control.stop",
+      "family": "gesture_control",
+      "tool": "gestureControl",
+      "args": {
+        "action": "stop"
+      },
+      "reply": null,
+      "phrases": [
+        "stop gesture control",
+        "turn off gesture control",
+        "turn gesture control off",
+        "switch off gesture control",
+        "disable gesture control",
+        "gesture control off",
+        "stop the air mouse",
+        "stop air mouse",
+        "turn off the air mouse",
+        "turn the air mouse off",
+        "turn off air mouse",
+        "switch off the air mouse",
+        "disable the air mouse",
+        "disable air mouse"
+      ]
+    },
+    {
       "id": "tv.power_on",
       "family": "tv",
       "tool": "tvControl",
