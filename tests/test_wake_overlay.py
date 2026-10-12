@@ -8,9 +8,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from desktop_app.orb_widget import OrbState  # noqa: E402
 from desktop_app.wake_overlay import (  # noqa: E402
+    FRAME_FAST_MS,
+    FRAME_STEADY_MS,
     MAX_UNCHANGED_S,
     OverlayModel,
+    ToneFade,
     edge_strips,
+    frame_interval_ms,
     frame_thickness,
     screens_to_cover,
 )
@@ -191,6 +195,113 @@ class TestPulse:
         assert model.look_state is OrbState.THINKING
 
 
+class TestFollowsTheClock:
+    """The animation runs on elapsed time, so a late frame lands where steady frames would."""
+
+    @pytest.mark.parametrize("late", [0.12, 0.2])
+    def test_a_late_frame_lands_where_steady_frames_would(self, late):
+        steady, delayed = _woken(), _woken()
+        for model in (steady, delayed):
+            _run(model, 2.6, 0.0)
+        for _ in range(round(late / 0.02)):
+            steady.step(0.02, 0.0)
+        delayed.step(late, 0.0)
+        assert abs(delayed.breath - steady.breath) < 0.05
+        assert abs(delayed.intensity - steady.intensity) < 0.05
+
+    def test_the_picture_does_not_depend_on_the_frame_rate(self):
+        slow, fast = _woken(), _woken()
+        for _ in range(20):
+            slow.step(1 / 15, 0.0)
+        for _ in range(60):
+            fast.step(1 / 45, 0.0)
+        assert abs(slow.intensity - fast.intensity) < 0.05
+        assert abs(slow.presence - fast.presence) < 0.01
+
+    def test_a_stall_far_beyond_a_frame_never_runs_the_wake_beats_ahead_of_the_screen(self):
+        model = _woken()
+        model.step(5.0, 0.0)   # the machine slept: not a quarter of the way through the beats
+        assert 0.0 <= model.pulse <= 1.0
+        assert model.time < 1.0
+
+
+class TestFrameCadence:
+    """Frames come quickly while the light changes fast and gently once it only breathes."""
+
+    def test_the_wake_beats_get_the_fast_cadence_and_breathing_the_steady_one(self):
+        model = _woken()
+        model.step(1 / 30, None)
+        assert frame_interval_ms(model) == FRAME_FAST_MS
+        _run(model, 4, 0.0)
+        assert frame_interval_ms(model) == FRAME_STEADY_MS
+
+    def test_fading_out_gets_the_fast_cadence(self):
+        model = _woken()
+        _run(model, 4, 0.0)
+        model.disengage()
+        model.step(1 / 30, None)
+        assert frame_interval_ms(model) == FRAME_FAST_MS
+
+    def test_the_fast_cadence_is_faster(self):
+        assert FRAME_FAST_MS < FRAME_STEADY_MS
+
+
+class TestToneFade:
+    """The glow changes colour by cross-fading to a palette that is ready, never by re-tinting mid-frame."""
+
+    A = ("#22d3ee", "#3b82f6")
+    B = ("#818cf8", "#38bdf8")
+
+    def _weights(self, fade):
+        return {palette: weight for palette, weight in fade.tones}
+
+    def test_it_starts_on_one_palette(self):
+        fade = ToneFade(self.A)
+        assert fade.tones == [(self.A, 1.0)]
+        assert fade.wanted is None
+
+    def test_a_new_palette_is_asked_for_and_nothing_changes_until_it_is_ready(self):
+        fade = ToneFade(self.A)
+        fade.retarget(self.B)
+        assert fade.wanted == self.B
+        for _ in range(30):
+            fade.step(1 / 30, ready=False)
+        assert fade.tones == [(self.A, 1.0)]
+
+    def test_once_ready_it_cross_fades_smoothly_and_completes_quickly(self):
+        fade = ToneFade(self.A)
+        fade.retarget(self.B)
+        seen = []
+        for _ in range(60):
+            fade.step(1 / 60, ready=True)
+            weights = self._weights(fade)
+            assert sum(weights.values()) == pytest.approx(1.0)
+            seen.append(weights.get(self.B, 0.0))
+        assert seen == sorted(seen)                                 # only ever towards the new palette
+        assert max(b - a for a, b in zip(seen, seen[1:])) < 0.2     # no jump between frames
+        assert fade.tones == [(self.B, 1.0)]
+        assert fade.wanted is None
+
+    def test_a_change_during_a_fade_waits_for_it_to_finish(self):
+        fade = ToneFade(self.A)
+        fade.retarget(self.B)
+        fade.step(0.1, ready=True)
+        fade.retarget(self.A)
+        before = self._weights(fade).get(self.B, 0.0)
+        for _ in range(60):
+            fade.step(1 / 60, ready=True)
+            assert self._weights(fade).get(self.B, 0.0) >= 0.0
+        assert before > 0.0
+        assert fade.tones == [(self.A, 1.0)]
+
+    def test_retargeting_the_palette_already_shown_changes_nothing(self):
+        fade = ToneFade(self.A)
+        fade.retarget(self.A)
+        assert fade.wanted is None
+        fade.step(0.5, ready=False)
+        assert fade.tones == [(self.A, 1.0)]
+
+
 class TestGeometry:
     @pytest.mark.parametrize("size", [(2560, 1440), (1080, 1920), (800, 600), (3840, 2160)])
     def test_strips_frame_the_edges_and_leave_the_middle_clear(self, size):
@@ -243,8 +354,7 @@ class TestPainter:
         layer = QImage(self.W, t, QImage.Format.Format_ARGB32_Premultiplied)
         layer.fill(Qt.GlobalColor.transparent)
         p = QPainter(layer)
-        colour, accent = state_colours(model.look_state)
-        FramePainter(self.W, self.H, (0, 0, self.W, t)).paint(p, model, QColor(colour), QColor(accent))
+        FramePainter(self.W, self.H, (0, 0, self.W, t)).paint(p, model, [(state_colours(model.look_state), 1.0)])
         p.end()
         image = QImage(self.W, t, QImage.Format.Format_ARGB32_Premultiplied)
         image.fill(QColor(backdrop))
@@ -279,17 +389,116 @@ class TestPainter:
         assert high[1] > low[1] + 20
 
     def test_an_unchanged_frame_is_not_repainted(self, qapp):
-        from PyQt6.QtGui import QColor
+        from desktop_app.orb_widget import state_colours
         from desktop_app.wake_overlay import FramePainter
 
         model = _woken()
         _run(model, 2)
         band = FramePainter(self.W, self.H, (0, 0, self.W, 80))
-        colour = QColor("#22d3ee")
-        assert band.needs_repaint(model, colour, colour)
-        assert not band.needs_repaint(model, colour, colour)
-        model.step(1.0 / 30, None)
-        assert band.needs_repaint(model, colour, colour)
+        tones = [(state_colours(OrbState.LISTENING), 1.0)]
+        assert band.needs_repaint(model, tones)
+        assert not band.needs_repaint(model, tones)
+        _run(model, 0.4)
+        assert band.needs_repaint(model, tones)
+
+    def test_a_change_of_palette_is_repainted(self, qapp):
+        from desktop_app.orb_widget import state_colours
+        from desktop_app.wake_overlay import FramePainter
+
+        model = _woken()
+        _run(model, 2)
+        band = FramePainter(self.W, self.H, (0, 0, self.W, 80))
+        assert band.needs_repaint(model, [(state_colours(OrbState.LISTENING), 1.0)])
+        assert band.needs_repaint(model, [(state_colours(OrbState.THINKING), 1.0)])
+
+    def test_a_barely_changing_glow_is_not_repainted_every_frame(self, qapp):
+        """Near the top and bottom of a breath the picture holds still: those frames cost nothing."""
+        from desktop_app.orb_widget import state_colours
+        from desktop_app.wake_overlay import FramePainter
+
+        model = _woken()
+        _run(model, 3, 0.0)
+        band = FramePainter(self.W, self.H, (0, 0, self.W, 80))
+        tones = [(state_colours(OrbState.LISTENING), 1.0)]
+        repainted = 0
+        frames = 30 * 12   # four breaths of the listening rhythm
+        for _ in range(frames):
+            model.step(1.0 / 30, 0.0)
+            repainted += band.needs_repaint(model, tones)
+        assert repainted < frames * 0.9
+
+    def test_it_is_ready_once_its_glow_is_rendered_and_painting_then_renders_nothing_more(self, qapp):
+        from desktop_app.orb_widget import state_colours
+        from desktop_app.wake_overlay import FramePainter
+
+        palette = state_colours(OrbState.LISTENING)
+        band = FramePainter(self.W, self.H, (0, 0, self.W, 80))
+        assert not band.is_ready(palette)
+        steps = 0
+        while not band.prepare_next(palette):
+            steps += 1
+            assert steps < 10
+        assert band.is_ready(palette)
+        assert band.prepare_next(palette)   # nothing left to do
+
+    def test_an_unprepared_band_still_paints(self, qapp):
+        model = _woken()
+        _run(model, 3, 0.0)
+        image = self._frame_over("#000000", model)
+        assert self._difference(image, "#000000", self.W // 2, 2) > 90
+
+    def test_scanlines_cut_every_third_row_of_the_glow(self, qapp):
+        model = _woken()
+        _run(model, 3, 0.0)
+        image = self._frame_over("#000000", model)
+
+        def lit(y):
+            return self._difference(image, "#000000", 400, y)
+
+        # Rows 0, 3, 6... are the cut ones: the glow there is dimmer than on the rows beside them.
+        cut = range(3, 21, 3)   # further in the glow is too faint for single steps to show
+        assert all(lit(y) < lit(y - 1) and lit(y) < lit(y + 1) for y in cut)
+
+    def test_two_tones_alternate_round_the_screen(self, qapp):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QColor, QImage, QPainter
+        from desktop_app.wake_overlay import FramePainter
+
+        model = _woken()
+        _run(model, 3, 0.0)
+        palette = ("#ff0000", "#0000ff")
+        t = frame_thickness(self.W, self.H)
+        layer = QImage(self.W, t, QImage.Format.Format_ARGB32_Premultiplied)
+        layer.fill(Qt.GlobalColor.transparent)
+        p = QPainter(layer)
+        FramePainter(self.W, self.H, (0, 0, self.W, t)).paint(p, model, [(palette, 1.0)])
+        p.end()
+        centre, corner = layer.pixelColor(self.W // 2, 2), layer.pixelColor(20, 2)
+        assert centre.red() > centre.blue()     # the colour at the middle of the top edge
+        assert corner.blue() > corner.red()     # the accent towards the corner
+
+    def test_cross_fading_two_palettes_keeps_the_glow_about_as_strong(self, qapp):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QImage, QPainter
+        from desktop_app.orb_widget import state_colours
+        from desktop_app.wake_overlay import FramePainter
+
+        model = _woken()
+        _run(model, 3, 0.0)
+        a, b = state_colours(OrbState.LISTENING), state_colours(OrbState.THINKING)
+        t = frame_thickness(self.W, self.H)
+
+        def alpha_at(tones):
+            layer = QImage(self.W, t, QImage.Format.Format_ARGB32_Premultiplied)
+            layer.fill(Qt.GlobalColor.transparent)
+            p = QPainter(layer)
+            FramePainter(self.W, self.H, (0, 0, self.W, t)).paint(p, model, tones)
+            p.end()
+            return layer.pixelColor(400, 1).alpha()
+
+        steady = alpha_at([(a, 1.0)])
+        for weight in (0.25, 0.5, 0.75):
+            assert alpha_at([(a, 1.0 - weight), (b, weight)]) >= steady * 0.8
 
 
 class TestSetting:
@@ -515,6 +724,195 @@ class TestWakeOverlayController:
         overlay.poll()
         assert overlay.windows() == []
         overlay.shutdown()
+
+
+class _Clock:
+    def __init__(self):
+        self.now = 100.0
+
+    def __call__(self):
+        return self.now
+
+
+class TestSmoothActivation:
+    """The wake must not stutter: everything is rendered before the light is shown, and the
+    animation starts from the first frame that is actually on screen."""
+
+    def test_every_window_is_fully_prepared_when_it_is_shown(self, qapp):
+        states = _States()
+        overlay = _overlay(states)
+        overlay.start()
+        _wake(overlay, states)
+        assert overlay.windows()
+        assert all(w.is_prepared() for w in overlay.windows())
+        overlay.shutdown()
+
+    def test_the_animation_waits_for_the_first_painted_frame(self, qapp):
+        clock = _Clock()
+        states = _States()
+        overlay = _overlay(states, clock=clock)
+        overlay.start()
+        _wake(overlay, states)
+        for _ in range(5):          # the windows have been shown but nothing has been painted yet
+            clock.now += 0.03
+            overlay._on_frame()
+        assert overlay.model.time == 0.0
+        assert overlay.model.presence == 0.0
+        qapp.processEvents()        # the first paint happens
+        clock.now += 0.03
+        overlay._on_frame()
+        assert overlay.model.time == pytest.approx(0.03)   # counted from the painted frame, not from the wake
+        overlay.shutdown()
+
+    def test_it_does_not_wait_for_a_paint_that_never_comes(self, qapp):
+        clock = _Clock()
+        states = _States()
+        overlay = _overlay(states, clock=clock)
+        overlay.start()
+        _wake(overlay, states)
+        for _ in range(20):
+            clock.now += 0.03
+            overlay._on_frame()
+        assert overlay.model.time > 0.0
+        overlay.shutdown()
+
+    def test_a_late_frame_advances_by_the_time_that_passed(self, qapp):
+        clock = _Clock()
+        states = _States()
+        overlay = _overlay(states, clock=clock)
+        overlay.start()
+        _wake(overlay, states)
+        qapp.processEvents()
+        overlay._on_frame()
+        before = overlay.model.time
+        clock.now += 0.15
+        overlay._on_frame()
+        assert overlay.model.time - before == pytest.approx(0.15)
+        overlay.shutdown()
+
+    def test_frames_are_quick_for_the_wake_beats_then_settle(self, qapp):
+        states = _States()
+        overlay = _overlay(states)
+        overlay.start()
+        _wake(overlay, states)
+        overlay.tick(1.0 / 60)
+        assert overlay.frame_interval() == FRAME_FAST_MS
+        for _ in range(240):
+            overlay.tick(1.0 / 60)
+        assert overlay.frame_interval() == FRAME_STEADY_MS
+        overlay.shutdown()
+
+    def test_a_change_of_state_cross_fades_the_colour_without_a_jump(self, qapp):
+        from desktop_app.orb_widget import state_colours
+
+        states = _States()
+        overlay = _overlay(states)
+        overlay.start()
+        _wake(overlay, states)
+        for _ in range(60):
+            overlay.tick(1.0 / 30)
+        assert overlay.tones == [(state_colours(OrbState.LISTENING), 1.0)]
+        states.state = OrbState.THINKING
+        overlay.poll()
+        shares = []
+        for _ in range(90):
+            overlay.tick(1.0 / 30)
+            shares.append(dict(overlay.tones).get(state_colours(OrbState.THINKING), 0.0))
+            assert sum(weight for _, weight in overlay.tones) == pytest.approx(1.0)
+        assert shares[-1] == 1.0
+        assert max(b - a for a, b in zip(shares, shares[1:])) < 0.25
+        overlay.shutdown()
+
+    def test_a_new_palette_is_rendered_a_little_at_a_time_never_all_in_one_frame(self, qapp, monkeypatch):
+        from desktop_app import wake_overlay
+
+        clock = _Clock()
+
+        def advancing():   # every read takes a little time, like work being done
+            clock.now += 0.002
+            return clock.now
+
+        states = _States()
+        overlay = _overlay(states, clock=advancing)
+        overlay.start()
+        _wake(overlay, states)
+        rendered = []
+        original = wake_overlay.FramePainter.prepare_next
+
+        def counting(self, palette):
+            rendered[-1] += 1
+            return original(self, palette)
+
+        monkeypatch.setattr(wake_overlay.FramePainter, "prepare_next", counting)
+        states.state = OrbState.THINKING
+        overlay.poll()
+        for _ in range(200):
+            rendered.append(0)
+            overlay.tick(1.0 / 30)
+            if overlay.tones == [(wake_overlay.state_colours(OrbState.THINKING), 1.0)]:
+                break
+        assert overlay.tones == [(wake_overlay.state_colours(OrbState.THINKING), 1.0)]
+        assert max(rendered) <= 4            # a couple of images a frame, within the frame budget
+        assert sum(1 for count in rendered if count) >= len(overlay.windows()) / 4   # spread over several frames
+        overlay.shutdown()
+
+    def test_the_first_wake_after_start_up_is_not_slowed_by_a_cold_logger(self, qapp, monkeypatch):
+        """Debug logging loads the settings the first time it is used: that happens at start, not at the wake."""
+        from desktop_app import wake_overlay
+
+        calls = []
+        monkeypatch.setattr(wake_overlay, "debug_log", lambda *a, **k: calls.append(a[0]))
+        overlay = _overlay(_States())
+        overlay.start()
+        assert calls
+        overlay.shutdown()
+
+
+class TestStateWatch:
+    def _file_overlay(self, states, path, **kwargs):
+        return _overlay(states, state_file=str(path), watch_interval_ms=5000, **kwargs)
+
+    def _wait_for(self, qapp, condition, seconds=3.0):
+        import time
+
+        end = time.monotonic() + seconds
+        while time.monotonic() < end and not condition():
+            qapp.processEvents()
+            time.sleep(0.005)
+        return condition()
+
+    def test_a_change_of_the_state_file_shows_the_light_without_waiting_for_the_next_poll(self, qapp, tmp_path):
+        path = tmp_path / "jarvis_state"
+        path.write_text("idle")
+        states = _States()
+        overlay = self._file_overlay(states, path)
+        overlay.start()
+        states.state = OrbState.IDLE
+        overlay.poll()
+        states.state = OrbState.LISTENING
+        path.write_text("listening")
+        assert self._wait_for(qapp, lambda: overlay.windows())
+        overlay.shutdown()
+
+    def test_a_missing_state_file_is_tolerated_and_the_poll_still_works(self, qapp, tmp_path):
+        states = _States()
+        overlay = self._file_overlay(states, tmp_path / "does_not_exist")
+        overlay.start()
+        _wake(overlay, states)
+        assert overlay.windows()
+        overlay.shutdown()
+
+    def test_nothing_is_watched_while_the_effect_is_off_or_shut_down(self, qapp, tmp_path):
+        path = tmp_path / "jarvis_state"
+        path.write_text("idle")
+        states = _States()
+        overlay = self._file_overlay(states, path, enabled=False)
+        overlay.start()
+        assert not overlay.is_watching()
+        overlay.set_enabled(True)
+        assert overlay.is_watching()
+        overlay.shutdown()
+        assert not overlay.is_watching()
 
 
 class TestTrayWiring:
