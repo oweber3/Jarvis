@@ -21,8 +21,6 @@ from desktop_app.themes import apply_theme, set_role
 from jarvis.debug import debug_log
 
 APP_PASSWORDS_URL = "https://myaccount.google.com/apppasswords"
-NOT_IN_BUILD = ("Sign-in with {provider} is not set up in this build of Jarvis (no app ID is configured). "
-                "Use one of the other options below.")
 RESTART_NOTE = ("Changes take effect after Jarvis restarts; Jarvis offers to restart when you close Settings. "
                 "Read only: Jarvis never sends, deletes or changes anything. Sign-ins and passwords stay in "
                 "Windows Credential Manager on this PC. To withdraw access later, remove the account here, and "
@@ -220,12 +218,13 @@ class AccountsPage(QWidget):
 
         self._busy_buttons = [self.test_button, self.remove_button, self.microsoft_button, self.google_button,
                               self.outlook_button, self.gmail_button, self.imap_button, self.link_button]
-        for key, button, hint in (("microsoft", self.microsoft_button, self.microsoft_hint),
-                                  ("google", self.google_button, self.google_hint)):
+        # Sign-in needs an app ID registered with the provider; without one the option is not shown at all.
+        for key, widgets in (("microsoft", (self.microsoft_button, self.ms_calendar, self.ms_mail,
+                                            self.microsoft_hint)),
+                             ("google", (self.google_button, self.google_hint))):
             if not self._store.client(key).configured:
-                label = "Microsoft" if key == "microsoft" else "Google"
-                button.setToolTip(NOT_IN_BUILD.format(provider=label))
-                hint.setText(NOT_IN_BUILD.format(provider=label))
+                for widget in widgets:
+                    widget.setVisible(False)
         classic = self._store.outlook_state() == "classic"
         self.outlook_button.setVisible(classic)
         self.outlook_hint.setVisible(classic)
