@@ -208,7 +208,7 @@ Console output: `🖐️ Gesture snapping on` with the gestures indented below, 
 
 ### Fast path
 
-The `gesture_control` family in `fastpath/phrases/<language>.json` maps whole utterances such as "start gesture control", "turn on gesture snapping", "stop gesture control" and "turn off gesture snapping" to `gestureControl` `start` and `stop` (`fastpath/fastpath.spec.md`). It is available only while the tool is registered.
+The `gesture_control` family in `fastpath/phrases/<language>.json` maps whole utterances such as "start gesture control", "start gesture controls", "turn on gestures", "stop gesture control" and "turn off the gesture controls" to `gestureControl` `start` and `stop` (`fastpath/fastpath.spec.md`). Every phrase pairs a start or stop verb phrase with a name for the feature (in English: gesture control or controls, gestures, hand gestures, gesture snapping or gesture mode); a bare name or a question about the feature falls through to the model. It is available only while the tool is registered.
 
 ### Privacy and logs
 

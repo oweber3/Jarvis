@@ -25,6 +25,51 @@ def test_stop_phrases_stop_gesture_snapping(text):
     assert (result.tool_name, result.args) == ('gestureControl', {'action': 'stop'})
 
 
+@pytest.mark.parametrize('text', ['Start gesture controls', 'start gestures', 'Turn on gesture controls',
+                                  'turn the gesture controls on', 'switch on gestures', 'enable hand gestures',
+                                  'activate gesture mode', 'turn on the gesture controls', 'gestures on',
+                                  'start using gestures', 'Could you start gesture controls please?',
+                                  'start the gesture control', 'switch gesture snapping on'])
+def test_everyday_start_variants_start_gesture_snapping(text):
+    result = route(text)
+    assert result is not None, text
+    assert (result.tool_name, result.args) == ('gestureControl', {'action': 'start'})
+
+
+@pytest.mark.parametrize('text', ['Stop gesture controls', 'stop gestures', 'Turn off gesture controls',
+                                  'turn the gesture controls off', 'switch off gestures', 'disable hand gestures',
+                                  'deactivate gesture mode', 'turn off the gesture controls', 'gestures off',
+                                  'stop using gestures', 'Can you stop the gestures please',
+                                  'switch gesture snapping off'])
+def test_everyday_stop_variants_stop_gesture_snapping(text):
+    result = route(text)
+    assert result is not None, text
+    assert (result.tool_name, result.args) == ('gestureControl', {'action': 'stop'})
+
+
+def _bundled_gesture_phrases():
+    import json
+    from pathlib import Path
+    import jarvis.fastpath
+    for path in sorted((Path(jarvis.fastpath.__file__).parent / 'phrases').glob('*.json')):
+        for rule in json.loads(path.read_text(encoding='utf-8'))['rules']:
+            if rule['tool'] == 'gestureControl':
+                for phrase in rule['phrases']:
+                    yield path.stem, phrase, rule['args']
+
+
+@pytest.mark.parametrize('language,phrase,args', list(_bundled_gesture_phrases()))
+def test_every_gesture_phrase_routes_to_its_own_action_beside_apps_and_routines(language, phrase, args):
+    """No other family (apps, routines, devices) claims a gesture phrase, so none of them falls through."""
+    from jarvis.fastpath.matcher import FastTarget, match
+    apps = tuple(FastTarget((name,), name, f'{name}.exe', name) for name in ('Word', 'Chrome', 'Spotify'))
+    routines = (FastTarget(('morning',), 'morning', 'morning', 'morning'),)
+    result = match(phrase, language, targets=apps, routines=routines,
+                   available_tools=TOOLS | {'routineControl', 'systemSettings', 'openPath'})
+    assert result is not None, phrase
+    assert (result.tool_name, result.args) == ('gestureControl', args)
+
+
 def test_without_the_tool_the_phrases_fall_through():
     tools = TOOLS - {'gestureControl'}
     assert route('Start gesture control', tools) is None
@@ -32,7 +77,11 @@ def test_without_the_tool_the_phrases_fall_through():
 
 
 @pytest.mark.parametrize('text', ['start gesture control and open word', 'what is gesture control',
-                                  'stop the music'])
+                                  'stop the music', 'what are gesture controls', 'tell me about gestures',
+                                  'how do I turn on gesture controls', 'are gestures on', 'is gesture control on',
+                                  'gestures', 'gesture controls', 'turn off touchpad gestures',
+                                  'start gestures and open word', 'explain gesture mode', 'stop gestures then mute',
+                                  'why did gesture controls stop'])
 def test_other_requests_are_not_gesture_snap_routes(text):
     result = route(text)
     assert result is None or result.tool_name != 'gestureControl'
