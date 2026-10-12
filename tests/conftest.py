@@ -90,6 +90,8 @@ class MockConfig:
     routines: Dict[str, dict] = field(default_factory=dict)
     windows_fancyzones_enabled: bool = True
     roku_host: str = ""
+    apple_music_enabled: bool = False
+    apple_music_country: str = ""
     tts_pc_speakers_enabled: bool = True
     fast_commands_enabled: bool = True
     fast_commands_locales: List[str] = field(default_factory=lambda: ['en'])

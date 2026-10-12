@@ -653,6 +653,46 @@ def snapshot(window: str = '') -> dict:
     return _with_uia(_snapshot, resolve_hwnd(window))
 
 
+class AppSession:
+    """Pattern-only access to one application's window for an OS module that drives that application
+    (``apple_music.py``). Valid only inside ``with_session``: its objects belong to that thread's COM apartment."""
+
+    def __init__(self, client: _Client):
+        self._client = client
+
+    def nodes(self, hwnd: int, *, budget: int = SEARCH_BUDGET, max_depth: int = 2 * MAX_DEPTH,
+              seconds: float = WALK_BUDGET_SEC) -> List[_Node]:
+        _require_readable(hwnd)
+        root = self._client.uia.ElementFromHandle(hwnd)
+        return _walk(self._client, root, budget=budget, max_depth=max_depth, seconds=seconds)[0]
+
+    def _pattern(self, node: _Node, name: str):
+        pattern = self._client.pattern(node.element, name)
+        if pattern is None:
+            raise OSError('The control does not support that action.')
+        return pattern
+
+    def invoke(self, node: _Node) -> None:
+        self._pattern(node, 'invoke').Invoke()
+
+    def select(self, node: _Node) -> None:
+        self._pattern(node, 'selectionitem').Select()
+
+    def expand(self, node: _Node) -> None:
+        self._pattern(node, 'expandcollapse').Expand()
+
+    def collapse(self, node: _Node) -> None:
+        self._pattern(node, 'expandcollapse').Collapse()
+
+    def scroll_down(self, node: _Node) -> None:
+        self._pattern(node, 'scroll').Scroll(2, 3)  # ScrollAmount: NoAmount across, LargeIncrement down
+
+
+def with_session(fn: Callable[[AppSession], Any]) -> Any:
+    """``fn(session)`` in a COM apartment on the calling thread; UIA failures surface as ``OSError``."""
+    return _with_uia(lambda client: fn(AppSession(client)))
+
+
 # ---------------------------------------------------------------------------
 # Element resolution
 # ---------------------------------------------------------------------------
