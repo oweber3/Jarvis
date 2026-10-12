@@ -974,13 +974,17 @@ class DictationEngine:
                 debug_log(f"on_dictation_start callback error: {exc}", "dictation")
 
         # A quick tap can be released while the start notice is on its way, and
-        # its end notice can land first; ending again here leaves the listener
-        # resumed. A newer press owns its own notices, so it is left alone.
+        # its session can finish (end notice given) before that start notice
+        # lands. The end is then given again, so the listener is resumed; with
+        # another dictation still open, that one's finish gives it instead.
         # The notice is given under the engine lock so a newer press cannot
         # start between the check and the notice.
         with self._lock:
-            released = not self._recording
-            if released:
+            finished = token not in self._open_sessions
+            released = finished or not self._recording or self._session != token
+            if finished and self._open_sessions:
+                self._end_owed = True
+            elif finished:
                 debug_log("dictation released before it started — listener resumed", "dictation")
                 if self._on_dictation_end:
                     try:
@@ -988,6 +992,7 @@ class DictationEngine:
                     except Exception as exc:
                         debug_log(f"on_dictation_end callback error: {exc}", "dictation")
         if released:
+            # A press released but not yet finished gets its end notice from its own finish.
             return
 
         # Play start beep

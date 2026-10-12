@@ -36,11 +36,13 @@ window, with four preset options: `ctrl+alt`, `ctrl+cmd`, `ctrl+shift+d`,
    post-processing pipeline, paste result into focused app via clipboard,
    restore face to `IDLE`, resume main voice listener.
 
-A tap released while recording is still starting can have its end notice
-delivered before its start notice. Once the start notice has been given, the
-engine checks whether the press was released meanwhile and, if so, gives the
-end notice again without opening the microphone, so the voice listener is
-always resumed. A newer press gives its own notices and is left alone.
+A tap released while recording is still starting can have its session
+finish, end notice included, before its start notice is given. Once the
+start notice has been given, the engine checks whether the press was
+released meanwhile; if so it opens no microphone, and if its session has
+already finished it gives the end notice again (or, while another dictation
+is open, leaves it owed to that one, see Overlapping Dictations), so the
+voice listener is always resumed.
 
 The face therefore moves through three distinct states across a dictation
 cycle: `DICTATING` while recording, `DICTATION_PROCESSING` while the captured

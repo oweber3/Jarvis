@@ -298,6 +298,7 @@ class TestRecordingStateMachine:
         engine = _make_engine(voice_device='Headset')
         engine._recording = True
         engine._session = 1
+        engine._open_sessions.add(1)  # as _start_recording records a press
 
         with patch('src.jarvis.dictation.dictation_engine.sd') as mock_sd, \
              patch('src.jarvis.dictation.dictation_engine._play_beep'):
@@ -339,6 +340,7 @@ class TestRecordingStateMachine:
         engine = _make_engine(voice_device='Disconnected Headset', on_dictation_end=ended.set)
         engine._recording = True
         engine._session = 1
+        engine._open_sessions.add(1)  # as _start_recording records a press
 
         with patch('src.jarvis.dictation.dictation_engine.sd') as mock_sd, \
              patch('src.jarvis.dictation.dictation_engine._play_beep'):
@@ -356,6 +358,7 @@ class TestRecordingStateMachine:
         engine = _make_engine(voice_device='1')
         engine._recording = True
         engine._session = 1
+        engine._open_sessions.add(1)  # as _start_recording records a press
 
         with patch('src.jarvis.dictation.dictation_engine.sd') as mock_sd, \
              patch('src.jarvis.dictation.dictation_engine._play_beep'):
@@ -540,6 +543,7 @@ class TestRecordingStateMachine:
             mock_sd.InputStream.return_value = MagicMock()
             engine._recording = True
             engine._session = 1
+            engine._open_sessions.add(1)  # as _start_recording records a press
             engine._begin_recording(1)
             assert audio_lock.open_stream_count() == 1
             engine._stop_recording(discard=True)
@@ -570,6 +574,7 @@ class TestRecordingStateMachine:
             mock_sd.InputStream.return_value = MagicMock()
             engine._recording = True
             engine._session = 1
+            engine._open_sessions.add(1)  # as _start_recording records a press
             engine._begin_recording(1)
 
         assert listener_paused['value'] is False
