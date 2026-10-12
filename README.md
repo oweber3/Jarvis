@@ -299,6 +299,7 @@ Off by default. Turn it on in **Settings → Extras → Web chat** and restart J
 - **Switching the model or effort changes it for voice too** and is saved in your settings. Each chat remembers the model it last used and offers one tap to switch back, but opening a chat never turns on a cloud mode by itself.
 - **Saved locally, redacted.** Chats are kept in Jarvis's own database as the redacted text Jarvis sees, never what you typed before redaction. Delete a chat from its menu.
 - **Nothing leaves your PC.** The page is served by Jarvis on `127.0.0.1` only, with no cloud service, CDN or analytics, and works without internet.
+- **Only Jarvis's own page is shown.** If another program already uses the chat's port, the window says so instead of showing that program; pick another port in Settings.
 
 Details: [`src/jarvis/webchat/webchat.spec.md`](src/jarvis/webchat/webchat.spec.md). Changing the page itself needs Node; see [`webchat-ui/README.md`](webchat-ui/README.md). Running Jarvis does not.
 

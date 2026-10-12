@@ -11,6 +11,7 @@ import time
 
 import pytest
 
+import dialogue_clock
 from jarvis import daemon
 from jarvis.memory.chat_store import ChatStore
 from jarvis.memory.conversation import DialogueMemory
@@ -43,10 +44,12 @@ def world(tmp_path, monkeypatch):
     gate = threading.Event()
     gate.set()
     seen = []
+    contexts = []
 
     def engine(db, cfg, tts, text, dialogue_memory, language, quiet, origin):
         gate.wait(5)
         seen.append((text, origin, tts))
+        contexts.append([m["content"] for m in dialogue_memory.get_recent_messages()])
         dialogue_memory.add_message("user", text)
         dialogue_memory.add_message("assistant", f"Reply to: {text}")
         return f"Reply to: {text}"
@@ -60,7 +63,8 @@ def world(tmp_path, monkeypatch):
     (static / "index.html").write_text("<title>x</title>")
     server = WebChatServer(hub, ServerSettings(host="127.0.0.1", port=0, static_dir=static, poll_timeout_sec=0.3))
     server.start()
-    yield type("World", (), {"server": server, "store": store, "memory": memory, "gate": gate, "seen": seen})()
+    yield type("World", (), {"server": server, "store": store, "memory": memory, "gate": gate, "seen": seen,
+                                 "contexts": contexts})()
     gate.set()
     server.stop()
     store.close()
@@ -177,3 +181,16 @@ def test_the_local_model_switch_reaches_the_daemons_settings(world, monkeypatch)
     assert daemon._global_cfg.llm_chat_model == "qwen3.5:9b"
     listed = call(world, "GET", "/api/models")[1]
     assert listed["current"] == "qwen3.5:9b"
+
+
+def test_a_chat_opened_after_the_dialogue_window_still_gives_the_model_its_thread(world, monkeypatch):
+    clock = dialogue_clock.install(monkeypatch)
+    call(world, "POST", "/api/chat", {"text": "about trains"})
+    assert wait_for(lambda: len(open_chat_texts(world)) == 2)
+    trains = world.store.get_active_chat_id()
+    assert wait_for(lambda: call(world, "POST", "/api/chats", {})[0] == 201)
+    assert call(world, "POST", f"/api/chats/{trains}/open")[0] == 200
+    clock.advance(world.memory.RECENT_WINDOW_SEC + 60)  # the owner reads the old thread for a while
+    call(world, "POST", "/api/chat", {"text": "and the fastest one"})
+    assert wait_for(lambda: len(open_chat_texts(world)) == 4)
+    assert world.contexts[-1] == ["about trains", "Reply to: about trains"]

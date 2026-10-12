@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+import dialogue_clock
 from fake_webchat_backend import FakeWebChatBackend
 from jarvis.memory.chat_store import ANY_PROJECT, ChatStore
 from jarvis.webchat.hub import DEFAULT_CHAT_TITLE, ChatHub
@@ -133,6 +134,25 @@ class TestTypedMessages:
         assert [n["kind"] for n in hub.snapshot(0)["notices"]] == ["stopped"]
         assert store.messages(open_id(store)) == []
 
+    def test_a_notice_goes_once_a_newer_turn_is_stored(self, backend, store):
+        past = ChatHub(backend, store, sync_interval_sec=0.05, clock=lambda: time.time() - 60)
+        past.sync()
+        backend.mode = "busy"
+        past.submit("hello")
+        assert [n["kind"] for n in past.snapshot(0)["notices"]] == ["busy"]
+        backend.speak("what time is it", "Ten past three")
+        past.sync()
+        assert past.snapshot(0)["notices"] == []
+
+    def test_a_notice_newer_than_every_stored_turn_stays(self, hub, backend, store):
+        backend.speak("what time is it", "Ten past three")
+        hub.sync()
+        backend.mode = "busy"
+        hub.submit("hello")
+        notices = hub.snapshot(0)["notices"]
+        assert [n["kind"] for n in notices] == ["busy"]
+        assert notices[0]["ts"] >= store.last_messages(open_id(store), 1)[0].ts
+
     def test_the_page_can_read_a_late_reply_after_it_is_released(self, hub, backend, store):
         backend.mode = "hold"
         hub.submit("slow one")
@@ -255,6 +275,73 @@ class TestOpeningChats:
         hub.open_chat(chat)
         assert [m["content"] for m in backend.memory.all_messages()] == ["q3", "a3", "q4", "a4"]
         assert other.id != chat
+
+    def test_a_turn_that_lands_as_a_chat_opens_is_mirrored_into_it(self, hub, backend, store):
+        hub.submit("about trains")
+        trains = open_id(store)
+        hub.new_chat()
+        # The outcome of a confirmed action arrives between the swap and the hub's next look at the memory.
+        backend.after_switch = lambda: backend.memory.add_message("assistant", "Uninstalled the app.")
+        assert hub.open_chat(trains).status == "ok"
+        backend.after_switch = None
+        hub.sync()
+        assert [m.content for m in store.messages(trains)] == ["about trains", "Done.", "Uninstalled the app."]
+
+
+def recent(memory):
+    return [m["content"] for m in memory.get_recent_messages()]
+
+
+class TestTheModelKeepsTheThread:
+    """An open chat stays in the reply context however long ago its turns were, while the web chat runs."""
+
+    @pytest.fixture
+    def clock(self, monkeypatch):
+        return dialogue_clock.install(monkeypatch)
+
+    def test_an_opened_chat_older_than_the_dialogue_window_still_reaches_the_reply_context(self, hub, backend, store, clock):
+        hub.submit("about trains")
+        trains = open_id(store)
+        hub.new_chat()
+        hub.open_chat(trains)
+        clock.advance(backend.memory.RECENT_WINDOW_SEC + 60)  # the owner reads for a while
+        assert recent(backend.memory) == ["about trains", "Done."]
+        assert backend.memory.has_recent_messages() is True
+
+    def test_after_a_restart_the_restored_thread_outlives_the_window(self, backend, store, clock):
+        first = ChatHub(backend, store)
+        first.sync()
+        first.submit("what is a nebula")
+        backend.memory = type(backend.memory)()
+        again = ChatHub(backend, store)
+        again.sync()
+        clock.advance(backend.memory.RECENT_WINDOW_SEC + 60)
+        assert recent(backend.memory) == ["what is a nebula", "Done."]
+        again.stop()
+
+    def test_follow_ups_in_the_open_chat_join_the_kept_thread(self, hub, backend, store, clock):
+        hub.submit("about trains")
+        clock.advance(backend.memory.RECENT_WINDOW_SEC + 60)
+        hub.submit("the fastest one")
+        clock.advance(backend.memory.RECENT_WINDOW_SEC + 60)
+        assert recent(backend.memory) == ["about trains", "Done.", "the fastest one", "Done."]
+
+    def test_no_more_than_the_restored_turns_are_kept(self, backend, store, clock):
+        hub = ChatHub(backend, store, restore_turns=4)
+        hub.sync()
+        for i in range(4):
+            hub.submit(f"q{i}")
+        clock.advance(backend.memory.RECENT_WINDOW_SEC + 60)
+        assert recent(backend.memory) == ["q2", "Done.", "q3", "Done."]
+        hub.stop()
+
+    def test_a_stopped_web_chat_returns_the_memory_to_the_dialogue_window(self, backend, store, clock):
+        hub = ChatHub(backend, store)
+        hub.sync()
+        hub.submit("about trains")
+        hub.stop()
+        clock.advance(backend.memory.RECENT_WINDOW_SEC + 60)
+        assert recent(backend.memory) == []
 
 
 class TestDeleting:

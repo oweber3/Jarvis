@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import threading
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -14,6 +16,8 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
 )
+
+from jarvis.debug import debug_log
 
 from .themes import apply_theme, divider, hud_heading
 
@@ -218,3 +222,119 @@ def show_desktop_confirmation_dialog(request: Any, resolve: Callable[[bool], Any
     else:
         bridge.open_request.emit(handle)
     return handle
+
+
+@dataclass(frozen=True)
+class PipedConfirmationRequest:
+    """What the dialog shows for a request the daemon subprocess sent."""
+    id: str
+    action: str
+    target: str
+    consequence: Optional[str] = None
+
+
+def _optional_text(value: Any) -> Optional[str]:
+    if value is None or isinstance(value, str):
+        return value
+    raise ValueError("not text")
+
+
+class SubprocessConfirmationRelay:
+    """Shows the dialogs a daemon subprocess asks for and writes each answer to its stdin.
+
+    ``write_line(line)`` sends one line to the daemon. ``handle_line`` takes the daemon's
+    ``__CONFIRM__:`` events on the GUI thread. A dialog closed by the daemon or by ``close_all``
+    (the daemon went away) answers nothing, which the daemon treats as a refusal. See
+    ``desktop_app.spec.md`` (Action Confirmation Dialog).
+    """
+
+    def __init__(self, write_line: Callable[[str], Any],
+                 presenter: Optional[Callable[[Any, Callable[[bool], Any]], Any]] = None) -> None:
+        self._write_line = write_line
+        self._presenter = presenter or show_desktop_confirmation_dialog
+        self._lock = threading.Lock()
+        self._open: dict = {}
+
+    def handle_line(self, line: str) -> bool:
+        """Apply a ``__CONFIRM__:`` event. True when the line was one, even a malformed one."""
+        from jarvis.tools.confirmation_pipe import CONFIRM_IPC_PREFIX
+        if not line.startswith(CONFIRM_IPC_PREFIX):
+            return False
+        try:
+            event = json.loads(line[len(CONFIRM_IPC_PREFIX):])
+            kind, data = event.get("type"), event.get("data")
+            request_id = data.get("id")
+            if not isinstance(request_id, str):
+                raise ValueError("no id")
+            if kind == "open":
+                request = PipedConfirmationRequest(
+                    id=request_id,
+                    action=_optional_text(data.get("action")) or "",
+                    target=_optional_text(data.get("target")) or "",
+                    consequence=_optional_text(data.get("consequence")),
+                )
+        except (ValueError, AttributeError):
+            debug_log("desktop confirmation: malformed event ignored", "desktop")
+            return True
+        if kind == "open":
+            self._open_dialog(request)
+        elif kind == "close":
+            self._close(request_id)
+        else:
+            debug_log("desktop confirmation: unknown event ignored", "desktop")
+        return True
+
+    def close_all(self) -> None:
+        """Dismiss every dialog without answering (the daemon stopped or crashed)."""
+        with self._lock:
+            handles, self._open = list(self._open.values()), {}
+        for handle in handles:
+            self._dismiss(handle)
+        if handles:
+            debug_log(f"desktop confirmation: closed {len(handles)} dialog(s), the daemon went away", "desktop")
+
+    def _open_dialog(self, request: PipedConfirmationRequest) -> None:
+        def resolve(approved: bool) -> None:
+            with self._lock:
+                if self._open.pop(request.id, None) is None:
+                    return  # closed, already answered or never shown
+            self._answer(request.id, bool(approved))
+
+        with self._lock:
+            self._open[request.id] = None
+        handle = self._presenter(request, resolve)
+        if handle is None:
+            with self._lock:
+                self._open.pop(request.id, None)
+            debug_log("desktop confirmation: dialog could not be shown, declining", "desktop")
+            self._answer(request.id, False)
+            return
+        with self._lock:
+            if request.id in self._open:
+                self._open[request.id] = handle
+                debug_log("desktop confirmation: dialog shown for the daemon", "desktop")
+                return
+        self._dismiss(handle)  # answered while it was being opened
+
+    def _close(self, request_id: str) -> None:
+        with self._lock:
+            handle = self._open.pop(request_id, None)
+        if handle is not None:
+            self._dismiss(handle)
+
+    @staticmethod
+    def _dismiss(handle: Any) -> None:
+        if handle is None:
+            return
+        try:
+            handle.close()
+        except Exception as exc:
+            debug_log(f"desktop confirmation: closing the dialog failed: {type(exc).__name__}", "desktop")
+
+    def _answer(self, request_id: str, approved: bool) -> None:
+        from jarvis.tools.confirmation_pipe import CONFIRM_ANSWER_IPC_PREFIX
+        try:
+            self._write_line(CONFIRM_ANSWER_IPC_PREFIX + json.dumps({"id": request_id, "approved": approved}))
+        except Exception as exc:
+            # The daemon is gone; with no answer nothing runs.
+            debug_log(f"desktop confirmation: answer not delivered: {type(exc).__name__}", "desktop")

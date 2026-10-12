@@ -1076,7 +1076,29 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
 
     # Step 2: Check for recent dialogue context
     recent_messages = []
+    # A new conversation starts when nothing was said inside the dialogue window. Turns the web chat
+    # keeps in context (``keep_last_turns``) carry the thread, not the previous session's caches.
     is_new_conversation = True
+    if dialogue_memory:
+        is_new_conversation = not getattr(dialogue_memory, "has_recent_activity",
+                                          dialogue_memory.has_recent_messages)()
+
+    # New conversation reset: when the previous session lapsed past the
+    # inactivity window, drop the conversation-scoped cache and any
+    # tool-carryover from the previous session before the context is read.
+    # This is what bounds the cache lifetime now that individual entries no
+    # longer expire by age.
+    if is_new_conversation and dialogue_memory is not None:
+        if hasattr(dialogue_memory, "clear_hot_cache"):
+            try:
+                dialogue_memory.clear_hot_cache()
+            except Exception:
+                pass
+        if hasattr(dialogue_memory, "clear_tool_carryover"):
+            try:
+                dialogue_memory.clear_tool_carryover()
+            except Exception:
+                pass
 
     if dialogue_memory and dialogue_memory.has_recent_messages():
         if hasattr(dialogue_memory, "get_recent_turns_with_tools"):
@@ -1092,23 +1114,6 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
         if callable(has_private) and has_private(max_tool_turns=getattr(cfg, "tool_carryover_max_turns", 2)) is True:
             mark_turn_private()
             debug_log("turn context holds activity data; reply kept private", "memory")
-        is_new_conversation = False
-
-    # New conversation reset: when the previous session lapsed past the
-    # inactivity window, drop the conversation-scoped cache and any
-    # tool-carryover from the previous session. This is what bounds the
-    # cache lifetime now that individual entries no longer expire by age.
-    if is_new_conversation and dialogue_memory is not None:
-        if hasattr(dialogue_memory, "clear_hot_cache"):
-            try:
-                dialogue_memory.clear_hot_cache()
-            except Exception:
-                pass
-        if hasattr(dialogue_memory, "clear_tool_carryover"):
-            try:
-                dialogue_memory.clear_tool_carryover()
-            except Exception:
-                pass
 
     # Refresh MCP tools on new conversation (memory expired)
     if is_new_conversation and getattr(cfg, "mcps", {}):

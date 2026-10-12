@@ -116,6 +116,9 @@ REPLY_MODE_EVENT_PREFIX = "__REPLY_MODE_STATE__:"
 # Activity log (subprocess mode): the tray asks to pause, resume or delete the history with
 # ``{"action": "pause" | "resume" | "delete"}``.
 ACTIVITY_IPC_PREFIX = "__ACTIVITY__:"
+# Web chat (subprocess mode): once the server is up the daemon tells the desktop app its port and the
+# identity token the server proves it holds, so the chat window never shows another program on the port.
+WEB_CHAT_EVENT_PREFIX = "__WEB_CHAT__:"
 
 # The running voice listener, so a wake request can reach it.
 _global_voice_listener = None
@@ -166,7 +169,7 @@ def get_pending_diary_chunks() -> list:
 
 
 def get_hot_window_messages() -> list:
-    """Return the current hot-window turns (last ``RECENT_WINDOW_SEC``) as
+    """Return the turns in context (the hot window and any kept turns) as
     ``[{"role": "user"|"assistant", "content": str}, ...]``.
 
     The chat window seeds its transcript from this on first open so a user who
@@ -250,21 +253,22 @@ def set_chat_messages(messages: list) -> bool:
         _chat_query_lock.release()
 
 
-def switch_chat_conversation(messages: list) -> bool:
+def switch_chat_conversation(messages: list) -> Optional[float]:
     """Replace the shared conversation with a web chat's history (opening or starting a chat).
 
     The outgoing turns the diary has not seen get a diary pass of their own on a worker
     thread, so nothing is lost and the switch does not wait for the summary. The incoming
     turns are redacted and count as already summarised. Turns flagged ``"diary": False``
-    stay private. Returns False, changing nothing, when a query is running or the daemon
-    has not booted.
+    stay private. Returns the cursor for ``DialogueMemory.messages_after`` (every turn stored
+    after the swap is newer than it), or None, changing nothing, when a query is running or
+    the daemon has not booted.
     """
     dm = _global_dialogue_memory
     if dm is None:
-        return False
+        return None
     if not _chat_query_lock.acquire(blocking=False):
         debug_log("chat switch rejected: a query is in flight", "chat")
-        return False
+        return None
     try:
         from .utils.redact import redact
 
@@ -276,12 +280,12 @@ def switch_chat_conversation(messages: list) -> bool:
                 if m.get("diary") is False:
                     turn["diary"] = False
                 incoming.append(turn)
-        dm.set_messages(incoming, saved=True)
+        cursor = dm.set_messages(incoming, saved=True)
     finally:
         _chat_query_lock.release()
     if outgoing.has_pending_chunks():
         _flush_detached_conversation(outgoing)
-    return True
+    return cursor
 
 
 @dataclasses.dataclass(frozen=True)
@@ -483,6 +487,86 @@ def _emit_chat_event(event_type: str, data) -> None:
     already-redacted query to the ``start`` event.
     """
     _emit_ipc_event(CHAT_IPC_PREFIX, event_type, data, "chat_ipc")
+
+
+def _desktop_owns_stdio() -> bool:
+    """Whether the desktop app started this daemon and reads its stdout and writes its stdin.
+
+    The desktop app sets ``JARVIS_STDIN_IPC=1`` for its daemon subprocess. A bundled app runs the daemon
+    in its own process instead, and a daemon started from a console has nobody on the other end.
+    """
+    return not getattr(sys, "frozen", False) and os.environ.get("JARVIS_STDIN_IPC") == "1"
+
+
+def _write_stdout_line(line: str) -> None:
+    print(line, flush=True)
+
+
+def _emit_confirmed_chat_event(reply: str) -> None:
+    """Forward a confirmed typed action's (redacted) outcome to the desktop chat (subprocess mode)."""
+    _emit_chat_event("confirmed", reply)
+
+
+# The dialog presenter that asks the desktop app over the pipes (subprocess mode only).
+_pipe_dialog_presenter = None
+
+
+def install_desktop_confirmations() -> None:
+    """Show desktop confirmation dialogs through the desktop app when it started this daemon.
+
+    Does nothing for a daemon nobody is listening to (dialog actions stay refused) and in the bundled
+    app, which registers its own in-process dialog.
+    """
+    global _pipe_dialog_presenter
+    if not _desktop_owns_stdio():
+        debug_log("desktop confirmations: no desktop app on the pipes, dialog actions stay refused", "safety")
+        return
+    from .tools.confirmation import set_dialog_callback
+    from .tools.confirmation_pipe import PipeDialogPresenter
+    _pipe_dialog_presenter = PipeDialogPresenter(_write_stdout_line)
+    set_dialog_callback(_pipe_dialog_presenter)
+    add_chat_result_listener(_emit_confirmed_chat_event)
+    debug_log("desktop confirmations: dialogs are shown by the desktop app over the pipes", "safety")
+
+
+def uninstall_desktop_confirmations() -> None:
+    """Stop asking the desktop app; a dialog still waiting is dropped (and so declined)."""
+    global _pipe_dialog_presenter
+    if _pipe_dialog_presenter is None:
+        return
+    from .tools.confirmation import get_dialog_callback, set_dialog_callback
+    if get_dialog_callback() is _pipe_dialog_presenter:
+        set_dialog_callback(None)
+    remove_chat_result_listener(_emit_confirmed_chat_event)
+    _pipe_dialog_presenter = None
+
+
+def announce_web_chat(server) -> None:
+    """Tell the desktop app which port the web chat serves and the server's identity token.
+
+    Only when the desktop app started this daemon: its stdout goes nowhere else. A console run prints
+    no token.
+    """
+    if server is None or not _desktop_owns_stdio():
+        return
+    _emit_ipc_event(WEB_CHAT_EVENT_PREFIX, "ready",
+                    {"port": server.port, "token": server.identity_token}, "webchat")
+
+
+def handle_confirm_answer_stdin_line(line: str) -> bool:
+    """Apply a ``__CONFIRM_ANSWER__:`` line from the desktop app (subprocess mode).
+
+    True when the line was an answer (even one that is unusable or for no open dialog), False otherwise.
+    """
+    from .tools.confirmation import get_dialog_callback
+    from .tools.confirmation_pipe import CONFIRM_ANSWER_IPC_PREFIX, PipeDialogPresenter
+    if not line.startswith(CONFIRM_ANSWER_IPC_PREFIX):
+        return False
+    presenter = get_dialog_callback()
+    if not isinstance(presenter, PipeDialogPresenter):
+        debug_log("desktop confirmation answer ignored: no dialog was asked for", "safety")
+        return True
+    return presenter.handle_answer_line(line)
 
 
 def _notify_chat(event_type: str, data, *, callbacks: dict, use_ipc: bool) -> None:
@@ -727,7 +811,8 @@ def regenerate_chat_reply(
 
 
 def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc: bool, origin: str) -> None:
-    """Run one text query on a worker thread. The caller holds ``_chat_query_lock``; the worker releases it."""
+    """Run one text query on a worker thread. The caller holds ``_chat_query_lock``; the worker releases it
+    before ``complete`` is delivered, so a caller can send its next query from that callback."""
     # Per-query cancellation flag. The Stop button sets this; the reply engine ends the request at its
     # next step and drops the model call in flight, and the worker drops any reply that still arrives.
     global _chat_cancel_event
@@ -735,6 +820,7 @@ def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc
     _chat_cancel_event = cancel_event
 
     def _worker() -> None:
+        reply = None
         try:
             # Snapshot the redacted query for the start event. ``run_reply_engine``
             # redacts internally too; we mirror that here so the IPC stream and
@@ -764,18 +850,18 @@ def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc
             if cancel_event.is_set():
                 debug_log("chat query cancelled, dropping reply", "chat")
                 reply = None
-            _notify_chat("complete", reply, callbacks=callbacks, use_ipc=use_ipc)
         except Exception as exc:
             debug_log(f"chat query worker error: {exc}", "chat")
-            try:
-                _notify_chat("complete", None, callbacks=callbacks, use_ipc=use_ipc)
-            except Exception:
-                pass
+            reply = None
         finally:
             global _chat_cancel_event
             if _chat_cancel_event is cancel_event:
                 _chat_cancel_event = None
             _chat_query_lock.release()
+        try:
+            _notify_chat("complete", reply, callbacks=callbacks, use_ipc=use_ipc)
+        except Exception as exc:
+            debug_log(f"chat query complete callback failed: {type(exc).__name__}", "chat")
 
     try:
         threading.Thread(target=_worker, name="jarvis-chat-query", daemon=True).start()
@@ -1003,6 +1089,26 @@ def handle_chat_restore_stdin_line(line: str) -> bool:
         return True
     set_chat_messages(messages)
     return True
+
+
+def handle_ipc_stdin_line(line: str) -> bool:
+    """Route one stripped stdin line from the desktop app (subprocess mode) to its handler.
+
+    Returns True when a handler took the line, False for a line that is no request (ignored).
+    ``SHUTDOWN`` and EOF are the stdin monitor's own business.
+    """
+    handlers = (
+        handle_confirm_answer_stdin_line,
+        handle_chat_cancel_stdin_line,
+        handle_wake_stdin_line,
+        handle_reply_mode_stdin_line,
+        handle_activity_stdin_line,
+        handle_chat_new_session_stdin_line,
+        handle_chat_rewind_stdin_line,
+        handle_chat_restore_stdin_line,
+        handle_chat_query_stdin_line,
+    )
+    return any(handler(line) for handler in handlers)
 
 
 def wait_for_chat_worker(timeout_sec: float = 5.0) -> bool:
@@ -1293,7 +1399,7 @@ def main(smoke_test: bool = False) -> None:
 
     # Reply mode: local starts nothing; an allowed cloud mode starts its background bridge.
     from .bridge import modes as reply_modes
-    if os.environ.get("JARVIS_STDIN_IPC") == "1":
+    if _desktop_owns_stdio():
         # The desktop app owns our stdout: it shows the mode in the tray and on the orb.
         reply_modes.add_listener(_emit_reply_mode_state)
     reply_modes.start(cfg)
@@ -1543,7 +1649,7 @@ def main(smoke_test: bool = False) -> None:
 
     # Opt-in web chat: serves nothing unless the user turned it on in Settings.
     from .webchat import runtime as web_chat_runtime
-    web_chat_runtime.start(cfg)
+    announce_web_chat(web_chat_runtime.start(cfg))
 
     # Periodic diary update checking
     last_diary_check = time.time()
@@ -1572,30 +1678,16 @@ def main(smoke_test: bool = False) -> None:
                     debug_log("SHUTDOWN command received, requesting stop", "jarvis")
                     request_stop()
                     break
-                # Chat query-in (subprocess mode). Returns False for any other
-                # line, which we silently ignore.
-                if handle_chat_cancel_stdin_line(stripped):
-                    continue
-                if handle_wake_stdin_line(stripped):
-                    continue
-                if handle_reply_mode_stdin_line(stripped):
-                    continue
-                if handle_activity_stdin_line(stripped):
-                    continue
-                if handle_chat_new_session_stdin_line(stripped):
-                    continue
-                if handle_chat_rewind_stdin_line(stripped):
-                    continue
-                if handle_chat_restore_stdin_line(stripped):
-                    continue
-                if stripped.startswith(CHAT_QUERY_IPC_PREFIX):
-                    handle_chat_query_stdin_line(stripped)
+                # Any other line we don't recognise is silently ignored.
+                handle_ipc_stdin_line(stripped)
         except Exception:
             pass  # stdin might not be available
 
     if _stdin_ipc_enabled():
         stdin_thread = threading.Thread(target=stdin_monitor, daemon=True)
         stdin_thread.start()
+    # The answers come back through the stdin monitor, so dialogs are asked for only once it reads.
+    install_desktop_confirmations()
 
     try:
         # Main daemon loop
@@ -1620,7 +1712,8 @@ def main(smoke_test: bool = False) -> None:
         print("🔄 Daemon shutting down - saving memory...", flush=True)
         debug_log("daemon finally block starting - performing cleanup", "jarvis")
 
-        # No new phone requests once shutdown has begun.
+        # No new phone requests once shutdown has begun, and no new desktop dialogs.
+        uninstall_desktop_confirmations()
         remote_runtime.stop()
         web_chat_runtime.stop()
         # Let go of a held window and the camera first.

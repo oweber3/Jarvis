@@ -36,7 +36,7 @@ describe("buildThreadMessages", () => {
   })
 
   it("gives every message its own id", () => {
-    const out = buildThreadMessages([message(1, "user", "a")], [notice(1, "failed", "b")], { text: "c", accepted: true, afterId: 0 })
+    const out = buildThreadMessages([message(1, "user", "a")], [notice(1, "failed", "b")], { text: "c", accepted: true, afterId: 0, acceptedAt: 1 })
     const ids = out.map((m) => m.id)
     expect(new Set(ids).size).toBe(ids.length)
   })
@@ -51,8 +51,38 @@ describe("buildThreadMessages", () => {
     expect(buildThreadMessages([], [notice(4, "busy")], null)).toHaveLength(1)
   })
 
+  it("places a notice by time among the stored messages, not after all of them", () => {
+    // messages at ts +1 .. +3; the notice happened between the first and second turn
+    const early: Notice = { ...notice(5, "stopped"), ts: 1_760_000_001.5 }
+    const out = buildThreadMessages(
+      [message(1, "user", "a"), message(2, "assistant", "b"), message(3, "user", "c")],
+      [early],
+      null,
+    )
+    expect(out.map((m) => m.id)).toEqual(["m1", "n5", "m2", "m3"])
+  })
+
+  it("keeps a notice newer than every message at the end, after the message it follows", () => {
+    const same: Notice = { ...notice(6, "busy"), ts: 1_760_000_002 }
+    const out = buildThreadMessages([message(1, "user", "a"), message(2, "user", "b")], [same], null)
+    expect(out.map((m) => m.id)).toEqual(["m1", "m2", "n6"])
+  })
+
+  it("keeps a failed request and its notice together where the notice happened", () => {
+    const early: Notice = { ...notice(7, "failed", "open the doors"), ts: 1_760_000_001.5 }
+    const out = buildThreadMessages([message(1, "user", "a"), message(2, "assistant", "b")], [early], null)
+    expect(out.map((m) => m.id)).toEqual(["m1", "n7-request", "n7", "m2"])
+  })
+
+  it("orders several notices by time too", () => {
+    const first: Notice = { ...notice(8, "busy"), ts: 1_760_000_010 }
+    const second: Notice = { ...notice(9, "stopped"), ts: 1_760_000_020 }
+    const out = buildThreadMessages([message(1, "user", "a")], [second, first], null)
+    expect(out.map((m) => m.id)).toEqual(["m1", "n8", "n9"])
+  })
+
   it("shows the message being sent and a thinking placeholder until the reply arrives", () => {
-    const out = buildThreadMessages([], [], { text: "hello", accepted: false, afterId: 0 })
+    const out = buildThreadMessages([], [], { text: "hello", accepted: false, afterId: 0, acceptedAt: 0 })
     expect(out.map((m) => m.role)).toEqual(["user", "assistant"])
     expect(out[1]?.status).toEqual({ type: "running" })
     expect(out[1]?.content).toEqual([])
@@ -88,25 +118,31 @@ describe("chatTitle", () => {
 })
 
 describe("pendingDone", () => {
-  const sent = { text: "hi", accepted: false, afterId: 4 }
+  const sent = { text: "hi", accepted: false, afterId: 4, acceptedAt: 0 }
+  const accepted = { ...sent, accepted: true, acceptedAt: 3 }
 
   it("waits while Jarvis is still working on the request", () => {
-    expect(pendingDone({ ...sent, accepted: true }, true, [])).toBe(false)
+    expect(pendingDone(accepted, true, [], 4)).toBe(false)
   })
 
-  it("is done once the send was confirmed and Jarvis has finished", () => {
-    expect(pendingDone({ ...sent, accepted: true }, false, [])).toBe(true)
+  it("is done once the send was confirmed and a poll made after that shows Jarvis has finished", () => {
+    expect(pendingDone(accepted, false, [], 4)).toBe(true)
+  })
+
+  it("ignores a snapshot from a poll made before the send was confirmed, which cannot know about the request", () => {
+    expect(pendingDone(accepted, false, [], 3)).toBe(false)
+    expect(pendingDone(accepted, false, [], 2)).toBe(false)
   })
 
   it("is done when a fast reply is already stored, even before the send was confirmed", () => {
-    expect(pendingDone(sent, false, [message(5, "user", "hi"), message(6, "assistant", "hello")])).toBe(true)
+    expect(pendingDone(sent, false, [message(5, "user", "hi"), message(6, "assistant", "hello")], 1)).toBe(true)
   })
 
   it("does not take an older reply for the answer", () => {
-    expect(pendingDone(sent, false, [message(3, "assistant", "earlier")])).toBe(false)
+    expect(pendingDone(sent, false, [message(3, "assistant", "earlier")], 1)).toBe(false)
   })
 
   it("has nothing to clear without a message being sent", () => {
-    expect(pendingDone(null, false, [])).toBe(false)
+    expect(pendingDone(null, false, [], 1)).toBe(false)
   })
 })
