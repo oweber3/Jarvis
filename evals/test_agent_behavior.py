@@ -200,7 +200,7 @@ class TestContextUtilization:
         mock_tool_run = create_mock_tool_run(capture, {"webSearch": MOCK_WEATHER_SEARCH})
 
         call_count = 0
-        def mock_chat(base_url, chat_model, messages, timeout_sec, extra_options=None, tools=None, **kwargs):
+        def mock_chat(cfg, messages, **kwargs):
             nonlocal call_count
             call_count += 1
 
@@ -254,7 +254,7 @@ class TestToolUsage:
         })
 
         call_count = 0
-        def mock_chat(base_url, chat_model, messages, timeout_sec, extra_options=None, tools=None, **kwargs):
+        def mock_chat(cfg, messages, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -291,7 +291,7 @@ class TestToolUsage:
         })
 
         call_count = 0
-        def mock_chat(base_url, chat_model, messages, timeout_sec, extra_options=None, tools=None, **kwargs):
+        def mock_chat(cfg, messages, **kwargs):
             nonlocal call_count
             call_count += 1
 
@@ -355,7 +355,7 @@ class TestMultiStepReasoning:
         })
 
         call_count = 0
-        def mock_chat(base_url, chat_model, messages, timeout_sec, extra_options=None, tools=None, **kwargs):
+        def mock_chat(cfg, messages, **kwargs):
             nonlocal call_count
             call_count += 1
 
@@ -425,6 +425,7 @@ class TestMemoryEnrichment:
     ])
     def test_enrichment_extracts_correct_keywords(self, query: str, expected_keywords: list, mock_config):
         """Enrichment should extract keywords that find relevant memory context."""
+        from jarvis.llm import Tier, resolve_model
         from jarvis.reply.enrichment import extract_search_params_for_memory
         from helpers import JUDGE_MODEL
 
@@ -433,8 +434,8 @@ class TestMemoryEnrichment:
 
         result = extract_search_params_for_memory(
             query=query,
-            ollama_base_url=mock_config.ollama_base_url,
-            ollama_chat_model=mock_config.ollama_chat_model,
+            cfg=mock_config,
+            chat_model=resolve_model(mock_config, Tier.FAST),  # the tier the engine runs it on
             timeout_sec=15.0
         )
 
@@ -463,6 +464,7 @@ class TestMemoryEnrichment:
         the query generator should not emit implicit questions asking for that same
         information — we don't want to pull it from long-term memory redundantly.
         """
+        from jarvis.llm import Tier, resolve_model
         from jarvis.reply.enrichment import extract_search_params_for_memory
         from helpers import JUDGE_MODEL
 
@@ -479,8 +481,8 @@ class TestMemoryEnrichment:
 
         result = extract_search_params_for_memory(
             query="recommend a restaurant I'd enjoy",
-            ollama_base_url=mock_config.ollama_base_url,
-            ollama_chat_model=mock_config.ollama_chat_model,
+            cfg=mock_config,
+            chat_model=resolve_model(mock_config, Tier.FAST),  # the tier the engine runs it on
             timeout_sec=15.0,
             context_hint=context_hint,
         )
@@ -519,7 +521,7 @@ class TestMemoryEnrichment:
 
         captured_messages = []
 
-        def mock_chat(base_url, chat_model, messages, timeout_sec, extra_options=None, tools=None, **kwargs):
+        def mock_chat(cfg, messages, **kwargs):
             captured_messages.extend(messages)
             return create_mock_llm_response(
                 "Based on your love for Italian food and goal to eat more veggies, "
@@ -567,7 +569,7 @@ class TestMemoryEnrichment:
         })
 
         call_count = 0
-        def mock_chat(base_url, chat_model, messages, timeout_sec, extra_options=None, tools=None, **kwargs):
+        def mock_chat(cfg, messages, **kwargs):
             nonlocal call_count
             call_count += 1
 
@@ -1448,7 +1450,7 @@ class TestMalformedResponseAfterTools:
 
         call_count = 0
 
-        def mock_chat(base_url, chat_model, messages, timeout_sec, extra_options=None, tools=None, **kwargs):
+        def mock_chat(cfg, messages, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:

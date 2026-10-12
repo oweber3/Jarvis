@@ -25,18 +25,14 @@ Run: EVAL_JUDGE_MODEL=gemma4:e2b pytest evals/test_planner_personalisation.py -v
 import pytest
 
 from conftest import requires_judge_llm
-from helpers import JUDGE_BASE_URL, JUDGE_MODEL
+from helpers import make_eval_llm_config
 
 
 def _cfg():
-    from types import SimpleNamespace
-    return SimpleNamespace(
-        ollama_base_url=JUDGE_BASE_URL,
-        ollama_chat_model=JUDGE_MODEL,
-        fast_model="",
-        planner_enabled=True,
-        planner_timeout_sec=20.0,
-    )
+    cfg = make_eval_llm_config()
+    cfg.planner_enabled = True
+    cfg.planner_timeout_sec = 20.0
+    return cfg
 
 
 _TOOL_CATALOG = [
