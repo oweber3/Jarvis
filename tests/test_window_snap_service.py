@@ -155,6 +155,7 @@ def test_the_shared_flag_is_on_while_running_and_off_after_stopping(mock_config,
     svc.stop()
     assert not snap_state.is_on()
 
+
 def test_no_thread_of_the_mode_is_left_running_once_it_is_off(mock_config, desk):
     import threading
 
@@ -164,16 +165,17 @@ def test_no_thread_of_the_mode_is_left_running_once_it_is_off(mock_config, desk)
     names = ("hand-capture", "hand-detect", "gesture-snap-watchdog")
 
     def alive():
-        return [t.name for t in threading.enumerate() if t.name in names]
+        return {t for t in threading.enumerate() if t.name in names}
 
+    before = alive()
     svc = WindowSnapService(mock_config, output_factory=lambda: desk,
                             tracker_factory=lambda camera: snap_tracker(
                                 mock_config, camera, hands_factory=lambda: FakeHands(),
                                 camera_factory=lambda index: FakeCamera()))
     assert svc.start() == "started"
     deadline = time.perf_counter() + 2.0
-    while len(alive()) < 3 and time.perf_counter() < deadline:
+    while len({t.name for t in alive() - before}) < 3 and time.perf_counter() < deadline:
         time.sleep(0.01)
-    assert sorted(alive()) == sorted(names), "the camera, the detector and the watchdog run while it is on"
+    assert {t.name for t in alive() - before} == set(names), "the camera, the detector and the watchdog run while on"
     svc.stop()
-    assert alive() == [], "nothing keeps polling once it is off"
+    assert alive() - before == set(), "nothing keeps polling once it is off"

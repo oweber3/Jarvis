@@ -241,7 +241,6 @@ class HandTracker:
                  idle_after: float = IDLE_AFTER_SEC,
                  clock: Callable[[], float] = time.perf_counter):
         self._index = camera
-        self._max_hands = max_hands
         self._hands_factory = hands_factory or (lambda: _load_mediapipe_hands(max_hands))
         self._camera_factory = camera_factory or OpenCVCamera
         self._period = 1.0 / max_fps
@@ -262,14 +261,6 @@ class HandTracker:
     def running(self) -> bool:
         with self._lock:
             return bool(self._threads)
-
-    @property
-    def max_hands(self) -> int:
-        return self._max_hands
-
-    @property
-    def idle_fps(self) -> Optional[float]:
-        return self._idle_fps
 
     @property
     def idle(self) -> bool:
@@ -321,6 +312,7 @@ class HandTracker:
             thread.join(timeout=_JOIN_SEC)
         with self._lock:
             self._pending = None
+        self._gate = None
         debug_log("hand tracking stopped", "gestures")
 
     def _say(self, key: str, text: str) -> None:

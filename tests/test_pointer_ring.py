@@ -191,21 +191,25 @@ class TestPointerRingController:
     def test_it_repaints_far_less_often_than_it_follows_the_pointer(self, qapp):
         from desktop_app.pointer_ring import PAINT_INTERVAL_S
 
+        dt, ticks = 1.0 / 60, 120
         ring = _ring(_Flag(True))
         ring.start()
         ring.poll()
         _settle(ring, 0.5)
-        repaints = []
-        ring.window().update = lambda *a: repaints.append(1)
+        repainted_at = []
+        tick = [0]
+        ring.window().update = lambda *a: repainted_at.append(tick[0])
         cursor = ring._cursor
-        moves = 0
-        for i in range(120):  # two seconds at 60 ticks a second
+        followed = 0
+        for i in range(ticks):
+            tick[0] = i
             cursor.pos = (100 + i, 100)
-            ring.tick(1.0 / 60)
-            g = ring.window().geometry()
-            moves += abs(g.center().x() - (100 + i)) <= 1
-        assert moves == 120, "the window is moved on every tick"
-        assert 2.0 / PAINT_INTERVAL_S * 0.8 <= len(repaints) <= 2.0 / PAINT_INTERVAL_S * 1.2
+            ring.tick(dt)
+            followed += abs(ring.window().geometry().center().x() - (100 + i)) <= 1
+        assert followed == ticks, "the window follows the pointer on every tick"
+        assert 0 < len(repainted_at) <= ticks // 2, "and is repainted on far fewer of them"
+        gaps = [(y - x) * dt for x, y in zip(repainted_at, repainted_at[1:])]
+        assert min(gaps) >= PAINT_INTERVAL_S - 1e-9, "never more often than the paint interval"
         ring.shutdown()
 
     def test_window_passes_clicks_through_and_never_takes_focus(self, qapp):

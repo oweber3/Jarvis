@@ -11,6 +11,27 @@ from jarvis.gestures.window_snap_service import snap_tracker
 from tests.test_hand_tracking import Collector, FakeCamera, _hand_for
 
 
+@pytest.fixture
+def detector_log(monkeypatch):
+    """Replaces MediaPipe with a detector that records how many hands it was built to look for."""
+    built = []
+
+    class Detector:
+        def __init__(self, model_path, max_hands=2):
+            built.append(max_hands)
+
+        def __call__(self, frame, timestamp):
+            return ()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(ht, "MediaPipeHands", Detector)
+    monkeypatch.setattr(ht, "ensure_hand_model", lambda fetch=None: "model.task")
+    monkeypatch.setitem(__import__("sys").modules, "mediapipe", SimpleNamespace())
+    return built
+
+
 class TestIdleGate:
     def _gate(self, fps=5.0, after=3.0):
         return IdleGate(idle_fps=fps, idle_after=after)
@@ -70,6 +91,23 @@ class TestIdleGate:
         assert not gate.idle
         gate.should_search(102.0)
         assert gate.idle
+
+
+class TestWakeDelay:
+    @pytest.mark.parametrize("camera_fps", [9.0, 15.0, 30.0])
+    def test_a_hand_raised_from_idle_is_noticed_within_one_idle_period_and_a_frame(self, camera_fps):
+        gate = IdleGate(idle_fps=ht.IDLE_FPS, idle_after=ht.IDLE_AFTER_SEC)
+        frame = 1 / camera_fps
+        t = 0.0
+        while t < ht.IDLE_AFTER_SEC + 5.0:  # no hand for a long while
+            if gate.should_search(t):
+                gate.searched(t, found=False)
+            t += frame
+        assert gate.idle
+        raised = t
+        while not gate.should_search(t):
+            t += frame
+        assert t - raised <= 1 / ht.IDLE_FPS + frame + 1e-9
 
 
 class _Hands:
@@ -143,6 +181,15 @@ class TestTrackerIdling:
         assert logged and not any("hand" in m.casefold() and ("idl" in m or "awake" in m or "view" in m)
                                   for m in logged)
 
+    def test_a_stopped_tracker_is_not_idle(self):
+        hands = _Hands()
+        tracker, camera = _idle_tracker(hands, idle_fps=5, idle_after=0.05)
+        tracker.start()
+        time.sleep(0.4)
+        assert tracker.idle
+        tracker.stop()
+        assert not tracker.idle
+
     def test_the_default_searches_every_frame_without_hands_too(self):
         hands = _Hands()
         tracker, camera = _idle_tracker(hands)
@@ -157,28 +204,13 @@ class TestTrackerIdling:
 
 @pytest.mark.unit
 class TestHowManyHands:
-    def test_the_default_detector_is_built_for_the_hands_asked_for(self, monkeypatch):
-        built = []
-
-        class Detector:
-            def __init__(self, model_path, max_hands=2):
-                built.append(max_hands)
-
-            def __call__(self, frame, timestamp):
-                return ()
-
-            def close(self):
-                pass
-
-        monkeypatch.setattr(ht, "MediaPipeHands", Detector)
-        monkeypatch.setattr(ht, "ensure_hand_model", lambda fetch=None: "model.task")
-        monkeypatch.setitem(__import__("sys").modules, "mediapipe", SimpleNamespace())
+    def test_the_default_detector_is_built_for_the_hands_asked_for(self, detector_log):
         for asked, expected in ((None, 2), (1, 1), (2, 2)):
             kwargs = {} if asked is None else {"max_hands": asked}
             tracker = HandTracker(0, camera_factory=lambda index: FakeCamera(), **kwargs)
             assert tracker.start() is True
             tracker.stop()
-            assert built[-1] == expected
+            assert detector_log[-1] == expected
 
 
 def _cfg(hand="any"):
@@ -187,20 +219,25 @@ def _cfg(hand="any"):
 
 @pytest.mark.unit
 class TestSnapTracker:
-    def test_one_hand_is_enough_when_any_hand_may_drive(self):
-        tracker = snap_tracker(_cfg("any"), 0)
-        assert tracker.max_hands == 1
+    @pytest.mark.parametrize("hand, looks_for", [("any", 1), ("left", 2), ("right", 2), ("sideways", 1)])
+    def test_it_looks_for_one_hand_unless_a_named_side_needs_both(self, detector_log, hand, looks_for):
+        tracker = snap_tracker(_cfg(hand), 0, camera_factory=lambda index: FakeCamera())
+        assert tracker.start() is True
+        tracker.stop()
+        assert detector_log == [looks_for]
 
-    @pytest.mark.parametrize("side", ["left", "right"])
-    def test_a_named_side_needs_both_hands_to_be_seen(self, side):
-        assert snap_tracker(_cfg(side), 0).max_hands == 2
-
-    def test_a_setting_that_is_not_a_side_counts_as_any(self):
-        assert snap_tracker(_cfg("sideways"), 0).max_hands == 1
-
-    def test_it_idles_while_there_are_no_hands(self):
-        tracker = snap_tracker(_cfg(), 0)
-        assert tracker.idle_fps == ht.IDLE_FPS
+    def test_it_searches_fewer_frames_while_there_are_no_hands(self):
+        hands = _Hands()
+        camera = FakeCamera()
+        tracker = snap_tracker(_cfg(), 0, hands_factory=lambda: hands, camera_factory=lambda index: camera,
+                               max_fps=100, idle_after=0.05)
+        tracker.start()
+        try:
+            time.sleep(1.0)
+        finally:
+            tracker.stop()
+        assert camera.n > 30
+        assert hands.searched < camera.n * 0.5
 
     def test_the_camera_index_and_test_doubles_pass_through(self):
         camera = FakeCamera()
