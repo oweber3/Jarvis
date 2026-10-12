@@ -1,6 +1,6 @@
 """Synthetic hands and a fake desktop for gesture snapping tests.
 
-``hand`` builds a ``Hand`` whose index fingertip is at an image position and whose world landmarks raise or
+``hand`` builds a ``Hand`` whose palm centre is at an image position and whose world landmarks raise or
 fold each finger, so tests can describe gestures in the user's terms (one finger, a fist, two fingers, an open
 hand) without a camera."""
 from __future__ import annotations
@@ -19,7 +19,7 @@ UP, DOWN = 1.35, 0.75  # finger curls measured on a real webcam with the palm to
 
 def hand(x: float = 0.5, y: float = 0.5, *, gesture: str = "one", side: str = "right", score: float = 0.9,
          curls: Optional[Dict[str, float]] = None) -> Hand:
-    """A hand with its index fingertip at image position ``(x, y)`` making ``gesture`` (one, two, fist, open or
+    """A hand with its palm centre at image position ``(x, y)`` making ``gesture`` (one, two, fist, open or
     rock). ``curls`` sets chosen fingers' curl exactly (wrist to tip over wrist to middle joint)."""
     raised = GESTURES[gesture]
     wanted = {name: (UP if name in raised else DOWN) for name in FINGERS}
@@ -37,9 +37,11 @@ def hand(x: float = 0.5, y: float = 0.5, *, gesture: str = "one", side: str = "r
     world[Landmark.THUMB_MCP] = Point(-0.05, -0.04, 0.0)
     world[Landmark.THUMB_IP] = Point(-0.06, -0.06, 0.0)
     world[Landmark.THUMB_TIP] = Point(-0.065, -0.08, 0.0)
-    index_tip = world[Landmark.INDEX_TIP]
-    # Image points: the shape scaled into a 640 x 480 frame around the index fingertip, with square pixels.
-    points = tuple(Point(x + (p.x - index_tip.x) * 1.5, y + (p.y - index_tip.y) * 2, p.z) for p in world)
+    palm = [world[i] for i in (Landmark.WRIST, Landmark.INDEX_MCP, Landmark.MIDDLE_MCP, Landmark.RING_MCP,
+                               Landmark.PINKY_MCP)]
+    cx, cy = sum(p.x for p in palm) / 5, sum(p.y for p in palm) / 5
+    # Image points: the shape scaled into a 640 x 480 frame around the palm centre, with square pixels.
+    points = tuple(Point(x + (p.x - cx) * 1.5, y + (p.y - cy) * 2, p.z) for p in world)
     return Hand(side=side, score=score, points=points, world=tuple(world))
 
 
@@ -70,9 +72,6 @@ class FakeDesktop:
 
     def desktop(self):
         return list(self.monitors)
-
-    def position(self) -> Tuple[int, int]:
-        return self.at
 
     def move_to(self, x: int, y: int) -> None:
         if self.fail:

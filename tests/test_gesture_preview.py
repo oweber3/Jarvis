@@ -7,8 +7,10 @@ from tests.synthetic_hands import frame, hand
 
 def test_the_hand_is_drawn_where_the_detector_found_it():
     image = np.zeros((480, 640, 3), dtype=np.uint8)
-    drawn = draw_overlay(image, frame(0.0, hand(0.25, 0.5)))
-    x, y = int(0.25 * 640), int(0.5 * 480)
+    shown = hand(0.25, 0.5)
+    drawn = draw_overlay(image, frame(0.0, shown))
+    tip = shown.point(8)  # the index fingertip
+    x, y = int(tip.x * 640), int(tip.y * 480)
     assert drawn[y - 3:y + 4, x - 3:x + 4].any()
     assert not image.any()  # the camera frame itself is untouched
 

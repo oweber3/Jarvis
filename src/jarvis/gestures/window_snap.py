@@ -20,6 +20,9 @@ from .hand_tracking import Hand, HandFrame, Landmark
 Rectangle = Tuple[int, int, int, int]
 
 HAND_LOST_SEC = 0.25
+# After a gesture change the pointer's distance from the palm's place fades with this time constant.
+CATCH_UP_SEC = 0.15
+_PALM = (Landmark.WRIST, Landmark.INDEX_MCP, Landmark.MIDDLE_MCP, Landmark.RING_MCP, Landmark.PINKY_MCP)
 WATCHDOG_SEC = 0.05
 WHEEL_NOTCH = 120
 # Wheel units are sent once at least this many have built up, so slow movements do not flood the window.
@@ -95,6 +98,12 @@ def finger_curl(hand: Hand, finger: str) -> float:
     if pip <= 1e-6:
         return 0.0
     return _distance(wrist, hand.world_point(getattr(Landmark, f"{finger}_TIP"))) / pip
+
+
+def palm_centre(hand: Hand) -> Tuple[float, float]:
+    """The image position of the middle of the palm (wrist and the four finger bases), which stays put when
+    fingers fold or rise."""
+    return (sum(hand.point(i).x for i in _PALM) / len(_PALM), sum(hand.point(i).y for i in _PALM) / len(_PALM))
 
 
 def describe_hand(hand: Hand, settings: Optional["WindowSnapSettings"] = None) -> str:
@@ -184,11 +193,15 @@ class WindowSnap:
         self._monitors: List[Rectangle] = [tuple(int(v) for v in m) for m in output.desktop()]  # type: ignore
         if not self._monitors:
             raise ValueError("no monitors")
-        self._desktop_width = max(m[2] for m in self._monitors) - min(m[0] for m in self._monitors)
+        left, right = min(m[0] for m in self._monitors), max(m[2] for m in self._monitors)
+        top, bottom = min(m[1] for m in self._monitors), max(m[3] for m in self._monitors)
+        self._desktop_width = right - left
+        self._centre = ((left + right) / 2, (top + bottom) / 2)
         self._fx = OneEuroFilter(settings.min_cutoff, settings.beta)
         self._fy = OneEuroFilter(settings.min_cutoff, settings.beta)
         self._state = _IDLE
-        self._tracking = False
+        self._drift: Tuple[float, float] = (0.0, 0.0)
+        self._last_t: Optional[float] = None
         self._side: Optional[str] = None
         self._tip: Optional[Tuple[float, float]] = None
         self._last_hand: Optional[float] = None
@@ -230,10 +243,11 @@ class WindowSnap:
                 self._check_lost(arrived)
                 return
             self._last_hand = arrived
-            tip = chosen.point(Landmark.INDEX_TIP)
+            # Absolute: the comfort box, centred in the camera's view, spans the desktop's bounding rectangle.
+            px, py = palm_centre(chosen)
             gain = self._desktop_width / (self._s.comfort_box * max(frame.width, 1))
-            position = (self._fx(tip.x * frame.width * gain, frame.time),
-                        self._fy(tip.y * frame.height * gain, frame.time))
+            position = (self._fx(self._centre[0] + (px - 0.5) * frame.width * gain, frame.time),
+                        self._fy(self._centre[1] + (py - 0.5) * frame.height * gain, frame.time))
             self._step(position, self._shape(chosen), frame.time, frame.height * gain)
 
     def tick(self) -> None:
@@ -254,8 +268,8 @@ class WindowSnap:
     # -- hands -----------------------------------------------------------------------------------
 
     def _choose(self, hands: Sequence[Hand]) -> Optional[Hand]:
-        """The driving hand. Once a hand drives, only it is followed (the hand nearest its last fingertip
-        position, so two hands with the same label never swap); another hand can take over only from idle."""
+        """The driving hand. Once a hand drives, only it is followed (the hand nearest its last palm position,
+        so two hands with the same label never swap); another hand can take over only after it is lost."""
         wanted = self._s.hand
         candidates = [h for h in hands if wanted == "any" or h.side == wanted]
         if self._side is not None and self._tip is not None:
@@ -263,15 +277,14 @@ class WindowSnap:
             if not candidates:
                 return None
             last_x, last_y = self._tip
-            chosen = min(candidates, key=lambda h: (h.point(Landmark.INDEX_TIP).x - last_x) ** 2
-                         + (h.point(Landmark.INDEX_TIP).y - last_y) ** 2)
+            chosen = min(candidates, key=lambda h: (palm_centre(h)[0] - last_x) ** 2
+                         + (palm_centre(h)[1] - last_y) ** 2)
         elif candidates:
             chosen = max(candidates, key=lambda h: h.score)
         else:
             return None
         self._side = chosen.side
-        tip = chosen.point(Landmark.INDEX_TIP)
-        self._tip = (tip.x, tip.y)
+        self._tip = palm_centre(chosen)
         return chosen
 
     def _shape(self, hand: Hand) -> str:
@@ -297,7 +310,6 @@ class WindowSnap:
             self._end_scroll()
         self._window = None
         self._state = _IDLE
-        self._tracking = False
         self._gesture = self._candidate = None
         self._raised.clear()
         self._side = None
@@ -308,6 +320,8 @@ class WindowSnap:
     # -- the state machine -----------------------------------------------------------------------
 
     def _step(self, p: Tuple[float, float], shape: str, t: float, scale: float) -> None:
+        dt = 0.0 if self._last_t is None else max(t - self._last_t, 0.0)
+        self._last_t = t
         if shape == self._gesture:
             self._candidate = None
         else:
@@ -316,16 +330,14 @@ class WindowSnap:
             if t - self._candidate_since >= self._s.debounce:
                 self._candidate = None
                 self._confirm(shape, p)
-                self._ref = p
-                return
-            # The hand is changing: the aim (and a held window) stays still until the new gesture counts.
+            # Until the new gesture counts the pointer (and a held window) stays still.
             self._ref = p
             return
         state = self._state
         if state == _AIMING:
-            self._move_by(p)
+            self._aim(p, dt)
         elif state == _HOLDING:
-            self._move_by(p)
+            self._aim(p, dt)
             self._follow()
         elif state == _SCROLLING:
             self._scroll_by(p, scale)
@@ -335,6 +347,7 @@ class WindowSnap:
     def _confirm(self, shape: str, p: Tuple[float, float]) -> None:
         """A new gesture has lasted the debounce time: act on it."""
         previous, self._gesture = self._gesture, shape
+        paused = self._state == _IDLE
         if self._state in (_HOLDING, _HOLDING_NOTHING):
             if not self._raised.get("INDEX"):
                 return  # still a fist, perhaps with another finger loosening: keep holding
@@ -343,8 +356,15 @@ class WindowSnap:
         if self._state == _SCROLLING and shape != TWO:
             self._end_scroll()
             self._state = _AIMING
-        if shape in (ONE, TWO, FIST) and not self._tracking:
-            self._begin(p)
+        if shape in (ONE, TWO, FIST):
+            if paused:
+                # Resuming after a pause: the pointer goes straight to the palm's place.
+                self._drift = (0.0, 0.0)
+                self._cursor = clamp_to_desktop(p[0], p[1], self._monitors)
+                self._show(self._cursor)
+            else:
+                # The pointer continues from where it stood; the difference from the palm fades (see _aim).
+                self._drift = (self._cursor[0] - p[0], self._cursor[1] - p[1])
         if shape == ONE:
             self._state = _AIMING
         elif shape == FIST:
@@ -353,30 +373,17 @@ class WindowSnap:
             self._start_scroll()
         else:
             if previous in (ONE, TWO, FIST):
-                debug_log(f"gesture snapping: clutch ({shape})", "gestures")
+                debug_log(f"gesture snapping: paused ({shape})", "gestures")
             self._state = _IDLE
-            self._tracking = False
 
-    def _begin(self, p: Tuple[float, float]) -> None:
-        """Start driving the pointer from where it is, read from the system, so it never jumps."""
-        try:
-            x, y = self._out.position()
-        except Exception as exc:  # noqa: BLE001 - keep the last known position
-            self._output_failed("read the pointer position", exc)
-            x, y = self._cursor
-        else:
-            self._failing.discard("read the pointer position")
-        self._cursor = clamp_to_desktop(float(x), float(y), self._monitors)
-        self._shown = (int(x), int(y))
+    def _aim(self, p: Tuple[float, float], dt: float) -> None:
+        """Put the pointer at the palm's place, plus whatever difference is still fading after a gesture change."""
+        fade = math.exp(-dt / CATCH_UP_SEC) if dt > 0 else 1.0
+        self._drift = (self._drift[0] * fade, self._drift[1] * fade)
+        if abs(self._drift[0]) < 0.5 and abs(self._drift[1]) < 0.5:
+            self._drift = (0.0, 0.0)
         self._ref = p
-        self._tracking = True
-        self._state = _AIMING
-
-    def _move_by(self, p: Tuple[float, float]) -> None:
-        x = self._cursor[0] + p[0] - self._ref[0]
-        y = self._cursor[1] + p[1] - self._ref[1]
-        self._ref = p
-        self._cursor = clamp_to_desktop(x, y, self._monitors)
+        self._cursor = clamp_to_desktop(p[0] + self._drift[0], p[1] + self._drift[1], self._monitors)
         self._show(self._cursor)
 
     def _show(self, point: Tuple[float, float]) -> None:

@@ -107,7 +107,6 @@ def _user32():
         "GetClassNameW": ([wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
         "SetWindowPos": ([wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
                           wintypes.UINT], wintypes.BOOL),
-        "GetCursorPos": ([ctypes.POINTER(_Point)], wintypes.BOOL),
         "SetCursorPos": ([ctypes.c_int, ctypes.c_int], wintypes.BOOL),
         "IsZoomed": ([wintypes.HWND], wintypes.BOOL),
         "GetWindowPlacement": ([wintypes.HWND, ctypes.POINTER(_WindowPlacement)], wintypes.BOOL),
@@ -154,14 +153,6 @@ class WindowsSnapOutput:
     def desktop(self) -> List[Rectangle]:
         from .displays import list_monitors
         return [monitor.bounds for monitor in list_monitors()]
-
-    def position(self) -> Tuple[int, int]:
-        from .displays import per_monitor_dpi
-        point = _Point()
-        with per_monitor_dpi():
-            if not _user32().GetCursorPos(ctypes.byref(point)):
-                raise OSError("The pointer position could not be read.")
-        return int(point.x), int(point.y)
 
     def move_to(self, x: int, y: int) -> None:
         from .displays import per_monitor_dpi

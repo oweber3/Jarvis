@@ -459,7 +459,7 @@ def _build_field_metadata() -> List[FieldMeta]:
       "Move and scroll windows with your hand through the webcam, palm towards the camera: raise one "
       "finger to aim the pointer, make a fist to grab the window under it and move it, then raise a finger or open "
       "your hand to snap it into the FancyZones zone under the pointer. Raise two fingers and move your hand up or "
-      "down to scroll. Open your hand flat to pause and reposition it. It never clicks. This only makes it available: say \"start gesture control\" to turn the "
+      "down to scroll. Open your hand flat to pause. It never clicks. This only makes it available: say \"start gesture control\" to turn the "
       "camera on and \"stop gesture control\" to turn it off. Everything stays on this PC. Takes effect after "
       "Jarvis restarts.",
       "gesture_snap", "bool")
@@ -470,8 +470,9 @@ def _build_field_metadata() -> List[FieldMeta]:
       "Which hand aims. Any: whichever hand is in view, and the one already in use keeps control.",
       "gesture_snap", "choice", choices=[("any", "Any hand"), ("right", "Right hand"), ("left", "Left hand")])
     f("gesture_snap_comfort_box", "Comfort Box",
-      "How far your fingertip moves to cross the whole desktop (all monitors), as a share of the camera's width. "
-      "Smaller means less arm movement but a faster, more sensitive pointer.",
+      "The part of the camera's view, centred, that stands for your whole desktop (all monitors), as a share of "
+      "the camera's width. Your palm at its middle puts the pointer in the middle of the desktop. Smaller means "
+      "less arm movement but a more sensitive pointer.",
       "gesture_snap", "float", min_val=0.15, max_val=1.0, step=0.05)
     f("gesture_snap_finger_up", "Finger Up",
       "How straight a finger must be to count as raised (its fingertip's distance from the wrist compared with "

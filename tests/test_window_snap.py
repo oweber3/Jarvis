@@ -63,14 +63,14 @@ class Rig:
                            gesture=gesture))
 
     def grab_at(self, x, y):
-        """Close the hand into a fist at (x, y); the index fingertip drifts as a real folding finger does."""
-        self.show(hand(x + 0.01, y + 0.03, gesture="fist"), frames=SETTLE)
+        """Close the hand into a fist at (x, y); the palm shifts slightly as a real closing hand does."""
+        self.show(hand(x + 0.005, y + 0.005, gesture="fist"), frames=SETTLE)
 
     def two_at(self, x, y):
         self.show(hand(x + 0.01, y + 0.01, gesture="two"), frames=SETTLE)
 
     def raise_finger(self, x, y):
-        self.show(hand(x - 0.02, y - 0.03), frames=SETTLE)
+        self.show(hand(x - 0.005, y - 0.005), frames=SETTLE)
 
 
 def window(rect=(100, 100, 900, 700), **kw):
@@ -103,7 +103,7 @@ def test_a_gesture_shorter_than_the_debounce_changes_nothing():
 
 
 def test_an_unknown_finger_combination_holds_the_pointer_still():
-    rig = Rig(FakeDesktop(at=(700, 400)))
+    rig = Rig(FakeDesktop())
     rig.start()
     before = rig.desk.at
     rig.glide((0.5, 0.5), (0.6, 0.6), gesture="rock")
@@ -112,43 +112,53 @@ def test_an_unknown_finger_combination_holds_the_pointer_still():
 
 # --- aiming ----------------------------------------------------------------------------------------
 
-def test_one_finger_moves_the_pointer_from_where_it_is():
-    rig = Rig(FakeDesktop(at=(500, 400)))
-    rig.start(0.3, 0.3)
-    assert rig.desk.at == (500, 400)  # no jump when the hand appears
-    rig.glide((0.3, 0.3), (0.4, 0.4))
-    x, y = rig.desk.at
-    assert x > 500 and y > 400
+THREE = [(-1920, 0, 0, 1080), (0, 0, 2560, 1440), (2560, 0, 4480, 1080)]  # desktop centre (1280, 720)
 
 
-def test_crossing_the_comfort_box_crosses_the_whole_desktop_of_several_monitors():
-    monitors = [(-1920, 0, 0, 1080), (0, 0, 2560, 1440), (2560, 0, 4480, 1080)]
-    rig = Rig(FakeDesktop(monitors, at=(-1920, 500)), comfort_box=0.5)
-    rig.start(0.2, 0.5)
-    rig.glide((0.2, 0.5), (0.7, 0.5), frames=20)  # half the camera's width
+def test_the_palm_in_the_middle_of_the_camera_puts_the_pointer_in_the_middle_of_the_desktop():
+    rig = Rig(FakeDesktop(THREE, at=(-1500, 100)))
+    rig.start(0.5, 0.5)
+    assert rig.desk.at == (1280, 720)
+
+
+def test_the_comfort_box_edges_are_the_desktop_edges_across_several_monitors():
+    rig = Rig(FakeDesktop(THREE), comfort_box=0.5)
+    rig.start(0.25, 0.5)  # the left edge of a box half the camera's width, centred
+    assert rig.desk.at[0] == -1920
+    rig.glide((0.25, 0.5), (0.75, 0.5), frames=20)
     assert rig.desk.at[0] == pytest.approx(4479, abs=2)
+
+
+def test_a_palm_outside_the_comfort_box_holds_the_pointer_at_the_edge():
+    rig = Rig(FakeDesktop([(0, 0, 1920, 1080)]))
+    rig.start(0.05, 0.5)
+    assert rig.desk.at[0] == 0
+    rig.glide((0.05, 0.5), (0.95, 0.5), frames=20)
+    assert rig.desk.at[0] == 1919
 
 
 def test_a_smaller_comfort_box_needs_less_hand_movement():
     def travel(box):
-        rig = Rig(FakeDesktop(at=(100, 500)), comfort_box=box)
-        rig.start(0.4, 0.5)
-        rig.glide((0.4, 0.5), (0.45, 0.5))
-        return rig.desk.at[0] - 100
+        rig = Rig(FakeDesktop(), comfort_box=box)
+        rig.start(0.5, 0.5)
+        start = rig.desk.at[0]
+        rig.glide((0.5, 0.5), (0.53, 0.5))
+        return rig.desk.at[0] - start
     assert travel(0.25) == pytest.approx(2 * travel(0.5), rel=0.02)
 
 
 def test_up_and_down_use_the_same_scale_as_left_and_right():
-    rig = Rig(FakeDesktop([(0, 0, 3840, 2160)], at=(1000, 1000)))
+    rig = Rig(FakeDesktop([(0, 0, 3840, 2160)]))
     rig.start()
-    rig.glide((0.5, 0.5), (0.6, 0.5))
-    across = rig.desk.at[0] - 1000
-    rig.glide((0.6, 0.5), (0.6, 0.5 + 0.1 * 640 / 480))  # the same distance in camera pixels, downwards
-    assert rig.desk.at[1] - 1000 == pytest.approx(across, abs=2)
+    x0, y0 = rig.desk.at
+    rig.glide((0.5, 0.5), (0.55, 0.5))
+    across = rig.desk.at[0] - x0
+    rig.glide((0.55, 0.5), (0.55, 0.5 + 0.05 * 640 / 480))  # the same distance in camera pixels, downwards
+    assert rig.desk.at[1] - y0 == pytest.approx(across, abs=2)
 
 
 def test_the_pointer_never_leaves_the_desktop():
-    rig = Rig(FakeDesktop([(0, 0, 1920, 1080)], at=(100, 100)))
+    rig = Rig(FakeDesktop([(0, 0, 1920, 1080)]))
     rig.start()
     rig.glide((0.5, 0.5), (0.0, 0.0))
     assert rig.desk.at == (0, 0)
@@ -158,20 +168,19 @@ def test_the_pointer_never_leaves_the_desktop():
 
 def test_a_gap_between_monitors_of_different_heights_is_never_a_pointer_position():
     monitors = [(0, 0, 1920, 1080), (1920, 0, 3840, 600)]
-    rig = Rig(FakeDesktop(monitors, at=(1800, 1000)))
-    rig.start()
-    rig.glide((0.5, 0.5), (0.55, 0.5))
+    rig = Rig(FakeDesktop(monitors))
+    rig.start(0.6, 0.7)
     x, y = rig.desk.at
     assert any(l <= x < r and t <= y < b for l, t, r, b in monitors)
 
 
-def test_moving_back_from_an_edge_moves_the_pointer_at_once():
-    rig = Rig(FakeDesktop(at=(50, 500)))
+def test_folding_and_raising_fingers_does_not_move_the_pointer():
+    rig = Rig(FakeDesktop())
     rig.start()
-    rig.glide((0.5, 0.5), (0.2, 0.5))
-    assert rig.desk.at[0] == 0
-    rig.glide((0.2, 0.5), (0.22, 0.5), frames=2)
-    assert rig.desk.at[0] > 0
+    aim = rig.desk.at
+    for gesture in ("two", "one", "rock", "one"):
+        rig.show(hand(0.5, 0.5, gesture=gesture), frames=SETTLE)
+    assert rig.desk.at == aim
 
 
 def test_aiming_never_grabs_or_scrolls_anything():
@@ -181,74 +190,62 @@ def test_aiming_never_grabs_or_scrolls_anything():
     assert rig.desk.of("grab") == [] and rig.desk.of("window") == [] and rig.desk.of("scroll") == []
 
 
-# --- clutch ----------------------------------------------------------------------------------------
+# --- pausing ---------------------------------------------------------------------------------------
 
-def test_an_open_hand_holds_the_pointer_still_and_resuming_does_not_jump():
-    rig = Rig(FakeDesktop(at=(900, 500)))
+def test_an_open_hand_holds_the_pointer_still_and_one_finger_brings_it_to_the_hand():
+    rig = Rig(FakeDesktop([(0, 0, 1920, 1080)]))
     rig.start()
     rig.glide((0.5, 0.5), (0.55, 0.5))
     held = rig.desk.at
-    rig.glide((0.55, 0.5), (0.25, 0.5), gesture="open", frames=10)
+    rig.glide((0.55, 0.5), (0.45, 0.5), gesture="open", frames=10)
     assert rig.desk.at == held
-    rig.start(0.25, 0.5)
+    rig.start(0.45, 0.5)
+    assert rig.desk.at[0] < held[0]
+
+
+def test_a_hand_out_of_view_holds_the_pointer_and_its_return_goes_to_the_hand():
+    rig = Rig(FakeDesktop([(0, 0, 1920, 1080)]))
+    rig.start()
+    held = rig.desk.at
+    rig.show(frames=15)
     assert rig.desk.at == held
-    rig.glide((0.25, 0.5), (0.3, 0.5))
+    rig.start(0.6, 0.5)
     assert rig.desk.at[0] > held[0]
-
-
-def test_a_hand_out_of_view_holds_the_pointer_and_its_return_does_not_jump():
-    rig = Rig(FakeDesktop(at=(900, 500)))
-    rig.start()
-    rig.glide((0.5, 0.5), (0.55, 0.5))
-    held = rig.desk.at
-    rig.show(frames=15)
-    rig.start(0.2, 0.8)
-    assert rig.desk.at == held
-
-
-def test_moving_the_real_mouse_while_clutched_is_respected():
-    rig = Rig(FakeDesktop(at=(900, 500)))
-    rig.start()
-    rig.show(frames=15)
-    rig.desk.at = (300, 300)
-    rig.start()
-    rig.glide((0.5, 0.5), (0.52, 0.5), frames=2)
-    assert rig.desk.at[0] > 300 and rig.desk.at[1] == 300
 
 
 # --- grabbing, moving and snapping -----------------------------------------------------------------
 
 def test_a_fist_grabs_the_window_under_where_the_pointer_was_before_the_hand_closed():
     front, behind = window((600, 300, 1200, 800)), window((0, 0, 1920, 1080))
-    rig = Rig(FakeDesktop(at=(700, 400), windows=[front, behind]))
+    rig = Rig(FakeDesktop(windows=[front, behind]))
     rig.start()
     aim = rig.desk.at
     rig.grab_at(0.5, 0.5)
     assert rig.desk.of("grab") == [("grab", front)]
-    assert rig.desk.at == aim
+    assert abs(rig.desk.at[0] - aim[0]) < 10 and abs(rig.desk.at[1] - aim[1]) < 10  # easing towards the palm
 
 
 def test_a_fist_raised_from_the_clutch_grabs_the_window_under_the_pointer():
     win = window((600, 300, 1200, 800))
-    rig = Rig(FakeDesktop(at=(700, 400), windows=[win]))
+    rig = Rig(FakeDesktop(windows=[win]))
     rig.show(hand(0.5, 0.5, gesture="fist"), frames=SETTLE)
     assert rig.desk.of("grab") == [("grab", win)] and rig.snap.state == "holding"
 
 
 def test_the_held_window_follows_the_hand_keeping_its_place_under_the_pointer():
     win = window((600, 300, 1200, 800))
-    rig = Rig(FakeDesktop(at=(700, 400), windows=[win]))
+    rig = Rig(FakeDesktop(windows=[win]))
     rig.start()
     rig.grab_at(0.5, 0.5)
-    rig.glide((0.51, 0.53), (0.61, 0.53), gesture="fist")
+    rig.glide((0.5, 0.5), (0.55, 0.5), gesture="fist")
     x, y = rig.desk.at
-    assert x > 1000
-    assert (x - win.rect[0], y - win.rect[1]) == (100, 100)
+    assert x > 1100
+    assert (x - win.rect[0], y - win.rect[1]) == (360, 240)  # where the pointer was on the window at the grab
 
 
 def test_raising_a_finger_snaps_the_window_where_the_pointer_is():
     win = window((600, 300, 1200, 800))
-    rig = Rig(FakeDesktop(at=(700, 400), windows=[win]))
+    rig = Rig(FakeDesktop(windows=[win]))
     rig.start()
     rig.grab_at(0.5, 0.5)
     rig.glide((0.51, 0.53), (0.61, 0.53), gesture="fist")
@@ -261,7 +258,7 @@ def test_raising_a_finger_snaps_the_window_where_the_pointer_is():
 @pytest.mark.parametrize("gesture", ["two", "open"])
 def test_two_fingers_or_an_open_hand_also_snap_the_window(gesture):
     win = window((600, 300, 1200, 800))
-    rig = Rig(FakeDesktop(at=(700, 400), windows=[win]))
+    rig = Rig(FakeDesktop(windows=[win]))
     rig.start()
     rig.grab_at(0.5, 0.5)
     rig.glide((0.51, 0.53), (0.61, 0.53), gesture="fist")
@@ -272,7 +269,7 @@ def test_two_fingers_or_an_open_hand_also_snap_the_window(gesture):
 
 def test_a_loosening_little_finger_keeps_holding():
     win = window((600, 300, 1200, 800))
-    rig = Rig(FakeDesktop(at=(700, 400), windows=[win]))
+    rig = Rig(FakeDesktop(windows=[win]))
     rig.start()
     rig.grab_at(0.5, 0.5)
     rig.show(hand(0.51, 0.53, gesture="fist", curls={"pinky": 1.3}), frames=SETTLE)
@@ -281,7 +278,7 @@ def test_a_loosening_little_finger_keeps_holding():
 
 def test_a_maximised_window_is_restored_and_stays_under_the_pointer():
     win = window((0, 0, 1920, 1080), maximised=True, restored=(200, 200, 1000, 800))
-    rig = Rig(FakeDesktop(at=(960, 300), windows=[win]))
+    rig = Rig(FakeDesktop(windows=[win]))
     rig.start()
     rig.grab_at(0.5, 0.5)
     assert not win.maximised
@@ -291,7 +288,7 @@ def test_a_maximised_window_is_restored_and_stays_under_the_pointer():
 
 
 def test_a_fist_over_no_window_holds_the_aim_still_and_drops_nothing():
-    rig = Rig(FakeDesktop(at=(700, 400), windows=[]))
+    rig = Rig(FakeDesktop(windows=[]))
     rig.start()
     aim = rig.desk.at
     rig.grab_at(0.5, 0.5)
@@ -304,7 +301,7 @@ def test_a_fist_over_no_window_holds_the_aim_still_and_drops_nothing():
 
 def test_a_window_that_refuses_to_move_is_let_go_and_tracking_continues():
     win = window((600, 300, 1200, 800))
-    rig = Rig(FakeDesktop(at=(700, 400), windows=[win]))
+    rig = Rig(FakeDesktop(windows=[win]))
     rig.start()
     rig.grab_at(0.5, 0.5)
     rig.desk.fail_window_moves = True
@@ -312,14 +309,14 @@ def test_a_window_that_refuses_to_move_is_let_go_and_tracking_continues():
     rig.desk.fail_window_moves = False
     rig.raise_finger(0.61, 0.53)
     before = rig.desk.at
-    rig.glide((0.59, 0.5), (0.5, 0.5), frames=3)
+    rig.glide((0.6, 0.53), (0.5, 0.53), frames=3)
     assert rig.desk.of("drop") == [] and rig.desk.at[0] < before[0]
 
 
 # --- scrolling -------------------------------------------------------------------------------------
 
 def test_two_fingers_moved_up_scroll_the_content_up_and_hold_the_pointer_still():
-    rig = Rig(FakeDesktop(at=(700, 400)))
+    rig = Rig(FakeDesktop())
     rig.start()
     aim = rig.desk.at
     rig.two_at(0.5, 0.5)
@@ -329,7 +326,7 @@ def test_two_fingers_moved_up_scroll_the_content_up_and_hold_the_pointer_still()
 
 
 def test_two_fingers_moved_down_scroll_the_other_way():
-    rig = Rig(FakeDesktop(at=(700, 400)))
+    rig = Rig(FakeDesktop())
     rig.start()
     rig.two_at(0.5, 0.5)
     rig.glide((0.51, 0.51), (0.51, 0.56), gesture="two")
@@ -338,7 +335,7 @@ def test_two_fingers_moved_down_scroll_the_other_way():
 
 def test_the_scroll_speed_setting_scales_the_scroll():
     def amount(speed):
-        rig = Rig(FakeDesktop(at=(700, 400)), scroll_speed=speed)
+        rig = Rig(FakeDesktop(), scroll_speed=speed)
         rig.start()
         rig.two_at(0.5, 0.5)
         rig.glide((0.51, 0.51), (0.51, 0.41), gesture="two")
@@ -347,7 +344,7 @@ def test_the_scroll_speed_setting_scales_the_scroll():
 
 
 def test_slow_movement_scrolls_in_small_steps_not_a_flood_of_events():
-    rig = Rig(FakeDesktop(at=(700, 400)))
+    rig = Rig(FakeDesktop())
     rig.start()
     rig.two_at(0.5, 0.5)
     rig.glide((0.51, 0.51), (0.51, 0.49), gesture="two", frames=30)
@@ -356,7 +353,7 @@ def test_slow_movement_scrolls_in_small_steps_not_a_flood_of_events():
 
 
 def test_sideways_movement_does_not_scroll():
-    rig = Rig(FakeDesktop(at=(700, 400)))
+    rig = Rig(FakeDesktop())
     rig.start()
     rig.two_at(0.5, 0.5)
     rig.glide((0.51, 0.51), (0.61, 0.51), gesture="two")
@@ -364,7 +361,7 @@ def test_sideways_movement_does_not_scroll():
 
 
 def test_one_finger_ends_the_scroll_and_aiming_resumes():
-    rig = Rig(FakeDesktop(at=(700, 400)))
+    rig = Rig(FakeDesktop())
     rig.start()
     rig.two_at(0.5, 0.5)
     rig.glide((0.51, 0.51), (0.51, 0.45), gesture="two")
@@ -375,7 +372,7 @@ def test_one_finger_ends_the_scroll_and_aiming_resumes():
 
 
 def test_a_fist_from_scrolling_grabs_the_window_under_the_pointer():
-    rig = Rig(FakeDesktop(at=(700, 400), windows=[window((0, 0, 1920, 1080))]))
+    rig = Rig(FakeDesktop(windows=[window((0, 0, 1920, 1080))]))
     rig.start()
     rig.two_at(0.5, 0.5)
     rig.show(hand(0.51, 0.51, gesture="fist"), frames=SETTLE)
@@ -383,7 +380,7 @@ def test_a_fist_from_scrolling_grabs_the_window_under_the_pointer():
 
 
 def test_a_window_that_refuses_scrolling_does_not_break_tracking():
-    rig = Rig(FakeDesktop(at=(700, 400)))
+    rig = Rig(FakeDesktop())
     rig.start()
     rig.two_at(0.5, 0.5)
     rig.desk.fail = True
@@ -397,7 +394,7 @@ def test_a_window_that_refuses_scrolling_does_not_break_tracking():
 
 def test_losing_the_hand_while_holding_leaves_the_window_where_it_is():
     win = window((600, 300, 1200, 800))
-    rig = Rig(FakeDesktop(at=(700, 400), windows=[win]))
+    rig = Rig(FakeDesktop(windows=[win]))
     rig.start()
     rig.grab_at(0.5, 0.5)
     rig.glide((0.51, 0.53), (0.61, 0.53), gesture="fist")
@@ -441,7 +438,7 @@ def test_slow_detection_does_not_let_go():
 
 def test_closing_while_holding_leaves_the_window_and_later_frames_do_nothing():
     win = window((600, 300, 1200, 800))
-    rig = Rig(FakeDesktop(at=(700, 400), windows=[win]))
+    rig = Rig(FakeDesktop(windows=[win]))
     rig.start()
     rig.grab_at(0.5, 0.5)
     rig.snap.close()
@@ -464,24 +461,24 @@ def test_a_pointer_that_refuses_input_does_not_break_tracking():
 # --- which hand ------------------------------------------------------------------------------------
 
 def test_only_the_chosen_hand_moves_the_pointer():
-    rig = Rig(FakeDesktop(at=(900, 500)), hand="right")
+    rig = Rig(FakeDesktop(), hand="right")
     for i in range(10):
         rig.show(hand(0.3 + i * 0.01, 0.5, side="left"))
     assert rig.desk.of("pointer") == []
 
 
 def test_with_any_hand_the_hand_in_use_keeps_control_when_another_appears():
-    rig = Rig(FakeDesktop(at=(900, 500)))
+    rig = Rig(FakeDesktop())
     rig.show(hand(0.5, 0.5, side="left", score=0.7), frames=SETTLE)
     for i in range(1, 6):
         rig.show(hand(0.5 + i * 0.01, 0.5, side="left", score=0.7),
                  hand(0.8, 0.2 + i * 0.05, side="right", score=0.99))
     x, y = rig.desk.at
-    assert x > 900 and y == 500
+    assert x > 960 and y == 540
 
 
 def test_another_hand_never_takes_over_during_a_dropout():
-    rig = Rig(FakeDesktop(at=(900, 500), windows=[window((0, 0, 1920, 1080))]))
+    rig = Rig(FakeDesktop(windows=[window((0, 0, 1920, 1080))]))
     rig.show(hand(0.5, 0.5, side="right"), frames=SETTLE)
     rig.grab_at(0.5, 0.5)
     rig.show(hand(0.2, 0.2, gesture="open", side="left"))  # the right hand missed for one frame
@@ -491,12 +488,13 @@ def test_another_hand_never_takes_over_during_a_dropout():
 
 
 def test_two_hands_with_the_same_label_do_not_make_the_pointer_jump():
-    rig = Rig(FakeDesktop(at=(900, 500)))
-    a, b = (0.3, 0.5), (0.7, 0.5)
+    rig = Rig(FakeDesktop())
+    a, b = (0.4, 0.5), (0.6, 0.5)
     rig.show(hand(*a), frames=SETTLE)
+    aim = rig.desk.at
     for i in range(6):
         rig.show(*((hand(*a), hand(*b)) if i % 2 else (hand(*b), hand(*a))))
-    assert rig.desk.of("pointer") == []
+    assert rig.desk.at == aim
 
 
 # --- smoothing -------------------------------------------------------------------------------------
@@ -504,7 +502,7 @@ def test_two_hands_with_the_same_label_do_not_make_the_pointer_jump():
 def test_smoothing_steadies_a_jittery_fingertip():
     def spread(**overrides):
         rng = random.Random(7)
-        rig = Rig(FakeDesktop(at=(900, 500)), **overrides)
+        rig = Rig(FakeDesktop(), **overrides)
         xs = []
         for _ in range(150):
             rig.show(hand(0.5 + rng.uniform(-0.003, 0.003), 0.5 + rng.uniform(-0.003, 0.003)))
@@ -514,11 +512,11 @@ def test_smoothing_steadies_a_jittery_fingertip():
 
 
 def test_smoothing_still_follows_a_deliberate_movement():
-    rig = Rig(FakeDesktop(at=(200, 500)), min_cutoff=1.0, beta=0.005)
+    rig = Rig(FakeDesktop(), min_cutoff=1.0, beta=0.005)
     rig.start(0.4, 0.5)
     rig.glide((0.4, 0.5), (0.5, 0.5), frames=6)
     rig.show(hand(0.5, 0.5), frames=30)
-    assert rig.desk.at[0] == pytest.approx(200 + 0.1 * 640 * 1920 / 320, abs=10)
+    assert rig.desk.at[0] == pytest.approx(960, abs=10)
 
 
 # --- state and settings ----------------------------------------------------------------------------
@@ -547,3 +545,15 @@ def test_settings_come_from_the_config_with_down_below_up(mock_config):
     loaded = WindowSnapSettings.from_config(mock_config)
     assert loaded.finger_down < loaded.finger_up
     assert loaded.debounce == pytest.approx(0.15)
+
+
+def test_a_gesture_change_never_makes_the_pointer_hop_and_it_catches_up_with_the_palm():
+    rig = Rig(FakeDesktop())
+    rig.start()
+    aim = rig.desk.at
+    rig.show(hand(0.52, 0.52, gesture="two"), frames=SETTLE)  # the palm shifts while the hand changes
+    rig.show(hand(0.52, 0.52), frames=SETTLE)
+    first = rig.desk.at
+    assert abs(first[0] - aim[0]) < 40  # no hop of the full shift (0.02 of the camera = 77 pixels here)
+    rig.show(hand(0.52, 0.52), frames=40)
+    assert rig.desk.at[0] == pytest.approx(960 + 0.02 * 640 * 6, abs=3)  # back on the palm's place
