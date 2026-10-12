@@ -1591,7 +1591,7 @@
         "left-click",
         "left-click it"
       ],
-      "needs_wake_word": true
+      "ambient": true
     },
     {
       "id": "gesture_click.double_click",
@@ -1613,7 +1613,7 @@
         "double-click there",
         "double-click that"
       ],
-      "needs_wake_word": true
+      "ambient": true
     },
     {
       "id": "gesture_click.right_click",
@@ -1635,7 +1635,7 @@
         "right-click there",
         "right-click that"
       ],
-      "needs_wake_word": true
+      "ambient": true
     },
     {
       "id": "tv.power_on",

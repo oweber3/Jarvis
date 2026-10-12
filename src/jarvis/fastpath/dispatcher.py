@@ -9,9 +9,10 @@ from .matcher import match, FastMatch
 UNEXPECTED_FAILURE = 'That did not work: the action failed with an unexpected error.'
 
 
-def match_command(text, cfg, language=None, addressed=True):
+def match_command(text, cfg, language=None, addressed=True, ambient=False):
     """Check availability and the central policy before offering a routine route. ``addressed`` is false for a
-    voice request engaged only by the hot window, which never gets a route marked ``needs_wake_word``."""
+    voice request engaged only by the hot window, which never gets a route marked ``needs_wake_word``. ``ambient``
+    is true for speech nobody addressed to Jarvis, which gets only routes marked ``ambient``."""
     if not getattr(cfg, 'fast_commands_enabled', True):
         return None
     try:
@@ -24,6 +25,17 @@ def match_command(text, cfg, language=None, addressed=True):
         if not cfg.windows_tools_enabled:
             available -= {'appControl', 'windowControl', 'workspaceControl', 'systemVolume', 'mediaControl',
                           'systemInfo', 'openPath', 'systemSettings', 'inputControl', 'pdfNavigate'}
+        if ambient:
+            # Only fixed phrases are ever ambient, so names (apps, TV apps, routines) are not looked up.
+            result = match(redact(text), lang, available_tools=available)
+            if result is None or not result.ambient:
+                return None
+            ready = getattr(BUILTIN_TOOLS[result.tool_name], 'fast_available', None)
+            if ready is None or not ready(cfg, result.args):
+                return None
+            safety = evaluate_safety(result.tool_name, result.args, cfg, tool=BUILTIN_TOOLS[result.tool_name],
+                                     language=lang)
+            return result if safety.tier == SafetyTier.SAFE else None
         tv_apps = BUILTIN_TOOLS['tvControl'].fast_targets(cfg) if 'tvControl' in available else ()
         routines = BUILTIN_TOOLS['routineControl'].fast_targets(cfg) if 'routineControl' in available else ()
         result = match(redact(text), lang, tv_apps=tv_apps, routines=routines, available_tools=available)

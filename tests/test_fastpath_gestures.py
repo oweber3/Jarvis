@@ -125,8 +125,8 @@ def test_a_click_route_waits_for_gesture_snapping_to_run(mock_config, monkeypatc
 
 
 
-def test_a_spoken_click_needs_the_wake_word_or_a_raised_hand(mock_config, monkeypatch):
-    """A bare "click" overheard in the hot window never clicks; addressed (wake word, orb, raised hand) it does."""
+def test_a_spoken_click_works_addressed_and_in_the_hot_window(mock_config, monkeypatch):
+    """No wake word needed: the hot window and addressed requests both click (bare speech: test_bare_click.py)."""
     from jarvis.fastpath import dispatcher
     from jarvis.gestures import window_snap_service
     from jarvis.tools.builtin.gesture_control import GestureControlTool
@@ -136,5 +136,5 @@ def test_a_spoken_click_needs_the_wake_word_or_a_raised_hand(mock_config, monkey
         running = True
     monkeypatch.setitem(BUILTIN_TOOLS, 'gestureControl', GestureControlTool())
     monkeypatch.setattr(window_snap_service, '_service', Running())
-    assert dispatcher.match_command('click', mock_config, 'en', addressed=False) is None
+    assert dispatcher.match_command('click', mock_config, 'en', addressed=False).args == {'action': 'click'}
     assert dispatcher.match_command('click', mock_config, 'en', addressed=True).args == {'action': 'click'}

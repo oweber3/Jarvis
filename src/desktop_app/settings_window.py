@@ -709,7 +709,7 @@ def _build_field_metadata() -> List[FieldMeta]:
       "finger to aim the pointer, make a fist to grab the window under it and move it, then raise a finger or open "
       "your hand to snap it into the FancyZones zone under the pointer. Raise two fingers and move your hand up or "
       "down to scroll. Open your hand flat to pause, or hold it up for a second to talk to Jarvis. Pull two open "
-      "hands apart or together to zoom, and cross your wrists to turn it off. Gestures never click; say \"Jarvis, click\", "
+      "hands apart or together to zoom, and cross your wrists to turn it off. Gestures never click; say \"click\", "
       "\"double click\" or \"right click\" to click at the pointer. This only makes it available: say \"start "
       "gesture control\" to turn the camera on and \"stop gesture control\" to turn it off. Everything stays on "
       "this PC. Takes effect after Jarvis restarts.",
