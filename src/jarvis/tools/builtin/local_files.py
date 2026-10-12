@@ -17,6 +17,7 @@ from ..base import Tool, ToolContext
 from ..types import ToolExecutionResult
 from ...debug import debug_log
 from ...platform import file_find
+from ...utils.path_safety import is_network_or_device_path
 
 KNOWN_FOLDERS = ('desktop', 'documents', 'downloads', 'pictures', 'music', 'videos')
 OPERATIONS = ('find', 'list', 'read', 'write', 'append', 'delete', 'move', 'copy', 'rename')
@@ -55,6 +56,9 @@ def _home() -> Path:
 def resolve_path(raw: Any) -> Path:
     """An absolute, ``~`` or home-relative path; a leading known folder name is the real folder."""
     text = str(raw).strip()
+    if is_network_or_device_path(text):
+        # Refused from the text: resolving a network path would already connect to that computer.
+        raise PermissionError(f'Network and device paths are not allowed: {text}')
     if text == '~' or text.startswith(('~/', '~\\')):
         return Path(os.path.expanduser('~'), text[2:]).resolve()
     path = Path(text)
@@ -249,9 +253,12 @@ class LocalFilesTool(Tool):
         path_arg = args.get("path")
         if not operation or not path_arg:
             return request()
+        refused = False
         try:
             target_path = resolve_path(path_arg)
         except (OSError, ValueError):
+            # Refused by run before anything is touched, so nothing here looks at the path either.
+            refused = True
             target_path = Path(str(path_arg))
 
         if operation == "delete":
@@ -261,7 +268,7 @@ class LocalFilesTool(Tool):
             return request(SafetyTier.CONFIRM_VOICE, "delete file", str(target_path), mutates=True,
                            consequence="The file will be permanently deleted.")
         if operation == "write":
-            if target_path.exists():
+            if not refused and target_path.exists():
                 return request(SafetyTier.CONFIRM_VOICE, "overwrite file", str(target_path), mutates=True,
                                consequence="The existing file will be overwritten with new content.")
             return request(action="write file", target=str(target_path), mutates=True)
@@ -294,12 +301,17 @@ class LocalFilesTool(Tool):
 
                 glob_pattern = args.get("glob", "*")
                 recursive = bool(args.get("recursive", False))
+                pattern = Path(str(glob_pattern))
+                if pattern.anchor or '..' in pattern.parts:
+                    return ToolExecutionResult(success=False, reply_text=(
+                        "glob must be a pattern inside the folder, without '..' or a drive."))
 
                 try:
                     if recursive:
                         files = list(target.rglob(glob_pattern))
                     else:
                         files = list(target.glob(glob_pattern))
+                    files = [f for f in files if _inside_home(f.resolve())]
 
                     if not files:
                         return ToolExecutionResult(success=True, reply_text=f"No files found matching '{glob_pattern}' in {target}")
@@ -401,7 +413,7 @@ class LocalFilesTool(Tool):
                        'Name a folder to search, such as Downloads or Documents.' if scope is None else
                        'That folder could not be searched right now.')
             return ToolExecutionResult(success=False, reply_text=message)
-        except ValueError as exc:
+        except (ValueError, PermissionError) as exc:
             return ToolExecutionResult(success=False, reply_text=str(exc))
         data: Dict[str, Any] = {'action': 'found', 'scope': criteria.scope or 'everywhere'}
         if after is not None or before is not None:
