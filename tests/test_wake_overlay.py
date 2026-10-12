@@ -287,11 +287,14 @@ class TestToneFade:
         fade.retarget(self.B)
         fade.step(0.1, ready=True)
         fade.retarget(self.A)
-        before = self._weights(fade).get(self.B, 0.0)
-        for _ in range(60):
+        assert self._weights(fade).get(self.B, 0.0) > 0.0     # mid-fade
+        seen = []
+        for _ in range(120):
             fade.step(1 / 60, ready=True)
-            assert self._weights(fade).get(self.B, 0.0) >= 0.0
-        assert before > 0.0
+            seen.append(self._weights(fade).get(self.B, 0.0))
+        # B is allowed to finish (it reaches 1.0) before the fade back to A, which then completes.
+        assert max(seen) == 1.0
+        assert seen.index(1.0) < len(seen) - 1 and seen[-1] == 0.0
         assert fade.tones == [(self.A, 1.0)]
 
     def test_retargeting_the_palette_already_shown_changes_nothing(self):
@@ -458,6 +461,26 @@ class TestPainter:
         # Rows 0, 3, 6... are the cut ones: the glow there is dimmer than on the rows beside them.
         cut = range(3, 21, 3)   # further in the glow is too faint for single steps to show
         assert all(lit(y) < lit(y - 1) and lit(y) < lit(y + 1) for y in cut)
+
+    def test_scanlines_follow_the_screen_rows_in_a_band_that_starts_off_the_pattern(self, qapp):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QImage, QPainter
+        from desktop_app.orb_widget import state_colours
+        from desktop_app.wake_overlay import FramePainter
+
+        model = _woken()
+        _run(model, 3, 0.0)
+        top, t = 100, frame_thickness(self.W, self.H)    # a side band starting on a row that is not a multiple of 3
+        layer = QImage(t, 60, QImage.Format.Format_ARGB32_Premultiplied)
+        layer.fill(Qt.GlobalColor.transparent)
+        p = QPainter(layer)
+        p.translate(0, -top)
+        FramePainter(self.W, self.H, (0, top, t, 60)).paint(p, model, [(state_colours(OrbState.LISTENING), 1.0)])
+        p.end()
+        alpha = [layer.pixelColor(2, y).alpha() for y in range(60)]
+        for y in range(1, 59):
+            if (top + y) % 3 == 0:
+                assert alpha[y] < alpha[y - 1] and alpha[y] < alpha[y + 1]    # the cut rows are the dim ones
 
     def test_two_tones_alternate_round_the_screen(self, qapp):
         from PyQt6.QtCore import Qt
@@ -856,8 +879,8 @@ class TestSmoothActivation:
         assert sum(1 for count in rendered if count) >= len(overlay.windows()) / 4   # spread over several frames
         overlay.shutdown()
 
-    def test_the_first_wake_after_start_up_is_not_slowed_by_a_cold_logger(self, qapp, monkeypatch):
-        """Debug logging loads the settings the first time it is used: that happens at start, not at the wake."""
+    def test_logging_is_warmed_up_when_watching_starts_not_at_the_wake(self, qapp, monkeypatch):
+        """Debug logging loads the settings the first time it is used: that must happen at start, not at the wake."""
         from desktop_app import wake_overlay
 
         calls = []
@@ -865,6 +888,97 @@ class TestSmoothActivation:
         overlay = _overlay(_States())
         overlay.start()
         assert calls
+        overlay.shutdown()
+
+    def test_the_light_waits_for_every_window_to_paint_before_the_beats_begin(self, qapp):
+        clock = _Clock()
+        states = _States()
+        overlay = _overlay(states, clock=clock)
+        overlay.start()
+        _wake(overlay, states)
+        windows = overlay.windows()
+        overlay.note_painted(windows[0])        # one window has painted, the others have not
+        clock.now += 0.03
+        overlay._on_frame()
+        assert overlay.model.time == 0.0
+        for window in windows:
+            overlay.note_painted(window)
+        clock.now += 0.03
+        overlay._on_frame()
+        assert overlay.model.time == pytest.approx(0.03)
+        overlay.shutdown()
+
+    def test_a_failure_while_showing_leaves_nothing_behind_and_the_next_wake_works(self, qapp, monkeypatch):
+        from desktop_app import wake_overlay
+
+        states = _States()
+        overlay = _overlay(states)
+        overlay.start()
+        original = wake_overlay.FramePainter.prepare_next
+
+        def failing(self, palette):
+            raise RuntimeError("out of memory")
+
+        monkeypatch.setattr(wake_overlay.FramePainter, "prepare_next", failing)
+        _wake(overlay, states)
+        assert overlay.windows() == []
+        assert not overlay.is_animating()
+        monkeypatch.setattr(wake_overlay.FramePainter, "prepare_next", original)
+        states.state = OrbState.IDLE
+        overlay.poll()
+        _wake(overlay, states)
+        assert overlay.windows()
+        overlay.shutdown()
+
+    def test_waking_again_while_fading_out_keeps_the_light_and_brings_it_back(self, qapp):
+        states = _States()
+        overlay = _overlay(states)
+        overlay.start()
+        _wake(overlay, states)
+        for _ in range(30):
+            overlay.tick(1.0 / 30)
+        windows = overlay.windows()
+        states.state = OrbState.IDLE
+        overlay.poll()
+        for _ in range(6):
+            overlay.tick(1.0 / 30)
+        assert 0.0 < overlay.model.presence < 1.0
+        _wake(overlay, states)
+        for _ in range(30):
+            overlay.tick(1.0 / 30)
+        assert overlay.windows() == windows
+        assert overlay.model.presence > 0.9
+        overlay.shutdown()
+
+    def test_shutting_down_mid_fade_removes_everything_and_later_wakes_are_ignored(self, qapp):
+        states = _States()
+        overlay = _overlay(states)
+        overlay.start()
+        _wake(overlay, states)
+        states.state = OrbState.IDLE
+        overlay.poll()
+        overlay.tick(1.0 / 30)
+        overlay.shutdown()
+        assert overlay.windows() == []
+        assert not overlay.is_animating()
+        _wake(overlay, states)
+        assert overlay.windows() == []
+
+    def test_only_the_palettes_in_use_stay_rendered(self, qapp):
+        from desktop_app.orb_widget import state_colours
+
+        states = _States()
+        overlay = _overlay(states)
+        overlay.start()
+        _wake(overlay, states)
+        listening, thinking = state_colours(OrbState.LISTENING), state_colours(OrbState.THINKING)
+        states.state = OrbState.THINKING
+        overlay.poll()
+        for _ in range(120):
+            overlay.tick(1.0 / 30)
+        window = overlay.windows()[0]
+        assert window.is_ready(thinking)
+        assert not window.is_ready(listening)
         overlay.shutdown()
 
 
@@ -894,6 +1008,29 @@ class TestStateWatch:
         assert self._wait_for(qapp, lambda: overlay.windows())
         overlay.shutdown()
 
+    def test_a_state_file_caught_empty_mid_write_is_not_read_until_it_has_content(self, qapp, tmp_path):
+        """The daemon truncates and then writes: reading in between would see nothing and miss the wake."""
+        path = tmp_path / "jarvis_state"
+        path.write_text("idle")
+        states = _States()
+        reads = []
+
+        def reader():
+            reads.append(states.state)
+            return states.state
+
+        overlay = _overlay(reader, state_file=str(path), watch_interval_ms=5000)
+        overlay.start()
+        overlay.poll()
+        reads.clear()
+        path.write_text("")                       # the truncation is reported on its own
+        self._wait_for(qapp, lambda: False, seconds=0.25)
+        assert reads == []                        # nothing was read from an empty file
+        states.state = OrbState.LISTENING
+        path.write_text("listening")
+        assert self._wait_for(qapp, lambda: overlay.windows())
+        overlay.shutdown()
+
     def test_a_missing_state_file_is_tolerated_and_the_poll_still_works(self, qapp, tmp_path):
         states = _States()
         overlay = self._file_overlay(states, tmp_path / "does_not_exist")
@@ -909,10 +1046,16 @@ class TestStateWatch:
         overlay = self._file_overlay(states, path, enabled=False)
         overlay.start()
         assert not overlay.is_watching()
+        assert not overlay._file_watch.files()
         overlay.set_enabled(True)
         assert overlay.is_watching()
+        assert overlay._file_watch.files()
+        overlay.set_enabled(False)
+        assert not overlay._file_watch.files()
+        overlay.set_enabled(True)
         overlay.shutdown()
         assert not overlay.is_watching()
+        assert not overlay._file_watch.files()
 
 
 class TestTrayWiring:

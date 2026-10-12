@@ -68,7 +68,7 @@ _RHYTHMS = {
     OrbState.THINKING: _Rhythm(1.05, 0.32, 0.38, 0.3, 2.4),   # a quick, crisp pulse
     OrbState.SPEAKING: _Rhythm(1.6, 0.16, 0.44, 1.0, 1.6),    # follows the voice, a light breath under it
 }
-# The wake is a heartbeat: two beats a quarter of a second apart, the first the strongest.
+# The wake is a heartbeat: two beats a third of a second apart, the first the strongest.
 _WAKE_BEATS = ((0.0, 1.0), (0.3, 0.75))
 _BEAT_ATTACK_S = 0.07
 _BEAT_DECAY_S = 0.3
@@ -451,7 +451,7 @@ class _EdgeWindow(QWidget):
         p.translate(-self._strip[0], -self._strip[1])
         self._overlay.paint_screen(p, self._painter)
         p.end()
-        self._overlay.note_painted()
+        self._overlay.note_painted(self)
 
 
 CONFIG_KEY = "wake_overlay_enabled"
@@ -505,6 +505,7 @@ class WakeOverlay(QObject):
     FILE_SETTLE_MS = 8            # let a write to the state file finish before reading it
     FIRST_PAINT_TIMEOUT_S = 0.25  # start animating even if the first paint never reports in
     PREPARE_BUDGET_S = 0.004      # rendering a new palette takes at most this much of any frame
+    MAX_EMPTY_READS = 10          # how many settle periods to give a writer that has truncated the state file
 
     def __init__(self, state_reader: Optional[Callable[[], OrbState]] = None,
                  audio_source: Optional[AudioLevelSource] = None,
@@ -525,7 +526,9 @@ class WakeOverlay(QObject):
         self._fade = ToneFade(state_colours(OrbState.LISTENING))
         self._kept: tuple = ()
         self._shown_at = self._last_frame = self._clock()
-        self._painted = False       # a window has painted since the light was shown
+        self._painted = False       # every window has painted since the light was shown
+        self._painted_windows: set = set()
+        self._empty_reads = 0       # times in a row the state file was found empty after a change
         self._animating = False     # the animation clock is running: it starts at the first painted frame
         # Only the real state channel is watched; a test or caller with its own reader is polled alone.
         self._state_file = state_file if state_file is not None else (
@@ -539,7 +542,7 @@ class WakeOverlay(QObject):
         self._settle = QTimer(self)
         self._settle.setSingleShot(True)
         self._settle.setInterval(self.FILE_SETTLE_MS)
-        self._settle.timeout.connect(self.poll)
+        self._settle.timeout.connect(self._on_settled)
         self._frame = QTimer(self)
         self._frame.setTimerType(Qt.TimerType.PreciseTimer)   # a coarse timer drifts by whole frames
         self._frame.setInterval(FRAME_FAST_MS)
@@ -596,7 +599,7 @@ class WakeOverlay(QObject):
 
     def poll(self) -> None:
         """Read the state once; shows the frame on a wake."""
-        if not self._enabled:
+        if not self._enabled or not self._started:
             return
         self._watch_state_file()
         try:
@@ -635,9 +638,12 @@ class WakeOverlay(QObject):
     def paint_screen(self, p: QPainter, painter: FramePainter) -> None:
         painter.paint(p, self.model, self.tones)
 
-    def note_painted(self) -> None:
-        """A window has painted: from now on the animation counts time."""
-        if not self._painted:
+    def note_painted(self, window: QWidget) -> None:
+        """A window has painted; once every window has, the animation starts counting time."""
+        if self._painted:
+            return
+        self._painted_windows.add(id(window))
+        if len(self._painted_windows) >= len(self._windows):
             self._painted = True
             self._start_clock()
 
@@ -663,6 +669,22 @@ class WakeOverlay(QObject):
 
     def _on_state_file_changed(self, _path: str) -> None:
         self._settle.start()
+
+    def _on_settled(self) -> None:
+        """Read the state after a change of the file, but not while the writer has it truncated and unwritten:
+        an empty read counts as an unknown state, which would miss the wake or cut a conversation short."""
+        if self._state_file and self._empty_reads < self.MAX_EMPTY_READS and self._state_file_is_empty():
+            self._empty_reads += 1
+            self._settle.start()
+            return
+        self._empty_reads = 0
+        self.poll()
+
+    def _state_file_is_empty(self) -> bool:
+        try:
+            return os.path.getsize(self._state_file) == 0
+        except OSError:
+            return False
 
     def _start_clock(self) -> None:
         self._animating = True
@@ -690,6 +712,13 @@ class WakeOverlay(QObject):
     def _show(self) -> None:
         if self._windows:
             return  # still fading out from the last conversation: carry on with the same windows
+        try:
+            self._build_and_show()
+        except Exception as exc:
+            debug_log(f"wake screen effect: could not show the light: {exc}", "desktop")
+            self._teardown()
+
+    def _build_and_show(self) -> None:
         began = self._clock()
         try:
             screens = self._screens()
@@ -717,6 +746,7 @@ class WakeOverlay(QObject):
             from desktop_app.win32_overlay import make_never_activate
             never_activate = make_never_activate
         self._painted = self._animating = False
+        self._painted_windows = set()
         for window in self._windows:
             if never_activate is not None:
                 never_activate(int(window.winId()))
