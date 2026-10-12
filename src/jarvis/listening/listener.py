@@ -1875,6 +1875,9 @@ class VoiceListener(threading.Thread):
             self._end_engagement()
         else:
             debug_log("manual wake: waiting for the request", "voice")
+            # The click starts a new turn: the wait runs from now, not from
+            # the end of whatever was last heard.
+            self._turn = None
             self._begin_collection("", "", addressed=True)
 
     def _check_query_timeout(self) -> None:
