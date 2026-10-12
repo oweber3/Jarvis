@@ -74,7 +74,7 @@ Each bridge has the same bounds and sharing switches under its own prefix (`code
 | `_share_lists_reminders` | `true` | Expose `scheduleControl`, `listControl` and `noteControl`, so the mode can set and read timers, alarms, reminders, lists and notes. Independent of `_share_long_term_memory`. Off means no reminder, list or note content is disclosed through Jarvis |
 | `_max_tool_calls` | 8 | Executed tool calls per request |
 
-Size bounds are constants: utterance 4000 characters, context 4000 characters per message, tool arguments 8 KiB, tool result 4000 characters, final reply 2000 characters, protocol message 1 MiB. Anything longer is truncated with a marker (results, replies) or rejected (utterance, arguments, messages).
+Size bounds are constants: utterance 4000 characters, context 4000 characters per message, tool arguments 8 KiB, tool result 4000 characters, final reply 2000 characters, protocol message 1 MiB. Anything longer is truncated with a marker (results, replies) or rejected (utterance, arguments, messages). A tool result that is a JSON object is shortened by dropping whole entries from the end of its longest list and adding `truncated: true`, so every path, name or handle the model sees is complete; other results are cut.
 
 ## Request lifecycle
 

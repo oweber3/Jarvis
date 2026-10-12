@@ -1,4 +1,5 @@
 """Behavioural tests for the background Codex bridge broker (request lifecycle and ownership)."""
+import json
 import threading
 
 import pytest
@@ -244,6 +245,27 @@ class TestExecute:
         execute(broker, req, "c1", "getTime", {})
         broker.record_result(req.id, "c1", "ok", "y" * 10000)
         assert len(execute(broker, req, "c1", "getTime", {}).text) <= 4000 + 40
+
+    def test_long_json_result_keeps_every_shown_entry_whole(self, broker):
+        limit = BrokerLimits().max_result_chars
+        items = [{"name": f"Fluids textbook {i}.pdf", "path": "C:\\Users\\me\\Documents\\" + "x" * 120 + f"\\{i}.pdf"}
+                 for i in range(60)]
+        req = new_active(broker)
+        execute(broker, req, "c1", "getTime", {})
+        broker.record_result(req.id, "c1", "ok", json.dumps({"action": "found", "count": 60, "items": items}))
+        text = execute(broker, req, "c1", "getTime", {}).text
+        assert len(text) <= limit
+        data = json.loads(text)
+        assert data["truncated"] is True and data["count"] == 60
+        assert 0 < len(data["items"]) < 60
+        assert data["items"] == items[:len(data["items"])]
+
+    def test_short_json_result_is_unchanged(self, broker):
+        payload = json.dumps({"action": "found", "items": [{"path": "C:\\a.pdf"}]})
+        req = new_active(broker)
+        execute(broker, req, "c1", "getTime", {})
+        broker.record_result(req.id, "c1", "ok", payload)
+        assert execute(broker, req, "c1", "getTime", {}).text == payload
 
 
 @pytest.mark.unit

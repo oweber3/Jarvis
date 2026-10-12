@@ -126,6 +126,28 @@ def _bound(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + _TRUNCATION_MARKER
 
 
+def _bound_result(text: str, limit: int) -> str:
+    """Bound a tool result. A JSON object loses whole entries from the end of its longest list and
+    gains ``truncated: true``, so every path or name the model sees is complete; anything else is cut."""
+    if len(text) <= limit:
+        return text
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    lists = [key for key, value in data.items() if isinstance(value, list) and value] if isinstance(data, dict) else []
+    if lists:
+        key = max(lists, key=lambda k: len(json.dumps(data[k], ensure_ascii=False)))
+        entries = data[key]
+        while entries:
+            entries = entries[:-1]
+            shortened = json.dumps({**data, key: entries, "truncated": True}, ensure_ascii=False)
+            if len(shortened) <= limit:
+                debug_log(f"tool result list shortened to {len(entries)} entries", "bridge")
+                return shortened
+    return _bound(text, limit)
+
+
 def _canonical(tool: str, args: Dict[str, Any]) -> str:
     return tool + "\x00" + json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
 
@@ -367,7 +389,7 @@ class Broker:
             if call is None or call.status != "inflight":
                 return False
             call.status = "ok" if status == "ok" else "error"
-            call.text = _bound(text or "", self._limits.max_result_chars)
+            call.text = _bound_result(text or "", self._limits.max_result_chars)
             return True
 
     def result_text(self, request_id: str, call_id: str) -> str:
