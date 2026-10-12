@@ -20,11 +20,10 @@ from typing import Optional, TYPE_CHECKING, Any, Callable, Literal
 from datetime import datetime
 
 from rapidfuzz import fuzz
-from contextlib import contextmanager
 
 from .echo_detection import EchoDetector
 from .state_manager import StateManager, ListeningState
-from ..utils.audio_lock import portaudio_lock
+from ..utils.audio_lock import open_stream_count, portaudio_lock, stream_closed, stream_opened
 from ..utils.audio_capture import mono_capture, open_input_stream, resolve_input_device
 from .wake_detection import is_wake_word_detected, extract_query_after_wake, is_stop_command, is_bare_wake_word
 from .transcript_buffer import TranscriptBuffer
@@ -411,30 +410,6 @@ def _clear_corrupted_whisper_cache(error_message: str) -> bool:
         debug_log(f"failed to clear corrupted cache: {e}", "voice")
         return False
 
-
-
-@contextmanager
-def _serialised_stream(stream):
-    """Like ``with stream:`` but with lifecycle calls under portaudio_lock.
-
-    sounddevice's context manager calls start() on enter and stop()/close()
-    on exit; those are the thread-unsafe PortAudio lifecycle operations that
-    must be serialised process-wide (see jarvis.utils.audio_lock).
-    """
-    with portaudio_lock:
-        stream.start()
-    try:
-        yield stream
-    finally:
-        with portaudio_lock:
-            try:
-                stream.stop()
-            except Exception:
-                pass
-            try:
-                stream.close()
-            except Exception:
-                pass
 
 
 class VoiceListener(threading.Thread):
@@ -1911,6 +1886,137 @@ class VoiceListener(threading.Thread):
         self._audio_callback_error = ''
         self._audio_health_warning = None
 
+    _NO_CALLBACKS_WARNING = 'No microphone callbacks in the last 5 seconds'
+    # Gaps between attempts to get a lost microphone back: doubling up to the cap.
+    _CAPTURE_RETRY_FIRST_SECONDS = 5.0
+    _CAPTURE_RETRY_MAX_SECONDS = 30.0
+    _capture_stream = None
+    _capture_device = None  # (name, host API) of the opened input, when one was selected
+    _mic_probe_thread: Optional[threading.Thread] = None
+    _capture_lost = False
+    _capture_attempts = 0
+    _capture_retry_at = 0.0
+    _silence_reopened = False
+
+    def _start_capture(self, stream_kwargs) -> int:
+        """Open and start the capture stream on the selected input; returns its channel count."""
+        stream, rate, channels = open_input_stream(
+            sd, self._samplerate, self._frame_ms, stream_kwargs, callback=self._on_audio,
+        )
+        try:
+            with portaudio_lock:
+                stream_opened(stream)
+                stream.start()
+        except Exception:
+            with portaudio_lock:
+                stream_closed(stream)
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+            raise
+        self._capture_device = None
+        if "device" in stream_kwargs:
+            try:
+                with portaudio_lock:
+                    info = sd.query_devices(stream_kwargs["device"])
+                self._capture_device = (info.get("name"), info.get("hostapi"))
+            except Exception:
+                pass
+        self._capture_stream = stream
+        self._stream_samplerate = rate
+        self._frame_samples = max(1, int(rate * self._frame_ms / 1000))
+        self._pending_audio = None
+        return channels
+
+    def _close_capture(self) -> None:
+        stream, self._capture_stream = self._capture_stream, None
+        if stream is None:
+            return
+        with portaudio_lock:
+            stream_closed(stream)
+            for teardown in (stream.abort, stream.close):
+                try:
+                    teardown()
+                except Exception:
+                    pass
+
+    def _recover_capture(self, now=None) -> None:
+        """Reopen the microphone after its stream stopped delivering audio.
+
+        The first attempt reopens the same input. Later attempts first refresh
+        the system's device list, which finds a microphone that was plugged
+        back in and the current default input, and are spaced further apart
+        up to a cap so a missing microphone keeps being looked for.
+        """
+        if not self._capture_lost or self._dictation_active or self._should_stop:
+            return
+        now = time.monotonic() if now is None else now
+        if now < self._capture_retry_at:
+            return
+        self._capture_lost = False
+        self._capture_attempts += 1
+        attempt = self._capture_attempts
+        self._capture_retry_at = now + min(
+            self._CAPTURE_RETRY_MAX_SECONDS, self._CAPTURE_RETRY_FIRST_SECONDS * 2 ** (attempt - 1))
+        if attempt == 1:
+            print("  🔄 Reconnecting to the microphone...", flush=True)
+        self._close_capture()
+        if attempt > 1:
+            self._refresh_audio_devices()
+        try:
+            self._start_capture(self._capture_device_kwargs())
+        except Exception as exc:
+            debug_log(f"microphone reconnect attempt {attempt} failed: {exc}", "voice")
+            self._capture_lost = True
+            return
+        self._clear_audio_buffers()
+        self._last_audio_callback = now
+        debug_log(f"microphone reopened (attempt {attempt}, {self._stream_samplerate} Hz)", "voice")
+
+    def _capture_device_kwargs(self) -> dict:
+        """The input to reopen: as configured, with a device chosen by number found again by its name.
+
+        Settings stores a chosen microphone as its device number, and a
+        refreshed device list can give that number to another device.
+        """
+        selected = getattr(self.cfg, "voice_device", None)
+        stream_kwargs = resolve_input_device(sd, selected)
+        if self._capture_device is None or not str(selected).strip().isdigit():
+            return stream_kwargs
+        with portaudio_lock:
+            devices = sd.query_devices()
+        for index, device in enumerate(devices):
+            if ((device.get("max_input_channels") or 0) > 0
+                    and (device.get("name"), device.get("hostapi")) == self._capture_device):
+                return {"device": index}
+        raise ValueError("the selected microphone is not connected")
+
+    def _refresh_audio_devices(self) -> bool:
+        """Re-read the system's audio devices; returns whether the list was refreshed.
+
+        PortAudio keeps the device list from when it started, and restarting it
+        closes every open stream, so this waits while any other stream is open
+        (Jarvis speaking, dictation recording) or the startup microphone check,
+        which opens its stream without the lock, is still running.
+        """
+        with portaudio_lock:
+            probe = self._mic_probe_thread
+            if open_stream_count() or (probe is not None and probe.is_alive()):
+                debug_log("audio device refresh deferred: other audio in use", "voice")
+                return False
+            try:
+                sd._terminate()
+            except Exception as exc:
+                debug_log(f"PortAudio stop before device refresh failed: {exc}", "voice")
+            try:
+                sd._initialize()
+            except Exception as exc:
+                debug_log(f"audio device refresh failed: {exc}", "voice")
+                return False
+        debug_log("audio device list refreshed", "voice")
+        return True
+
     def _check_audio_health(self, now=None):
         """Report capture failures outside the real-time callback, without recording audio."""
         now = time.monotonic() if now is None else now
@@ -1922,7 +2028,7 @@ class VoiceListener(threading.Thread):
         self._last_health_check = now
         warning = None
         if now - self._last_audio_callback >= 5:
-            warning = 'No microphone callbacks in the last 5 seconds'
+            warning = self._NO_CALLBACKS_WARNING
         elif self._audio_peak <= 1e-7 and now - self._audio_started >= 10:
             warning = 'Microphone is delivering silent samples'
         if warning and warning != self._audio_health_warning:
@@ -1932,6 +2038,16 @@ class VoiceListener(threading.Thread):
         elif not warning and self._audio_health_warning:
             print("  ✅ Microphone audio is arriving again.", flush=True)
         self._audio_health_warning = warning
+        if warning is None:
+            self._capture_attempts = 0
+            self._capture_retry_at = 0.0
+            self._silence_reopened = False
+        elif warning == self._NO_CALLBACKS_WARNING:
+            self._capture_lost = True
+        elif not self._silence_reopened:
+            # Silence may be a stream that lost its device; a muted mic stays silent after one reopen.
+            self._silence_reopened = True
+            self._capture_lost = True
         if self._callback_status or self._audio_callback_error or self._audio_dropped:
             print(f"  ⚠️  Audio capture: {self._callback_status or self._audio_callback_error or 'queue full'}; {self._audio_dropped} blocks dropped.", flush=True)
             self._callback_status = self._audio_callback_error = ''
@@ -2520,6 +2636,7 @@ class VoiceListener(threading.Thread):
                                 pass
 
                 check_thread = threading.Thread(target=_mic_check, daemon=True)
+                self._mic_probe_thread = check_thread
                 check_thread.start()
                 check_thread.join(timeout=5.0)
 
@@ -2886,10 +3003,7 @@ class VoiceListener(threading.Thread):
         self._stream_samplerate = self._samplerate
         open_error = None
         try:
-            stream, self._stream_samplerate, channels = open_input_stream(
-                sd, self._samplerate, frame_ms, stream_kwargs, callback=self._on_audio,
-            )
-            self._frame_samples = max(1, int(self._stream_samplerate * frame_ms / 1000))
+            channels = self._start_capture(stream_kwargs)
             if self._stream_samplerate != self._samplerate or channels != 1:
                 print(f"  🎤 Using {self._stream_samplerate} Hz, {channels} input channel(s); "
                       "converting to mono and resampling for speech recognition", flush=True)
@@ -2917,21 +3031,7 @@ class VoiceListener(threading.Thread):
         self._reset_audio_health()
         debug_log(f"Capture stream: {self._stream_samplerate} Hz, {self._frame_samples} samples per {frame_ms} ms frame", "voice")
         # Main audio processing loop
-        with _serialised_stream(stream):
-            # Verify stream is actually recording (helps catch permission issues)
-            if not stream.active:
-                try:
-                    with portaudio_lock:
-                        stream.start()
-                except Exception as e:
-                    error_msg = str(e).lower()
-                    debug_log(f"failed to start audio stream: {e}", "voice")
-                    if "access" in error_msg or "permission" in error_msg:
-                        print(f"  ❌ Microphone access denied. Please check: {_get_mic_permission_hint()}", flush=True)
-                    else:
-                        print(f"  ❌ Failed to start recording: {e}", flush=True)
-                    return
-
+        try:
             self._start_transcription_worker()
 
             # Show ready message only after stream is confirmed active
@@ -3009,6 +3109,7 @@ class VoiceListener(threading.Thread):
                     continue
 
                 self._check_audio_health()
+                self._recover_capture()
 
                 try:
                     item = self._audio_q.get(timeout=0.2)
@@ -3034,6 +3135,8 @@ class VoiceListener(threading.Thread):
                     continue
 
                 self._consume_audio_block(item)
+        finally:
+            self._close_capture()
 
     # Past the utterance cap, how long the cut may wait for a pause between words.
     _UTTERANCE_CAP_GRACE_MS = 500

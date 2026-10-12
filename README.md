@@ -311,6 +311,13 @@ Select the headset's microphone/input profile in Settings, not its playback devi
 </details>
 
 <details>
+<summary><strong>Jarvis stopped hearing me after sleep or a microphone drop-out</strong></summary>
+
+Jarvis reconnects to the microphone by itself. Logs show a missing-callback or silent-input warning, then `🔄 Reconnecting to the microphone...`, then `✅ Microphone audio is arriving again.` once it hears audio. A microphone that was unplugged is picked up again within about 30 seconds of being plugged back in. If the warning stays, check that the microphone works in Windows Sound settings and is not muted.
+
+</details>
+
+<details>
 <summary><strong>Linux says Listening, but never hears speech</strong></summary>
 
 Check Logs for missing-callback or silent-input warnings. Verify the recording source and mute state in PipeWire/PulseAudio, and select a microphone rather than an output monitor. Enable `voice_debug` in Settings for capture-level diagnostics. See the [troubleshooting guide](docs/CONFIGURATION.md#troubleshooting).

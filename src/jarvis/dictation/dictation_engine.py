@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional
 
 from .. import voice_levels
 from ..debug import debug_log
-from ..utils.audio_lock import portaudio_lock
+from ..utils.audio_lock import portaudio_lock, stream_closed, stream_opened
 from ..utils.audio_capture import mono_capture, open_input_stream, resolve_input_device
 from .history import DictationHistory
 
@@ -570,6 +570,7 @@ def _close_stream(stream: Any) -> None:
     if stream is None:
         return
     with portaudio_lock:
+        stream_closed(stream)
         try:
             stream.stop()
         except Exception as exc:
@@ -918,6 +919,23 @@ class DictationEngine:
             except Exception as exc:
                 debug_log(f"on_dictation_start callback error: {exc}", "dictation")
 
+        # A quick tap can be released while the start notice is on its way, and
+        # its end notice can land first; ending again here leaves the listener
+        # resumed. A newer press owns its own notices, so it is left alone.
+        # The notice is given under the engine lock so a newer press cannot
+        # start between the check and the notice.
+        with self._lock:
+            released = not self._recording
+            if released:
+                debug_log("dictation released before it started — listener resumed", "dictation")
+                if self._on_dictation_end:
+                    try:
+                        self._on_dictation_end()
+                    except Exception as exc:
+                        debug_log(f"on_dictation_end callback error: {exc}", "dictation")
+        if released:
+            return
+
         # Play start beep
         _play_beep(_get_start_beep())
 
@@ -934,10 +952,11 @@ class DictationEngine:
 
         # Query native sample rate
         try:
-            if "device" in stream_kwargs:
-                dev_info = sd.query_devices(stream_kwargs["device"])
-            else:
-                dev_info = sd.query_devices(kind="input")
+            with portaudio_lock:
+                if "device" in stream_kwargs:
+                    dev_info = sd.query_devices(stream_kwargs["device"])
+                else:
+                    dev_info = sd.query_devices(kind="input")
             native_rate = int(dev_info.get("default_samplerate", self._target_sample_rate))
         except Exception:
             native_rate = self._target_sample_rate
@@ -949,6 +968,7 @@ class DictationEngine:
                     callback=self._audio_callback, log_category='dictation',
                     fallback_rate=self._target_sample_rate,
                 )
+            stream_opened(stream)
             debug_log(
                 f'dictation stream at {self._stream_sample_rate} Hz, {channels} channel(s) '
                 f'(resamples to {self._target_sample_rate} Hz)', 'dictation',

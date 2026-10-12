@@ -143,6 +143,24 @@ def test_streamed_playback_keeps_every_sentence_in_order(fake_audio):
     assert durations == [pytest.approx(4500 / voice.config.sample_rate)]
 
 
+def test_jarvis_voice_counts_as_open_audio_only_while_it_plays(fake_audio):
+    # The microphone recovery must not restart PortAudio under a playing reply.
+    from jarvis.utils import audio_lock
+    while_playing = []
+    tts = make_tts(FakeVoice(delay=0.05))
+    tts.start()
+    try:
+        speak_and_wait(tts, "One. Two.",
+                       first_audio_callback=lambda: while_playing.append(audio_lock.open_stream_count()))
+        deadline = time.monotonic() + 3
+        while audio_lock.open_stream_count() and time.monotonic() < deadline:
+            time.sleep(0.01)
+    finally:
+        tts.stop()
+    assert while_playing == [1]
+    assert audio_lock.open_stream_count() == 0
+
+
 def test_interrupt_while_synthesising_stops_without_completing(fake_audio):
     completed = []
     voice = FakeVoice(delay=0.2)
