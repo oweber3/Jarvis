@@ -2,6 +2,7 @@
 
 Used only by gesture snapping (``gestures/gestures.spec.md``), which relays the user's own hand movements;
 nothing here is a tool action and nothing here clicks or sends keys (it scrolls the wheel only). Coordinates are physical pixels in the virtual desktop.
+It also keeps the diagnostic preview window out of screen captures (``exclude_from_capture``).
 Grabbing and moving post to windows without waiting (``ShowWindowAsync``, ``SWP_ASYNCWINDOWPOS``), so a hung
 application never holds up tracking; the final snap runs on a worker thread through the shared, verified
 ``place_window``.
@@ -26,6 +27,22 @@ _SHELL_CLASSES = frozenset({"Progman", "WorkerW", "Shell_TrayWnd", "Shell_Second
 _TITLE_GRIP_PX = 16
 _SW_RESTORE = 9
 _INPUT_MOUSE, _MOUSEEVENTF_WHEEL = 0, 0x0800
+_WDA_MONITOR, _WDA_EXCLUDEFROMCAPTURE = 0x1, 0x11
+
+
+def exclude_from_capture(hwnd: int) -> bool:
+    """Keep a window out of every screen capture (screenshots, screen sharing, the ``screenshot`` tool), for the
+    diagnostic preview's camera image. Asks Windows to leave the window out of captures, or, where Windows is
+    too old for that, to capture it as black. Returns whether either took effect."""
+    from ctypes import wintypes
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    user.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user.SetWindowDisplayAffinity.restype = wintypes.BOOL
+    for affinity in (_WDA_EXCLUDEFROMCAPTURE, _WDA_MONITOR):
+        if user.SetWindowDisplayAffinity(wintypes.HWND(hwnd), affinity):
+            return True
+    debug_log(f"capture exclusion refused (error {ctypes.get_last_error()})", "gestures")
+    return False
 
 
 def grabbable_class(name: str) -> bool:

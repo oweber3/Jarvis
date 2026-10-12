@@ -1,11 +1,13 @@
 """The diagnostic preview: the camera's mirrored image with the detected hand drawn on it.
 
 Used only by ``python -m jarvis.gestures --preview``, which the user opens to see what the camera sees.
-Frames are drawn on a copy and shown live; nothing is kept beyond the newest frame or saved. See
+Frames are drawn on a copy and shown live; nothing is kept beyond the newest frame or saved, and the window is
+kept out of screen captures. See
 ``gestures.spec.md``, Diagnostic command.
 """
 from __future__ import annotations
 
+import sys
 import threading
 from typing import Any, Callable, Optional
 
@@ -72,25 +74,55 @@ class FrameTap:
             return self._latest
 
 
+def make_window() -> Any:
+    """The preview window (needs a ``QApplication``): kept above other windows, with ``picture`` and ``text``
+    labels. On Windows it is kept out of screen captures every time it is shown, so its camera image never
+    reaches a screenshot, a screen share or a model."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+
+    class PreviewWindow(QWidget):
+        def showEvent(self, event: Any) -> None:  # noqa: N802 - Qt's name
+            super().showEvent(event)
+            _exclude_from_capture(int(self.winId()))
+
+    window = PreviewWindow()
+    window.setWindowTitle("Jarvis hand tracking preview")
+    window.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    window.picture, window.text = QLabel("Waiting for the camera…"), QLabel()
+    window.picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    window.text.setStyleSheet("font-size: 16px; padding: 6px;")
+    layout = QVBoxLayout(window)
+    layout.addWidget(window.picture)
+    layout.addWidget(window.text)
+    return window
+
+
+_warned = False
+
+
+def _exclude_from_capture(hwnd: int) -> None:
+    global _warned
+    if sys.platform != "win32":
+        return
+    from ..platform.windows.window_snap import exclude_from_capture
+    if not exclude_from_capture(hwnd) and not _warned:
+        _warned = True
+        print("   ⚠️ The preview could not be hidden from screenshots and screen sharing", flush=True)
+
+
 def run_window(tap: FrameTap, latest_hands: Callable[[], Optional[HandFrame]], state: Callable[[], str],
                seconds: Optional[float], every_second: Optional[Callable[[], None]] = None,
                settings: Any = None) -> None:
     """Show the preview, kept above other windows, until it is closed or ``seconds`` pass (runs Qt on this
     thread). ``every_second`` runs about once a second, for the console readout."""
-    from PyQt6.QtCore import Qt, QTimer
+    from PyQt6.QtCore import QTimer
     from PyQt6.QtGui import QImage, QPixmap
-    from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
+    from PyQt6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication([])
-    window = QWidget()
-    window.setWindowTitle("Jarvis hand tracking preview")
-    window.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-    picture, text = QLabel("Waiting for the camera…"), QLabel()
-    picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    text.setStyleSheet("font-size: 16px; padding: 6px;")
-    layout = QVBoxLayout(window)
-    layout.addWidget(picture)
-    layout.addWidget(text)
+    window = make_window()
+    picture, text = window.picture, window.text
 
     def refresh() -> None:
         image = tap.take()

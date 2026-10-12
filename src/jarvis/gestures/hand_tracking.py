@@ -221,7 +221,6 @@ class HandTracker:
         self._threads: List[threading.Thread] = []
         self._hands: Optional[Callable[[Any, float], Tuple[Hand, ...]]] = None
         self._said: Set[str] = set()
-        self._sides: Tuple[str, ...] = ()
 
     @property
     def running(self) -> bool:
@@ -272,7 +271,6 @@ class HandTracker:
             thread.join(timeout=_JOIN_SEC)
         with self._lock:
             self._pending = None
-        self._sides = ()
         debug_log("hand tracking stopped", "gestures")
 
     def _say(self, key: str, text: str) -> None:
@@ -392,14 +390,7 @@ class HandTracker:
                 continue
             finally:
                 del frame
-            self._note_sides(hands)
             self._deliver(HandFrame(captured, int(width), int(height), hands))
-
-    def _note_sides(self, hands: Tuple[Hand, ...]) -> None:
-        sides = tuple(sorted(hand.side for hand in hands))
-        if sides != self._sides:
-            self._sides = sides
-            debug_log(f"hands in view: {', '.join(sides) or 'none'}", "gestures")
 
     def _deliver(self, hand_frame: HandFrame) -> None:
         with self._lock:

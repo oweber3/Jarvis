@@ -22,7 +22,7 @@ from .builtin.time_tool import TimeTool
 from .builtin.stop import StopTool
 from .builtin.tool_search import ToolSearchTool
 from .builtin.routine_control import RoutineControlTool
-from .request_scope import CallContext, note_outside_content, tool_call
+from .request_scope import CallContext, note_outside_content, request_origin, tool_call
 from .types import ToolExecutionResult
 from ..config import Settings
 from ..debug import debug_log
@@ -570,6 +570,8 @@ def _run_tool(db, cfg, tool_name, tool_args, system_prompt, original_prompt, red
                 "quiet": quiet,
                 # Text chat runs the reply engine quietly; its outcome returns to the chat.
                 "origin": ORIGIN_CHAT if quiet else ORIGIN_VOICE,
+                # Where the request came from (``phone`` limits some tools), kept for the approved run.
+                "request_origin": request_origin(),
                 # Lets an external orchestrator find the confirmation it caused.
                 "request_ref": request_ref,
                 # A bridge request's tool snapshot still bounds the call once it is approved.

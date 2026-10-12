@@ -2,8 +2,11 @@
 
 - The request scope is set by ``run_reply_engine`` for each request. ``run_tool_with_retries`` notes in
   it when a tool that returns outside content has run, so a later call in the same request can tell
-  (routine changes are refused after it, ``routines.spec.md``, Prompt-injection boundary). An approved
-  confirmation runs later on its own and is in no request.
+  (routine changes are refused after it, ``routines.spec.md``, Prompt-injection boundary). It also holds
+  where the request came from (the caller's origin, such as ``chat`` or ``phone``; ``None`` when the caller
+  names none, as the voice listener does), so a tool can refuse what only someone at the PC may do. An action approved in the desktop
+  dialog runs later on its own worker, in a fresh scope that keeps only the origin of the request it came
+  from.
 - The call context is set by ``run_tool_with_retries`` for the duration of one call: the request's
   language, the allowed-tool snapshot of a background bridge request, the bridge request reference
   and, once the user has approved the call, the approved request.
@@ -21,6 +24,7 @@ from typing import Any, FrozenSet, Iterator, Optional
 @dataclass
 class RequestScope:
     outside_content: bool = False
+    origin: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -40,9 +44,9 @@ _call: ContextVar[Optional[CallContext]] = ContextVar("jarvis_tool_call", defaul
 
 
 @contextmanager
-def request_scope() -> Iterator[RequestScope]:
-    """A fresh scope for one request; nothing seen in an earlier request carries into it."""
-    scope = RequestScope()
+def request_scope(origin: Optional[str] = None) -> Iterator[RequestScope]:
+    """A fresh scope for one request from ``origin``; nothing seen in an earlier request carries into it."""
+    scope = RequestScope(origin=origin)
     token = _request.set(scope)
     try:
         yield scope
@@ -61,6 +65,17 @@ def note_outside_content() -> None:
 def outside_content_seen() -> bool:
     scope = _request.get()
     return scope is not None and scope.outside_content
+
+
+def request_origin() -> Optional[str]:
+    """Where the current request came from, or ``None`` outside a request or when its caller named none."""
+    scope = _request.get()
+    return scope.origin if scope is not None else None
+
+
+def from_phone() -> bool:
+    """Whether the current request came from a paired phone, whose user may not be at the PC."""
+    return request_origin() == "phone"
 
 
 @contextmanager
