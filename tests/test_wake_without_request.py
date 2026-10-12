@@ -59,6 +59,25 @@ def test_an_orb_wake_with_no_request_returns_to_idle(face_states):
     listener.state_manager.stop()
 
 
+def test_the_wake_word_works_after_an_unanswered_orb_wake(face_states):
+    listener, _tts = _create_listener()
+    listener.state_manager.wake_wait_seconds = 0.1
+    listener.toggle_manual_wake()
+    listener._check_query_timeout()
+    time.sleep(0.2)
+    listener._check_query_timeout()
+    assert not listener.state_manager.is_collecting()
+    judge = _install_intent_judge(listener, _make_judgment(query="what time is it"))
+
+    with patch("jarvis.fastpath.dispatcher.match_command", return_value=None):
+        _hear(listener, "jarvis what time is it")
+
+    assert judge.judge.called
+    assert listener.state_manager.get_pending_query() == "what time is it"
+    assert face_states[-1] is AssistantState.LISTENING
+    listener.state_manager.stop()
+
+
 def test_the_request_after_an_unanswered_wake_is_judged_like_any_other(face_states):
     listener, _tts = _create_listener()
     listener.state_manager.wake_wait_seconds = 0.1

@@ -290,6 +290,23 @@ def test_manual_wake_waits_for_the_request_like_a_spoken_wake_word(mock_config):
     obj.state_manager.stop()
 
 
+@pytest.mark.parametrize('heard_ago', [6.0, 60.0])
+def test_manual_wake_waits_from_the_click_not_from_earlier_speech(mock_config, heard_ago):
+    # Speech heard before the click (a past request, background talk) must not use up the wait.
+    obj = make_voice_listener(mock_config, judged('unused'))
+    hear(obj, 'something said a while ago', speech_end=time.time() - heard_ago)
+    obj._last_voice_frame_time = time.time() - heard_ago
+    obj.toggle_manual_wake()
+    obj._check_query_timeout()
+    obj._check_query_timeout()
+    assert obj.state_manager.is_collecting() and obj.dispatched == []
+    hear(obj, 'what is the weather', speech_end=time.time())
+    time.sleep(0.4)
+    obj._check_query_timeout()
+    assert obj.dispatched == ['what is the weather']
+    obj.state_manager.stop()
+
+
 def test_manual_wake_is_consumed_once(mock_config):
     obj = make_voice_listener(mock_config, judged('unused'))
     obj.toggle_manual_wake()
