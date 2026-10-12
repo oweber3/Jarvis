@@ -79,49 +79,58 @@ def _settle(fut: concurrent.futures.Future, *, result: Any = None,
         pass
 
 
-def _server_processes(server_cfg: Dict[str, Any], since: float) -> list:
-    """Process IDs of this process's children started at or after ``since``
-    whose command line carries the server's command and every argument: the
-    subprocess a stdio session just spawned."""
+def _our_descendants() -> Dict[int, Any]:
+    """This process's descendants by PID (empty without psutil)."""
+    import os
     try:
         import psutil
-    except ImportError:
-        return []
+        return {proc.pid: proc for proc in psutil.Process(os.getpid()).children(recursive=True)}
+    except Exception:  # noqa: BLE001 - psutil missing or the process table unreadable
+        return {}
+
+
+def _server_processes(server_cfg: Dict[str, Any], since: float) -> list:
+    """``(pid, create_time)`` of each descendant of this process started at or
+    after ``since`` whose command line carries the server's command and every
+    argument: the subprocess a stdio session just spawned (the MCP SDK does
+    not expose it). Only our own descendants are considered, so another
+    program running the same server command (another Jarvis) never matches."""
     import os
     command = os.path.splitext(os.path.basename(str(server_cfg.get("command") or "")))[0]
     wanted = [command, *(os.path.expanduser(str(a)) for a in (server_cfg.get("args") or []))]
     found = []
-    try:
-        children = psutil.Process().children(recursive=False)
-    except psutil.Error:
-        return []
-    for child in children:
+    for proc in _our_descendants().values():
         try:
-            if child.create_time() < since - 1.0:
+            created = proc.create_time()
+            if created < since - 1.0:
                 continue
-            line = " ".join(child.cmdline())
-        except psutil.Error:
+            line = " ".join(proc.cmdline())
+        except Exception:  # noqa: BLE001 - the process ended or is unreadable
             continue
         if all(part and part in line for part in wanted):
-            found.append(child.pid)
+            found.append((proc.pid, created))
     return found
 
 
-def _kill_process_trees(pids: list) -> None:
-    try:
-        import psutil
-    except ImportError:
-        return
-    for pid in pids:
+def _kill_process_trees(records: list) -> None:
+    """Kill each recorded server process and its descendants, but only while
+    it is still our descendant with the same start time: a PID the system
+    has since given to another process is never touched."""
+    ours = _our_descendants()
+    for pid, created in records:
+        root = ours.get(pid)
         try:
-            root = psutil.Process(pid)
-            for proc in [*root.children(recursive=True), root]:
-                try:
-                    proc.kill()
-                except psutil.Error:
-                    pass
-        except psutil.Error:
+            if root is None or root.create_time() != created:
+                debug_log("MCP server process already gone; nothing killed", "mcp")
+                continue
+            tree = [*root.children(recursive=True), root]
+        except Exception:  # noqa: BLE001 - it ended meanwhile
             continue
+        for proc in tree:
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001 - already ended
+                pass
 
 def _resolve_invoke_timeout(server_cfg: Dict[str, Any]) -> float:
     """Return the invoke timeout for ``server_cfg``: its ``timeout_sec``

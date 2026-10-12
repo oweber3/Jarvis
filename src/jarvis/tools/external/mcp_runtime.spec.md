@@ -33,7 +33,7 @@ resident for the daemon's lifetime.
 | First call referencing a server | Creates a `_ServerWorker`, awaits `_ready` (the worker signals readiness once `session.initialize()` returns). A server that does not finish the handshake within 30 s (`_SETUP_TIMEOUT_SEC`) fails the call with `TimeoutError` and its worker is shut down, so the half-started subprocess ends. |
 | A call times out while still queued | Its future is cancelled and the worker skips it: a request reported to its caller as failed never runs later. |
 | A call times out in flight | The session is stuck in that call, so the worker is shut down (its task cancelled, its subprocess ended). Requests queued behind it are drained with `_WorkerDeadError` and retried once on a fresh worker while their callers still wait; the next call gets a fresh session. |
-| A worker is replaced or dropped | The replacement starts only after the old worker has fully stopped (its `_run` has finished, so its subprocess has ended). If it has not stopped within 5 s (`_STOP_WAIT_SEC`) its server process tree (the child spawned for that session, found by its command and arguments) is killed first. Two processes of one server never run at the same time, so a timed-out call can never act after the next call. Runtime shutdown waits the same way for each worker. |
+| A worker is replaced or dropped | The replacement starts only after the old worker has fully stopped (its `_run` has finished, so its subprocess has ended). If it has not stopped within 5 s (`_STOP_WAIT_SEC`) its server process tree is killed first. That process is recorded when the session starts (the MCP SDK does not expose it) as the descendant of the Jarvis process, started just then, whose command line carries the server's command and every argument, with its PID and start time; it is killed only while it is still a descendant of the Jarvis process with that start time. A process outside Jarvis's own tree, such as another Jarvis running the same server command, is never killed, nor is a PID the system has given to another process since. Two processes of one server never run at the same time, so a timed-out call can never act after the next call. Runtime shutdown waits the same way for each worker. |
 | Server config equality holds | Subsequent calls reuse the cached worker. |
 | Server config changes | Old worker is shut down; a fresh worker replaces it. |
 | Worker raises `_WorkerDeadError` | Runtime drops it and retries the call once with a new worker. Second failure surfaces as `MCPServerSessionError` to the public layer. |
@@ -119,7 +119,9 @@ child scripts). The contract verified there:
 - After a call times out in flight (its server still running background
   work), the next call runs only once the old server has ended, and the
   old server's work never lands afterwards; a session that will not stop
-  is killed after the stop window.
+  is killed after the stop window, while a process outside the test's
+  own tree with the same command line survives, and a recorded PID whose
+  start time no longer matches is never killed.
 - A caller cancelling during the drain does not stop other queued
   requests being resolved.
 - A server that misses the handshake window leaves no process running.

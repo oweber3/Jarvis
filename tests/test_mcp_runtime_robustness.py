@@ -27,6 +27,12 @@ _FAKE_SERVER = textwrap.dedent(
     from mcp.server.fastmcp import FastMCP
 
     work = Path(sys.argv[1])
+    if os.environ.get("JARVIS_TEST_DECOY"):
+        # Another program running the very same server command line.
+        import time
+        (work / "decoy-pid").write_text(str(os.getpid()))
+        while True:
+            time.sleep(0.2)
     (work / f"pid-{os.getpid()}").write_text(str(os.getpid()))
     mcp = FastMCP("fake")
 
@@ -126,7 +132,8 @@ def runtime_cleanup(tmp_path):
     (tmp_path / "release").write_text("x")
     (tmp_path / "go").write_text("x")
     shutdown_runtime()
-    for pid in _spawned_pids(tmp_path):
+    decoy = tmp_path / "decoy-pid"
+    for pid in _spawned_pids(tmp_path) + ([int(decoy.read_text())] if decoy.exists() else []):
         try:
             psutil.Process(pid).kill()
         except psutil.NoSuchProcess:
@@ -246,6 +253,65 @@ def test_a_session_that_will_not_stop_is_killed_before_its_replacement_starts(
 
     assert answer.content[0].text == "recorded fast"
     assert not old_alive and time.monotonic() - started < 30
+
+
+def _start_decoy(tmp_path, cfg):
+    """Start the server's exact command line as a process outside this test's process tree (its launcher
+    exits, so it is nobody's descendant here), as another Jarvis running the same server would be."""
+    import os
+    import subprocess
+
+    launcher = ("import subprocess, sys; subprocess.Popen(sys.argv[1:], close_fds=True, "
+                "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, "
+                "creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0), start_new_session=True)")
+    subprocess.run([sys.executable, "-c", launcher, cfg["command"], *cfg["args"]], check=True,
+                   env={**os.environ, "JARVIS_TEST_DECOY": "1"}, timeout=30)
+    assert _wait_for((tmp_path / "decoy-pid").exists)
+    decoy = int((tmp_path / "decoy-pid").read_text())
+    ours = {proc.pid for proc in psutil.Process().children(recursive=True)}
+    assert decoy not in ours and _alive(decoy)
+    return decoy
+
+
+def test_the_stop_kill_reaches_only_our_own_server_never_another_programs(
+    tmp_path, monkeypatch, runtime_cleanup
+):
+    """Another Jarvis may run the very same server command line; only our own stuck server is killed."""
+    import mcp.client.stdio as stdio
+
+    from jarvis.tools.external import mcp_runtime
+
+    monkeypatch.setattr(stdio, "PROCESS_TERMINATION_TIMEOUT", 60.0)
+    monkeypatch.setattr(mcp_runtime, "_STOP_WAIT_SEC", 1.0)
+    cfg = _server_cfg(tmp_path, _FAKE_SERVER)
+    decoy = _start_decoy(tmp_path, cfg)
+
+    old_pid, old_alive, answer = _timed_out_server_then_next_call(tmp_path, cfg)
+
+    assert answer.content[0].text == "recorded fast" and not old_alive
+    assert _alive(decoy), "a process outside Jarvis's own tree was killed"
+    # Even named directly, a process that is not our descendant is never killed.
+    mcp_runtime._kill_process_trees([(decoy, psutil.Process(decoy).create_time())])
+    time.sleep(0.5)
+    assert _alive(decoy)
+
+
+def test_a_recorded_process_id_reused_by_another_process_is_never_killed():
+    """The kill checks the recorded start time, so a PID reused since the session started is left alone."""
+    import subprocess
+
+    from jarvis.tools.external import mcp_runtime
+
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        created = psutil.Process(child.pid).create_time()
+        mcp_runtime._kill_process_trees([(child.pid, created + 5)])
+        time.sleep(0.5)
+        assert child.poll() is None
+        mcp_runtime._kill_process_trees([(child.pid, created)])
+        assert child.wait(timeout=10) is not None
+    finally:
+        child.kill()
 
 
 def test_a_caller_cancelling_during_the_drain_never_stops_it(monkeypatch, runtime_cleanup):
