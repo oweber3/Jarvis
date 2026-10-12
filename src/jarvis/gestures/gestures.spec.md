@@ -147,7 +147,7 @@ Any other combination (for example index and little finger) changes nothing and 
 Scrolling works like a joystick (or a browser's middle-click autoscroll), because a moving hand is the hardest thing to read: the scroll speed comes from where the hand is, not from each movement.
 
 - **Neutral.** When two fingers start a scroll, the pointer stays where it is (so the wheel events reach the window under it) and the palm's height at that moment becomes the neutral point.
-- **Speed from distance.** Holding the hand above neutral scrolls up (towards the top of the page) and below neutral scrolls down. Within 3% of the camera's height of neutral nothing scrolls, so a steady hand never creeps. Beyond that the speed grows with the distance: `gesture_snap_scroll_speed` (default 5) wheel notches a second for every further tenth of the camera's height. Wheel units (120 a notch) are sent in steps of at least 30, so slow scrolling is smooth without a flood of events. Sideways movement is ignored.
+- **Speed from distance.** Holding the hand above neutral scrolls up (towards the top of the page) and below neutral scrolls down. Within 3% of the camera's height of neutral nothing scrolls, so a steady hand never creeps. Beyond that the speed grows with the distance: `gesture_snap_scroll_speed` (default 15) wheel notches a second for every further tenth of the camera's height. Wheel units (120 a notch) are sent in steps of at least 30, so slow scrolling is smooth without a flood of events. Sideways movement is ignored.
 - **Misreads do not stop it.** While the hand is briefly misread as another gesture the scroll carries on at the speed its position gives.
 - Leaving a scroll needs the new gesture to last at least 0.5 s (or the debounce time, if longer), because a moving hand is misread: measured on a real webcam at about 15 frames a second, two fingers moving up and down read as one finger or a fist for 1 or 2 frames at a time and as a fist for up to 6 frames (0.4 s), and the raised fingers dipped to 0.92 to 1.0. In the same measurement the MediaPipe Gesture Recognizer classified the moving two-finger pose correctly in only 26% of frames against 47% for finger counting, and was not better on any held pose, so it is not used. Then one finger aims again and an open hand pauses. A fist ends the scroll but grabs nothing: a fist grabs only after one finger or straight after a pause, so closing the hand while scrolling never picks up a window. The pointer then stays still until a finger is raised.
 - A scroll the window refuses (a higher-privilege application) is reported once; tracking continues.
@@ -202,7 +202,7 @@ Gesture snapping adds nothing that leaves the machine and nothing written to dis
 | `gesture_snap_finger_up` | `1.1` | Finger curl above which a finger counts as raised (0.8 to 2.0) |
 | `gesture_snap_finger_down` | `0.95` | Finger curl below which a finger counts as folded (0.5 to 1.5, below the raised threshold) |
 | `gesture_snap_debounce_ms` | `100` | How long a gesture must last to count (0 to 500 ms) |
-| `gesture_snap_scroll_speed` | `5` | Wheel notches a second for each tenth of the camera's height the hand is held beyond neutral (0.5 to 30) |
+| `gesture_snap_scroll_speed` | `15` | Wheel notches a second for each tenth of the camera's height the hand is held beyond neutral (0.5 to 60) |
 | `gesture_snap_smoothing` | `1.0` | One Euro minimum cutoff in hertz (0.05 to 10) |
 | `gesture_snap_speed_response` | `0.005` | One Euro speed coefficient (0 to 0.1) |
 

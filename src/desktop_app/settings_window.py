@@ -489,7 +489,7 @@ def _build_field_metadata() -> List[FieldMeta]:
     f("gesture_snap_scroll_speed", "Scroll Speed",
       "How fast two-finger scrolling goes: wheel notches a second for each tenth of the camera's height your "
       "hand is held above or below where the scroll started.",
-      "gesture_snap", "float", min_val=0.5, max_val=30.0, step=0.5)
+      "gesture_snap", "float", min_val=0.5, max_val=60.0, step=0.5)
     f("gesture_snap_smoothing", "Steadiness",
       "Smoothing of the pointer when your hand is still (the filter's minimum cutoff in hertz). Lower is "
       "steadier but feels slower.",

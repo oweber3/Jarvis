@@ -50,7 +50,7 @@ class TestGestureSnapSettings:
         assert cfg.gesture_snap_debounce_ms == 500
         assert cfg.gesture_snap_camera == 0
         assert cfg.gesture_snap_smoothing > 0
-        assert cfg.gesture_snap_scroll_speed == 30.0
+        assert cfg.gesture_snap_scroll_speed == 60.0
         assert cfg.gesture_snap_finger_up == 2.0
         assert cfg.gesture_snap_finger_down == 0.5
 

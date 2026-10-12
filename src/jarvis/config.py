@@ -428,7 +428,7 @@ class Settings:
     gesture_snap_finger_up: float = 1.1
     gesture_snap_finger_down: float = 0.95
     gesture_snap_debounce_ms: int = 100
-    gesture_snap_scroll_speed: float = 5.0
+    gesture_snap_scroll_speed: float = 15.0
     gesture_snap_smoothing: float = 1.0
     gesture_snap_speed_response: float = 0.005
 
@@ -563,7 +563,7 @@ def _gesture_snap_settings(merged: Dict[str, Any], defaults: Dict[str, Any]) -> 
         "gesture_snap_finger_up": finger_up,
         "gesture_snap_finger_down": finger_down if finger_down < finger_up else round(finger_up - 0.1, 3),
         "gesture_snap_debounce_ms": get("gesture_snap_debounce_ms", 0, 500, int),
-        "gesture_snap_scroll_speed": get("gesture_snap_scroll_speed", 0.5, 30.0),
+        "gesture_snap_scroll_speed": get("gesture_snap_scroll_speed", 0.5, 60.0),
         "gesture_snap_smoothing": get("gesture_snap_smoothing", 0.05, 10.0),
         "gesture_snap_speed_response": get("gesture_snap_speed_response", 0.0, 0.1),
     }
@@ -956,7 +956,7 @@ def get_default_config() -> Dict[str, Any]:
         "gesture_snap_finger_up": 1.1,
         "gesture_snap_finger_down": 0.95,
         "gesture_snap_debounce_ms": 100,
-        "gesture_snap_scroll_speed": 5.0,
+        "gesture_snap_scroll_speed": 15.0,
         "gesture_snap_smoothing": 1.0,
         "gesture_snap_speed_response": 0.005,
         "remote_access_enabled": False,

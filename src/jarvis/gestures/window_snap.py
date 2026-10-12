@@ -62,7 +62,7 @@ class WindowSnapSettings:
     finger_up: float = 1.1
     finger_down: float = 0.95
     debounce: float = 0.1
-    scroll_speed: float = 5.0
+    scroll_speed: float = 15.0
     min_cutoff: float = 1.0
     beta: float = 0.005
 
