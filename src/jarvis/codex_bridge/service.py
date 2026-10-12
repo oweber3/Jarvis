@@ -103,8 +103,9 @@ def _error(reason: str) -> BridgeOutcome:
 
 def codex_tool_snapshot(cfg: Any) -> Dict[str, Dict[str, Any]]:
     """Tools Codex may use for one request: name -> description and input schema."""
-    return build_tool_snapshot(cfg, share_long_term_memory=bridge_settings(cfg, "codex").share_long_term_memory,
-                               log_tag="codex")
+    settings = bridge_settings(cfg, "codex")
+    return build_tool_snapshot(cfg, share_long_term_memory=settings.share_long_term_memory,
+                               share_lists_reminders=settings.share_lists_reminders, log_tag="codex")
 
 
 def _turn_failure(error: Any) -> str:

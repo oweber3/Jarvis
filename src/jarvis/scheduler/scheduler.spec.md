@@ -62,7 +62,7 @@ Platform-neutral and always registered. Times arrive as arguments: the model tur
 - `list` gives one sentence per pending item, soonest first: the time left on a timer, the time of an alarm or reminder. With a `label` it lists only matching items; with nothing pending it says so (success).
 - `cancel` cancels the single matching item. A label matches when it equals an item's label (ignoring case and spacing) or one contains the other. No match fails; more than one match fails, names them and cancels nothing. Without a label it cancels the only pending item of the kind.
 - Every action is `SAFE`: setting and cancelling a timer is a routine local action.
-- `log_arguments` is false and the tool is `personal_data`: reminder messages are the user's own words, so the fast path logs only argument names, and the reply bridges offer the tool only while long-term memory is shared with that mode (`bridge/bridge.spec.md`). Fast-path timers work in every reply mode.
+- `log_arguments` is false: reminder messages are the user's own words, so the fast path logs only argument names. The reply bridges offer the tool exactly while that mode's `<mode>_share_lists_reminders` is true (default true, independent of long-term memory sharing; `bridge/bridge.spec.md`). Fast-path timers work in every reply mode.
 - With no scheduler running (it failed to open the database, or outside the daemon) every action fails with "Timers and reminders are not available right now."
 
 ### Fast path

@@ -74,10 +74,8 @@ def _due_at(value: str, now: float) -> float:
 
 
 class ScheduleControlTool(Tool):
-    # Reminder messages are the user's own words: the fast path logs only argument names, and the reply
-    # bridges offer the tool only while long-term memory is shared.
+    # Reminder messages are the user's own words: the fast path logs only argument names.
     log_arguments = False
-    personal_data = True
 
     @property
     def name(self) -> str:

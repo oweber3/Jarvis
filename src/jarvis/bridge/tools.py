@@ -20,6 +20,9 @@ EXECUTE_TOOL = "jarvis_execute"
 # or end a turn without a reply (dismissals are handled locally before a request reaches a bridge).
 ALWAYS_EXCLUDED_TOOLS = frozenset({"toolSearchTool", "refreshMCPTools", "replyMode", "gestureControl", "stop"})
 PERSONAL_DATA_TOOLS = frozenset({"logMeal", "fetchMeals", "deleteMeal"})
+# Timers, reminders, lists and notes: offered while the mode's ``share_lists_reminders`` switch is on,
+# independently of long-term memory.
+LISTS_REMINDERS_TOOLS = frozenset({"scheduleControl", "listControl", "noteControl"})
 # Opt-in personal sources, each offered to a cloud model only while its own sharing switch allows it.
 CLOUD_GATED_TOOLS = {
     "activityLog": activity_runtime.shared_with_cloud,
@@ -97,8 +100,8 @@ def execute_tool_description(tools: Dict[str, Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def build_tool_snapshot(cfg: Any, *, share_long_term_memory: bool, log_tag: str = "bridge"
-                        ) -> Dict[str, Dict[str, Any]]:
+def build_tool_snapshot(cfg: Any, *, share_long_term_memory: bool, share_lists_reminders: bool,
+                        log_tag: str = "bridge") -> Dict[str, Dict[str, Any]]:
     """Tools a bridge may use for one request: name -> description and input schema."""
     from ..tools.registry import BUILTIN_TOOLS, get_cached_mcp_tools
 
@@ -106,6 +109,8 @@ def build_tool_snapshot(cfg: Any, *, share_long_term_memory: bool, log_tag: str 
     for name, tool in BUILTIN_TOOLS.items():
         personal = name in PERSONAL_DATA_TOOLS or getattr(tool, "personal_data", False) is True
         if name in ALWAYS_EXCLUDED_TOOLS or (personal and not share_long_term_memory):
+            continue
+        if name in LISTS_REMINDERS_TOOLS and not share_lists_reminders:
             continue
         gate = CLOUD_GATED_TOOLS.get(name)
         if gate is not None and not gate(cfg):
@@ -123,6 +128,8 @@ def build_tool_snapshot(cfg: Any, *, share_long_term_memory: bool, log_tag: str 
                 }
         except Exception as exc:
             debug_log(f"MCP tools unavailable for bridge snapshot: {type(exc).__name__}", log_tag)
+    debug_log(f"tool snapshot: {len(snapshot)} tools (memory {share_long_term_memory}, "
+              f"lists and reminders {share_lists_reminders})", log_tag)
     return snapshot
 
 

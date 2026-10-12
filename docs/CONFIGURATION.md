@@ -707,7 +707,7 @@ No setup needed. Say "set a 10 minute pasta timer", "how long left on the pasta 
 
 - Timer phrasings are recognised without a model; times of day go through the model, which works out the exact time.
 - Alarms and reminders are kept in the local Jarvis database, so they survive a restart. Anything that came due while Jarvis was off is announced once, as missed, when it starts again.
-- Nothing leaves the computer. In Codex or Claude mode, setting reminders by voice needs long-term memory sharing for that mode turned on, because reminders are personal data; timer phrasings work in every mode.
+- In local mode nothing leaves the computer. In Codex or Claude mode the model can set and read timers and reminders while that mode's *Timers, Reminders, Lists and Notes* switch is on (`codex_share_lists_reminders`, `claude_share_lists_reminders`, on by default); reminders it reads are sent to OpenAI or Anthropic. Timer phrasings work in every mode.
 
 Spec: `src/jarvis/scheduler/scheduler.spec.md`.
 
@@ -751,7 +751,7 @@ Jarvis answers with the local model unless you allow a cloud mode. `codex_enable
 }
 ```
 
-Switch at runtime by saying "use Claude", "use ChatGPT" or "go local", or from the tray's **Reply Mode** menu; the choice is written back to `reply_mode`. Each mode has its own sharing switches and bounds (`codex_*`, `claude_*`: recent conversation, Jarvis's records of what it acted on (`_share_desktop_referents`), the window you're looking at (`_share_foreground_window`, never sent for phone requests), personal-data tools, deadline, queue and tool calls), all in its column of **Settings → Cloud Modes**. Each column picks the mode's model (`codex_model`, `claude_model`) and effort from a dropdown; a model ID set by hand in `config.json` is shown there and kept. See the README for what each mode sends and how it signs in.
+Switch at runtime by saying "use Claude", "use ChatGPT" or "go local", or from the tray's **Reply Mode** menu; the choice is written back to `reply_mode`. Each mode has its own sharing switches and bounds (`codex_*`, `claude_*`: recent conversation, Jarvis's records of what it acted on (`_share_desktop_referents`), the window you're looking at (`_share_foreground_window`, never sent for phone requests), personal-data tools (`_share_long_term_memory`, off by default), timers, reminders, lists and notes (`_share_lists_reminders`, on by default), deadline, queue and tool calls), all in its column of **Settings → Cloud Modes**. Each column picks the mode's model (`codex_model`, `claude_model`) and effort from a dropdown; a model ID set by hand in `config.json` is shown there and kept. See the README for what each mode sends and how it signs in.
 
 ## Activity log
 

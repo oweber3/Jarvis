@@ -385,6 +385,7 @@ class Settings:
     codex_share_desktop_referents: bool = True
     codex_share_foreground_window: bool = True
     codex_share_long_term_memory: bool = False
+    codex_share_lists_reminders: bool = True
     codex_max_tool_calls: int = 8
     # Optional background Claude reply mode (see src/jarvis/claude_bridge/claude_bridge.spec.md)
     claude_model: str = "haiku"
@@ -397,6 +398,7 @@ class Settings:
     claude_share_desktop_referents: bool = True
     claude_share_foreground_window: bool = True
     claude_share_long_term_memory: bool = False
+    claude_share_lists_reminders: bool = True
     claude_max_tool_calls: int = 8
 
     # Opt-in activity log (see src/jarvis/memory/activity_log.spec.md): foreground application and
@@ -954,6 +956,7 @@ def get_default_config() -> Dict[str, Any]:
         "codex_share_desktop_referents": True,
         "codex_share_foreground_window": True,
         "codex_share_long_term_memory": False,
+        "codex_share_lists_reminders": True,
         "codex_max_tool_calls": 8,
         "claude_model": "haiku",
         "claude_effort": "low",
@@ -965,6 +968,7 @@ def get_default_config() -> Dict[str, Any]:
         "claude_share_desktop_referents": True,
         "claude_share_foreground_window": True,
         "claude_share_long_term_memory": False,
+        "claude_share_lists_reminders": True,
         "claude_max_tool_calls": 8,
         "activity_log_enabled": False,
         "activity_log_paused": False,
@@ -1435,6 +1439,7 @@ def load_settings() -> Settings:
         claude_share_desktop_referents=bool(merged.get("claude_share_desktop_referents", True)),
         claude_share_foreground_window=bool(merged.get("claude_share_foreground_window", True)),
         claude_share_long_term_memory=bool(merged.get("claude_share_long_term_memory", False)),
+        claude_share_lists_reminders=bool(merged.get("claude_share_lists_reminders", True)),
         claude_max_tool_calls=_bounded_number(merged.get("claude_max_tool_calls", 8), 8, 1, int),
         codex_model=_text(merged.get("codex_model"), defaults["codex_model"]),
         codex_reasoning_effort=_text(merged.get("codex_reasoning_effort"),
@@ -1447,6 +1452,7 @@ def load_settings() -> Settings:
         codex_share_desktop_referents=bool(merged.get("codex_share_desktop_referents", True)),
         codex_share_foreground_window=bool(merged.get("codex_share_foreground_window", True)),
         codex_share_long_term_memory=bool(merged.get("codex_share_long_term_memory", False)),
+        codex_share_lists_reminders=bool(merged.get("codex_share_lists_reminders", True)),
         codex_max_tool_calls=_bounded_number(merged.get("codex_max_tool_calls", 8), 8, 1, int),
         activity_log_enabled=merged.get("activity_log_enabled") is True,
         activity_log_paused=merged.get("activity_log_paused") is True,

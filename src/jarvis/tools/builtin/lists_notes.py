@@ -56,8 +56,6 @@ def _preview(text: str) -> str:
 
 
 class ListControlTool(Tool):
-    personal_data = True
-
     def returns_outside_content_for(self, args: Optional[Dict[str, Any]]) -> bool:
         # An item may have been copied from a web page (lists_notes.spec.md, Privacy).
         return isinstance(args, dict) and args.get("action") in _LIST_READS
@@ -159,8 +157,6 @@ class ListControlTool(Tool):
 
 
 class NoteControlTool(Tool):
-    personal_data = True
-
     def returns_outside_content_for(self, args: Optional[Dict[str, Any]]) -> bool:
         # A note may have been copied from a web page (lists_notes.spec.md, Privacy).
         return isinstance(args, dict) and args.get("action") in _NOTE_READS

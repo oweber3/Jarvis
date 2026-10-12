@@ -86,11 +86,12 @@ notes are changed through Jarvis, where the confirmations above apply.
 
 - List items and note text never appear in logs or console lines. Debug logs
   and progress lines carry only actions and counts.
-- Both tools are personal-data tools (`personal_data = True`): a Codex or
-  Claude reply mode gets them only when that mode's
-  `<mode>_share_long_term_memory` is true (default false), the same switch as
-  the diary, memory graph and meal log (`bridge/bridge.spec.md`). With it off,
-  no list or note content reaches a cloud model through Jarvis.
+- A Codex or Claude reply mode gets both tools exactly when that mode's
+  `<mode>_share_lists_reminders` is true (default true), the same switch as
+  `scheduleControl` and independent of `<mode>_share_long_term_memory`, which
+  governs the diary, memory graph and meal log (`bridge/bridge.spec.md`).
+  While it is on, a list or note the model reads is sent to that provider;
+  with it off, no list or note content reaches a cloud model through Jarvis.
 - Read results (`show`, `lists`, `search`, `recent`) count as outside content
   for routines (`routines/routines.spec.md`): a list item or note may have been
   copied from a web page, so routines cannot be changed later in that request.

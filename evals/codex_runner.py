@@ -965,7 +965,8 @@ def tool_snapshot(cfg: Any) -> Dict[str, Dict[str, Any]]:
     if cfg is None:
         from jarvis.config import load_settings
         cfg = load_settings()
-    snap = build_tool_snapshot(dataclasses.replace(cfg, mcps={}), share_long_term_memory=False, log_tag="eval")
+    snap = build_tool_snapshot(dataclasses.replace(cfg, mcps={}), share_long_term_memory=False,
+                               share_lists_reminders=cfg.codex_share_lists_reminders, log_tag="eval")
     snap["shutdownComputer"] = {"description": "Shut the computer down now.",
                                 "inputSchema": {"type": "object", "properties": {}, "required": []}}
     if os.environ.get("EVAL_DEVTOOLS", "1") != "0":

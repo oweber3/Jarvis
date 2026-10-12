@@ -475,8 +475,14 @@ def _build_field_metadata() -> List[FieldMeta]:
               "or conversation text. When off, follow-ups need the name of what they are about.",
               "bool", shown_when=allowed)
         cloud("share_long_term_memory", "Your Memories",
-              "Off by default: nothing from your diary, memory graph, meal log, lists or notes is ever "
-              "disclosed. Turn on to let the model use the tools that read them.",
+              "Off by default: nothing from your diary, memory graph or meal log is ever disclosed. Turn on "
+              "to let the model use the tools that read them.",
+              "bool", shown_when=allowed)
+        provider = "OpenAI" if mode == "codex" else "Anthropic"
+        cloud("share_lists_reminders", "Timers, Reminders, Lists and Notes",
+              f"On by default: lets the model set and read your timers, reminders, lists and notes. Reading a "
+              f"list, a note or your reminders sends it to {provider}. When off, the model cannot use them; "
+              f"local mode is unaffected.",
               "bool", shown_when=allowed)
         heading("Limits")
         cloud("timeout_sec", "Answer Time Limit",

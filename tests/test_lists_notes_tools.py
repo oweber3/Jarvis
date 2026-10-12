@@ -184,13 +184,26 @@ class TestPrivacy:
         for secret in ("secretlist", "zebrafish", "platypus", "4471"):
             assert secret not in logs
 
-    def test_cloud_reply_modes_get_them_only_when_memories_are_shared(self, cfg):
+    @pytest.mark.parametrize("mode", ["codex", "claude"])
+    def test_cloud_reply_modes_get_them_by_default_while_memories_stay_private(self, cfg, mode):
+        from jarvis.claude_bridge.service import claude_tool_snapshot
+        from jarvis.codex_bridge.service import codex_tool_snapshot
+        from jarvis.config import get_default_config
+        defaults = get_default_config()
+        for key in ("share_long_term_memory", "share_lists_reminders"):
+            setattr(cfg, f"{mode}_{key}", defaults[f"{mode}_{key}"])
+        snapshot = (codex_tool_snapshot if mode == "codex" else claude_tool_snapshot)(cfg)
+        assert {"listControl", "noteControl"} <= set(snapshot)
+        assert not ({"logMeal", "fetchMeals", "deleteMeal"} & set(snapshot))
+
+    @pytest.mark.parametrize("share_memory", [False, True])
+    def test_the_lists_switch_alone_decides_whether_they_are_offered(self, cfg, share_memory):
         from jarvis.bridge.tools import build_tool_snapshot
-        private = build_tool_snapshot(cfg, share_long_term_memory=False)
-        shared = build_tool_snapshot(cfg, share_long_term_memory=True)
+        withheld = build_tool_snapshot(cfg, share_long_term_memory=share_memory, share_lists_reminders=False)
+        offered = build_tool_snapshot(cfg, share_long_term_memory=share_memory, share_lists_reminders=True)
         for name in ("listControl", "noteControl"):
-            assert name not in private
-            assert name in shared
+            assert name not in withheld
+            assert name in offered
 
     def test_read_results_count_as_outside_content_and_changes_do_not(self):
         lists, notes = BUILTIN_TOOLS["listControl"], BUILTIN_TOOLS["noteControl"]
