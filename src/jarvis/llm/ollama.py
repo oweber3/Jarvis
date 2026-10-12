@@ -88,6 +88,14 @@ def _drop_connection(sock: Optional[socket.socket]) -> None:
 _VISION: Dict[tuple, bool] = {}
 _VISION_TIMEOUT_SEC = 3.0
 
+# (base URL, model) -> True for a model that reasons although asked not to (``think: false``, e.g.
+# gpt-oss) and accepts reasoning levels, False for one that reasons regardless and refuses them.
+# Learned from responses. Such a model's reasoning counts against ``num_predict``, so a call that
+# asks for no reasoning is sent ``think: "low"`` when levels are accepted, and a capped call gets
+# REASONING_ALLOWANCE_TOKENS on top of its cap for that reasoning.
+_REASONS_REGARDLESS: Dict[tuple, bool] = {}
+REASONING_ALLOWANCE_TOKENS = 1024
+
 
 class OllamaBackend(LLMBackend):
     """:class:`LLMBackend` implementation that talks to a local Ollama server."""
@@ -140,46 +148,85 @@ class OllamaBackend(LLMBackend):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ]
+        key = (self._base_url, chat_model)
 
-        options: Dict[str, Any] = {}
-        if temperature is not None:
-            options["temperature"] = temperature
-        if max_tokens is not None:
-            options["num_predict"] = max_tokens
+        # At most three requests: as asked, then (newly learned that the model reasons regardless)
+        # with low reasoning and an allowance, then with no level if the model refuses levels.
+        for _attempt in range(3):
+            think, cap = self._reasoning_request(key, thinking, max_tokens)
+            options: Dict[str, Any] = {}
+            if temperature is not None:
+                options["temperature"] = temperature
+            if cap is not None:
+                options["num_predict"] = cap
 
-        payload: Dict[str, Any] = {
-            "model": chat_model,
-            "messages": messages,
-            "stream": False,
-            "cache_prompt": True,
-            "options": options,
-            "think": thinking,
-        }
+            payload: Dict[str, Any] = {
+                "model": chat_model,
+                "messages": messages,
+                "stream": False,
+                "cache_prompt": True,
+                "options": options,
+                "think": think,
+            }
 
-        self._apply_request_shape(payload)
-        try:
-            with requests.post(
-                f"{self._base_url}/api/chat", json=payload, timeout=timeout_sec
-            ) as resp:
-                resp.raise_for_status()
-                data = resp.json()
+            self._apply_request_shape(payload)
+            try:
+                with requests.post(
+                    f"{self._base_url}/api/chat", json=payload, timeout=timeout_sec
+                ) as resp:
+                    if resp.status_code == 400 and isinstance(think, str):
+                        _REASONS_REGARDLESS[key] = False
+                        debug_log(f"OllamaBackend.direct: {chat_model} refuses reasoning levels; "
+                                  "asking without a level and with room for its reasoning", "llm")
+                        continue
+                    resp.raise_for_status()
+                    data = resp.json()
+            except requests.exceptions.Timeout:
+                debug_log(f"OllamaBackend.direct: timeout after {timeout_sec}s", "llm")
+                return None
+            except Exception as e:
+                debug_log(f"OllamaBackend.direct: request failed — {e}", "llm")
+                return None
 
-            if isinstance(data, dict):
-                content = extract_text_from_response(data)
-                if isinstance(content, str) and content.strip():
-                    return content
-                debug_log(
-                    f"OllamaBackend.direct: empty content from response keys={list(data.keys())}",
-                    "llm",
-                )
-        except requests.exceptions.Timeout:
-            debug_log(f"OllamaBackend.direct: timeout after {timeout_sec}s", "llm")
-            return None
-        except Exception as e:
-            debug_log(f"OllamaBackend.direct: request failed — {e}", "llm")
+            if not isinstance(data, dict):
+                return None
+            newly_learned = self._note_reasoning(key, thinking, think, data)
+            content = extract_text_from_response(data)
+            if isinstance(content, str) and content.strip():
+                return content
+            if newly_learned:
+                debug_log("OllamaBackend.direct: reasoning used up the cap; asking again", "llm")
+                continue
+            debug_log(
+                f"OllamaBackend.direct: empty content from response keys={list(data.keys())}",
+                "llm",
+            )
             return None
 
         return None
+
+    @staticmethod
+    def _reasoning_request(key: tuple, thinking: bool, max_tokens: Optional[int]):
+        """The ``think`` value and token cap to send for a call, given what is known of the model."""
+        accepts_levels = _REASONS_REGARDLESS.get(key) if thinking is False else None
+        if accepts_levels is None:
+            return thinking, max_tokens
+        cap = max_tokens + REASONING_ALLOWANCE_TOKENS if max_tokens is not None else None
+        return ("low" if accepts_levels else False), cap
+
+    @staticmethod
+    def _note_reasoning(key: tuple, thinking: bool, think_sent: Any, data: Dict[str, Any]) -> bool:
+        """Record a model that reasoned although asked not to; True when this is new."""
+        if thinking is not False or think_sent is not False or key in _REASONS_REGARDLESS:
+            return False
+        message = data.get("message")
+        reasoning = message.get("thinking") if isinstance(message, dict) else None
+        if not (isinstance(reasoning, str) and reasoning.strip()):
+            return False
+        _REASONS_REGARDLESS[key] = True
+        debug_log(f"OllamaBackend: {key[1]} reasons although asked not to; capped calls now ask for low "
+                  "reasoning and leave room for it", "llm")
+        return True
 
     def streaming(
         self,
