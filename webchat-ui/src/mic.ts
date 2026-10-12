@@ -195,7 +195,7 @@ export class MicRecorder {
     } catch (error) {
       // An unreachable server is waited out (the daemon decides when the page has left); a recording the
       // daemon no longer has is over.
-      if (error instanceof ApiError && error.status === 404 && this.session === session && !this.disposed) {
+      if (error instanceof ApiError && error.status === 404 && this.phase === "recording" && this.session === session && !this.disposed) {
         this.clearTimers()
         this.session = null
         this.message = describeMicError(error)

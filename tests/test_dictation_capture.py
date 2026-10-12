@@ -341,3 +341,20 @@ def test_the_blocker_reports_whisper_not_loaded(tmp_path):
     engine = _engine(_Ui(), tmp_path, model_ref=lambda: None)
     with patch.object(de, "sd"):
         assert engine.capture_blocker() == "not_ready"
+
+
+def test_stopping_the_engine_while_a_capture_is_opening_leaves_no_stream_open(world):
+    real_open = world.engine._open_capture_stream
+
+    def open_then_engine_stops(capture):
+        stream = real_open(capture)
+        world.engine.stop()  # the daemon shuts down while the microphone is being opened
+        return stream
+
+    with patch.object(world.engine, "_open_capture_stream", side_effect=open_then_engine_stops):
+        with pytest.raises(world.de.CaptureRefused):
+            world.engine.start_capture(max_seconds=30)
+
+    assert world.streams.released
+    assert not world.ui.listener_paused and world.ui.state == "IDLE"
+    assert world.engine.capture_blocker() is None

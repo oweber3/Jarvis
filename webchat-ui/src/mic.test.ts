@@ -150,6 +150,26 @@ describe("staying alive", () => {
     expect(t.clock.running).toBe(0)
   })
 
+  it("is not confused by a heartbeat that comes back unknown after stop was clicked", async () => {
+    let failBeat!: () => void
+    let finishStop!: () => void
+    const t = setup({
+      heartbeat: vi.fn(() => new Promise<{ state: string }>((_resolve, reject) => (failBeat = () => reject(new ApiError(404, "unknown"))))),
+      stop: vi.fn(() => new Promise<{ text: string }>((resolve) => (finishStop = () => resolve({ text: "hello there" })))),
+    })
+    await t.recorder.toggle()
+    await t.clock.advance(HEARTBEAT_MS + 10) // a heartbeat is now in flight
+    const stopping = t.recorder.toggle()
+    failBeat() // the server had already taken the recording for the stop
+    await settle()
+    expect(t.view().phase).toBe("transcribing")
+    finishStop()
+    await stopping
+    expect(t.delivered).toEqual(["hello there"])
+    expect(t.view().phase).toBe("idle")
+    expect(t.view().message).toBeNull()
+  })
+
   it("keeps recording through a heartbeat that could not reach the server", async () => {
     let calls = 0
     const t = setup({ heartbeat: vi.fn(async () => { if (calls++ === 0) throw new TypeError("network"); return { state: "recording" } }) })

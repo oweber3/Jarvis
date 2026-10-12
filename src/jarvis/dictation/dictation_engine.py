@@ -847,6 +847,13 @@ class DictationEngine:
                 self._capture = None
             self._finish_session(token)
             raise CaptureRefused("microphone")
+        with self._lock:
+            still_open = self._capture is capture
+        if not still_open:
+            # The engine was stopped while the stream opened: nothing owns the stream, so release it.
+            self._release_capture_stream(capture)
+            debug_log("dictation capture ended while the microphone opened", "dictation")
+            raise CaptureRefused("unavailable")
         capture.started_at = time.time()
         capture.timer = threading.Timer(max_seconds, self._capture_full, args=(capture,))
         capture.timer.daemon = True
