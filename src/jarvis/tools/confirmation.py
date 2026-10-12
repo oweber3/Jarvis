@@ -870,8 +870,11 @@ class ConfirmationStore:
         """Run an approved action on its own worker thread and deliver the result."""
 
         def _worker() -> None:
+            from .request_scope import request_scope
             try:
-                result = self.run_approved(action, db=db, cfg=cfg)
+                # The worker is in no request, so it carries where the request it approves came from.
+                with request_scope(action.execution_context.get("request_origin")):
+                    result = self.run_approved(action, db=db, cfg=cfg)
                 reply = result.reply_text or (
                     "Action completed." if result.success else (result.error_message or "Action failed.")
                 )

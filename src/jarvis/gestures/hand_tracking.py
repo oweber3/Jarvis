@@ -257,7 +257,6 @@ class HandTracker:
         self._threads: List[threading.Thread] = []
         self._hands: Optional[Callable[[Any, float], Tuple[Hand, ...]]] = None
         self._said: Set[str] = set()
-        self._sides: Tuple[str, ...] = ()
 
     @property
     def running(self) -> bool:
@@ -322,7 +321,6 @@ class HandTracker:
             thread.join(timeout=_JOIN_SEC)
         with self._lock:
             self._pending = None
-        self._sides = ()
         debug_log("hand tracking stopped", "gestures")
 
     def _say(self, key: str, text: str) -> None:
@@ -427,7 +425,6 @@ class HandTracker:
 
     def _detect_loop(self) -> None:
         hands_of, gate = self._hands, self._gate
-        was_idle = False
         while not self._stop.is_set():
             item = self._next_frame()
             if item is None or self._stop.is_set():
@@ -436,9 +433,6 @@ class HandTracker:
             del item
             if gate is not None:
                 search = gate.should_search(captured)
-                if gate.idle != was_idle:
-                    was_idle = gate.idle
-                    debug_log("hand tracking idling: no hand in view" if was_idle else "hand tracking awake", "gestures")
                 if not search:
                     del frame
                     continue
@@ -455,14 +449,7 @@ class HandTracker:
                 del frame
             if gate is not None:
                 gate.searched(captured, bool(hands))
-            self._note_sides(hands)
             self._deliver(HandFrame(captured, int(width), int(height), hands))
-
-    def _note_sides(self, hands: Tuple[Hand, ...]) -> None:
-        sides = tuple(sorted(hand.side for hand in hands))
-        if sides != self._sides:
-            self._sides = sides
-            debug_log(f"hands in view: {', '.join(sides) or 'none'}", "gestures")
 
     def _deliver(self, hand_frame: HandFrame) -> None:
         with self._lock:

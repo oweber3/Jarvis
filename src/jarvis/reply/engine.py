@@ -1017,7 +1017,7 @@ def run_reply_engine(db: "Database", cfg, tts: Optional[Any],
     """
     from ..tools.request_scope import request_scope
     try:
-        with request_scope():
+        with request_scope(origin):
             return _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addressed, origin)
     except RequestCancelled:
         # Stop was pressed: nothing is delivered and nothing is added to the conversation.

@@ -2,7 +2,7 @@
 window and raising a finger again snaps it into a FancyZones zone; two fingers scroll.
 
 Registered only on Windows when ``gesture_snap_enabled`` is on (``registry.configure_gesture_tool``), and never
-offered to a cloud model. The mode itself lives in ``jarvis.gestures.window_snap_service``; this tool only
+offered to a cloud model; a request from a paired phone may stop it but not start it. The mode itself lives in ``jarvis.gestures.window_snap_service``; this tool only
 starts, stops and reports it. See ``gestures/gestures.spec.md``, Gesture snapping.
 """
 from typing import Any, Dict, Optional
@@ -44,6 +44,7 @@ class GestureControlTool(Tool):
 
     def run(self, args: Optional[Dict[str, Any]], context: ToolContext) -> ToolExecutionResult:
         from ...gestures import window_snap_service
+        from ..request_scope import from_phone
 
         action = str((args or {}).get("action") or "").strip().lower()
         service = window_snap_service.get_service()
@@ -58,6 +59,9 @@ class GestureControlTool(Tool):
         if action == "stop":
             service.stop()
             return ToolExecutionResult(True, "Gesture snapping is off and the camera is released.")
+        if from_phone():
+            debug_log("gestureControl start refused: the request came from a phone", "gestures")
+            return _fail("Gesture snapping turns the webcam on, so it can only be started at the PC.")
         try:
             outcome = service.start()
         except window_snap_service.WindowSnapUnavailable as exc:

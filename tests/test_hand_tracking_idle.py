@@ -126,6 +126,23 @@ class TestTrackerIdling:
         finally:
             tracker.stop()
 
+    def test_idling_and_waking_log_nothing_about_hands(self, monkeypatch):
+        """Whether a hand is in view is what the camera sees, and debug logs can reach an issue report."""
+        from jarvis.gestures import hand_tracking
+        logged = []
+        monkeypatch.setattr(hand_tracking, "debug_log", lambda message, category="": logged.append(message))
+        hands = _Hands()
+        tracker, camera = _idle_tracker(hands, idle_fps=5, idle_after=0.1)
+        tracker.start()
+        try:
+            time.sleep(0.6)
+            hands.present.set()
+            time.sleep(0.4)
+        finally:
+            tracker.stop()
+        assert logged and not any("hand" in m.casefold() and ("idl" in m or "awake" in m or "view" in m)
+                                  for m in logged)
+
     def test_the_default_searches_every_frame_without_hands_too(self):
         hands = _Hands()
         tracker, camera = _idle_tracker(hands)
