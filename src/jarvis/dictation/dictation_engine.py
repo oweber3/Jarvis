@@ -413,6 +413,22 @@ def _suppress_stderr():
 # Audio resampling
 # ---------------------------------------------------------------------------
 
+def _has_voice(audio, min_energy: float, rate: int) -> bool:
+    """Whether any 30 ms window of the audio is as loud as the level the voice listener counts as
+    speech (``voice_min_energy``). Whisper turns pure silence into invented phrases, so silent
+    audio is never sent to it."""
+    import numpy as np
+
+    samples = np.asarray(audio, dtype="float32").ravel()
+    if samples.size == 0:
+        return False
+    window = max(1, int(rate * 0.03))
+    usable = samples[: samples.size - samples.size % window] if samples.size >= window else samples
+    frames = usable.reshape(-1, min(window, usable.size))
+    peak_rms = float(np.sqrt((frames ** 2).mean(axis=1)).max())
+    return peak_rms >= min_energy
+
+
 def _resample(audio, from_rate: int, to_rate: int):
     """Resample a 1-D float32 numpy array from *from_rate* to *to_rate*."""
     if from_rate == to_rate or np is None:
@@ -1432,7 +1448,10 @@ class DictationEngine:
             debug_log(f"dictation transcribe/paste error: {exc}", "dictation")
 
     def _transcribe(self, audio) -> str:
-        """Transcribe audio using the shared Whisper model."""
+        """Transcribe audio using the shared Whisper model. Silence gives an empty transcript."""
+        if not _has_voice(audio, self._setting("voice_min_energy", 0.02), self._target_sample_rate):
+            debug_log("dictation audio is silent, not transcribed", "dictation")
+            return ""
         backend = self._whisper_backend_ref()
         model = self._whisper_model_ref()
 
@@ -1452,8 +1471,14 @@ class DictationEngine:
         try:
             import mlx_whisper
             result = mlx_whisper.transcribe(audio, path_or_hf_repo=repo, language=None)
-            text = result.get("text", "").strip() if isinstance(result, dict) else ""
-            return text
+            if not isinstance(result, dict):
+                return ""
+            segments = result.get("segments")
+            if not segments:
+                return result.get("text", "").strip()
+            kept = self._speech_segments(
+                (str(seg.get("text", "")), seg.get("no_speech_prob")) for seg in segments)
+            return " ".join(text.strip() for text in kept).strip()
         except Exception as exc:
             debug_log(f"MLX transcription error: {exc}", "dictation")
             return ""
@@ -1464,7 +1489,31 @@ class DictationEngine:
                 segments, _info = model.transcribe(audio, language=None, vad_filter=False)
             except TypeError:
                 segments, _info = model.transcribe(audio, language=None)
-            return " ".join(seg.text for seg in segments).strip()
+            kept = self._speech_segments(
+                (seg.text, getattr(seg, "no_speech_prob", None)) for seg in segments)
+            return " ".join(kept).strip()
         except Exception as exc:
             debug_log(f"faster-whisper transcription error: {exc}", "dictation")
             return ""
+
+    def _setting(self, name: str, default: float) -> float:
+        try:
+            return float(getattr(self._cfg, name, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _speech_segments(self, segments) -> list:
+        """Drop the segments Whisper itself rates as not speech: the stock phrases it invents for
+        silence and room noise. Same no-speech gate as the voice listener. Never logs the text."""
+        from ..listening.listener import is_whisper_hallucination
+
+        threshold = self._setting("whisper_no_speech_threshold", 0.5)
+        kept, dropped = [], 0
+        for text, no_speech_prob in segments:
+            if isinstance(no_speech_prob, (int, float)) and is_whisper_hallucination(float(no_speech_prob), threshold):
+                dropped += 1
+                continue
+            kept.append(text)
+        if dropped:
+            debug_log(f"dictation dropped {dropped} segment(s) Whisper rated as not speech", "dictation")
+        return kept

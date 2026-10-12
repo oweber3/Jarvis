@@ -608,7 +608,7 @@ class TestTranscription:
             whisper_backend_ref=lambda: "faster-whisper",
         )
 
-        audio = np.zeros(16000, dtype=np.float32)
+        audio = np.full(16000, 0.1, dtype=np.float32)
         result = engine._transcribe(audio)
         assert result == "hello world"
 
@@ -651,7 +651,7 @@ class TestTranscription:
                 mlx_repo_ref=lambda: "mlx-community/whisper-small-mlx",
             )
 
-            audio = np.zeros(16000, dtype=np.float32)
+            audio = np.full(16000, 0.1, dtype=np.float32)
             result = engine._transcribe(audio)
             assert result == "hello from mlx"
 
@@ -806,7 +806,7 @@ class TestTranscribeAndPaste:
             whisper_backend_ref=lambda: "faster-whisper",
         )
 
-        frames = [np.zeros(8000, dtype=np.float32)]  # 0.5s
+        frames = [np.full(8000, 0.1, dtype=np.float32)]  # 0.5s
         engine._transcribe_and_paste(frames)
         mock_paste.assert_called_once_with("hello world")
 
@@ -1038,7 +1038,7 @@ class TestThreadSafety:
         done = threading.Event()
 
         def do_transcribe():
-            result_holder[0] = engine._transcribe(np.zeros(16000, dtype=np.float32))
+            result_holder[0] = engine._transcribe(np.full(16000, 0.1, dtype=np.float32))
             done.set()
 
         t = threading.Thread(target=do_transcribe)

@@ -591,7 +591,7 @@ class TestEngineHistoryIntegration:
         # Replace history with one using temp path
         engine.history = DictationHistory(path=tmp_path / "h.json")
 
-        frames = [np.zeros(8000, dtype=np.float32)]  # 0.5s
+        frames = [np.full(8000, 0.1, dtype=np.float32)]  # 0.5s
         engine._transcribe_and_paste(frames)
 
         assert engine.history.count == 1
@@ -621,7 +621,7 @@ class TestEngineHistoryIntegration:
         )
         engine.history = DictationHistory(path=tmp_path / "h.json")
 
-        frames = [np.zeros(8000, dtype=np.float32)]
+        frames = [np.full(8000, 0.1, dtype=np.float32)]
         engine._transcribe_and_paste(frames)
 
         assert len(results) == 1
