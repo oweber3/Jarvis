@@ -6,7 +6,7 @@ local model. See ``bridge.spec.md``.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..debug import debug_log
 from ..llm.errors import RequestCancelled
@@ -23,21 +23,28 @@ def build_dialogue_context(dialogue_memory: Any, settings: BridgeSettings) -> Li
 
     Turns kept out of the diary because they quote the activity log stay local unless the user
     shares the activity log with cloud modes (``memory/activity_log.spec.md``)."""
+    return _shared_dialogue(dialogue_memory, settings)[0]
+
+
+def _shared_dialogue(dialogue_memory: Any, settings: BridgeSettings) -> Tuple[List[Dict[str, str]], bool]:
+    """The dialogue shared with the bridge, and whether any shared message is a private
+    (activity log) turn."""
     if not settings.share_recent_dialogue or dialogue_memory is None:
-        return []
+        return [], False
     limit = settings.recent_dialogue_messages
+    if not limit:
+        return [], False
     try:
-        messages = (dialogue_memory.get_recent_messages(include_private=settings.share_activity_log)
+        messages = (dialogue_memory.get_recent_messages(include_private=settings.share_activity_log,
+                                                        flag_private=True)
                     if dialogue_memory.has_recent_messages() else [])
     except Exception as exc:
         debug_log(f"dialogue context unavailable: {type(exc).__name__}", "bridge")
-        return []
-    shared = [
-        {"role": m["role"], "content": redact(str(m.get("content") or ""))[:_MESSAGE_CHARS]}
-        for m in messages
-        if m.get("role") in ("user", "assistant") and str(m.get("content") or "").strip()
-    ]
-    return shared[-limit:] if limit else []
+        return [], False
+    kept = [m for m in messages
+            if m.get("role") in ("user", "assistant") and str(m.get("content") or "").strip()][-limit:]
+    shared = [{"role": m["role"], "content": redact(str(m.get("content") or ""))[:_MESSAGE_CHARS]} for m in kept]
+    return shared, any(m.get("private") is True for m in kept)
 
 
 def build_desktop_context(cfg: Any, settings: BridgeSettings, origin: str,
@@ -85,8 +92,9 @@ def run_bridge_reply(mode: str, db: Any, cfg: Any, tts: Any, redacted: str, dial
         return deliver(not_running_text(mode), redacted, cfg, tts, dialogue_memory, quiet)
     settings = bridge_settings(cfg, mode)
     origin = origin or ("chat" if quiet else "voice")
+    dialogue, shared_private = _shared_dialogue(dialogue_memory, settings)
     outcome = service.run_request(
-        redacted, build_dialogue_context(dialogue_memory, settings),
+        redacted, dialogue,
         origin, language, db, quiet,
         desktop=build_desktop_context(cfg, settings, origin, read_foreground),
     )
@@ -94,6 +102,12 @@ def run_bridge_reply(mode: str, db: Any, cfg: Any, tts: Any, redacted: str, dial
               "bridge")
     if outcome.kind == "cancelled" or not (outcome.text or "").strip():
         return None
+    if shared_private:
+        # A reply built on shared activity data is as private as the turn that read it
+        # (memory/activity_log.spec.md): out of the diary and the console log.
+        from ..memory.activity_log import mark_turn_private
+        mark_turn_private()
+        debug_log("shared dialogue held activity data; reply kept private", "bridge")
     try:
         return deliver(outcome.text, redacted, cfg, tts, dialogue_memory, quiet)
     except RequestCancelled:

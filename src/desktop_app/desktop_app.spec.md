@@ -241,7 +241,7 @@ The desktop app registers callbacks with the daemon for:
 
 In bundled mode, the daemon runs in the same process, so callbacks can be set directly via `set_diary_update_callbacks()`. The DiaryUpdateDialog receives:
 - `on_chunks`: List of conversation chunks being summarized
-- `on_token`: Streaming tokens as the diary is generated
+- `on_token`: Streaming tokens as the diary is generated. A long conversation is summarised in batches; each batch streams the updated summary after a blank line, so the last one shown is the one stored
 - `on_status`: Status messages ("Writing diary entry...")
 - `on_complete`: Completion signal (success/failure)
 

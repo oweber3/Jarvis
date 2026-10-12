@@ -37,7 +37,7 @@ A small English stopword list (`is`, `the`, `what`, etc.) filters function words
 
 ## Privacy
 
-The overlap words can include user-supplied query terms. Before they reach `debug_log`, they are passed through `redact()` so emails, JWTs, and other structurally-detectable secrets in the query don't leak into logs. The gate does not store anything itself.
+The overlap words are user-supplied query terms, split into word pieces that no redaction can recognise (an email address becomes its name and domain parts). `debug_log` therefore records only the coverage and how many query words overlap, never the words. The gate does not store anything itself.
 
 ## Why not have the planner do this?
 

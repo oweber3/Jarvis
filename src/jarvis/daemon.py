@@ -64,8 +64,9 @@ _global_dictation_engine = None  # Dictation engine reference for history UI
 _global_cfg = None
 _global_db = None
 
-# Shutdown timeout for diary update (shorter than normal to allow reasonable quit time)
-# Desktop app's stop_daemon() should wait at least this long + buffer
+# Shutdown budget for the whole diary update: every summary batch, embedding and the graph
+# update together (shorter than normal to allow reasonable quit time). Desktop app's
+# stop_daemon() should wait at least this long + buffer.
 SHUTDOWN_DIARY_TIMEOUT_SEC = 45.0
 
 # Callbacks for desktop app to receive diary update progress
@@ -1060,7 +1061,7 @@ def _install_signal_handlers() -> None:
 
 def _check_and_update_diary(
     db: Database, cfg, verbose: bool = False, force: bool = False, timeout_sec: Optional[float] = None,
-    use_callbacks: bool = False, use_ipc: bool = False
+    use_callbacks: bool = False, use_ipc: bool = False, total_timeout_sec: Optional[float] = None
 ) -> None:
     """Check if diary should be updated and perform batch update if needed.
 
@@ -1069,6 +1070,8 @@ def _check_and_update_diary(
                     During shutdown, a shorter timeout is used to allow graceful quit.
         use_callbacks: If True, uses the global diary update callbacks for UI updates.
         use_ipc: If True, emits diary events to stdout for IPC with desktop app (subprocess mode).
+        total_timeout_sec: Optional bound on the whole update (shutdown); turns not summarised
+                    within it stay pending.
     """
     global _global_dialogue_memory, _diary_update_callbacks
 
@@ -1165,6 +1168,7 @@ def _check_and_update_diary(
                 on_token=on_token,
                 thinking=getattr(cfg, 'llm_thinking_enabled', False),
                 graph_picker_model=graph_picker_model,
+                total_timeout_sec=total_timeout_sec,
             )
 
             # Flush any remaining tokens in IPC mode
@@ -1646,7 +1650,8 @@ def main(smoke_test: bool = False) -> None:
         # Use IPC (stdout events) if callbacks not set (subprocess mode)
         use_callbacks = any(_diary_update_callbacks.values())
         use_ipc = not use_callbacks  # Subprocess mode - emit events to stdout
-        _check_and_update_diary(db, cfg, verbose=True, force=True, timeout_sec=SHUTDOWN_DIARY_TIMEOUT_SEC, use_callbacks=use_callbacks, use_ipc=use_ipc)
+        _check_and_update_diary(db, cfg, verbose=True, force=True, timeout_sec=SHUTDOWN_DIARY_TIMEOUT_SEC,
+                                total_timeout_sec=SHUTDOWN_DIARY_TIMEOUT_SEC, use_callbacks=use_callbacks, use_ipc=use_ipc)
         print("✅ Diary update complete", flush=True)
         debug_log("diary update complete", "jarvis")
 
