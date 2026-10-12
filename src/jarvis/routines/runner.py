@@ -18,6 +18,8 @@ from .definitions import NEVER_STEPS, Routine, Step, fingerprint, step_label
 
 DEADLINE_SEC = 120.0
 _REASON_CHARS = 200
+# The most of one step's result a briefing keeps.
+OUTPUT_CHARS = 2000
 
 _run_lock = threading.Lock()
 _state_lock = threading.Lock()
@@ -42,6 +44,8 @@ class StepResult:
     reason: str = ""
     # The step's own confirmation question when it stopped the routine; never part of the report.
     question: str = ""
+    # What a done step returned (redacted, bounded), kept only for a briefing (``report: results``).
+    output: str = ""
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,11 @@ class RoutineResult:
         """The confirmation question of the step that stopped the routine, worded and naming its target
         exactly as that call alone would ask (redacted, not scrubbed); empty when no step asked."""
         return next((step.question for step in self.steps if step.question), "")
+
+    @property
+    def outputs(self) -> list[tuple[str, str]]:
+        """Each done step's label and what it returned, in order, for a briefing."""
+        return [(step.label, step.output) for step in self.steps if step.status == "done" and step.output]
 
     @property
     def text(self) -> str:
@@ -275,7 +284,7 @@ def run_routine(routine: Routine, cfg, *, db=None, language: Optional[str] = Non
                     continue
                 outcome = _run_step(step, executor, cfg=cfg, db=db, language=language, quiet=quiet,
                                     allowed_tools=allowed_tools, request_ref=request_ref,
-                                    original_prompt=original_prompt)
+                                    original_prompt=original_prompt, keep_output=routine.report == "results")
                 results.append(outcome)
                 debug_log(f"routine step {step.position} of {len(steps)} ({step.tool}): {outcome.status}",
                           "routines")
@@ -298,7 +307,7 @@ NEEDS_CONFIRMATION = "needs confirmation"
 
 
 def _run_step(step: PlannedStep, executor, *, cfg, db, language, quiet, allowed_tools, request_ref,
-              original_prompt) -> StepResult:
+              original_prompt, keep_output: bool = False) -> StepResult:
     from ..tools.confirmation import get_confirmation_store
     store = get_confirmation_store()
     pending_before = store.get_pending()
@@ -311,7 +320,12 @@ def _run_step(step: PlannedStep, executor, *, cfg, db, language, quiet, allowed_
         debug_log(f"routine step {step.position} raised {type(exc).__name__}", "routines")
         return StepResult(step.position, step.label, "failed", "The step could not be completed.")
     if result.success:
-        return StepResult(step.position, step.label, "done")
+        if not keep_output:
+            return StepResult(step.position, step.label, "done")
+        output = redact(result.reply_text or "").strip()
+        if len(output) > OUTPUT_CHARS:
+            output = output[:OUTPUT_CHARS - 1].rstrip() + "…"
+        return StepResult(step.position, step.label, "done", output=output)
     pending = store.get_pending()
     if pending is not None and pending is not pending_before and pending.request.tool_name == step.tool:
         # Its classification changed since the routine was approved: the step's own question stands, and

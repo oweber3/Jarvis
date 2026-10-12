@@ -561,6 +561,44 @@ def deliver_chat_confirmed_result(reply: str, success: bool) -> None:
             debug_log(f"chat result delivery failed: {exc}", "chat")
 
 
+def deliver_announcement(text: str) -> None:
+    """Say something Jarvis brings up on its own (a timer, alarm, reminder or scheduled routine).
+
+    Printed to the console, recorded in the shared conversation (so "what was that?" works), shown in
+    the chat (bundled listeners, or a ``notice`` IPC event in subprocess mode) and spoken through the
+    voice listener's reply path, so stop and barge-in cut it like any reply. Without a listener the TTS
+    engine speaks it directly."""
+    from .utils.redact import redact
+    safe = redact(text or "").strip()
+    if not safe:
+        return
+    print(f"⏰ {safe}", flush=True)
+    dm = _global_dialogue_memory
+    if dm is not None:
+        try:
+            dm.add_message("assistant", safe)
+        except Exception as exc:
+            debug_log(f"recording announcement failed: {type(exc).__name__}", "scheduler")
+    with _chat_result_listeners_lock:
+        listeners = list(_chat_result_listeners)
+    for callback in listeners:
+        try:
+            callback(safe)
+        except Exception as exc:
+            debug_log(f"announcement chat delivery failed: {type(exc).__name__}", "scheduler")
+    if _stdin_ipc_enabled():
+        _emit_chat_event("notice", safe)
+    listener = _global_voice_listener
+    tts = _global_tts_engine
+    try:
+        if listener is not None:
+            listener.speak_announcement(safe)
+        elif tts is not None and getattr(tts, "enabled", False):
+            tts.speak(safe)
+    except Exception as exc:
+        debug_log(f"announcement not spoken: {type(exc).__name__}", "scheduler")
+
+
 def install_chat_result_delivery() -> None:
     """Route chat-origin confirmed-action results to ``deliver_chat_confirmed_result``."""
     from .tools.confirmation import ORIGIN_CHAT, set_result_handler
@@ -1417,6 +1455,11 @@ def main(smoke_test: bool = False) -> None:
     voice_thread.start()
     _global_voice_listener = voice_thread
 
+    # Timers, alarms, reminders and scheduled routines (scheduler/scheduler.spec.md). Missed reminders
+    # are announced once now; a scheduled routine holds the shared query lock while it runs.
+    from .scheduler import runtime as scheduler_runtime
+    scheduler_runtime.start(cfg, deliver_announcement, db=db, exclusive=query_lock)
+
     # Initialize dictation engine (hold-to-dictate)
     dictation = None
     if bool(getattr(cfg, "dictation_enabled", True)):
@@ -1473,6 +1516,7 @@ def main(smoke_test: bool = False) -> None:
 
         # Clean shutdown: stop engines, close database, tear down MCP runtime.
         # The caller is responsible for printing SMOKE_TEST_PASSED / FAILED.
+        scheduler_runtime.stop()
         if dictation is not None:
             try:
                 dictation.stop()
@@ -1607,6 +1651,7 @@ def main(smoke_test: bool = False) -> None:
 
         # No new phone requests once shutdown has begun.
         remote_runtime.stop()
+        scheduler_runtime.stop()
         web_chat_runtime.stop()
         # Let go of a held window and the camera first.
         window_snap_service.stop_service()

@@ -666,6 +666,9 @@ class ChatWindow(QMainWindow):
             self.signals.busy.emit()
         elif kind == "rewind":
             self.signals.rewound.emit(data is True)
+        elif kind == "notice":
+            # Something Jarvis brought up on its own (a timer or reminder), shown like a confirmed result.
+            self.signals.confirmed_result.emit(str(data or ""))
         return True
 
     # --- Rendering helpers ----------------------------------------------

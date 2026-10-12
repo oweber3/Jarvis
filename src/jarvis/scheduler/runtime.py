@@ -54,7 +54,7 @@ def start(cfg: Any, announce: Callable[[str], None], *, db=None,
     pending = len(service.pending())
     scheduled = sum(1 for routine in routine_store.current(cfg).values()
                     if routine.schedule is not None and routine.schedule.enabled)
-    print(f"⏰ Scheduler ready", flush=True)
+    print("⏰ Scheduler ready", flush=True)
     print(f"   ⏳ {pending} timer(s), alarm(s) and reminder(s) pending", flush=True)
     print(f"   🔁 {scheduled} scheduled routine(s)", flush=True)
     return service

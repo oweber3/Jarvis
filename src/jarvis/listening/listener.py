@@ -1494,6 +1494,12 @@ class VoiceListener(threading.Thread):
         print(f"  {'✅' if success else '❌'} {reply}", flush=True)
         self._speak_reply(reply)
 
+    def speak_announcement(self, text: str) -> None:
+        """Speak something Jarvis says on its own (a timer, alarm or reminder) through the normal reply
+        output, so a stop or barge-in cuts it like any reply and the hot window opens after it.
+        Thread-safe: TTS output is queue-based."""
+        self._speak_reply(text)
+
     def _dispatch_query(self, query: str) -> None:
         """
         Hand a complete query to the serial reply worker.
