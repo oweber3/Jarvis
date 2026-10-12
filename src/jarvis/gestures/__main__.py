@@ -1,5 +1,5 @@
 """Watch hand tracking: ``python -m jarvis.gestures [--camera N] [--seconds S] [--record PATH] [--image PATH]``,
-or try the air mouse with ``--air-mouse``.
+or try gesture snapping with ``--snap``.
 
 See ``gestures.spec.md``.
 """
@@ -104,7 +104,7 @@ def _live(args: argparse.Namespace, make_tracker: Callable[[int], HandTracker]) 
 
 
 class _PinchReadout:
-    """The latest hand's pinch ratio and pose, for choosing the air mouse thresholds."""
+    """The latest hand's pinch ratio and pose, for choosing the gesture snapping thresholds."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -113,7 +113,7 @@ class _PinchReadout:
         self.hand_frame: Optional[HandFrame] = None
 
     def __call__(self, frame: HandFrame) -> None:
-        from .air_mouse import is_open_palm, pinch_ratio
+        from .window_snap import is_open_palm, pinch_ratio
 
         text = None
         self.hand_frame = frame
@@ -130,19 +130,19 @@ class _PinchReadout:
             return self.frames, self.latest
 
 
-def _air_mouse(args: argparse.Namespace, make_tracker: Callable[[int], HandTracker],
-               make_pointer: Optional[Callable[[], Any]]) -> int:
+def _snap(args: argparse.Namespace, make_tracker: Callable[[int], HandTracker],
+          make_output: Optional[Callable[[], Any]]) -> int:
     from ..config import load_settings
-    from .air_mouse_service import AirMouseService, AirMouseUnavailable
+    from .window_snap_service import WindowSnapService, WindowSnapUnavailable
 
-    if make_pointer is None:
+    if make_output is None:
         if sys.platform != "win32":
-            print("🖐️ The air mouse needs Windows", flush=True)
+            print("🖐️ Gesture snapping needs Windows", flush=True)
             return 1
-        from ..platform.windows.pointer import WindowsPointer
-        make_pointer = WindowsPointer
+        from ..platform.windows.window_snap import WindowsSnapOutput
+        make_output = WindowsSnapOutput
     cfg = load_settings()
-    camera = args.camera if args.camera is not None else cfg.air_mouse_camera
+    camera = args.camera if args.camera is not None else cfg.gesture_snap_camera
     readout = _PinchReadout()
     recorder = HandRecorder(args.record) if args.record else None
     tap = _tap(camera) if args.preview else None
@@ -154,11 +154,11 @@ def _air_mouse(args: argparse.Namespace, make_tracker: Callable[[int], HandTrack
             tracker.subscribe(recorder)
         return tracker
 
-    service = AirMouseService(cfg, output_factory=make_pointer, tracker_factory=tracker_for)
+    service = WindowSnapService(cfg, output_factory=make_output, tracker_factory=tracker_for)
     try:
         service.start()
-    except AirMouseUnavailable as exc:
-        print(f"🖐️ The air mouse could not start: {exc}", flush=True)
+    except WindowSnapUnavailable as exc:
+        print(f"🖐️ Gesture snapping could not start: {exc}", flush=True)
         if recorder is not None:
             recorder.close()
         return 1
@@ -178,7 +178,7 @@ def _air_mouse(args: argparse.Namespace, make_tracker: Callable[[int], HandTrack
                 count, latest = readout.take()
                 fps = (count - last_count) / (time.perf_counter() - last_tick)
                 last_tick, last_count = time.perf_counter(), count
-                print(f"   📊 {fps:.0f} fps · {latest or 'no hands'}", flush=True)
+                print(f"   📊 {fps:.0f} fps · {latest or 'no hands'} · {service.state}", flush=True)
     except KeyboardInterrupt:
         pass
     finally:
@@ -239,27 +239,27 @@ def _photo(path: str) -> int:
 
 def main(argv: Optional[List[str]] = None, *,
          make_tracker: Optional[Callable[[int], HandTracker]] = None,
-         make_pointer: Optional[Callable[[], Any]] = None) -> int:
+         make_output: Optional[Callable[[], Any]] = None) -> int:
     for stream in (sys.stdout, sys.stderr):  # a Windows console may not default to UTF-8, and lines start with emoji
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(prog="python -m jarvis.gestures",
                                      description="Watch webcam hand tracking, or run it on a photo.")
     parser.add_argument("--camera", type=int, default=None,
-                        help="webcam index (default 0, or air_mouse_camera with --air-mouse)")
+                        help="webcam index (default 0, or gesture_snap_camera with --snap)")
     parser.add_argument("--seconds", type=float, default=None, help="stop after this many seconds")
     parser.add_argument("--record", metavar="PATH", help="also write the landmarks to this file")
     parser.add_argument("--image", metavar="PATH", help="find hands in a photo instead of the webcam")
     parser.add_argument("--preview", action="store_true",
                         help="show the camera image with the detected hand drawn on it")
-    parser.add_argument("--air-mouse", action="store_true",
-                        help="move the real pointer with your hand, showing the pinch ratio to tune thresholds")
+    parser.add_argument("--snap", action="store_true",
+                        help="move windows into zones with your hand, showing the pinch ratio to tune thresholds")
     args = parser.parse_args(argv)
     if args.image:
         return _photo(args.image)
     make_tracker = make_tracker or (lambda index: HandTracker(index))
-    if args.air_mouse:
-        return _air_mouse(args, make_tracker, make_pointer)
+    if args.snap:
+        return _snap(args, make_tracker, make_output)
     if args.camera is None:
         args.camera = 0
     return _live(args, make_tracker)

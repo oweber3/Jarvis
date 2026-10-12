@@ -1,5 +1,5 @@
-"""Air mouse routing: turning gesture control on and off reaches gestureControl, and clicking on Jarvis's behalf
-still reaches uiControl.
+"""Gesture snapping routing: turning gesture control on and off reaches gestureControl, and placing a named window by
+voice still reaches windowControl.
 
 Runs the local model's tool selection and chat call with ``gestureControl`` offered next to the Windows tools.
 Nothing is executed and the camera is never opened.
@@ -16,12 +16,12 @@ import pytest
 # (utterance, tool, expected arguments, or None to check the tool only)
 CASES = [
     ('Start gesture control', 'gestureControl', {'action': 'start'}),
-    ('Turn on the air mouse', 'gestureControl', {'action': 'start'}),
-    ('Let me control the mouse pointer with my hand', 'gestureControl', {'action': 'start'}),
+    ('Turn on gesture snapping', 'gestureControl', {'action': 'start'}),
+    ('Let me move windows around with my hand', 'gestureControl', {'action': 'start'}),
     ('Stop gesture control', 'gestureControl', {'action': 'stop'}),
-    ('Turn the air mouse off', 'gestureControl', {'action': 'stop'}),
-    ('Is the air mouse on?', 'gestureControl', {'action': 'status'}),
-    ('Click the Save button in this dialog', 'uiControl', None),
+    ('Turn gesture snapping off', 'gestureControl', {'action': 'stop'}),
+    ('Is gesture control on?', 'gestureControl', {'action': 'status'}),
+    ('Move Spotify to the left half of my main monitor', 'windowControl', None),
     ('Open Word', 'appControl', None),
 ]
 
@@ -56,7 +56,7 @@ def _ask(query):
 
 @pytest.mark.eval
 @pytest.mark.parametrize('query,tool,expected', CASES, ids=[c[0] for c in CASES])
-def test_air_mouse_requests_reach_the_right_tool(query, tool, expected):
+def test_gesture_snap_requests_reach_the_right_tool(query, tool, expected):
     selected, calls = _ask(query)
     assert tool in selected, f'{query}: router selected {selected}'
     assert calls, f'{query}: no tool call'

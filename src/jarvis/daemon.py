@@ -47,7 +47,7 @@ from .tools.registry import (start_mcp_discovery, configure_windows_tools, confi
                              configure_gesture_tool)
 from .assistant_state import AssistantState, set_state
 from .extensions import load_extensions
-from .gestures import air_mouse_service
+from .gestures import window_snap_service
 from .debug import debug_log
 from .llm.errors import RequestCancelled
 from .listening.listener import VoiceListener
@@ -1497,7 +1497,7 @@ def main(smoke_test: bool = False) -> None:
 
         reply_modes.stop()
         activity_runtime.stop()
-        air_mouse_service.stop_service()
+        window_snap_service.stop_service()
         extensions.stop()
         db.close()
 
@@ -1605,7 +1605,7 @@ def main(smoke_test: bool = False) -> None:
         remote_runtime.stop()
         web_chat_runtime.stop()
         # Let go of a held mouse button and the camera first.
-        air_mouse_service.stop_service()
+        window_snap_service.stop_service()
 
         # Clean shutdown - stop dictation first
         if dictation is not None:

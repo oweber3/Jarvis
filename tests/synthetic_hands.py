@@ -1,4 +1,4 @@
-"""Synthetic hands and a fake pointer for air mouse tests.
+"""Synthetic hands and a fake desktop for gesture snapping tests.
 
 ``hand`` builds a ``Hand`` whose index fingertip is at an image position and whose world landmarks give a
 chosen pinch ratio and pose, so tests can describe gestures in the user's terms (point here, pinch, open
@@ -51,15 +51,26 @@ def frame(t: float, *hands: Hand, width: int = 640, height: int = 480) -> HandFr
     return HandFrame(time=t, width=width, height=height, hands=tuple(hands))
 
 
-class FakePointer:
-    """Records what the air mouse does to the pointer. Monitors are ``(left, top, right, bottom)``."""
+class FakeWindow:
+    """A window on the fake desktop: its frame ``rect`` and whether it is maximised."""
 
-    def __init__(self, monitors=((0, 0, 1920, 1080),), at=(960, 540)):
+    def __init__(self, rect, maximised=False, restored=None):
+        self.rect = tuple(rect)
+        self.maximised = maximised
+        self.restored = tuple(restored) if restored else self.rect
+
+
+class FakeDesktop:
+    """The output gesture snapping drives, recording what it does. Monitors are ``(left, top, right, bottom)``;
+    ``windows`` are listed front to back."""
+
+    def __init__(self, monitors=((0, 0, 1920, 1080),), at=(960, 540), windows=()):
         self.monitors = [tuple(m) for m in monitors]
         self.at = tuple(at)
-        self.down = False
+        self.windows = list(windows)
         self.events: List[tuple] = []
         self.fail = False
+        self.fail_window_moves = False
 
     def desktop(self):
         return list(self.monitors)
@@ -71,20 +82,40 @@ class FakePointer:
         if self.fail:
             raise OSError("refused")
         self.at = (x, y)
-        self.events.append(("move", x, y))
+        self.events.append(("pointer", x, y))
 
-    def press(self) -> None:
-        if self.fail:
+    def grab(self, x: int, y: int):
+        for window in self.windows:
+            left, top, right, bottom = window.rect
+            if left <= x < right and top <= y < bottom:
+                window.original = (window.rect, window.maximised)
+                if window.maximised:  # restored under the pointer, keeping its share of the width
+                    share = (x - left) / (right - left)
+                    w = window.restored[2] - window.restored[0]
+                    h = window.restored[3] - window.restored[1]
+                    new_left = int(x - share * w)
+                    window.rect = (new_left, y - 10, new_left + w, y - 10 + h)
+                    window.maximised = False
+                self.windows.remove(window)
+                self.windows.insert(0, window)
+                self.events.append(("grab", window))
+                return window
+        self.events.append(("grab", None))
+        return None
+
+    def move_window(self, window, left: int, top: int) -> None:
+        if self.fail_window_moves:
             raise OSError("refused")
-        self.down = True
-        self.events.append(("press", *self.at))
+        width, height = window.rect[2] - window.rect[0], window.rect[3] - window.rect[1]
+        window.rect = (left, top, left + width, top + height)
+        self.events.append(("window", window, left, top))
 
-    def release(self) -> None:
-        self.down = False
-        self.events.append(("release", *self.at))
+    def drop(self, window, x: int, y: int) -> None:
+        self.events.append(("drop", window, x, y))
 
-    def buttons(self) -> List[tuple]:
-        return [e for e in self.events if e[0] in ("press", "release")]
+    def put_back(self, window) -> None:
+        window.rect, window.maximised = window.original
+        self.events.append(("put_back", window))
 
-    def moves(self) -> List[tuple]:
-        return [e for e in self.events if e[0] == "move"]
+    def of(self, kind: str) -> List[tuple]:
+        return [e for e in self.events if e[0] == kind]

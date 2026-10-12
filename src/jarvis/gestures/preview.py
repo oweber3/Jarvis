@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable, Optional
 
-from .air_mouse import is_open_palm, pinch_ratio
+from .window_snap import is_open_palm, pinch_ratio
 from .hand_tracking import HandFrame, Landmark
 
 _BONES = ((0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (5, 9), (9, 10), (10, 11), (11, 12),
@@ -20,7 +20,7 @@ _TIP = (0, 220, 255)
 
 
 def caption(hand_frame: Optional[HandFrame], state: str) -> str:
-    """One line about the strongest hand: side, pinch ratio, pose and the air mouse state."""
+    """One line about the strongest hand: side, pinch ratio, pose and the gesture snapping state."""
     if hand_frame is None or not hand_frame.hands:
         return f"no hand  ·  {state}"
     hand = max(hand_frame.hands, key=lambda h: h.score)

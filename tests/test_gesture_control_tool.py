@@ -1,27 +1,27 @@
 """gestureControl: start, stop and status through the normal tool path, registration and cloud exclusion."""
 import pytest
 
-from tests.synthetic_hands import FakePointer
-from tests.test_air_mouse_service import FakeTracker
+from tests.synthetic_hands import FakeDesktop
+from tests.test_window_snap_service import FakeTracker
 
 
 @pytest.fixture
 def fake_service(mock_config, monkeypatch):
-    from jarvis.gestures import air_mouse_service
-    pointer = FakePointer()
+    from jarvis.gestures import window_snap_service
+    desk = FakeDesktop()
     FakeTracker.instances = []
-    svc = air_mouse_service.AirMouseService(mock_config, output_factory=lambda: pointer,
+    svc = window_snap_service.WindowSnapService(mock_config, output_factory=lambda: desk,
                                             tracker_factory=lambda camera: FakeTracker(camera))
-    monkeypatch.setattr(air_mouse_service, "_service", svc)
+    monkeypatch.setattr(window_snap_service, "_service", svc)
     yield svc
     svc.stop()
 
 
 @pytest.fixture(autouse=True)
 def _clean_registry(monkeypatch):
-    from jarvis.gestures import air_mouse_service
+    from jarvis.gestures import window_snap_service
     from jarvis.tools.registry import BUILTIN_TOOLS
-    monkeypatch.setattr(air_mouse_service, "_service", None)
+    monkeypatch.setattr(window_snap_service, "_service", None)
     BUILTIN_TOOLS.pop("gestureControl", None)
     yield
     BUILTIN_TOOLS.pop("gestureControl", None)
@@ -35,7 +35,7 @@ def run(cfg, **args):
                                  original_prompt="", redacted_text="", max_retries=1, quiet=True)
 
 
-def test_start_turns_the_air_mouse_on(fake_service, mock_config):
+def test_start_turns_the_gesture_snap_on(fake_service, mock_config):
     result = run(mock_config, action="start")
     assert result.success and fake_service.running
     assert "pinch" in result.reply_text.lower()
@@ -67,10 +67,10 @@ def test_status_reports_whether_it_is_on(fake_service, mock_config):
 
 
 def test_a_start_failure_is_reported_honestly(mock_config, monkeypatch):
-    from jarvis.gestures import air_mouse_service
-    svc = air_mouse_service.AirMouseService(mock_config, output_factory=FakePointer,
+    from jarvis.gestures import window_snap_service
+    svc = window_snap_service.WindowSnapService(mock_config, output_factory=FakeDesktop,
                                             tracker_factory=lambda camera: FakeTracker(camera, works=False))
-    monkeypatch.setattr(air_mouse_service, "_service", svc)
+    monkeypatch.setattr(window_snap_service, "_service", svc)
     result = run(mock_config, action="start")
     assert not result.success and result.error_message
 
@@ -91,15 +91,15 @@ def test_every_action_is_routine(mock_config):
                                                        (True, "linux", False)])
 def test_offered_only_when_enabled_in_settings_on_windows(mock_config, enabled, platform, offered):
     from jarvis.tools.registry import BUILTIN_TOOLS, configure_gesture_tool
-    mock_config.air_mouse_enabled = enabled
+    mock_config.gesture_snap_enabled = enabled
     configure_gesture_tool(mock_config, platform=platform)
     assert ("gestureControl" in BUILTIN_TOOLS) is offered
 
 
-def test_turning_the_setting_off_stops_a_running_air_mouse(fake_service, mock_config):
+def test_turning_the_setting_off_stops_running_gesture_snapping(fake_service, mock_config):
     from jarvis.tools.registry import configure_gesture_tool
     fake_service.start()
-    mock_config.air_mouse_enabled = False
+    mock_config.gesture_snap_enabled = False
     configure_gesture_tool(mock_config, platform="win32")
     assert not fake_service.running
 

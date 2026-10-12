@@ -75,7 +75,7 @@ CATEGORIES = [
     ("activity", "Activity Log (optional)"),
     ("remote", "Phone Access (optional)"),
     ("web_chat", "Web Chat (optional)"),
-    ("air_mouse", "Air Mouse (optional)"),
+    ("gesture_snap", "Gesture Snapping (optional)"),
     ("features", "Features"),
     ("mcps", "MCP Servers"),
     ("advanced", "Advanced"),
@@ -454,45 +454,43 @@ def _build_field_metadata() -> List[FieldMeta]:
       "python -m jarvis.devices.roku --discover. Restart Jarvis after changing it.",
       "windows", "str", nullable=True)
 
-    # --- Air mouse (gestures/gestures.spec.md, Air mouse) ---
-    f("air_mouse_enabled", "Allow Air Mouse",
-      "Move the mouse pointer with your hand through the webcam: point with your index finger to move, pinch "
-      "your thumb and index finger to click, hold the pinch to drag, open your hand to pause. This only makes "
-      "it available: say \"start gesture control\" to turn the camera on and \"stop gesture control\" to turn "
-      "it off. Everything stays on this PC. Takes effect after Jarvis restarts.",
-      "air_mouse", "bool")
-    f("air_mouse_camera", "Camera",
-      "Which webcam to use: 0 is the first one. Run python -m jarvis.gestures --camera N to try one.",
-      "air_mouse", "int", min_val=0, max_val=16)
-    f("air_mouse_hand", "Hand",
-      "Which hand moves the pointer. Any: whichever hand is in view, and the one already in use keeps control.",
-      "air_mouse", "choice", choices=[("any", "Any hand"), ("right", "Right hand"), ("left", "Left hand")])
-    f("air_mouse_comfort_box", "Comfort Box",
+    # --- Gesture snapping (gestures/gestures.spec.md, Gesture snapping) ---
+    f("gesture_snap_enabled", "Allow Gesture Snapping",
+      "Move windows into your FancyZones zones with your hand through the webcam: point with your index finger "
+      "to aim the pointer, pinch to grab the window under it, move your hand and let go to snap it into the zone "
+      "under the pointer. Open your hand to pause, or to cancel a move. It never clicks. This only makes it "
+      "available: say \"start gesture control\" to turn the camera on and \"stop gesture control\" to turn it "
+      "off. Everything stays on this PC. Takes effect after Jarvis restarts.",
+      "gesture_snap", "bool")
+    f("gesture_snap_camera", "Camera",
+      "Which webcam to use: 0 is the first one. Run python -m jarvis.gestures --camera N --preview to try one.",
+      "gesture_snap", "int", min_val=0, max_val=16)
+    f("gesture_snap_hand", "Hand",
+      "Which hand aims. Any: whichever hand is in view, and the one already in use keeps control.",
+      "gesture_snap", "choice", choices=[("any", "Any hand"), ("right", "Right hand"), ("left", "Left hand")])
+    f("gesture_snap_comfort_box", "Comfort Box",
       "How far your fingertip moves to cross the whole desktop (all monitors), as a share of the camera's width. "
       "Smaller means less arm movement but a faster, more sensitive pointer.",
-      "air_mouse", "float", min_val=0.15, max_val=1.0, step=0.05)
-    f("air_mouse_pinch_start", "Pinch Start",
-      "How close your thumb and index fingertips must come for a pinch, as a share of your hand's size. "
-      "Lower needs a firmer pinch.",
-      "air_mouse", "float", min_val=0.05, max_val=1.0, step=0.01)
-    f("air_mouse_pinch_release", "Pinch Release",
-      "How far apart the fingertips must open to end a pinch. Must be above Pinch Start; the gap between them "
+      "gesture_snap", "float", min_val=0.15, max_val=1.0, step=0.05)
+    f("gesture_snap_pinch_start", "Pinch Start",
+      "How close your thumb and index fingertips must come for a pinch, as a share of your hand's size as the "
+      "camera sees it. Lower needs a firmer pinch.",
+      "gesture_snap", "float", min_val=0.05, max_val=1.0, step=0.01)
+    f("gesture_snap_pinch_release", "Pinch Release",
+      "How far apart the fingertips must open to let go. Must be above Pinch Start; the gap between them "
       "stops a pinch from flickering.",
-      "air_mouse", "float", min_val=0.1, max_val=1.5, step=0.01)
-    f("air_mouse_debounce_ms", "Pinch Debounce",
-      "How long a pinch or its release must last to count, so brief tracking glitches never click.",
-      "air_mouse", "int", min_val=0, max_val=500, step=10, suffix="ms")
-    f("air_mouse_hold_ms", "Hold to Drag",
-      "A pinch held this long presses the button and drags; a shorter pinch clicks.",
-      "air_mouse", "int", min_val=100, max_val=2000, step=50, suffix="ms")
-    f("air_mouse_smoothing", "Steadiness",
+      "gesture_snap", "float", min_val=0.1, max_val=1.5, step=0.01)
+    f("gesture_snap_debounce_ms", "Pinch Debounce",
+      "How long a pinch or its release must last to count, so brief tracking glitches never grab or drop.",
+      "gesture_snap", "int", min_val=0, max_val=500, step=10, suffix="ms")
+    f("gesture_snap_smoothing", "Steadiness",
       "Smoothing of the pointer when your hand is still (the filter's minimum cutoff in hertz). Lower is "
       "steadier but feels slower.",
-      "air_mouse", "float", min_val=0.05, max_val=10.0, step=0.05, suffix="Hz")
-    f("air_mouse_speed_response", "Speed Response",
+      "gesture_snap", "float", min_val=0.05, max_val=10.0, step=0.05, suffix="Hz")
+    f("gesture_snap_speed_response", "Speed Response",
       "How quickly smoothing gives way when you move fast. Higher keeps up with quick movements better but "
       "lets more shake through.",
-      "air_mouse", "float", min_val=0.0, max_val=0.1, step=0.001)
+      "gesture_snap", "float", min_val=0.0, max_val=0.1, step=0.001)
 
     # --- Reply mode: who answers, and which cloud modes may be switched to ---
     f("reply_mode", "Reply Mode",

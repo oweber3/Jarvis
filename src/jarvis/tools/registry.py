@@ -108,18 +108,18 @@ def configure_activity_log_tool(cfg, *, platform=None):
 
 
 def configure_gesture_tool(cfg, *, platform=None):
-    """Offer ``gestureControl`` (the air mouse) only on Windows when ``air_mouse_enabled`` is on.
+    """Offer ``gestureControl`` (gesture snapping) only on Windows when ``gesture_snap_enabled`` is on.
 
-    The service is created here with the Windows pointer as its output; the camera starts only when asked."""
-    from ..gestures import air_mouse_service
+    The service is created here with the Windows desktop as its output; the camera starts only when asked."""
+    from ..gestures import window_snap_service
     BUILTIN_TOOLS.pop('gestureControl', None)
-    if (platform or sys.platform) != 'win32' or getattr(cfg, 'air_mouse_enabled', False) is not True:
-        air_mouse_service.set_service(None)
+    if (platform or sys.platform) != 'win32' or getattr(cfg, 'gesture_snap_enabled', False) is not True:
+        window_snap_service.set_service(None)
         return
-    from ..platform.windows.pointer import WindowsPointer
+    from ..platform.windows.window_snap import WindowsSnapOutput
     from .builtin.gesture_control import GestureControlTool
-    if air_mouse_service.get_service() is None:
-        air_mouse_service.set_service(air_mouse_service.AirMouseService(cfg, output_factory=WindowsPointer))
+    if window_snap_service.get_service() is None:
+        window_snap_service.set_service(window_snap_service.WindowSnapService(cfg, output_factory=WindowsSnapOutput))
     BUILTIN_TOOLS['gestureControl'] = GestureControlTool()
 
 

@@ -1,8 +1,9 @@
-"""Turn the air mouse on and off: the webcam follows the user's hand and moves the pointer.
+"""Turn gesture snapping on and off: the webcam follows the user's hand, a pinch grabs a window and letting go
+snaps it into a FancyZones zone.
 
-Registered only on Windows when ``air_mouse_enabled`` is on (``registry.configure_gesture_tool``), and never
-offered to a cloud model. The mode itself lives in ``jarvis.gestures.air_mouse_service``; this tool only
-starts, stops and reports it. See ``gestures/gestures.spec.md``, Air mouse.
+Registered only on Windows when ``gesture_snap_enabled`` is on (``registry.configure_gesture_tool``), and never
+offered to a cloud model. The mode itself lives in ``jarvis.gestures.window_snap_service``; this tool only
+starts, stops and reports it. See ``gestures/gestures.spec.md``, Gesture snapping.
 """
 from typing import Any, Dict, Optional
 
@@ -25,9 +26,9 @@ class GestureControlTool(Tool):
     @property
     def description(self) -> str:
         # The router reads only the first 120 characters.
-        return ("Air mouse (gesture control): start or stop moving the mouse pointer with your hand through the "
-                "webcam, or say if it is on. Pinch to click, hold the pinch to drag. NOT for clicking or typing "
-                "on Jarvis's behalf; use uiControl.")
+        return ("Gesture control (gesture snapping): start or stop moving windows into zones with your hand through "
+                "the webcam, or say if it is on. Pinch to grab the window under the pointer, let go to snap it. NOT "
+                "for placing a named window by voice; use windowControl.")
 
     @property
     def inputSchema(self) -> Dict[str, Any]:
@@ -35,33 +36,33 @@ class GestureControlTool(Tool):
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": _ACTIONS,
-                           "description": "start turns the air mouse on (camera on); stop turns it off (camera "
+                           "description": "start turns gesture snapping on (camera on); stop turns it off (camera "
                                           "off); status says whether it is on."},
             },
             "required": ["action"],
         }
 
     def run(self, args: Optional[Dict[str, Any]], context: ToolContext) -> ToolExecutionResult:
-        from ...gestures import air_mouse_service
+        from ...gestures import window_snap_service
 
         action = str((args or {}).get("action") or "").strip().lower()
-        service = air_mouse_service.get_service()
+        service = window_snap_service.get_service()
         if action not in _ACTIONS:
             return _fail(f"Unknown action '{action}'. Use one of: {', '.join(_ACTIONS)}.")
         if service is None:
-            return _fail("The air mouse is turned off in Settings (Air Mouse).")
+            return _fail("Gesture snapping is turned off in Settings (Gesture Snapping).")
         debug_log(f"gestureControl action={action}", "gestures")
         if action == "status":
             on = service.running
-            return ToolExecutionResult(True, "The air mouse is on." if on else "The air mouse is off.")
+            return ToolExecutionResult(True, "Gesture snapping is on." if on else "Gesture snapping is off.")
         if action == "stop":
             service.stop()
-            return ToolExecutionResult(True, "The air mouse is off and the camera is released.")
+            return ToolExecutionResult(True, "Gesture snapping is off and the camera is released.")
         try:
             outcome = service.start()
-        except air_mouse_service.AirMouseUnavailable as exc:
-            context.user_print(f"⚠️ The air mouse could not start: {exc}")
-            return _fail(f"The air mouse could not start: {exc}.")
+        except window_snap_service.WindowSnapUnavailable as exc:
+            context.user_print(f"⚠️ Gesture snapping could not start: {exc}")
+            return _fail(f"Gesture snapping could not start: {exc}.")
         if outcome == "already":
-            return ToolExecutionResult(True, "The air mouse is already on.")
-        return ToolExecutionResult(True, f"The air mouse is on. {air_mouse_service.GESTURE_GUIDE}")
+            return ToolExecutionResult(True, "Gesture snapping is already on.")
+        return ToolExecutionResult(True, f"Gesture snapping is on. {window_snap_service.GESTURE_GUIDE}")

@@ -1,9 +1,10 @@
-"""The air mouse: the index fingertip moves the pointer, a pinch clicks, a held pinch drags.
+"""Gesture snapping: the index fingertip aims the pointer, a pinch grabs the window under it, the window follows
+the hand and letting go snaps it into a zone.
 
-Pure gesture logic on ``HandFrame``s. The pointer itself is an output object (``desktop``, ``position``,
-``move_to``, ``press``, ``release``) supplied by the caller, so this module knows nothing of Windows. It is
-the only code that sends pointer input, and only from the user's own hand movements. See
-``gestures.spec.md``, Air mouse.
+Pure gesture logic on ``HandFrame``s. The desktop is an output object (``desktop``, ``position``, ``move_to``,
+``grab``, ``move_window``, ``drop``, ``put_back``) supplied by the caller, so this module knows nothing of
+Windows or FancyZones. It never clicks. It is the only code that moves the pointer or windows this way, and
+only from the user's own hand movements. See ``gestures.spec.md``, Gesture snapping.
 """
 from __future__ import annotations
 
@@ -21,15 +22,12 @@ Rectangle = Tuple[int, int, int, int]
 HAND_LOST_SEC = 0.25
 WATCHDOG_SEC = 0.05
 EXTENDED_FACTOR = 1.2
-# A pinch must be able to end as a click: the hold always outlasts the debounce by this much.
-MIN_HOLD_MARGIN = 0.1
-RELEASE_ATTEMPTS = 3
 _DERIVATIVE_CUTOFF_HZ = 1.0
 _FINGERS = ("INDEX", "MIDDLE", "RING", "PINKY")
 
-_IDLE, _TRACKING, _ARMING, _PINCHED, _DRAGGING = "idle", "tracking", "arming", "pinched", "dragging"
-_STATE_NAMES = {_IDLE: "paused", _TRACKING: "moving", _ARMING: "pinch closing", _PINCHED: "pinched",
-                _DRAGGING: "dragging"}
+_IDLE, _AIMING, _CLOSING, _HOLDING, _HOLDING_NOTHING = "idle", "aiming", "closing", "holding", "holding nothing"
+_STATE_NAMES = {_IDLE: "paused", _AIMING: "aiming", _CLOSING: "pinch closing", _HOLDING: "holding",
+                _HOLDING_NOTHING: "holding nothing"}
 
 
 # --------------------------------------------------------------------------------------------------
@@ -37,7 +35,7 @@ _STATE_NAMES = {_IDLE: "paused", _TRACKING: "moving", _ARMING: "pinch closing", 
 # --------------------------------------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class AirMouseSettings:
+class WindowSnapSettings:
     """Thresholds and tuning. Times are in seconds; ``min_cutoff`` and ``beta`` tune the One Euro filter."""
 
     hand: str = "any"
@@ -45,31 +43,28 @@ class AirMouseSettings:
     pinch_start: float = 0.25
     pinch_release: float = 0.35
     debounce: float = 0.05
-    hold: float = 0.35
     min_cutoff: float = 1.0
     beta: float = 0.005
 
     @classmethod
-    def from_config(cls, cfg: Any) -> "AirMouseSettings":
+    def from_config(cls, cfg: Any) -> "WindowSnapSettings":
         default = cls()
 
         def number(key: str, fallback: float) -> float:
             value = getattr(cfg, key, fallback)
             return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else fallback
 
-        hand = getattr(cfg, "air_mouse_hand", default.hand)
-        start = number("air_mouse_pinch_start", default.pinch_start)
-        release = number("air_mouse_pinch_release", default.pinch_release)
+        hand = getattr(cfg, "gesture_snap_hand", default.hand)
+        start = number("gesture_snap_pinch_start", default.pinch_start)
+        release = number("gesture_snap_pinch_release", default.pinch_release)
         if release <= start:
             release = start + 0.1
-        debounce = number("air_mouse_debounce_ms", default.debounce * 1000) / 1000
-        hold = max(number("air_mouse_hold_ms", default.hold * 1000) / 1000, debounce + MIN_HOLD_MARGIN)
         return cls(hand=hand if hand in ("any", "left", "right") else default.hand,
-                   comfort_box=number("air_mouse_comfort_box", default.comfort_box),
+                   comfort_box=number("gesture_snap_comfort_box", default.comfort_box),
                    pinch_start=start, pinch_release=release,
-                   debounce=debounce, hold=hold,
-                   min_cutoff=number("air_mouse_smoothing", default.min_cutoff),
-                   beta=number("air_mouse_speed_response", default.beta))
+                   debounce=number("gesture_snap_debounce_ms", default.debounce * 1000) / 1000,
+                   min_cutoff=number("gesture_snap_smoothing", default.min_cutoff),
+                   beta=number("gesture_snap_speed_response", default.beta))
 
 
 # --------------------------------------------------------------------------------------------------
@@ -154,17 +149,19 @@ class OneEuroFilter:
         return self._x
 
 
+
+
 # --------------------------------------------------------------------------------------------------
 # The gesture model
 # --------------------------------------------------------------------------------------------------
 
-class AirMouse:
-    """Turns ``HandFrame``s into pointer moves and left-button presses on ``output``.
+class WindowSnap:
+    """Turns ``HandFrame``s into pointer moves, window grabs, window moves and snaps on ``output``.
 
     ``on_frame`` runs on the detection thread, ``tick`` on a watchdog thread and ``close`` on whichever
     thread stops the mode; one lock serialises them."""
 
-    def __init__(self, output: Any, settings: AirMouseSettings, clock: Callable[[], float] = time.perf_counter):
+    def __init__(self, output: Any, settings: WindowSnapSettings, clock: Callable[[], float] = time.perf_counter):
         self._out = output
         self._s = settings
         self._clock = clock
@@ -185,14 +182,15 @@ class AirMouse:
         self._anchor: Tuple[float, float] = (0.0, 0.0)
         self._below_since: Optional[float] = None
         self._above_since: Optional[float] = None
-        self._pinch_started = 0.0
-        self._pressed = False
+        self._window: Any = None
+        self._offset: Tuple[float, float] = (0.0, 0.0)
+        self._placed: Optional[Tuple[int, int]] = None
         self._closed = False
         self._failing: set = set()
 
     @property
     def state(self) -> str:
-        """What the hand is doing, for display: paused, moving, pinch closing, pinched or dragging."""
+        """What the hand is doing, for display: paused, aiming, pinch closing, holding or holding nothing."""
         return _STATE_NAMES[self._state]
 
     # -- entry points ----------------------------------------------------------------------------
@@ -216,22 +214,16 @@ class AirMouse:
     def tick(self) -> None:
         """Watchdog: let go once the hand has been missing too long, even when no frames arrive."""
         with self._lock:
-            if self._closed:
-                return
-            self._check_lost(self._clock())
-            if self._pressed and self._state != _DRAGGING:
-                self._release_button("retry")
+            if not self._closed:
+                self._check_lost(self._clock())
 
     def close(self) -> None:
-        """Stop for good, releasing the button if the air mouse holds it."""
+        """Stop for good, leaving a held window where it is."""
         with self._lock:
+            if self._window is not None:
+                debug_log("gesture snapping: window left where it is (stopped)", "gestures")
             self._closed = True
-            for attempt in range(RELEASE_ATTEMPTS):
-                if not self._pressed:
-                    break
-                if attempt:
-                    time.sleep(0.02)
-                self._release_button("stopped")
+            self._window = None
             self._state = _IDLE
 
     # -- hands -----------------------------------------------------------------------------------
@@ -260,13 +252,11 @@ class AirMouse:
     def _check_lost(self, now: float) -> None:
         if self._state == _IDLE or self._last_hand is None or now - self._last_hand < HAND_LOST_SEC:
             return
-        if self._state in (_ARMING, _PINCHED):
-            debug_log("air mouse: pinch cancelled, hand lost", "gestures")
-        self._reset("hand lost")
-
-    def _reset(self, reason: str) -> None:
-        if self._pressed:
-            self._release_button(reason)
+        if self._window is not None:
+            debug_log("gesture snapping: window left where it is (hand lost)", "gestures")
+        elif self._state == _CLOSING:
+            debug_log("gesture snapping: pinch cancelled, hand lost", "gestures")
+        self._window = None
         self._state = _IDLE
         self._side = None
         self._tip = None
@@ -282,57 +272,48 @@ class AirMouse:
             if not palm:
                 self._begin(p)
             return
-        if state == _TRACKING:
+        if state == _AIMING:
             if palm:
-                debug_log("air mouse: clutch (open palm)", "gestures")
+                debug_log("gesture snapping: clutch (open palm)", "gestures")
                 self._state = _IDLE
             elif ratio < s.pinch_release:
-                self._state = _ARMING
+                self._state = _CLOSING
                 self._anchor = self._cursor
                 self._below_since = t if ratio < s.pinch_start else None
                 self._ref = p
             else:
                 self._move_by(p)
             return
-        if state == _ARMING:
+        if state == _CLOSING:
             self._ref = p
-            if ratio >= s.pinch_release:
-                self._state = _TRACKING
+            if palm:
+                self._state = _IDLE
+            elif ratio >= s.pinch_release:
+                self._state = _AIMING
             elif ratio < s.pinch_start:
                 if self._below_since is None:
                     self._below_since = t
                 if t - self._below_since >= s.debounce:
-                    self._state = _PINCHED
-                    self._pinch_started = self._below_since
-                    self._above_since = None
+                    self._grab()
             else:
                 self._below_since = None
             return
-        if state == _PINCHED:
-            self._ref = p
-            if ratio > s.pinch_release:
-                if self._above_since is None:
-                    self._above_since = t
-                if t - self._above_since >= s.debounce:
-                    self._click()
-                    self._state = _TRACKING
-                return
-            self._above_since = None
-            if t - self._pinch_started >= s.hold:
-                self._start_drag()
+        # Holding a window, or a pinch over nothing.
+        if palm and self._window is not None:
+            self._put_back()
+            self._state = _IDLE
             return
-        if state == _DRAGGING:
-            if ratio > s.pinch_release:
-                self._ref = p  # hold the drop point still while the release is confirmed
-                if self._above_since is None:
-                    self._above_since = t
-                if t - self._above_since >= s.debounce:
-                    if self._pressed:
-                        self._release_button("drop")
-                    self._state = _TRACKING
-                return
-            self._above_since = None
-            self._move_by(p)
+        if ratio > s.pinch_release:
+            self._ref = p  # hold the drop point still while the release is confirmed
+            if self._above_since is None:
+                self._above_since = t
+            if t - self._above_since >= s.debounce:
+                self._drop()
+                self._state = _AIMING
+            return
+        self._above_since = None
+        self._move_by(p)
+        self._follow()
 
     def _begin(self, p: Tuple[float, float]) -> None:
         try:
@@ -343,7 +324,7 @@ class AirMouse:
         self._cursor = clamp_to_desktop(float(x), float(y), self._monitors)
         self._shown = (int(x), int(y))
         self._ref = p
-        self._state = _TRACKING
+        self._state = _AIMING
 
     def _move_by(self, p: Tuple[float, float]) -> None:
         x = self._cursor[0] + p[0] - self._ref[0]
@@ -352,67 +333,86 @@ class AirMouse:
         self._cursor = clamp_to_desktop(x, y, self._monitors)
         self._show(self._cursor)
 
-    def _show(self, point: Tuple[float, float], force: bool = False) -> bool:
+    def _show(self, point: Tuple[float, float]) -> None:
         target = (int(round(point[0])), int(round(point[1])))
-        if target == self._shown and not force:
-            return True
+        if target == self._shown:
+            return
         try:
             self._out.move_to(*target)
         except Exception as exc:  # noqa: BLE001 - the next frame tries again
             self._output_failed("move the pointer", exc)
-            return False
+            return
         self._shown = target
-        return True
+        self._failing.discard("move the pointer")
 
-    # -- buttons ---------------------------------------------------------------------------------
+    # -- windows ---------------------------------------------------------------------------------
 
-    def _click(self) -> None:
+    def _grab(self) -> None:
         self._cursor = self._anchor
-        if not self._show(self._anchor, force=True):
-            return
-        try:
-            self._out.press()
-        except Exception as exc:  # noqa: BLE001
-            self._output_failed("click", exc)
-            return
-        self._pressed = True
-        self._release_button("click")
-        debug_log("air mouse: click", "gestures")
-
-    def _start_drag(self) -> None:
-        self._cursor = self._anchor
-        self._state = _DRAGGING
         self._above_since = None
-        if not self._show(self._anchor, force=True):
-            return
+        x, y = int(round(self._anchor[0])), int(round(self._anchor[1]))
         try:
-            self._out.press()
-        except Exception as exc:  # noqa: BLE001 - the drag moves the pointer without the button
-            self._output_failed("press the button", exc)
+            window = self._out.grab(x, y)
+        except Exception as exc:  # noqa: BLE001 - a pinch that grabs nothing
+            self._output_failed("grab the window", exc)
+            window = None
+        if window is None:
+            self._state = _HOLDING_NOTHING
+            debug_log("gesture snapping: pinch over no window", "gestures")
             return
-        self._pressed = True
-        debug_log("air mouse: drag started", "gestures")
+        self._window = window
+        left, top = window.rect[0], window.rect[1]
+        self._offset = (x - left, y - top)
+        self._placed = (left, top)
+        self._state = _HOLDING
+        debug_log("gesture snapping: window grabbed", "gestures")
 
-    def _release_button(self, reason: str) -> None:
-        try:
-            self._out.release()
-        except Exception as exc:  # noqa: BLE001 - stays marked as pressed so the watchdog retries
-            self._output_failed("release the button", exc)
+    def _follow(self) -> None:
+        if self._window is None:
             return
-        self._pressed = False
-        self._failing.discard("release the button")
-        if reason != "click":
-            debug_log(f"air mouse: button released ({reason})", "gestures")
+        left = int(round(self._cursor[0] - self._offset[0]))
+        top = int(round(self._cursor[1] - self._offset[1]))
+        if (left, top) == self._placed:
+            return
+        try:
+            self._out.move_window(self._window, left, top)
+        except Exception as exc:  # noqa: BLE001 - let go of a window that refuses to move
+            self._output_failed("move the window", exc)
+            self._window = None
+            self._state = _HOLDING_NOTHING
+            return
+        self._placed = (left, top)
+
+    def _drop(self) -> None:
+        window, self._window = self._window, None
+        if window is None:
+            return
+        x, y = int(round(self._cursor[0])), int(round(self._cursor[1]))
+        try:
+            self._out.drop(window, x, y)
+        except Exception as exc:  # noqa: BLE001
+            self._output_failed("snap the window", exc)
+            return
+        debug_log("gesture snapping: window dropped", "gestures")
+
+    def _put_back(self) -> None:
+        window, self._window = self._window, None
+        try:
+            self._out.put_back(window)
+        except Exception as exc:  # noqa: BLE001
+            self._output_failed("put the window back", exc)
+            return
+        debug_log("gesture snapping: cancelled, window put back", "gestures")
 
     def _output_failed(self, what: str, exc: Exception) -> None:
         """Logged and printed once per kind of failure until it next succeeds, so retries stay quiet."""
         if what in self._failing:
             return
         self._failing.add(what)
-        debug_log(f"air mouse could not {what} ({type(exc).__name__})", "gestures")
+        debug_log(f"gesture snapping could not {what} ({type(exc).__name__})", "gestures")
         try:
-            print(f"🖐️ Air mouse could not {what}\n"
-                  "   💡 Windows blocks input to apps running as administrator and while the PC is locked",
+            print(f"🖐️ Gesture snapping could not {what}\n"
+                  "   💡 Windows blocks moving apps that run as administrator, and input while the PC is locked",
                   flush=True)
-        except Exception:  # noqa: BLE001 - a console that cannot print never stops a release
+        except Exception:  # noqa: BLE001 - a console that cannot print never stops tracking
             pass

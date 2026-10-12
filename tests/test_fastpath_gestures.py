@@ -1,4 +1,4 @@
-"""Starting and stopping the air mouse are whole-utterance fast routes, available only while the tool is."""
+"""Starting and stopping gesture snapping are whole-utterance fast routes, available only while the tool is."""
 import pytest
 
 TOOLS = {'getTime', 'appControl', 'windowControl', 'systemVolume', 'mediaControl', 'gestureControl'}
@@ -10,16 +10,16 @@ def route(text, tools=TOOLS):
 
 
 @pytest.mark.parametrize('text', ['Start gesture control', 'turn on gesture control', 'enable gesture control',
-                                  'Turn on the air mouse', 'start air mouse', 'Please start gesture control.'])
-def test_start_phrases_start_the_air_mouse(text):
+                                  'Turn on gesture snapping', 'start gesture snapping', 'Please start gesture control.'])
+def test_start_phrases_start_gesture_snapping(text):
     result = route(text)
     assert result is not None, text
     assert (result.tool_name, result.args) == ('gestureControl', {'action': 'start'})
 
 
 @pytest.mark.parametrize('text', ['Stop gesture control', 'turn off gesture control', 'disable gesture control',
-                                  'Turn off the air mouse', 'stop air mouse', 'turn the air mouse off'])
-def test_stop_phrases_stop_the_air_mouse(text):
+                                  'Turn off gesture snapping', 'stop gesture snapping', 'turn gesture snapping off'])
+def test_stop_phrases_stop_gesture_snapping(text):
     result = route(text)
     assert result is not None, text
     assert (result.tool_name, result.args) == ('gestureControl', {'action': 'stop'})
@@ -33,7 +33,7 @@ def test_without_the_tool_the_phrases_fall_through():
 
 @pytest.mark.parametrize('text', ['start gesture control and open word', 'what is gesture control',
                                   'stop the music'])
-def test_other_requests_are_not_air_mouse_routes(text):
+def test_other_requests_are_not_gesture_snap_routes(text):
     result = route(text)
     assert result is None or result.tool_name != 'gestureControl'
 

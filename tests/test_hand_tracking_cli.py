@@ -66,25 +66,25 @@ def _pinching_tracker(camera_index):
 
 
 @pytest.mark.unit
-class TestAirMouse:
-    def test_the_air_mouse_runs_reports_the_pinch_and_lets_go_when_it_stops(self, capsys):
-        from tests.synthetic_hands import FakePointer
-        pointer = FakePointer()
+class TestGestureSnapping:
+    def test_gesture_snapping_runs_reports_the_pinch_and_lets_go_when_it_stops(self, capsys):
+        from tests.synthetic_hands import FakeDesktop, FakeWindow
+        desk = FakeDesktop(windows=[FakeWindow((0, 0, 1920, 1080))])
         made = []
 
         def tracker(camera_index):
             made.append(camera_index)
             return _pinching_tracker(camera_index)
 
-        assert cli.main(["--air-mouse", "--camera", "3", "--seconds", "1.3"], make_tracker=tracker,
-                        make_pointer=lambda: pointer) == 0
+        assert cli.main(["--snap", "--camera", "3", "--seconds", "1.3"], make_tracker=tracker,
+                        make_output=lambda: desk) == 0
         out = capsys.readouterr().out
         assert made == [3]
-        assert "Air mouse on" in out and "pinch 0.1" in out and "Air mouse off" in out
-        assert pointer.buttons() and not pointer.down  # the held pinch pressed, stopping released
+        assert "Gesture snapping on" in out and "pinch 0.1" in out and "holding" in out and "Gesture snapping off" in out
+        assert desk.of("grab") and desk.of("drop") == []  # the held pinch grabbed; stopping left it in place
 
-    def test_an_air_mouse_that_cannot_start_exits_with_an_error(self, capsys):
-        from tests.synthetic_hands import FakePointer
+    def test_gesture_snapping_that_cannot_start_exits_with_an_error(self, capsys):
+        from tests.synthetic_hands import FakeDesktop
 
         def no_mediapipe():
             raise ImportError("No module named 'mediapipe'")
@@ -92,5 +92,5 @@ class TestAirMouse:
         def broken(camera_index):
             return HandTracker(camera_index, hands_factory=no_mediapipe, camera_factory=lambda index: _Camera())
 
-        assert cli.main(["--air-mouse", "--seconds", "0.2"], make_tracker=broken, make_pointer=FakePointer) == 1
+        assert cli.main(["--snap", "--seconds", "0.2"], make_tracker=broken, make_output=FakeDesktop) == 1
         assert "could not start" in capsys.readouterr().out

@@ -418,18 +418,17 @@ class Settings:
     # screen only when a request asks about it. Off removes the tool from every reply mode.
     screen_awareness_enabled: bool = True
 
-    # Air mouse (see src/jarvis/gestures/gestures.spec.md, Air mouse): offers gestureControl, which turns the
-    # webcam on only when asked. Thresholds are pinch ratios (thumb-to-index distance over hand size).
-    air_mouse_enabled: bool = False
-    air_mouse_camera: int = 0
-    air_mouse_hand: str = "any"
-    air_mouse_comfort_box: float = 0.5
-    air_mouse_pinch_start: float = 0.25
-    air_mouse_pinch_release: float = 0.35
-    air_mouse_debounce_ms: int = 50
-    air_mouse_hold_ms: int = 350
-    air_mouse_smoothing: float = 1.0
-    air_mouse_speed_response: float = 0.005
+    # Gesture snapping (see src/jarvis/gestures/gestures.spec.md, Gesture snapping): offers gestureControl, which
+    # turns the webcam on only when asked. Thresholds are pinch ratios (thumb-to-index distance over hand size).
+    gesture_snap_enabled: bool = False
+    gesture_snap_camera: int = 0
+    gesture_snap_hand: str = "any"
+    gesture_snap_comfort_box: float = 0.5
+    gesture_snap_pinch_start: float = 0.25
+    gesture_snap_pinch_release: float = 0.35
+    gesture_snap_debounce_ms: int = 50
+    gesture_snap_smoothing: float = 1.0
+    gesture_snap_speed_response: float = 0.005
 
     # File deletion (see src/jarvis/tools/builtin/local_files.spec.md): off means no request can delete a
     # file, on any route. On, a delete still needs the user's confirmation.
@@ -546,27 +545,24 @@ def _within(value: Any, default: float, low: float, high: float, cast=float):
     return cast(min(max(float(value), low), high))
 
 
-def _air_mouse_settings(merged: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, Any]:
-    """The air mouse keys, clamped to their ranges, with the pinch release always above the start."""
+def _gesture_snap_settings(merged: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, Any]:
+    """The gesture snapping keys, clamped to their ranges, with the pinch release always above the start."""
     def get(key, low, high, cast=float):
         return _within(merged.get(key), defaults[key], low, high, cast)
 
-    start = get("air_mouse_pinch_start", 0.05, 1.0)
-    release = get("air_mouse_pinch_release", 0.1, 1.5)
-    hand = merged.get("air_mouse_hand")
-    debounce = get("air_mouse_debounce_ms", 0, 500, int)
+    start = get("gesture_snap_pinch_start", 0.05, 1.0)
+    release = get("gesture_snap_pinch_release", 0.1, 1.5)
+    hand = merged.get("gesture_snap_hand")
     return {
-        "air_mouse_enabled": merged.get("air_mouse_enabled") is True,
-        "air_mouse_camera": get("air_mouse_camera", 0, 16, int),
-        "air_mouse_hand": hand if hand in ("any", "left", "right") else defaults["air_mouse_hand"],
-        "air_mouse_comfort_box": get("air_mouse_comfort_box", 0.15, 1.0),
-        "air_mouse_pinch_start": start,
-        "air_mouse_pinch_release": release if release > start else round(start + 0.1, 3),
-        "air_mouse_debounce_ms": debounce,
-        # The hold always outlasts the debounce, or every pinch would drag and none could click.
-        "air_mouse_hold_ms": max(get("air_mouse_hold_ms", 100, 2000, int), debounce + 100),
-        "air_mouse_smoothing": get("air_mouse_smoothing", 0.05, 10.0),
-        "air_mouse_speed_response": get("air_mouse_speed_response", 0.0, 0.1),
+        "gesture_snap_enabled": merged.get("gesture_snap_enabled") is True,
+        "gesture_snap_camera": get("gesture_snap_camera", 0, 16, int),
+        "gesture_snap_hand": hand if hand in ("any", "left", "right") else defaults["gesture_snap_hand"],
+        "gesture_snap_comfort_box": get("gesture_snap_comfort_box", 0.15, 1.0),
+        "gesture_snap_pinch_start": start,
+        "gesture_snap_pinch_release": release if release > start else round(start + 0.1, 3),
+        "gesture_snap_debounce_ms": get("gesture_snap_debounce_ms", 0, 500, int),
+        "gesture_snap_smoothing": get("gesture_snap_smoothing", 0.05, 10.0),
+        "gesture_snap_speed_response": get("gesture_snap_speed_response", 0.0, 0.1),
     }
 
 
@@ -950,16 +946,15 @@ def get_default_config() -> Dict[str, Any]:
         "activity_log_share_with_cloud": False,
         "screen_awareness_enabled": True,
         "file_delete_enabled": False,
-        "air_mouse_enabled": False,
-        "air_mouse_camera": 0,
-        "air_mouse_hand": "any",
-        "air_mouse_comfort_box": 0.5,
-        "air_mouse_pinch_start": 0.25,
-        "air_mouse_pinch_release": 0.35,
-        "air_mouse_debounce_ms": 50,
-        "air_mouse_hold_ms": 350,
-        "air_mouse_smoothing": 1.0,
-        "air_mouse_speed_response": 0.005,
+        "gesture_snap_enabled": False,
+        "gesture_snap_camera": 0,
+        "gesture_snap_hand": "any",
+        "gesture_snap_comfort_box": 0.5,
+        "gesture_snap_pinch_start": 0.25,
+        "gesture_snap_pinch_release": 0.35,
+        "gesture_snap_debounce_ms": 50,
+        "gesture_snap_smoothing": 1.0,
+        "gesture_snap_speed_response": 0.005,
         "remote_access_enabled": False,
         "remote_access_host": "0.0.0.0",
         "remote_access_port": 8765,
@@ -1440,7 +1435,7 @@ def load_settings() -> Settings:
         activity_log_share_with_cloud=merged.get("activity_log_share_with_cloud") is True,
         screen_awareness_enabled=merged.get("screen_awareness_enabled", True) is True,
         file_delete_enabled=merged.get("file_delete_enabled") is True,
-        **_air_mouse_settings(merged, defaults),
+        **_gesture_snap_settings(merged, defaults),
         remote_access_enabled=merged.get("remote_access_enabled") is True,
         remote_access_host=_text(merged.get("remote_access_host"), defaults["remote_access_host"]),
         remote_access_port=_port(merged.get("remote_access_port"), defaults["remote_access_port"]),
