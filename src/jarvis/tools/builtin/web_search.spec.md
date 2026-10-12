@@ -117,8 +117,10 @@ stretch that the skeleton shows as a run of three or more angle-like
 brackets (`<` `>` and their full-width and small forms, `‹` `›`, `«` `»`,
 `❮` `❯`, `❰` `❱`, `❬` `❭`, `ᐸ` `ᐳ`, `〈` `〉`, `⟨` `⟩`, `《` `》`, `⧼` `⧽`,
 `⦉` `⦊`, `˂` `˃`, mixed freely) becomes one single angle quotation mark
-(`‹` or `›`), and each stretch that spells the fence's name (`UNTRUSTED WEB
-EXTRACT`, any case or separators) becomes `[marker removed]`. All other
+(`‹` or `›`), and each stretch that spells a fence's name (`UNTRUSTED WEB
+EXTRACT`, or the email and calendar fences' `UNTRUSTED EMAIL CONTENT` and
+`UNTRUSTED CALENDAR DATA` from `FENCES`, any case or separators) becomes
+`[marker removed]`. All other
 text is returned unchanged. A page therefore cannot close the fence early
 or open a fake one; the only markers in the payload are the tool's own
 BEGIN and END.

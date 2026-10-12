@@ -404,6 +404,18 @@ class Settings:
     # leaves this PC.
     activity_log_share_with_cloud: bool = False
 
+    # Read-only calendar (see src/jarvis/agenda/agenda.spec.md): secret ICS addresses (in the credential
+    # store, never here) and classic Outlook. Off by default; sources are added with python -m jarvis.agenda.
+    calendar_enabled: bool = False
+    calendar_sources: list[Dict[str, Any]] = field(default_factory=list)
+    calendar_cache_minutes: int = 15
+    calendar_share_with_cloud: bool = False
+    # Read-only email (see src/jarvis/mail/mail.spec.md): IMAP, classic Outlook and Microsoft Graph accounts.
+    # Passwords and tokens live in the credential store. Off by default; added with python -m jarvis.mail.
+    email_enabled: bool = False
+    email_accounts: list[Dict[str, Any]] = field(default_factory=list)
+    email_share_with_cloud: bool = False
+
     # Screen awareness (see src/jarvis/tools/builtin/screenshot.spec.md): the screenshot tool looks at the
     # screen only when a request asks about it. Off removes the tool from every reply mode.
     screen_awareness_enabled: bool = True
@@ -567,6 +579,46 @@ def _bounded_number(value: Any, default: float, minimum: float, cast=float):
         return max(minimum, cast(value))
     except (TypeError, ValueError):
         return default
+
+
+# Calendar sources and email accounts: the keys each type may carry besides ``name`` and ``type``.
+# Secrets (addresses, passwords, tokens) are never config keys; they live in the credential store.
+_CALENDAR_SOURCE_FIELDS: Dict[str, tuple] = {"ics": (), "outlook": ()}
+_EMAIL_ACCOUNT_FIELDS: Dict[str, tuple] = {"imap": ("host", "port", "username"), "outlook": (),
+                                           "graph": ("client_id", "tenant")}
+
+
+def _named_entries(value: Any, fields: Dict[str, tuple]) -> list:
+    """Keep entries with a unique non-empty ``name`` and a known ``type``, and only that type's keys."""
+    if not isinstance(value, list):
+        return []
+    kept: list = []
+    seen: set = set()
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name").strip() if isinstance(entry.get("name"), str) else ""
+        kind = entry.get("type")
+        if not name or kind not in fields or name.casefold() in seen:
+            continue
+        clean: Dict[str, Any] = {"name": name, "type": kind}
+        for key in fields[kind]:
+            item = entry.get(key)
+            if key == "port":
+                try:
+                    port = int(item)
+                except (TypeError, ValueError):
+                    continue
+                if 1 <= port <= 65535:
+                    clean[key] = port
+            elif isinstance(item, str) and item.strip():
+                clean[key] = item.strip()
+        seen.add(name.casefold())
+        kept.append(clean)
+    if len(kept) != len(value):
+        from .debug import debug_log
+        debug_log(f"Ignored {len(value) - len(kept)} invalid calendar or email entries.", "config")
+    return kept
 
 
 def _monitor_aliases(value: Any) -> Dict[str, str]:
@@ -940,6 +992,13 @@ def get_default_config() -> Dict[str, Any]:
         "activity_log_excluded_processes": _activity_defaults()[0],
         "activity_log_private_title_markers": _activity_defaults()[1],
         "activity_log_share_with_cloud": False,
+        "calendar_enabled": False,
+        "calendar_sources": [],
+        "calendar_cache_minutes": 15,
+        "calendar_share_with_cloud": False,
+        "email_enabled": False,
+        "email_accounts": [],
+        "email_share_with_cloud": False,
         "screen_awareness_enabled": True,
         "file_delete_enabled": False,
         "gesture_snap_enabled": False,
@@ -1415,6 +1474,13 @@ def load_settings() -> Settings:
         activity_log_private_title_markers=_string_list(merged.get("activity_log_private_title_markers"),
                                                         defaults["activity_log_private_title_markers"]),
         activity_log_share_with_cloud=merged.get("activity_log_share_with_cloud") is True,
+        calendar_enabled=merged.get("calendar_enabled") is True,
+        calendar_sources=_named_entries(merged.get("calendar_sources"), _CALENDAR_SOURCE_FIELDS),
+        calendar_cache_minutes=_bounded_number(merged.get("calendar_cache_minutes", 15), 15, 0, int),
+        calendar_share_with_cloud=merged.get("calendar_share_with_cloud") is True,
+        email_enabled=merged.get("email_enabled") is True,
+        email_accounts=_named_entries(merged.get("email_accounts"), _EMAIL_ACCOUNT_FIELDS),
+        email_share_with_cloud=merged.get("email_share_with_cloud") is True,
         screen_awareness_enabled=merged.get("screen_awareness_enabled", True) is True,
         file_delete_enabled=merged.get("file_delete_enabled") is True,
         **_gesture_snap_settings(merged, defaults),

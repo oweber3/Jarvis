@@ -538,6 +538,35 @@ def _build_field_metadata() -> List[FieldMeta]:
       "Time without keyboard or mouse input before time is recorded as idle instead of as the "
       "application you left open.",
       "privacy", "float", min_val=30, max_val=3600, step=30, suffix="s", advanced=True, shown_when=logging)
+    heading("Calendar and email")
+    calendar_on = _on("calendar_enabled")
+    email_on = _on("email_enabled")
+    f("calendar_enabled", "Read My Calendar",
+      "Off by default. Let Jarvis read your calendars when you ask (\"what's on today?\", \"when is my next "
+      "meeting?\"). Read only: it never adds or changes events. Add a Google or Outlook.com calendar by its secret "
+      "iCal address, or classic Outlook on this PC, with python -m jarvis.agenda setup. Addresses are kept in "
+      "Windows Credential Manager, never in the settings file. Takes effect after Jarvis restarts.",
+      "privacy", "bool")
+    f("calendar_cache_minutes", "Reuse Calendar For",
+      "Minutes a downloaded calendar is reused before it is fetched again. When offline, Jarvis answers from "
+      "the last copy and says so.",
+      "privacy", "int", min_val=0, max_val=1440, step=5, suffix="min", advanced=True, shown_when=calendar_on)
+    f("calendar_share_with_cloud", "Share Calendar With Codex and Claude",
+      "Off by default: your calendar is available only to the local model and never leaves this PC. Turn on "
+      "to let the Codex and Claude reply modes read it, which sends the events they ask for to OpenAI or "
+      "Anthropic.",
+      "privacy", "bool", shown_when=calendar_on)
+    f("email_enabled", "Read My Email",
+      "Off by default. Let Jarvis check your inbox when you ask (\"any new emails?\", \"read me the latest "
+      "email from Sam\"). Read only: it never sends, deletes or marks anything as read. Add Gmail (with an app "
+      "password), classic Outlook on this PC or an Outlook.com account with python -m jarvis.mail setup. "
+      "Passwords and sign-ins are kept in Windows Credential Manager. Takes effect after Jarvis restarts.",
+      "privacy", "bool")
+    f("email_share_with_cloud", "Share Email With Codex and Claude",
+      "Off by default: your email is available only to the local model and never leaves this PC. Turn on to "
+      "let the Codex and Claude reply modes read it, which sends the messages they ask for to OpenAI or "
+      "Anthropic.",
+      "privacy", "bool", shown_when=email_on)
     heading("Location")
     located = _on("location_enabled")
     f("location_enabled", "Use Location",

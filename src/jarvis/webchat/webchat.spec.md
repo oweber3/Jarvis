@@ -55,7 +55,7 @@ Tables in the Jarvis database file (`db_path`), created with `CREATE TABLE IF NO
 
 - `chat_projects(id, name, position, created_at)`
 - `chats(id, project_id NULL, title, created_at, updated_at, last_mode, last_model)`
-- `chat_messages(id, chat_id, role, content, ts, source, private)` where `source` is `typed`, `voice` or `confirmed`, and `private` marks a turn that quotes the activity log
+- `chat_messages(id, chat_id, role, content, ts, source, private)` where `source` is `typed`, `voice` or `confirmed`, and `private` marks a turn that quotes the activity log, a calendar or email
 - `chat_state(key, value)`: holds `active_chat_id`
 
 A chat with no project is unfiled. Deleting a project keeps its chats and unfiles them. Deleting a chat deletes its messages. A chat's title is the first 60 characters of its first message until the owner renames it (no model call, so `docs/llm_contexts.md` is unaffected). A turn marked `private` keeps its flag, so reopening the chat keeps it out of the diary and out of any context sent off the PC. Identifiers are random hex strings.

@@ -19,6 +19,21 @@ class BridgeSettings:
     share_long_term_memory: bool = False
     # Shared by both modes (``activity_log_share_with_cloud``); see ``activity_runtime.shared_with_cloud``.
     share_activity_log: bool = False
+    # Whether dialogue turns kept private (they quote the activity log, a calendar or email) may be shared:
+    # only when every such source that is turned on is also shared (``private_dialogue_shared``).
+    share_private_dialogue: bool = False
+
+
+def private_dialogue_shared(cfg: Any) -> bool:
+    """Private turns carry no record of which source made them private, so they go to a cloud model
+    only when the activity log is shared and the calendar and email are each off or shared too."""
+    if not activity_runtime.shared_with_cloud(cfg):
+        return False
+    for enabled, shared in (("calendar_enabled", "calendar_share_with_cloud"),
+                            ("email_enabled", "email_share_with_cloud")):
+        if getattr(cfg, enabled, False) is True and getattr(cfg, shared, False) is not True:
+            return False
+    return True
 
 
 def bridge_settings(cfg: Any, mode: str) -> BridgeSettings:
@@ -38,4 +53,5 @@ def bridge_settings(cfg: Any, mode: str) -> BridgeSettings:
         share_foreground_window=bool(get("share_foreground_window")),
         share_long_term_memory=bool(get("share_long_term_memory")),
         share_activity_log=activity_runtime.shared_with_cloud(cfg),
+        share_private_dialogue=private_dialogue_shared(cfg),
     )

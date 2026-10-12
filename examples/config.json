@@ -95,6 +95,13 @@
     "\u65e0\u75d5\u6d4f\u89c8"
   ],
   "activity_log_share_with_cloud": false,
+  "calendar_enabled": false,
+  "calendar_sources": [],
+  "calendar_cache_minutes": 15,
+  "calendar_share_with_cloud": false,
+  "email_enabled": false,
+  "email_accounts": [],
+  "email_share_with_cloud": false,
   "screen_awareness_enabled": true,
   "file_delete_enabled": false,
   "gesture_snap_enabled": false,

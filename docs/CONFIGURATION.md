@@ -731,6 +731,50 @@ An opt-in record of the foreground application, a redacted window title and idle
 
 Details: [`src/jarvis/memory/activity_log.spec.md`](../src/jarvis/memory/activity_log.spec.md).
 
+## Calendar and email
+
+Read-only access to your calendars ("what's on today?", "when is my next meeting?") and inbox ("any new emails?", "anything from Sam?", "read me the latest email from my professor"). Both are off by default. Jarvis never sends, replies, deletes, accepts or marks anything as read.
+
+Add accounts with the setup commands (run from the Jarvis folder with Jarvis's Python), then restart Jarvis:
+
+```bash
+python -m jarvis.agenda setup        # add a calendar; also: list | test [name] | remove <name>
+python -m jarvis.mail setup          # add a mailbox;  also: list | test [name] | signin <name> | remove <name>
+```
+
+Each command tests the connection before saving, stores the secret in Windows Credential Manager (never in `config.json`) and turns the feature on. What ends up in `config.json` holds no secrets:
+
+```json
+{
+  "calendar_enabled": true,
+  "calendar_sources": [{"name": "Google", "type": "ics"}, {"name": "Outlook", "type": "outlook"}],
+  "calendar_cache_minutes": 15,
+  "calendar_share_with_cloud": false,
+  "email_enabled": true,
+  "email_accounts": [
+    {"name": "Gmail", "type": "imap", "host": "imap.gmail.com", "port": 993, "username": "you@gmail.com"},
+    {"name": "Outlook.com", "type": "graph", "client_id": "<your Azure app ID>", "tenant": "consumers"}
+  ],
+  "email_share_with_cloud": false
+}
+```
+
+| Account | What you need |
+|---------|---------------|
+| Google Calendar (`ics`) | Google Calendar on the web > Settings > your calendar > Integrate calendar > **Secret address in iCal format** |
+| Outlook.com or Microsoft 365 calendar (`ics`) | Outlook on the web > Settings > Calendar > Shared calendars > **Publish a calendar** (Can view all details) > the ICS link |
+| Classic Outlook (`outlook`) | Classic Outlook installed and signed in on this PC. The new Outlook app has no interface Jarvis can read |
+| Gmail (`imap`) | 2-Step Verification on, then an **app password** from myaccount.google.com/apppasswords |
+| Other IMAP (`imap`) | Server, port (993) and password |
+| Outlook.com or Microsoft 365 mail (`graph`) | A free app registration in portal.azure.com (public client flows allowed, delegated `Mail.Read`); the setup command signs in with a code shown in the terminal |
+
+- `calendar_cache_minutes` (default 15) is how long a downloaded calendar is reused. When offline, the last copy answers and Jarvis says when it was saved.
+- `calendar_share_with_cloud` and `email_share_with_cloud` (default `false`) decide whether the Codex and Claude reply modes are offered the `calendar` and `email` tools. The local model always has them while they are on. Replies that quote either are kept out of the diary and the log.
+- Email listings carry sender, subject, time and a short preview; a whole message is read only when asked. Message and event text is fenced as untrusted data.
+- A routine can list `{"tool": "calendar", "args": {}}` for today's agenda.
+
+Details: [`src/jarvis/agenda/agenda.spec.md`](../src/jarvis/agenda/agenda.spec.md), [`src/jarvis/mail/mail.spec.md`](../src/jarvis/mail/mail.spec.md).
+
 ## Phone access
 
 An opt-in web app the daemon serves to paired phones: the orb, the shared conversation, quick actions and desktop confirmations. It is off by default; restart Jarvis after turning it on.

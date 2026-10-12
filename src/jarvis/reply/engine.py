@@ -954,12 +954,12 @@ def _deliver_reply(reply, redacted, cfg, tts, dialogue_memory, quiet, *,
                    record_tools=None, error=False):
     """Shared reply output and dialogue recording for every engine route."""
     safe_reply = reply.strip()
-    # A reply that quoted the opt-in activity log stays out of the diary and the console log.
+    # A reply that quoted the opt-in activity log, a calendar or email stays out of the diary and the console log.
     private = consume_turn_private()
     try:
         if not quiet:
             icon = '⚠️' if error else '🤖'
-            shown = "🔒 Reply withheld from the log (it quotes the activity log)." if private else safe_reply
+            shown = "🔒 Reply withheld from the log (it quotes private data)." if private else safe_reply
             print(f"\n{icon} Jarvis\n  {_indent_text(shown)}\n", flush=True)
     except Exception as exc:
         debug_log(f'reply formatting failed: {exc}', 'planning')

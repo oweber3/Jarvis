@@ -21,6 +21,8 @@ ALWAYS_EXCLUDED_TOOLS = frozenset({"toolSearchTool", "refreshMCPTools", "replyMo
 PERSONAL_DATA_TOOLS = frozenset({"logMeal", "fetchMeals", "deleteMeal"})
 # Offered to a cloud model only while ``activity_runtime.shared_with_cloud`` allows it.
 ACTIVITY_TOOLS = frozenset({"activityLog"})
+# Offered to a cloud model only while their own sharing switch is a real ``True``.
+SHARED_ONLY_WHEN = {"calendar": "calendar_share_with_cloud", "email": "email_share_with_cloud"}
 _DESCRIPTION_CHARS = 600
 _REQUEST_ID = {"type": "string", "description": "The request ID from the turn input."}
 _EXECUTE_DESCRIPTION = ("Run one allowed Jarvis tool for this request. Allowed tools (name: description. "
@@ -104,6 +106,8 @@ def build_tool_snapshot(cfg: Any, *, share_long_term_memory: bool, log_tag: str 
         if name in ALWAYS_EXCLUDED_TOOLS or (personal and not share_long_term_memory):
             continue
         if name in ACTIVITY_TOOLS and not activity_runtime.shared_with_cloud(cfg):
+            continue
+        if name in SHARED_ONLY_WHEN and getattr(cfg, SHARED_ONLY_WHEN[name], False) is not True:
             continue
         snapshot[name] = {
             "description": (tool.description or "")[:_DESCRIPTION_CHARS],
