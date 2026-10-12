@@ -1247,7 +1247,11 @@ def load_settings() -> Settings:
     voice_collect_seconds = float(merged.get("voice_collect_seconds", 1.0))
     voice_max_collect_seconds = float(merged.get("voice_max_collect_seconds", 180.0))
     voice_wake_wait_seconds = float(merged.get("voice_wake_wait_seconds", 4.5))
-    wake_word = str(merged.get("wake_word", "jarvis")).strip().lower()
+    # A blank wake word would match every utterance, so it falls back to the default.
+    wake_word = _text(merged.get("wake_word"), defaults["wake_word"]).lower()
+    if wake_word != str(merged.get("wake_word") or "").strip().lower():
+        from .debug import debug_log
+        debug_log("wake_word is blank or not text; using the default wake word", "config")
     wake_aliases = [a.strip().lower() for a in _ensure_list(merged.get("wake_aliases")) if a.strip()]
     wake_fuzzy_ratio = float(merged.get("wake_fuzzy_ratio", 0.78))
     whisper_model = _expand_model_reference(merged.get("whisper_model")) or "medium"
@@ -1365,8 +1369,9 @@ def load_settings() -> Settings:
         codex_enabled=merged.get("codex_enabled") is True,
         claude_enabled=merged.get("claude_enabled") is True,
         claude_model=_text(merged.get("claude_model"), defaults["claude_model"]),
+        # Empty (or null) is the model's own default effort, as Settings offers it.
         claude_effort=(merged.get("claude_effort") or "").strip().lower()
-        if isinstance(merged.get("claude_effort"), str) else defaults["claude_effort"],
+        if isinstance(merged.get("claude_effort"), (str, type(None))) else defaults["claude_effort"],
         claude_executable=_text(merged.get("claude_executable"), defaults["claude_executable"]),
         claude_timeout_sec=_bounded_number(merged.get("claude_timeout_sec", 90.0), 90.0, 5.0),
         claude_queue_limit=_bounded_number(merged.get("claude_queue_limit", 1), 1, 0, int),

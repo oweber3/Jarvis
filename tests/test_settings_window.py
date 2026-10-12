@@ -692,3 +692,89 @@ class TestCloudModelChoices:
         win = self.open(tmp_path, monkeypatch, {})
         assert self.entries(win, "codex_model") == CODEX_MODEL_CHOICES
         win.close()
+
+
+@pytest.fixture
+def settings_on(qapp, tmp_path, monkeypatch):
+    """Open the window on a config file in a temporary folder; returns the window, the file and the warnings."""
+    opened, warnings = [], []
+
+    def open_with(values):
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({"_config_version": 6, **values}))
+        monkeypatch.setattr("desktop_app.settings_window.default_config_path", lambda: cfg)
+        monkeypatch.setenv("JARVIS_CONFIG_PATH", str(cfg))
+        monkeypatch.setattr("desktop_app.settings_window.get_input_devices", lambda: [("", "System Default")])
+        monkeypatch.setattr("desktop_app.settings_window.QMessageBox.information", lambda *a, **k: None)
+        monkeypatch.setattr("desktop_app.settings_window.QMessageBox.warning",
+                            lambda parent, title, text, *a, **k: warnings.append(text))
+        from desktop_app.settings_window import SettingsWindow
+        win = SettingsWindow()
+        opened.append(win)
+        return win, cfg, warnings
+
+    yield open_with
+    for win in opened:
+        win.close()
+
+
+def _choose(combo, value):
+    index = combo.findData(value)
+    assert index >= 0, value
+    combo.setCurrentIndex(index)
+
+
+class TestOfferedEmptyChoices:
+    """An offered empty choice ("Model default", "Automatic") is a value of its own and survives save and load."""
+
+    def test_claude_model_default_effort_is_what_claude_then_runs_with(self, settings_on):
+        from jarvis.config import load_settings
+        win, cfg, _ = settings_on({"claude_enabled": True})
+        _choose(win._widgets["claude_effort"], "")
+        win._on_save()
+        assert json.loads(cfg.read_text())["claude_effort"] == ""
+        assert load_settings().claude_effort == ""
+
+        reopened, _, _ = settings_on(json.loads(cfg.read_text()))
+        assert reopened._widgets["claude_effort"].currentData() == ""
+
+    @pytest.mark.parametrize("key,chosen", [("fast_model", "gemma4:e2b"), ("tool_model", "gpt-oss:20b"),
+                                            ("embedding_provider", "ollama")])
+    def test_an_empty_choice_that_is_the_default_is_left_out_of_the_file(self, settings_on, key, chosen):
+        win, cfg, _ = settings_on({key: chosen})
+        _choose(win._widgets[key], "")
+        win._on_save()
+        assert key not in json.loads(cfg.read_text())
+
+    def test_every_offered_empty_choice_saves_as_empty_text(self, settings_on):
+        """No choice field that offers "" ever writes null, whatever its default."""
+        from desktop_app.settings_window import FIELD_METADATA
+        win, _, _ = settings_on({})
+        offering = [fm for fm in FIELD_METADATA
+                    if fm.field_type == "choice" and any(v == "" for v, _ in (fm.choices or []))]
+        assert offering
+        for fm in offering:
+            _choose(win._widgets[fm.key], "")
+            assert win._get_value(fm) == "", fm.key
+
+
+class TestRequiredFields:
+    """A blank wake word would wake Jarvis on every utterance, so Save refuses it and writes nothing."""
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_a_blank_wake_word_is_refused_with_a_message(self, settings_on, blank):
+        win, cfg, warnings = settings_on({"wake_word": "friday"})
+        before = cfg.read_text()
+        win._widgets["wake_word"].setText(blank)
+        win._on_save()
+        assert cfg.read_text() == before
+        assert len(warnings) == 1 and "Wake Word" in warnings[0] and "empty" in warnings[0]
+        assert "—" not in warnings[0]
+        assert win._sidebar.currentItem().text() == "Listening"
+        assert win.result() != win.DialogCode.Accepted
+
+    def test_a_new_wake_word_is_saved(self, settings_on):
+        win, cfg, warnings = settings_on({})
+        win._widgets["wake_word"].setText("Friday")
+        win._on_save()
+        assert warnings == [] and json.loads(cfg.read_text())["wake_word"] == "Friday"

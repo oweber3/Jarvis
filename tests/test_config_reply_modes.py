@@ -55,6 +55,15 @@ class TestOverrides:
         assert cfg.reply_mode == "claude" and cfg.claude_enabled is True
         assert (cfg.claude_model, cfg.claude_effort, cfg.claude_max_tool_calls) == ("haiku", "", 3)
 
+    def test_a_null_claude_effort_is_the_model_default(self, tmp_path, monkeypatch):
+        """Settings shows ``null`` as "Model default", so Claude runs with the model's own effort."""
+        write(tmp_path, monkeypatch, {"_config_version": 6, "claude_effort": None})
+        assert load_settings().claude_effort == ""
+
+    def test_a_claude_effort_that_is_not_text_uses_the_default(self, tmp_path, monkeypatch):
+        write(tmp_path, monkeypatch, {"_config_version": 6, "claude_effort": 3})
+        assert load_settings().claude_effort == get_default_config()["claude_effort"]
+
     @pytest.mark.parametrize("key,value,expected", [
         ("claude_timeout_sec", -5, 5.0),
         ("claude_queue_limit", -3, 0),

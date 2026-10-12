@@ -20,6 +20,12 @@ from .hand_tracking import Hand, HandFrame, Landmark
 Rectangle = Tuple[int, int, int, int]
 
 HAND_LOST_SEC = 0.25
+# A slow camera (dim light) delivers frames further apart: the hand counts as lost only after this many of its
+# frame intervals without it, when that is longer than HAND_LOST_SEC.
+LOST_FRAME_INTERVALS = 1.5
+# The measured frame interval is a smoothed average of the gaps between delivered frames, counted as at most this.
+MAX_FRAME_INTERVAL_SEC = 1.0
+_INTERVAL_SMOOTHING = 0.2
 # The driving hand is followed only while its palm moves less than this share of the camera's width a frame.
 MAX_HAND_JUMP = 0.25
 # Leaving a scroll needs the new gesture to last at least this long: the raised fingers bend as the hand moves.
@@ -207,6 +213,9 @@ class WindowSnap:
         self._last_t: Optional[float] = None
         self._last_palm: Optional[Tuple[float, float]] = None
         self._last_hand: Optional[float] = None
+        self._last_arrival: Optional[float] = None
+        self._frame_interval: Optional[float] = None  # smoothed gap between delivered frames
+        self._slow_camera = False
         self._raised: Dict[str, bool] = {}
         self._gesture: Optional[str] = None
         self._candidate: Optional[str] = None
@@ -241,6 +250,7 @@ class WindowSnap:
             if self._closed:
                 return
             arrived = self._clock()
+            self._measure_interval(arrived)
             chosen = self._choose(frame.hands)
             if chosen is None:
                 self._check_lost(arrived)
@@ -306,8 +316,29 @@ class WindowSnap:
                 self._raised.setdefault(finger, False)
         return shape_of(frozenset(f for f in FINGERS if self._raised[f]))
 
+    def _measure_interval(self, arrived: float) -> None:
+        """Follow how far apart frames arrive, so a slow camera's gaps are not taken for a lost hand."""
+        previous, self._last_arrival = self._last_arrival, arrived
+        if previous is None or arrived <= previous:
+            return
+        gap = min(arrived - previous, MAX_FRAME_INTERVAL_SEC)
+        self._frame_interval = gap if self._frame_interval is None else (
+            self._frame_interval + _INTERVAL_SMOOTHING * (gap - self._frame_interval))
+        slow = LOST_FRAME_INTERVALS * self._frame_interval > HAND_LOST_SEC
+        if slow != self._slow_camera:
+            self._slow_camera = slow
+            debug_log("gesture snapping: slow camera, waiting longer before a hand counts as lost" if slow
+                      else "gesture snapping: camera back to its usual rate", "gestures")
+
+    def lost_after(self) -> float:
+        """Seconds without the driving hand after which it counts as lost: ``HAND_LOST_SEC``, or one and a half
+        measured frame intervals when the camera is slower than that allows."""
+        if self._frame_interval is None:
+            return HAND_LOST_SEC
+        return max(HAND_LOST_SEC, LOST_FRAME_INTERVALS * self._frame_interval)
+
     def _check_lost(self, now: float) -> None:
-        if self._last_hand is None or now - self._last_hand < HAND_LOST_SEC:
+        if self._last_hand is None or now - self._last_hand < self.lost_after():
             return
         if self._state == _IDLE and self._gesture is None and self._candidate is None:
             return

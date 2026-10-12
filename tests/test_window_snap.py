@@ -496,6 +496,67 @@ def test_slow_detection_does_not_let_go():
     assert rig.snap.state == "holding"
 
 
+class SlowCamera:
+    """Frames every ``period`` seconds (a webcam in dim light), with the watchdog ticking every 50 ms on its own
+    clock, out of step with the frames."""
+
+    def __init__(self, desk, period):
+        self.desk, self.period = desk, period
+        self.clock = Clock()
+        self.snap = WindowSnap(desk, settings(), clock=self.clock)
+        self.t = 0.0
+        self._tick = 0.025
+
+    def _run_watchdog(self, until):
+        while self._tick < until:
+            self.clock.now = self._tick
+            self.snap.tick()
+            self._tick += 0.05
+
+    def show(self, *hands, frames=1):
+        for _ in range(frames):
+            self.t += self.period
+            self._run_watchdog(self.t)
+            self.clock.now = self.t
+            self.snap.on_frame(frame(self.t, *hands))
+
+    def wait(self, seconds):
+        self._run_watchdog(self.t + seconds)
+
+
+@pytest.mark.parametrize("fps", [3.3, 2.0])
+def test_a_slow_camera_with_the_hand_always_in_view_aims_grabs_and_holds(fps):
+    win = window((600, 300, 1200, 800))
+    cam = SlowCamera(FakeDesktop(windows=[win]), 1 / fps)
+    for i in range(6):
+        cam.show(hand(0.45 + i * 0.01, 0.5))
+    assert cam.desk.of("pointer") and cam.snap.state == "aiming"
+    cam.show(hand(0.5, 0.5, gesture="fist"), frames=3)
+    assert cam.snap.state == "holding"
+    for i in range(6):
+        cam.show(hand(0.5 + i * 0.01, 0.5, gesture="fist"))
+    assert cam.snap.state == "holding" and cam.desk.of("window")
+
+
+def test_a_slow_camera_still_lets_go_when_the_hand_leaves_view():
+    cam = SlowCamera(FakeDesktop(windows=[window((0, 0, 1920, 1080))]), 1 / 3.3)
+    cam.show(hand(0.5, 0.5), frames=4)
+    cam.show(hand(0.5, 0.5, gesture="fist"), frames=3)
+    assert cam.snap.state == "holding"
+    cam.show(frames=2)  # two frames without the hand
+    assert cam.snap.state == "paused"
+
+
+def test_a_frozen_slow_camera_lets_go_within_one_and_a_half_seconds():
+    from jarvis.gestures.window_snap import LOST_FRAME_INTERVALS, MAX_FRAME_INTERVAL_SEC
+    cam = SlowCamera(FakeDesktop(windows=[window((0, 0, 1920, 1080))]), 1.0)
+    cam.show(hand(0.5, 0.5), frames=4)
+    cam.show(hand(0.5, 0.5, gesture="fist"), frames=3)
+    assert cam.snap.state == "holding"
+    cam.wait(LOST_FRAME_INTERVALS * MAX_FRAME_INTERVAL_SEC + 0.1)
+    assert cam.snap.state == "paused"
+
+
 def test_closing_while_holding_leaves_the_window_and_later_frames_do_nothing():
     win = window((600, 300, 1200, 800))
     rig = Rig(FakeDesktop(windows=[win]))
