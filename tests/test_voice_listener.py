@@ -5,6 +5,7 @@ These tests verify the Whisper model loading and fallback logic.
 """
 
 from unittest.mock import patch, MagicMock, call
+import itertools
 import time
 import pytest
 
@@ -958,7 +959,7 @@ class TestCrossPlatformAudioHealthWarning:
 
                             with patch("jarvis.listening.listener.time") as mock_time:
                                 mock_time.time.side_effect = advancing_time
-                                mock_time.monotonic.side_effect = [0, 6, 6, 6]
+                                mock_time.monotonic.side_effect = itertools.chain([0], itertools.repeat(6))
                                 mock_time.sleep = time.sleep
 
                                 # No LLM warmup threads: keeps time.time() call

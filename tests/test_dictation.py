@@ -532,6 +532,50 @@ class TestRecordingStateMachine:
             engine._stop_recording(discard=True)
             assert end_called.is_set()
 
+    def test_dictation_stream_counts_as_open_audio_only_while_recording(self):
+        """The microphone recovery must not restart PortAudio under a dictation."""
+        from src.jarvis.utils import audio_lock
+        engine = _make_engine()
+        with patch("src.jarvis.dictation.dictation_engine.sd") as mock_sd,              patch("src.jarvis.dictation.dictation_engine._play_beep"):
+            mock_sd.InputStream.return_value = MagicMock()
+            engine._recording = True
+            engine._session = 1
+            engine._begin_recording(1)
+            assert audio_lock.open_stream_count() == 1
+            engine._stop_recording(discard=True)
+        assert audio_lock.open_stream_count() == 0
+
+    def test_quick_tap_whose_end_lands_before_its_start_leaves_the_listener_resumed(self):
+        """A tap released while the worker is starting can deliver its end notice first.
+
+        The daemon pauses the voice listener on the start notice and resumes it
+        on the end notice, so a start landing last would leave Jarvis deaf.
+        """
+        listener_paused = {'value': False}
+        ended = threading.Event()
+        engine = None
+
+        def on_end():
+            listener_paused['value'] = False
+            ended.set()
+
+        def on_start():
+            engine._stop_recording()  # the release, and its end notice, win the race
+            assert ended.wait(2)
+            listener_paused['value'] = True
+
+        engine = _make_engine(on_dictation_start=on_start, on_dictation_end=on_end)
+        with patch("src.jarvis.dictation.dictation_engine.sd") as mock_sd, \
+             patch("src.jarvis.dictation.dictation_engine._play_beep"):
+            mock_sd.InputStream.return_value = MagicMock()
+            engine._recording = True
+            engine._session = 1
+            engine._begin_recording(1)
+
+        assert listener_paused['value'] is False
+        assert engine._stream is None
+        assert not engine._recording
+
 
 # ---------------------------------------------------------------------------
 # Transcription

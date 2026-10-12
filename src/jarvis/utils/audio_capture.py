@@ -17,7 +17,8 @@ def resolve_input_device(sounddevice, voice_device, devices=None):
         pass
 
     if devices is None:
-        devices = sounddevice.query_devices()
+        with portaudio_lock:
+            devices = sounddevice.query_devices()
     for index, device in enumerate(devices):
         name = str(device.get('name') or '')
         if (device.get('max_input_channels') or 0) > 0 and selected.lower() in name.lower():
@@ -58,8 +59,9 @@ def open_input_stream(sounddevice, sample_rate, frame_ms, device_kwargs, *,
             debug_log(f'Input format rejected: {rate} Hz, {channels} channel(s): {exc}', log_category)
             if len(candidates) == 1:
                 try:
-                    info = (sounddevice.query_devices(device_kwargs['device'])
-                            if 'device' in device_kwargs else sounddevice.query_devices(kind='input'))
+                    with portaudio_lock if serialise else nullcontext():
+                        info = (sounddevice.query_devices(device_kwargs['device'])
+                                if 'device' in device_kwargs else sounddevice.query_devices(kind='input'))
                     native_rate = int(info.get('default_samplerate', sample_rate))
                     max_channels = int(info.get('max_input_channels', 1))
                 except Exception:

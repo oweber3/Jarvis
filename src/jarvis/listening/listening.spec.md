@@ -36,6 +36,39 @@ Warnings are transition-based; dictation pauses suspend health checks. With
 peak level and capture rate, without saving microphone audio. Linux warnings
 point users to PipeWire/PulseAudio recording-source routing.
 
+A capture stream that stops delivering audio (sleep and resume, a USB or
+Bluetooth microphone dropping out or being unplugged, a driver restart) is
+reopened by the listener loop, so listening never needs a restart:
+
+- Missing callbacks start recovery at the health check that reports them.
+  Silent samples start one reopen per silent spell, since a stream that lost
+  its device can deliver silence; a muted microphone then stays silent and is
+  not reopened again until audio has been heard.
+- The first attempt reopens the selected input as it is. Each later attempt
+  first refreshes PortAudio's device list (restarting PortAudio, the only way
+  it sees devices added since it started), then resolves the input again: a
+  named microphone is found at its new position, a microphone chosen in
+  Settings (stored as its device number) is found again by its name and host
+  API rather than by the number, so no other device is used while it is
+  missing, and with the system default the current default input is used.
+- Restarting PortAudio closes every open stream and replaces the device
+  table, so a refresh runs under the PortAudio lock (no stream opens and no
+  device is queried meanwhile) and waits while any other recorded stream is
+  open (Jarvis's voice, a dictation) or the startup microphone permission
+  check, which opens its stream without the lock, is still running.
+- Attempts are spaced 5 s apart, doubling up to 30 s, and continue until the
+  microphone is back, so one plugged in again minutes later is picked up.
+  Recovery pauses while dictation is recording.
+- The console shows the existing missing-callback or silence warning, one
+  `🔄 Reconnecting to the microphone...` line per outage, and
+  `✅ Microphone audio is arriving again.` once audio is heard. Attempts and
+  failures are debug logs.
+- A working stream stays on its device: a change of the system default input
+  is followed only when the stream stops delivering audio.
+
+Captured audio still queued from the lost stream is discarded with the
+utterance in progress.
+
 The capture queue between the audio callback and the listener thread holds
 `intent_judge_timeout_sec` (counted up to the Settings maximum of 30 s) plus
 2 s of audio, at least 64 blocks. The intent judge runs on the listener thread,
@@ -127,8 +160,13 @@ All stream lifecycle calls (`InputStream`/`OutputStream` construction,
 `jarvis.utils.audio_lock.portaudio_lock`, shared with the dictation engine
 and TTS. PortAudio documents stream open/close as not
 thread safe; unserialised calls across threads abort the whole app on
-Windows (#462, #401, #422). The run loop uses `_serialised_stream` instead
-of the raw `with stream:` context manager. Two deliberate exceptions: the
+Windows (#462, #401, #422). The run loop starts, aborts and closes its
+capture stream under the lock rather than with the raw `with stream:`
+context manager. Device queries and restarting PortAudio to refresh the
+device list (see Capture format and health) also run under it, and the
+capture, TTS and dictation streams are recorded as open
+(`stream_opened`/`stream_closed`) so a restart can wait for them. Two
+deliberate exceptions: the
 Windows mic-permission probe opens its stream *without* the lock (that open
 can hang indefinitely when Windows blocks mic access, and hanging while
 holding the process-wide lock would freeze every audio user), and its

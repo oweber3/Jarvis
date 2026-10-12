@@ -884,7 +884,10 @@ def get_input_devices() -> List[tuple[str, str]]:
     devices: List[tuple[str, str]] = [("", "System Default")]
     try:
         import sounddevice as sd
-        for idx, dev in enumerate(sd.query_devices()):
+        from jarvis.utils.audio_lock import portaudio_lock
+        with portaudio_lock:
+            listed = sd.query_devices()
+        for idx, dev in enumerate(listed):
             try:
                 max_in = int(dev.get("max_input_channels", 0))
             except Exception:

@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from ..assistant_state import AssistantState, set_state
 from .. import voice_levels
 from ..debug import debug_log
-from ..utils.audio_lock import portaudio_lock
+from ..utils.audio_lock import portaudio_lock, stream_closed, stream_opened
 
 if TYPE_CHECKING:
     from ..extensions.api import VoiceOutput, VoiceSink
@@ -1150,6 +1150,7 @@ class PiperTTS:
                                     blocksize=blocksize,
                                     callback=audio_callback,
                                 )
+                                stream_opened(self._audio_stream)
                                 self._audio_stream.start()
                         debug_log(f"Piper TTS first audio {(time.time() - start_time) * 1000:.0f} ms after synthesis began", "tts")
                         self._notify_first_audio()
@@ -1192,6 +1193,7 @@ class PiperTTS:
                     if self._audio_stream is not None:
                         try:
                             with portaudio_lock:
+                                stream_closed(self._audio_stream)
                                 self._audio_stream.close()
                         except Exception:
                             pass
