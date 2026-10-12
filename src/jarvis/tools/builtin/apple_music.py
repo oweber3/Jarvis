@@ -24,7 +24,10 @@ _FAILURES = {
     "no_control": "Apple Music opened the {what}, but its Play control could not be found.",
     "not_started": "Apple Music opened the {what}, but playback did not start. Check that you are signed in "
                    "to Apple Music.",
+    "timed_out": "Apple Music did not respond in time, so playback could not be started.",
+    "busy": "Apple Music is still busy with the previous request. Try again in a moment.",
 }
+_TIMED_OUT = _FAILURES["timed_out"]
 
 
 def _fail(message: str) -> ToolExecutionResult:
@@ -103,10 +106,14 @@ class AppleMusicTool(Tool):
                 context.user_print(f"🎵 Opening {target.track or target.page_title} in Apple Music")
                 outcome = player.play_target(target)
                 what = kind
-        except (TimeoutError, OSError) as exc:
-            debug_log(f"playMusic could not drive the app ({type(exc).__name__})", "music")
+        except TimeoutError:
+            debug_log("playMusic gave up waiting for the app", "music")
+            context.user_print("⚠️ Apple Music did not respond in time")
+            return _fail(_TIMED_OUT)
+        except OSError as exc:
+            debug_log(f"playMusic could not use the app's controls ({type(exc).__name__})", "music")
             context.user_print("⚠️ Could not control Apple Music")
-            return _fail("Apple Music did not respond in time, so playback could not be started.")
+            return _fail("Apple Music's controls could not be used, so playback could not be started.")
         return self._result(outcome, what, context)
 
     def _lookup(self, query: str, kind: str, context: ToolContext):

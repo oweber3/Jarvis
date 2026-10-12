@@ -16,14 +16,17 @@ def control(kind, name="", automation_id="", path=(), patterns=(), expand=None):
                       patterns=frozenset(patterns), expand=expand)
 
 
-def header(path, title, play_id="PlayButtonElement", title_id=""):
-    """A page header: the title text and a Play button side by side."""
-    return [
+def header(path, title, play_id="PlayButtonElement", artist=""):
+    """A page header: the title, the artist (on album pages) and a Play button side by side."""
+    controls = [
         control("group", title, path=path),
-        control("text", title, title_id, path=path + (0,), patterns={"text"}),
-        control("button", "Play", play_id, path=path + (1,), patterns={"invoke"}),
-        control("button", "Shuffle", "ShuffleButtonElement", path=path + (2,), patterns={"invoke"}),
+        control("text", title, path=path + (0,), patterns={"text"}),
+        control("button", "Play", play_id, path=path + (2,), patterns={"invoke"}),
+        control("button", "Shuffle", "ShuffleButtonElement", path=path + (3,), patterns={"invoke"}),
     ]
+    if artist:
+        controls.append(control("text", artist, path=path + (1,), patterns={"text"}))
+    return controls
 
 
 def artist_header(path, name):
@@ -46,7 +49,7 @@ def track_row(path, number, title):
 
 
 def album_page(album, artist, tracks, *, start=0):
-    controls = [control("list", path=(5,), patterns={"scroll", "selection"})] + header((5, 0), album)
+    controls = [control("list", path=(5,), patterns={"scroll", "selection"})] + header((5, 0), album, artist=artist)
     for offset, title in enumerate(tracks):
         controls += track_row((5, 1 + offset), start + offset + 1, title)
     return {"controls": controls, "album": album, "artist": artist, "tracks": list(tracks)}
@@ -175,6 +178,9 @@ class FakeDesktop:
 
     def wait(self, seconds):
         self.waited += seconds
+
+    def clock(self):
+        return self.waited
 
     # Reactions
     def start(self, title, artist, album):

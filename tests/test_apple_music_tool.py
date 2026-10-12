@@ -160,7 +160,8 @@ def test_several_playlists_are_offered_back_to_choose_from(cfg, player, http):
     assert "Road Trip" in result.reply_text and "Road Trip Classics" in result.reply_text
 
 
-@pytest.mark.parametrize("status", ["not_found", "no_control", "not_started", "not_installed"])
+@pytest.mark.parametrize("status", ["not_found", "no_control", "not_started", "not_installed", "timed_out",
+                                    "busy"])
 def test_player_failures_are_reported_as_failures(cfg, player, http, status):
     player.outcome = am.PlayOutcome(status)
     result = run(cfg, query="bohemian rhapsody", kind="song")
@@ -178,7 +179,15 @@ def test_a_player_timeout_is_a_failure_not_a_crash(cfg, player, http, monkeypatc
         raise TimeoutError("took too long")
     monkeypatch.setattr(am, "play_target", stuck)
     result = run(cfg, query="bohemian rhapsody", kind="song")
-    assert not result.success
+    assert not result.success and "in time" in result.reply_text
+
+
+def test_a_control_failure_is_not_reported_as_a_timeout(cfg, player, http, monkeypatch):
+    def broken(target):
+        raise OSError("control went away")
+    monkeypatch.setattr(am, "play_target", broken)
+    result = run(cfg, query="bohemian rhapsody", kind="song")
+    assert not result.success and "in time" not in result.reply_text
 
 
 # --- privacy and safety ------------------------------------------------------------------------------

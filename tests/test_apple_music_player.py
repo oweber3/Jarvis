@@ -113,7 +113,7 @@ def test_the_app_not_being_installed_opens_nothing():
 
 
 @pytest.mark.parametrize("uri", ["https://evil.example/x", "musics://music.apple.com/us/album/1 & calc",
-                                 "music://music.apple.com/us/album/1"])
+                                 "music://music.apple.com/us/album/1", "musics://music.apple.com/us/album/1\n"])
 def test_only_well_formed_apple_music_links_are_opened(uri):
     d = desktop()
     with pytest.raises(ValueError):
@@ -124,9 +124,10 @@ def test_only_well_formed_apple_music_links_are_opened(uri):
 # --- library playlists -------------------------------------------------------------------------------
 
 def playlists_desktop(**kwargs):
-    from fake_apple_music import header, track_row
+    from fake_apple_music import control, header, track_row
     names = ["Favourite Songs", "Road Trip", "Road Trip Classics", "Focus"]
-    pages = {name: {"controls": header((5, 0), name, play_id="PlayButton") + track_row((5, 1), 1, f"{name} opener"),
+    pages = {name: {"controls": [control("list", path=(5,), patterns={"scroll", "selection"})]
+                    + header((5, 0), name, play_id="PlayButton") + track_row((5, 1), 1, f"{name} opener"),
                     "artist": "Various", "album": name, "tracks": [f"{name} opener"]} for name in names}
     return FakeDesktop(playlists=names, playlist_pages=pages, **kwargs)
 
@@ -185,3 +186,46 @@ def test_a_closed_app_is_started_before_looking_for_playlists():
     ("gb", "US", "gb"), ("", "DE", "de"), ("", "", "us"), ("not a country", "FR", "fr"), ("", "001", "us")])
 def test_the_store_country_comes_from_settings_then_the_windows_region(configured, region, expected):
     assert am.store_country(configured, region=lambda: region) == expected
+
+
+# --- review hardening ---------------------------------------------------------------------------------
+
+def test_an_old_page_with_the_same_album_title_by_another_artist_is_never_played():
+    other = album_page(ALBUM, "Someone Else", ["Their Opener"])
+    d = desktop(pages={ALBUM_URI: other})
+    outcome = am.play_target_with(d, album(), page_timeout=1.0)
+    assert outcome.status == "not_found" and d.now is None
+
+
+def test_an_artist_request_never_presses_an_album_page_play_button():
+    self_titled = album_page("Queen", "Queen", ["Keep Yourself Alive"])
+    d = desktop(pages={ARTIST_URI: self_titled})
+    outcome = am.play_target_with(d, artist(), page_timeout=1.0)
+    assert outcome.status == "not_found" and d.now is None
+
+
+def test_an_album_is_confirmed_by_its_album_name_not_any_track_by_the_artist():
+    d = desktop(plays=False, now=NowPlaying("Other", "Queen — News of the World", "paused", APP))
+    outcome = am.play_target_with(d, album(), confirm_timeout=2.0)
+    assert outcome.status == "not_started" and d.resumes == 0
+
+
+def test_a_page_that_never_loads_stops_at_the_overall_deadline_without_acting():
+    d = desktop(load_reads=10_000)
+    outcome = am.play_target_with(d, album(), page_timeout=100.0, total_timeout=5.0)
+    assert outcome.status == "timed_out"
+    assert d.waited <= 5.0 + 1e-6 and d.now is None and not d.actions
+
+
+def test_a_playlist_flow_also_keeps_to_the_overall_deadline():
+    d = playlists_desktop(load_reads=10_000)
+    outcome = am.play_playlist_with(d, "Focus", total_timeout=5.0)
+    assert outcome.status == "timed_out" and d.waited <= 5.0 + 1e-6
+    assert not any(action[0] == "invoke" for action in d.actions)
+    assert d.expanded is False  # the sidebar is still put back
+
+
+def test_a_sidebar_name_is_not_taken_for_one_of_the_playlist_tracks():
+    d = playlists_desktop(plays=False, now=NowPlaying("Road Trip", "Someone — Old Album", "paused", APP))
+    outcome = am.play_playlist_with(d, "Focus", confirm_timeout=2.0)
+    assert outcome.status == "not_started" and d.resumes == 0
