@@ -45,8 +45,8 @@ user said; nothing in code parses the utterance.
 
 - `items` is an array of strings; at most 50 per call. Items are matched by key.
 - Results are JSON: the list's display name, what changed (`added`,
-  `already_there`, `reopened`, `removed`, `checked`, `not_found`) and the
-  list's items after the change. Single-item changes never confirm.
+  `already_there`, `reopened`, `removed`, `checked`, `not_found`, or
+  `removed_count` for `clear`) and the list's items after the change. Single-item changes never confirm.
 - `remove`, `check`, `show`, `clear` and `delete` on a name that does not
   resolve fail with the names of the existing lists, so the model can ask or
   pick the intended one.
