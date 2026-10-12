@@ -413,20 +413,33 @@ def _suppress_stderr():
 # Audio resampling
 # ---------------------------------------------------------------------------
 
-def _has_voice(audio, min_energy: float, rate: int) -> bool:
-    """Whether any 30 ms window of the audio is as loud as the level the voice listener counts as
-    speech (``voice_min_energy``). Whisper turns pure silence into invented phrases, so silent
-    audio is never sent to it."""
+def audio_has_speech(audio, rate: int, min_energy: float) -> bool:
+    """Whether the audio holds speech at all. Whisper turns silence and room noise into invented
+    phrases ("Thanks for watching!"), so audio without speech is never sent to it.
+
+    Uses the Silero detector that ships with faster-whisper (local, offline), which hears quiet
+    speech and ignores noise regardless of level. Without it, a 30 ms window must reach the level
+    the voice listener counts as speech (``voice_min_energy``)."""
     import numpy as np
 
     samples = np.asarray(audio, dtype="float32").ravel()
     if samples.size == 0:
         return False
+    if rate == 16000:
+        try:
+            from faster_whisper.vad import VadOptions, get_speech_timestamps
+        except Exception:
+            pass
+        else:
+            try:
+                return bool(get_speech_timestamps(samples, VadOptions()))
+            except Exception as exc:
+                debug_log(f"dictation speech detector failed ({type(exc).__name__})", "dictation")
     window = max(1, int(rate * 0.03))
-    usable = samples[: samples.size - samples.size % window] if samples.size >= window else samples
-    frames = usable.reshape(-1, min(window, usable.size))
-    peak_rms = float(np.sqrt((frames ** 2).mean(axis=1)).max())
-    return peak_rms >= min_energy
+    if samples.size < window:
+        samples = np.pad(samples, (0, window - samples.size))
+    frames = samples[: samples.size - samples.size % window].reshape(-1, window)
+    return float(np.sqrt((frames ** 2).mean(axis=1)).max()) >= min_energy
 
 
 def _resample(audio, from_rate: int, to_rate: int):
@@ -672,6 +685,9 @@ class DictationEngine:
     on_dictation_result : callable | None
         Called with ``(entry_dict)`` after a successful dictation is saved
         to history. Used by the UI to update the history window.
+    speech_check : callable | None
+        ``(audio, sample_rate) -> bool``: whether the audio holds speech at all.
+        Silent audio is never sent to Whisper. Defaults to ``audio_has_speech``.
     """
 
     def __init__(
@@ -692,6 +708,7 @@ class DictationEngine:
         custom_dictionary: Optional[list] = None,
         cfg: Any = None,
         thinking: bool = False,
+        speech_check: Optional[Callable[[Any, int], bool]] = None,
     ) -> None:
         self._whisper_model_ref = whisper_model_ref
         self._whisper_backend_ref = whisper_backend_ref
@@ -709,6 +726,8 @@ class DictationEngine:
         self._custom_dictionary = custom_dictionary or []
         self._cfg = cfg
         self._thinking = thinking
+        self._speech_check = speech_check or (
+            lambda audio, rate: audio_has_speech(audio, rate, self._setting("voice_min_energy", 0.02)))
 
         # Parse hotkey
         self._modifiers, self._trigger = parse_hotkey(hotkey)
@@ -1449,7 +1468,7 @@ class DictationEngine:
 
     def _transcribe(self, audio) -> str:
         """Transcribe audio using the shared Whisper model. Silence gives an empty transcript."""
-        if not _has_voice(audio, self._setting("voice_min_energy", 0.02), self._target_sample_rate):
+        if not self._speech_check(audio, self._target_sample_rate):
             debug_log("dictation audio is silent, not transcribed", "dictation")
             return ""
         backend = self._whisper_backend_ref()

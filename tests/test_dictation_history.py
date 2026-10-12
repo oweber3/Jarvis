@@ -565,6 +565,7 @@ class TestEngineHistoryIntegration:
             mlx_repo_ref=lambda: None,
             hotkey="ctrl+shift+d",
             transcribe_lock=threading.Lock(),
+            speech_check=lambda _audio, _rate: True,
         )
         assert hasattr(engine, "history")
         assert engine.history is not None
@@ -587,11 +588,12 @@ class TestEngineHistoryIntegration:
             mlx_repo_ref=lambda: None,
             hotkey="ctrl+shift+d",
             transcribe_lock=threading.Lock(),
+            speech_check=lambda _audio, _rate: True,
         )
         # Replace history with one using temp path
         engine.history = DictationHistory(path=tmp_path / "h.json")
 
-        frames = [np.full(8000, 0.1, dtype=np.float32)]  # 0.5s
+        frames = [np.zeros(8000, dtype=np.float32)]  # 0.5s
         engine._transcribe_and_paste(frames)
 
         assert engine.history.count == 1
@@ -618,10 +620,11 @@ class TestEngineHistoryIntegration:
             hotkey="ctrl+shift+d",
             transcribe_lock=threading.Lock(),
             on_dictation_result=lambda entry: results.append(entry),
+            speech_check=lambda _audio, _rate: True,
         )
         engine.history = DictationHistory(path=tmp_path / "h.json")
 
-        frames = [np.full(8000, 0.1, dtype=np.float32)]
+        frames = [np.zeros(8000, dtype=np.float32)]
         engine._transcribe_and_paste(frames)
 
         assert len(results) == 1
@@ -643,6 +646,7 @@ class TestEngineHistoryIntegration:
             mlx_repo_ref=lambda: None,
             hotkey="ctrl+shift+d",
             transcribe_lock=threading.Lock(),
+            speech_check=lambda _audio, _rate: True,
         )
         engine.history = DictationHistory(path=tmp_path / "h.json")
 

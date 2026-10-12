@@ -109,8 +109,10 @@ Whisper turns silence and room noise into stock phrases ("Thanks for watching!")
 transcription, hold-to-dictate and a capture for a caller alike, applies two gates before any
 post-processing:
 
-1. **Silence gate.** Audio in which no 30 ms window reaches `voice_min_energy` (the level the
-   voice listener counts as speech) gives an empty transcript without calling Whisper.
+1. **Speech gate.** Audio without speech gives an empty transcript without calling Whisper
+   (`audio_has_speech`). It uses the Silero detector that ships with faster-whisper, which runs
+   offline, hears quiet speech and ignores noise whatever its level. Where Silero is unavailable,
+   a 30 ms window must reach `voice_min_energy`, the level the voice listener counts as speech.
 2. **No-speech gate.** A segment whose `no_speech_prob` is at or above
    `whisper_no_speech_threshold` is dropped, with the voice listener's own check
    (`is_whisper_hallucination`), on faster-whisper and MLX. Segments without a score are kept.
