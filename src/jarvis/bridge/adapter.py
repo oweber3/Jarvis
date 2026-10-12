@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional
 
 from ..debug import debug_log
+from ..llm.errors import RequestCancelled
 from ..utils.redact import redact
 from . import runtime
 from .settings import BridgeSettings, bridge_settings
@@ -93,4 +94,12 @@ def run_bridge_reply(mode: str, db: Any, cfg: Any, tts: Any, redacted: str, dial
               "bridge")
     if outcome.kind == "cancelled" or not (outcome.text or "").strip():
         return None
-    return deliver(outcome.text, redacted, cfg, tts, dialogue_memory, quiet)
+    try:
+        return deliver(outcome.text, redacted, cfg, tts, dialogue_memory, quiet)
+    except RequestCancelled:
+        # Stopped before the question was shown: nobody heard it, so a later "yes" must not approve it.
+        if outcome.confirmation_id:
+            from ..tools.confirmation import get_confirmation_store
+            get_confirmation_store().discard_pending(outcome.confirmation_id, "cancelled")
+            debug_log("confirmation of a stopped request discarded", "bridge")
+        raise

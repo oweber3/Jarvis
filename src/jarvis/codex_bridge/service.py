@@ -43,6 +43,8 @@ from .prompts import assistant_instructions
 
 BRIDGE_TOOLS = (EXECUTE_TOOL,)
 _POLL_SEC = 0.25
+# A request waiting for its turn checks this often whether it was stopped meanwhile.
+_TURN_SLICE_SEC = 0.1
 _RPC_TIMEOUT_SEC = 20.0
 _CLOSE_TIMEOUT_SEC = 3.0
 # A tool's images reach the model as the next input of the turn (``_steer_images``), labelled as data.
@@ -235,9 +237,12 @@ class BridgeService:
                 return _error("payload_too_large")
             rid = req.id
             self._waiting.add(rid)
-        if not self._turn_lock.acquire(timeout=self._deadline_sec):
+        if not self._wait_for_turn(rid):
             with self._lock:
                 self._waiting.discard(rid)
+            if self.broker.state_of(rid) is State.CANCELLED:
+                debug_log(f"request {rid[:8]} stopped while waiting for its turn", "codex")
+                return BridgeOutcome("cancelled", "Cancelled.", "cancelled")
             self.broker.cancel(rid, "queue_timeout")
             return _error("timeout")
         try:
@@ -262,6 +267,25 @@ class BridgeService:
                 self._active_rid, self._session = None, None
             self._turn_lock.release()
             self._prestart_thread()
+
+    def _wait_for_turn(self, rid: str) -> bool:
+        """Take the turn lock for ``rid``. Waits in short slices and gives up as soon as the request has
+        ended (stopped, switched away or past its deadline), so a stop never waits for a readiness check."""
+        deadline = time.monotonic() + self._deadline_sec
+        while True:
+            if self._turn_lock.acquire(timeout=_TURN_SLICE_SEC):
+                return True
+            state = self.broker.state_of(rid)
+            if state is None or state in TERMINAL or time.monotonic() >= deadline:
+                return False
+
+    def _discard_confirmation(self, rid: str) -> None:
+        """Drop a confirmation the request raised: nobody will hear its question, so a later "yes" must not
+        approve it."""
+        pending = self._store.pending_for_ref(rid)
+        if pending is not None:
+            self._store.discard_pending(pending.request.id, "cancelled")
+            debug_log("confirmation for a cancelled request discarded", "codex")
 
     def prepare(self) -> Optional[str]:
         """Start and check the Codex child ahead of the first request. Returns a failure reason or None."""
@@ -319,6 +343,7 @@ class BridgeService:
         if state is None or state in TERMINAL:
             return cancelled > 0
         self.broker.cancel(rid, reason)
+        self._discard_confirmation(rid)
         if session is not None and session.turn_id and not session.turn_done:
             threading.Thread(target=self._interrupt, args=(session,), daemon=True,
                              name="codex-interrupt").start()
@@ -611,7 +636,9 @@ class BridgeService:
         state = self.broker.state_of(rid)
         if state is State.AWAITING_CONFIRMATION:
             question = session.question if session else None
-            return BridgeOutcome("awaiting_confirmation", question or "Please confirm the action.")
+            req = self.broker.request_of(rid)
+            return BridgeOutcome("awaiting_confirmation", question or "Please confirm the action.",
+                                 confirmation_id=req.confirmation_id if req else None)
         if state is State.CANCELLED:
             return BridgeOutcome("cancelled", "Cancelled.", "cancelled")
         if state is State.EXPIRED:
