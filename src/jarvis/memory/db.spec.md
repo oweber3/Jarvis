@@ -40,7 +40,9 @@ a lower version is brought up once:
 
 The repair runs before the vector store loads, so only live embeddings are
 loaded. A repair that fails (the file is busy, for example) is rolled back and
-logged, the database opens as it is, and the repair runs at the next open.
+logged, the database opens as it is, and the repair runs at the next open. The
+repair waits at most 250 ms for another connection's lock, then the
+connection's usual busy timeout applies again.
 
 ## Activity sessions
 

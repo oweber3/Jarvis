@@ -826,12 +826,13 @@ class DialogueMemory:
         messages = self.get_recent_messages()
         return [f"{msg['role'].title()}: {msg['content']}" for msg in messages]
 
-    def get_recent_messages(self, include_private: bool = True) -> List[dict]:
+    def get_recent_messages(self, include_private: bool = True, flag_private: bool = False) -> List[dict]:
         """
         Get recent messages (last 5 minutes) formatted for LLM API.
 
         ``include_private=False`` leaves out messages added with ``diary=False`` (they quote
-        the activity log), for contexts that leave the PC.
+        the activity log), for contexts that leave the PC. ``flag_private=True`` adds a
+        ``private`` key to each message saying whether it is one of those.
 
         Returns:
             List of message dictionaries with 'role' and 'content' keys
@@ -845,7 +846,9 @@ class DialogueMemory:
             recent_messages = [msg for msg in self._messages if msg[0] >= cutoff
                                and (include_private or msg[0] not in self._diary_excluded)]
 
-            return [{"role": role, "content": content} for _, role, content in recent_messages]
+            return [{"role": role, "content": content,
+                     **({"private": ts in self._diary_excluded} if flag_private else {})}
+                    for ts, role, content in recent_messages]
 
     # ------------------------------------------------------------------
     # Session / rewind support (text-chat sessions)
@@ -1479,6 +1482,16 @@ TOPICS: [topic1, topic2, topic3]"""
 # the day's summary a batch at a time, so nothing is dropped and the model's input stays bounded.
 DIARY_BATCH_CHUNKS = 10
 
+# Embedding a stored summary is bounded by this, or by what is left of a total budget.
+_DIARY_EMBED_TIMEOUT_SEC = 15.0
+
+# Streamed between the summaries of consecutive batches, so a live view shows them apart.
+DIARY_BATCH_SEPARATOR = "\n\n"
+
+
+def _remaining(deadline: Optional[float], clock: Callable[[], float]) -> Optional[float]:
+    return None if deadline is None else deadline - clock()
+
 
 def update_daily_conversation_summary(
     db: Database,
@@ -1491,24 +1504,32 @@ def update_daily_conversation_summary(
     on_token: Optional[Callable[[str], None]] = None,
     thinking: bool = False,
     on_batch_stored: Optional[Callable[[int], None]] = None,
+    total_timeout_sec: Optional[float] = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Optional[int]:
     """
     Fold ``new_chunks`` into today's conversation summary, ``DIARY_BATCH_CHUNKS`` at a time.
 
-    Each batch updates the stored summary before the next one is sent, so every chunk is
-    summarised however long the conversation was. ``on_batch_stored(count)`` reports, after each
-    stored batch, how many of ``new_chunks`` the stored summary now covers.
+    Each batch updates the stored summary, and its embedding, before the next one is sent, so
+    every chunk is summarised however long the conversation was and the stored embedding always
+    matches the stored text. ``on_batch_stored(count)`` reports, after each stored batch, how many
+    of ``new_chunks`` the stored summary now covers.
 
     Args:
-        on_token: Optional callback for streaming tokens (for live UI updates)
+        timeout_sec: Bound on each summariser call.
+        on_token: Optional callback for streaming tokens (for live UI updates). Consecutive
+            batches are separated by ``DIARY_BATCH_SEPARATOR``.
+        total_timeout_sec: Optional bound on the whole pass (shutdown). No batch starts once it
+            is spent, and each call gets at most what is left; the remaining chunks stay unsaved.
 
     Returns the summary ID when every chunk was summarised, None otherwise. Batches stored before
-    a failure stay stored.
+    a failure or the end of the budget stay stored.
     """
     if not new_chunks:
         return None
 
     today = datetime.now(timezone.utc).date().isoformat()  # YYYY-MM-DD format
+    deadline = None if total_timeout_sec is None else clock() + total_timeout_sec
 
     try:
         # Redact sensitive information from chunks before processing
@@ -1527,23 +1548,39 @@ def update_daily_conversation_summary(
         topics: Optional[str] = None
         summary_id: Optional[int] = None
         summarised = 0
+        embed = bool(db.can_store_embeddings and cfg.embedding_model)
 
         for start in range(0, len(redacted_chunks), DIARY_BATCH_CHUNKS):
+            left = _remaining(deadline, clock)
+            if left is not None and left <= 0:
+                debug_log(f"conversation summary stopped: time budget spent after {summarised} of "
+                          f"{len(redacted_chunks)} chunks", "memory")
+                break
+            if start and on_token is not None:
+                on_token(DIARY_BATCH_SEPARATOR)
             batch = redacted_chunks[start:start + DIARY_BATCH_CHUNKS]
             new_summary, new_topics = generate_conversation_summary(
                 batch, summary, cfg,
-                timeout_sec=timeout_sec, on_token=on_token, thinking=thinking,
+                timeout_sec=timeout_sec if left is None else min(timeout_sec, left),
+                on_token=on_token, thinking=thinking,
             )
             if new_summary is None or new_topics is None:
                 debug_log(f"conversation summary stopped: a batch failed after {summarised} of "
                           f"{len(redacted_chunks)} chunks", "memory")
                 break
+            # Embedded before anything is stored, then stored together: a pass cut short (a
+            # killed shutdown) leaves the previous text with its own embedding, never a mix.
+            vec = _embed_summary(cfg, new_summary, new_topics, _remaining(deadline, clock)) if embed else None
             summary_id = db.upsert_conversation_summary(
                 date_utc=today,
                 summary=new_summary,
                 topics=new_topics,
                 source_app=source_app,
             )
+            if vec is not None:
+                db.upsert_summary_embedding(summary_id, vec)
+            elif embed:
+                db.delete_summary_embedding(summary_id)  # an embedding of older text would mislead
             summary, topics = new_summary, new_topics
             summarised += len(batch)
             if on_batch_stored is not None:
@@ -1559,23 +1596,23 @@ def update_daily_conversation_summary(
         debug_log(f"  summary: {summary_preview}", "memory")
         debug_log(f"  topics: {topics}", "memory")
 
-        # Generate and store embedding for semantic search. Gate on a
-        # configured embedding model too (matching the search paths) so an
-        # empty model never burns a doomed embed round-trip.
-        if db.can_store_embeddings and cfg.embedding_model:
-            # Combine summary and topics for embedding
-            text_for_embedding = f"{summary} {topics}"
-            vec = _embed_text(text_for_embedding, cfg, timeout_sec=15.0)
-            if vec is not None:
-                db.upsert_summary_embedding(summary_id, vec)
-            else:
-                debug_log("diary summary stored without an embedding (embedding unavailable)", "memory")
-
         return summary_id if summarised == len(redacted_chunks) else None
 
     except Exception as exc:
         debug_log(f"conversation summary update failed: {type(exc).__name__}", "memory")
         return None
+
+
+def _embed_summary(cfg, summary: str, topics: str, left: Optional[float]) -> Optional[list[float]]:
+    """Embedding of a summary and its topics, within what is left of a budget; None when unavailable."""
+    if left is not None and left <= 0:
+        debug_log("diary summary embedding skipped (time budget spent)", "memory")
+        return None
+    timeout = _DIARY_EMBED_TIMEOUT_SEC if left is None else min(_DIARY_EMBED_TIMEOUT_SEC, left)
+    vec = _embed_text(f"{summary} {topics}", cfg, timeout_sec=timeout)
+    if vec is None:
+        debug_log("diary summary stored without an embedding (embedding unavailable)", "memory")
+    return vec
 
 
 def search_conversation_memory_by_keywords(
@@ -1858,6 +1895,8 @@ def update_diary_from_dialogue_memory(
     on_token: Optional[Callable[[str], None]] = None,
     thinking: bool = False,
     graph_picker_model: Optional[str] = None,
+    total_timeout_sec: Optional[float] = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Optional[int]:
     """
     Update the diary with pending interactions from dialogue memory.
@@ -1868,9 +1907,12 @@ def update_diary_from_dialogue_memory(
 
     Args:
         on_token: Optional callback for streaming tokens (for live UI updates)
+        total_timeout_sec: Optional bound on the whole pass, summary batches and graph update
+            together (shutdown). Turns not summarised within it stay pending.
 
     Returns the summary ID if successful, None otherwise.
     """
+    deadline = None if total_timeout_sec is None else clock() + total_timeout_sec
     debug_log(f"update_diary_from_dialogue_memory called: force={force}", "memory")
 
     if not force and not dialogue_memory.should_update_diary():
@@ -1912,6 +1954,8 @@ def update_diary_from_dialogue_memory(
             on_token=on_token,
             thinking=thinking,
             on_batch_stored=lambda count: summarised.__setitem__(0, count),
+            total_timeout_sec=total_timeout_sec,
+            clock=clock,
         )
 
         debug_log(f"update_daily_conversation_summary returned: {summary_id}", "memory")
@@ -1942,11 +1986,15 @@ def update_diary_from_dialogue_memory(
                 existing = db.get_conversation_summary(today, source_app)
                 summary_text = existing['summary'] if existing else None
 
-                if summary_text:
+                left = _remaining(deadline, clock)
+                if summary_text and left is not None and left <= 0:
+                    # The next pass extracts from the same cumulative summary.
+                    debug_log("graph memory update skipped: time budget spent", "memory")
+                elif summary_text:
                     # Use a shorter timeout for graph operations — extraction (30s),
                     # placement (15s/fact), and split (45s) each have their own budgets
                     # inside update_graph_from_dialogue.
-                    graph_timeout = min(timeout_sec, 30.0)
+                    graph_timeout = min(timeout_sec, 30.0) if left is None else min(timeout_sec, 30.0, left)
                     result = update_graph_from_dialogue(
                         store=graph_store,
                         summary=summary_text,

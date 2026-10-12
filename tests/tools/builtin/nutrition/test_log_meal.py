@@ -258,3 +258,15 @@ class TestLoggedMealIsNeverDuplicated:
         assert len(meals) == 1
         assert result.success is True
         assert "10g protein" in result.reply_text and "Drink water." in result.reply_text
+
+    def test_a_non_finite_macro_logs_the_meal_once(self, tmp_path, monkeypatch):
+        import json
+
+        extracted = json.dumps({"description": "porridge", "calories_kcal": float("nan"),
+                                "protein_g": float("inf"), "carbs_g": 60})
+        result, meals = self._run(tmp_path, monkeypatch, extracted, lambda: "Drink water.")
+
+        assert len(meals) == 1
+        assert result.success is True
+        assert meals[0]["calories_kcal"] is None and meals[0]["carbs_g"] == 60
+        assert "60g carbs" in result.reply_text

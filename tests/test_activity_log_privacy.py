@@ -267,3 +267,36 @@ class TestCloudFollowUps:
         cloud(memory, True, db)
 
         assert any("Budget-2026" in chunk for chunk in memory.get_pending_chunks())
+
+    def test_an_old_private_tool_result_does_not_make_later_cloud_replies_private(self, cloud, memory, db):
+        # A local activity question earlier: its tool result stays in the local carry-over only.
+        memory.record_tool_turn(_activity_tool_turn(), private=True)
+        memory.add_message("user", "what is the capital of France?")
+        memory.add_message("assistant", "Paris.")
+
+        bridge = cloud(memory, True, db)
+
+        assert all(m["role"] in ("user", "assistant") for m in bridge.contexts[0])  # no tool results
+        assert any("Budget-2026" in chunk for chunk in memory.get_pending_chunks())
+
+    def test_nothing_shared_means_nothing_marked(self, cloud, memory, db, mock_config):
+        mock_config.claude_recent_dialogue_messages = 0
+        memory.add_message("user", "what was I working on this afternoon?", diary=False)
+        memory.add_message("assistant", "Mostly Excel.", diary=False)
+
+        bridge = cloud(memory, True, db)
+
+        assert bridge.contexts[0] == []
+        assert any("Budget-2026" in chunk for chunk in memory.get_pending_chunks())
+
+    def test_a_private_turn_older_than_the_shared_messages_does_not_count(self, cloud, memory, db, mock_config):
+        mock_config.claude_recent_dialogue_messages = 2
+        memory.add_message("user", "what was I working on this afternoon?", diary=False)
+        memory.add_message("assistant", "Mostly Excel.", diary=False)
+        memory.add_message("user", "what is the capital of France?")
+        memory.add_message("assistant", "Paris.")
+
+        bridge = cloud(memory, True, db)
+
+        assert [m["content"] for m in bridge.contexts[0]] == ["what is the capital of France?", "Paris."]
+        assert any("Budget-2026" in chunk for chunk in memory.get_pending_chunks())

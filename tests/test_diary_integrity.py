@@ -274,6 +274,109 @@ class TestExistingDatabaseRepair:
     def test_a_new_database_starts_at_the_current_version(self, diary_db):
         assert diary_db.conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
+    def test_a_write_lock_elsewhere_does_not_hold_up_opening(self, db_path):
+        import time as _time
+        self._old_database(db_path)
+        other = sqlite3.connect(db_path)
+        other.execute("BEGIN IMMEDIATE")  # another process mid-write
+        try:
+            started = _time.monotonic()
+            db = Database(db_path)
+            elapsed = _time.monotonic() - started
+            assert db.conn.execute("PRAGMA user_version").fetchone()[0] == 0  # postponed
+            assert db.conn.execute("PRAGMA busy_timeout").fetchone()[0] >= 1000  # usual wait restored
+            db.close()
+        finally:
+            other.rollback()
+            other.close()
+        assert elapsed < 2.0
+
+        db = Database(db_path)
+        try:
+            assert _fts_is_consistent(db.conn)
+        finally:
+            db.close()
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+class TestShutdownBudget:
+    """The shutdown flush has one budget for the whole pass, and the stored embedding always
+    matches the stored text."""
+
+    def test_no_batch_starts_once_the_budget_is_spent(self, db, monkeypatch, no_graph):
+        clock = FakeClock()
+        timeouts: list[float] = []
+
+        def slow_llm(cfg, system_prompt, user_content, *, timeout_sec, **kwargs):
+            timeouts.append(timeout_sec)
+            clock.now += 30.0  # each summariser call takes 30 s
+            return f"SUMMARY: Summary {len(timeouts)}.\nTOPICS: chat, misc, things"
+
+        monkeypatch.setattr(conv, "_direct_llm", slow_llm)
+        memory = DialogueMemory(inactivity_timeout=300)
+        _long_conversation(memory, exchanges=15)  # 30 chunks: three batches
+
+        result = conv.update_diary_from_dialogue_memory(
+            db, memory, _cfg(), force=True, timeout_sec=45.0, total_timeout_sec=45.0, clock=clock)
+
+        assert result is None  # not everything fitted
+        assert timeouts == [45.0, 15.0]  # the second call only gets what is left
+        assert len(memory.get_pending_chunks()) == 10  # the third batch waits for the next pass
+
+    def test_each_stored_batch_is_embedded_with_its_own_text(self, diary_db, monkeypatch):
+        embedded: list[str] = []
+        texts = iter(["kayaking", "chess"])
+
+        def fake_llm(*a, **k):
+            return f"SUMMARY: The user talked about {next(texts)}.\nTOPICS: hobbies, sport, games"
+
+        def fake_embed(text, cfg, **kw):
+            embedded.append(text)
+            return VECTOR
+
+        monkeypatch.setattr(conv, "_direct_llm", fake_llm)
+        monkeypatch.setattr(conv, "_embed_text", fake_embed)
+        chunks = [f"User: message {i}" for i in range(conv.DIARY_BATCH_CHUNKS + 1)]
+
+        sid = conv.update_daily_conversation_summary(diary_db, chunks, _cfg(embedding_model="nomic-embed-text"))
+
+        assert sid is not None
+        assert ["kayaking" in embedded[0], "chess" in embedded[1]] == [True, True]
+
+    def test_a_summary_without_a_fresh_embedding_keeps_no_old_one(self, diary_db, monkeypatch):
+        monkeypatch.setattr(conv, "_direct_llm", lambda *a, **k: "SUMMARY: The user likes kayaking.\nTOPICS: a, b, c")
+        monkeypatch.setattr(conv, "_embed_text", lambda *a, **k: VECTOR)
+        sid = conv.update_daily_conversation_summary(diary_db, ["User: kayaking"], _cfg(embedding_model="m"))
+        assert [i for i, _ in diary_db._python_vector_store.search(VECTOR, top_k=5)] == [sid]
+
+        monkeypatch.setattr(conv, "_direct_llm", lambda *a, **k: "SUMMARY: The user likes chess.\nTOPICS: a, b, c")
+        monkeypatch.setattr(conv, "_embed_text", lambda *a, **k: None)  # embedding service down
+        conv.update_daily_conversation_summary(diary_db, ["User: chess"], _cfg(embedding_model="m"))
+
+        assert diary_db._python_vector_store.search(VECTOR, top_k=5) == []
+
+    def test_streamed_batches_are_separated(self, db, monkeypatch):
+        streamed: list[str] = []
+
+        def fake_stream(cfg, system_prompt, user_content, *, on_token, **kwargs):
+            text = f"SUMMARY: Part {len(streamed)}.\nTOPICS: a, b, c"
+            on_token(text)
+            return text
+
+        monkeypatch.setattr(conv, "_stream_llm", fake_stream)
+        chunks = [f"User: message {i}" for i in range(conv.DIARY_BATCH_CHUNKS + 1)]
+
+        conv.update_daily_conversation_summary(db, chunks, _cfg(), on_token=streamed.append)
+
+        assert len(streamed) == 3 and streamed[1] == conv.DIARY_BATCH_SEPARATOR
+
 
 try:
     import flask  # noqa: F401

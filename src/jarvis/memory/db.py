@@ -77,6 +77,9 @@ CREATE TABLE IF NOT EXISTS summary_vec (
 # summaries FTS index matches its rows and no embedding is stored for an ID no summary has.
 SCHEMA_VERSION = 1
 
+# How long the one-off repair waits for another connection's write lock before postponing.
+_REPAIR_BUSY_TIMEOUT_MS = 250
+
 # Plain tables that map a summary ID to its embedding: written by the vector stores
 # (``utils/vector_store.py``, ``utils/fast_vector_store.py``) and by the sqlite-vss path.
 _VECTOR_TABLES = ("faiss_vector_store", "python_vector_store", "summary_vec")
@@ -186,6 +189,9 @@ class Database:
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
         if version >= SCHEMA_VERSION:
             return
+        # A busy file postpones the repair quickly instead of holding up start-up.
+        busy_timeout_ms = self.conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        self.conn.execute(f"PRAGMA busy_timeout = {_REPAIR_BUSY_TIMEOUT_MS}")
         try:
             if version < 1:
                 self._repair_index_and_embeddings()
@@ -194,6 +200,8 @@ class Database:
         except sqlite3.Error as exc:
             self.conn.rollback()
             debug_log(f"diary repair postponed: {type(exc).__name__}", "memory")
+        finally:
+            self.conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
 
     def _repair_index_and_embeddings(self) -> None:
         """Rebuild the summaries FTS index from its rows and drop embeddings of IDs no summary has
@@ -390,6 +398,18 @@ class Database:
             ).fetchone()
             self.conn.commit()
             return int(row["id"])
+
+    def delete_summary_embedding(self, summary_id: int) -> None:
+        """Remove a summary's embedding, for when its text changed and no new embedding is available."""
+        with self._lock:
+            if self.is_vss_enabled:
+                self.conn.execute(
+                    "DELETE FROM embeddings WHERE rowid IN (SELECT emb_id FROM summary_vec WHERE summary_id = ?)",
+                    (summary_id,))
+                self.conn.execute("DELETE FROM summary_vec WHERE summary_id = ?", (summary_id,))
+                self.conn.commit()
+        if self._python_vector_store is not None:
+            self._python_vector_store.delete_vector(summary_id)
 
     def delete_conversation_summary(self, summary_id: int) -> bool:
         """Delete a diary summary together with its FTS entry and its embedding."""

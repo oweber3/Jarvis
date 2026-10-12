@@ -101,3 +101,15 @@ class TestOneTimeCodes:
 
     def test_six_digits_without_a_keyword_are_kept(self):
         assert "482913" in redact("Order 482913 shipped")
+
+    def test_code_after_a_colon_or_otp_label_is_redacted(self):
+        assert "482913" not in redact("Login code: 482913")
+        assert "482913" not in redact("OTP 482913")
+
+    @pytest.mark.parametrize("text, number", [
+        ("write code that counts from 1 to 100000 and prints 123456", "123456"),
+        ("my pin code 560001 is in Bangalore", "560001"),
+        ("the barcode reads 012345", "012345"),
+    ])
+    def test_ordinary_requests_with_six_digits_stay_readable(self, text, number):
+        assert number in redact(text)

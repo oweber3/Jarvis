@@ -15,7 +15,8 @@ The summariser prompt is the only write-time defence. There is no post-process s
 - Input: every pending conversation chunk, sent in batches of at most 10 (`DIARY_BATCH_CHUNKS`), each batch with the same day's summary so far (the stored one for the first batch, the previous batch's result after that).
 - Output: a free-form summary (≤ 200 words) and 3–5 comma-separated topic keywords.
 - Storage: one row per `(date_utc, source_app)` in `conversation_summaries`, updated in place after each batch so the row keeps its ID, its FTS entry and its embedding.
-- Embedding: the concatenation of summary + topics is embedded and stored for vector retrieval whenever the database has a vector store (sqlite-vss, FAISS or the Python fallback), one embedding per summary.
+- Embedding: the concatenation of summary + topics is embedded and stored for vector retrieval whenever the database has a vector store (sqlite-vss, FAISS or the Python fallback), one embedding per summary. Each batch's summary is embedded before it is stored and the two are stored together; when no embedding is available the old one is removed, so a stored embedding always matches the stored text.
+- Time budget: the shutdown flush bounds the whole pass (`SHUTDOWN_DIARY_TIMEOUT_SEC`, every batch, embedding and the graph update together). No batch starts once it is spent and each call gets at most what is left; unsummarised turns stay pending.
 - LLM failure is non-fatal: the summariser returns `(None, None)` and no further batch is sent. Chunks whose batch was stored are marked saved; the rest stay pending for the next cycle.
 
 ## Hygiene Rules
