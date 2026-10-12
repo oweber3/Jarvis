@@ -22,7 +22,9 @@ they are already one short line.
 
 The router reads the first 120 characters of the description, which open with "Exact arithmetic and unit
 conversion" and ask for the tool to be used for any sum, percentage or conversion. The description says
-currency is not supported. Reply bridges offer the tool like any other: it touches no personal data.
+currency is not supported. The local reply loop's tool constraints (`reply/prompts/model_variants.py`, both
+model sizes) add that any calculation, percentage or unit conversion goes through `calculator`, never mental
+arithmetic (`evals/test_calculator_routing.py`). Reply bridges offer the tool like any other: it touches no personal data.
 
 ## Expressions
 

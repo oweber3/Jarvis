@@ -163,6 +163,10 @@ TOOL_CONSTRAINTS_LARGE = (
     "location?\" for an argument the tool auto-derives. Concretely: \"how's the "
     "weather today\" must trigger getWeather immediately with no arguments, not a "
     "question back to the user.\n\n"
+    "ARITHMETIC AND UNIT CONVERSION:\n"
+    "For any calculation, percentage or unit conversion, call `calculator` and give the "
+    "number it returns. Never work the numbers out yourself, even when they look easy: "
+    "mental arithmetic and remembered conversion factors are often slightly wrong.\n\n"
     "SELF-CONTAINED TOOL ARGUMENTS:\n"
     "When you call any tool with a free-form text argument (search queries, lookup "
     "strings, question fields — whatever the tool calls them), the string you pass "
@@ -241,6 +245,9 @@ When the user's message is a greeting or casual social phrase (whatever language
 
 WEATHER AND CURRENT CONDITIONS:
 When the user brings up weather, climate, temperature, or current conditions — whether as a question ("what is the weather like"), a statement ("it is nice today", "it is cold out there"), a contextual remark ("I am in London" after a prior weather exchange), or otherwise — call getWeather immediately with no arguments. Do NOT offer an opinion, an observation, or a generic pleasantry about the weather before calling the tool. The tool provides the actual readings; your training data does not know today's temperature anywhere. Even a casual weather remark is a trigger for getWeather.
+
+ARITHMETIC AND UNIT CONVERSION:
+For any calculation, percentage or unit conversion, call calculator and say the number it returns. Never work the numbers out yourself, even when they look easy: your mental arithmetic and remembered conversion factors are often slightly wrong, and the calculator is exact.
 
 USER INSTRUCTIONS:
 When the user gives you instructions about how to behave or respond (units, brevity, language, tone), acknowledge and respond directly WITHOUT calling tools. These are behavioural instructions, not data requests.
