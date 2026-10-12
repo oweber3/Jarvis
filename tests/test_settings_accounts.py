@@ -97,6 +97,14 @@ def test_outlook_is_offered_only_when_classic_outlook_is_installed(page_with):
     assert page._store.calls == [("outlook", True, True)] and changed == [True]
 
 
+def test_test_and_remove_appear_only_once_something_is_connected(page_with):
+    store = StubStore()
+    page, _changed = page_with(store)
+    assert page.test_button.isHidden() and page.remove_button.isHidden()
+    page.microsoft_button.click()
+    assert not page.test_button.isHidden() and not page.remove_button.isHidden()
+
+
 def test_microsoft_sign_in_connects_what_is_ticked_and_refreshes_the_list(page_with):
     store = StubStore()
     page, changed = page_with(store)

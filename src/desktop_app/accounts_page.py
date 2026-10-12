@@ -242,6 +242,8 @@ class AccountsPage(QWidget):
             self.list.addItem(item)
         self.empty_label.setVisible(self.list.count() == 0)
         self.list.setVisible(self.list.count() > 0)
+        self.test_button.setVisible(self.list.count() > 0)
+        self.remove_button.setVisible(self.list.count() > 0)
         if self.list.count():
             self.list.setCurrentRow(0)
         self._update_buttons()
