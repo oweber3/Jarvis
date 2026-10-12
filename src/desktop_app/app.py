@@ -2767,10 +2767,10 @@ class JarvisSystemTray:
             else:  # Linux and other Unix-like systems
                 subprocess.Popen(["xdg-open", str(directory_path)])
 
-            debug_log(f"opened {directory_name} directory: {directory_path}", "desktop")
+            debug_log(f"opened {directory_name} directory", "desktop")
             self.log_signals.new_log.emit(f"📂 Opened {directory_name} directory\n")
         except Exception as e:
-            debug_log(f"failed to open {directory_name} directory: {e}", "desktop")
+            debug_log(f"failed to open {directory_name} directory: {type(e).__name__}", "desktop")
             self.log_signals.new_log.emit(f"❌ Failed to open {directory_name} directory: {str(e)}\n")
             self.tray_icon.showMessage(
                 f"Error Opening {directory_name} Directory",

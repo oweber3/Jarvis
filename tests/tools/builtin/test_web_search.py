@@ -803,14 +803,15 @@ class TestBraveSearchHelper:
 
     @patch("src.jarvis.tools.builtin.web_search.debug_log")
     @patch("src.jarvis.tools.builtin.web_search.requests.get")
-    def test_scrubs_key_from_exception_log(self, mock_get, mock_debug):
-        """A stringified exception containing the API key must be scrubbed."""
+    def test_an_exception_is_logged_by_type_without_key_or_url(self, mock_get, mock_debug):
+        """An exception message can carry the request URL (the query) or the API key."""
         from src.jarvis.tools.builtin.web_search import _brave_search
-        mock_get.side_effect = requests.RequestException("bad token BSA-secret in url")
+        mock_get.side_effect = requests.RequestException("bad token BSA-secret in url ?q=private")
         assert _brave_search("q", "BSA-secret") == []
         logged = " ".join(str(c.args[0]) for c in mock_debug.call_args_list)
         assert "BSA-secret" not in logged
-        assert "***" in logged
+        assert "private" not in logged
+        assert "RequestException" in logged
 
 
 class TestWikipediaSummaryHelper:
@@ -1233,3 +1234,73 @@ class TestLanguagePlumbingEndToEnd:
                 listener._dispatch_query("istanbul")
 
         assert run_reply.call_args.kwargs["language"] == "tr"
+
+
+class TestNothingSearchedReachesTheDebugLog:
+    """Search terms, result titles and links are personal: the debug log gets kinds, counts and lengths only.
+
+    ``requests`` puts the request URL, query string included, into its exception messages, so an
+    exception is logged by type only."""
+
+    QUERY = "symptoms of lupus flare Quinn"
+    PRIVATE = ("lupus", "Quinn", "symptoms")
+
+    def setup_method(self):
+        self.tool = WebSearchTool()
+        self.context = Mock(spec=ToolContext)
+        self.context.user_print = Mock()
+        self.context.language = "en"
+        self.context.cfg = Mock()
+        self.context.cfg.web_search_enabled = True
+        self.context.cfg.voice_debug = False
+        self.context.cfg.brave_search_api_key = "BSA-key"
+        self.context.cfg.wikipedia_fallback_enabled = True
+
+    def _logged(self, monkeypatch):
+        import src.jarvis.tools.builtin.web_search as module
+        logged = []
+        monkeypatch.setattr(module, "debug_log", lambda message, *a, **k: logged.append(message))
+        return logged
+
+    def _assert_private_absent(self, logged):
+        assert logged
+        text = "\n".join(logged)
+        for word in self.PRIVATE:
+            assert word not in text, word
+
+    def test_a_search_where_every_provider_fails(self, monkeypatch):
+        logged = self._logged(monkeypatch)
+
+        def fail(url, *args, **kwargs):
+            raise requests.exceptions.ConnectionError(f"Max retries exceeded with url: {url}?q={self.QUERY}")
+
+        with patch("requests.get", side_effect=fail):
+            self.tool.run({"search_query": self.QUERY}, self.context)
+
+        self._assert_private_absent(logged)
+
+    @patch("src.jarvis.tools.builtin.web_search._fetch_page_content", return_value=None)
+    @patch("requests.get")
+    def test_a_search_with_results(self, mock_get, _fetch, monkeypatch):
+        logged = self._logged(monkeypatch)
+        instant = Mock(status_code=200)
+        instant.json.return_value = {}
+        lite = Mock(status_code=200)
+        lite.content = (b'<html><body><a href="https://clinic.test/lupus-Quinn">Lupus flare symptoms explained by'
+                        b' Dr Quinn</a></body></html>')
+        mock_get.side_effect = [instant, lite]
+
+        self.tool.run({"search_query": self.QUERY}, self.context)
+
+        self._assert_private_absent(logged)
+
+    def test_a_page_that_cannot_be_fetched(self, monkeypatch):
+        from src.jarvis.tools.builtin import web_search as module
+        logged = self._logged(monkeypatch)
+
+        def fail(url, *args, **kwargs):
+            raise requests.exceptions.ConnectionError(f"Max retries exceeded with url: {url}")
+
+        monkeypatch.setattr(module, "fetch_public", fail)
+        assert module._fetch_page_content("https://clinic.test/lupus-Quinn") is None
+        self._assert_private_absent(logged)

@@ -337,3 +337,29 @@ class TestUrlGuard:
         from src.jarvis.tools.builtin.url_guard import is_public_url
         for url in ("file:///C:/Windows/win.ini", "ftp://example.com/x", "javascript:alert(1)"):
             assert is_public_url(url) is False
+
+
+class TestNoAddressReachesTheDebugLog:
+    """An address can carry who the user is or a secret (reset links, tokens), so the debug log never gets it."""
+
+    URL = "https://clinic.test/patients/quinn?reset=abc123"
+
+    def test_neither_the_address_nor_a_failure_message_naming_it_is_logged(self, monkeypatch):
+        import src.jarvis.tools.builtin.fetch_web_page as module
+        logged = []
+        monkeypatch.setattr(module, "debug_log", lambda message, *a, **k: logged.append(message))
+
+        def fail(url, *args, **kwargs):
+            raise requests.exceptions.ConnectionError(f"Max retries exceeded with url: {url}")
+
+        monkeypatch.setattr(module, "fetch_public", fail)
+        context = Mock(spec=ToolContext)
+        context.user_print = Mock()
+
+        result = FetchWebPageTool().run({"url": self.URL}, context)
+
+        assert result.success is False
+        text = "\n".join(logged)
+        assert logged
+        for part in ("clinic.test", "quinn", "abc123"):
+            assert part not in text, part

@@ -95,13 +95,13 @@ def extract_and_log_meal(db: Database, cfg: Any, original_text: str, source_app:
     ) or ""
     text = (raw or "").strip()
     if text.upper() == "NONE":
-        debug_log(f"logMeal extractor returned NONE for text={original_text[:120]!r}", "nutrition")
+        debug_log(f"logMeal extractor returned NONE for {len(original_text or '')} chars of text", "nutrition")
         return None
     data: Dict[str, Any]
     try:
         data = json.loads(_strip_code_fence(text))
     except Exception as e:
-        debug_log(f"logMeal extractor JSON parse failed: {e!r}; raw={text[:200]!r}", "nutrition")
+        debug_log(f"logMeal extractor JSON parse failed: {type(e).__name__} ({len(text)} chars)", "nutrition")
         return None
     ts = datetime.now(timezone.utc).isoformat()
     meal_id = db.insert_meal(
@@ -240,7 +240,7 @@ class LogMealTool(Tool):
                     debug_log("logMeal: extraction+log succeeded", "nutrition")
                     return ToolExecutionResult(success=True, reply_text=meal_summary)
             except Exception as e:
-                debug_log(f"logMeal extract_and_log_meal attempt {attempt+1} raised: {e!r}", "nutrition")
+                debug_log(f"logMeal extract_and_log_meal attempt {attempt+1} raised: {type(e).__name__}", "nutrition")
 
         debug_log("logMeal: failed", "nutrition")
         context.user_print("⚠️ I couldn't log that meal automatically.")

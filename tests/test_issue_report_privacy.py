@@ -179,3 +179,23 @@ class TestCrashReport:
 
         assert "Fatal Python error: Aborted" in report
         _assert_private_words_absent(report)
+
+
+class TestOpeningAFolder:
+    def test_the_debug_log_does_not_name_the_folder(self, tmp_path, monkeypatch):
+        """Folder paths carry the Windows account name."""
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        import desktop_app.app as app_module
+
+        logged = []
+        monkeypatch.setattr(app_module, "debug_log", lambda message, *a, **k: logged.append(message))
+        monkeypatch.setattr(app_module.os, "startfile", lambda path: None, raising=False)
+        monkeypatch.setattr(app_module.subprocess, "Popen", lambda *a, **k: None)
+        tray = SimpleNamespace(log_signals=SimpleNamespace(new_log=Mock()), tray_icon=Mock())
+        folder = tmp_path / "someone" / "logs"
+
+        app_module.JarvisSystemTray.open_directory(tray, folder, "logs")
+
+        assert logged
+        assert all("someone" not in message for message in logged)
