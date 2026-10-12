@@ -83,7 +83,8 @@ audio is waiting, so speech said while the judge decided joins the request.
 Audio-frame processing is limited to VAD and utterance assembly. Completed
 utterances are enqueued for a single FIFO Whisper worker. Transcription results
 return to the listener loop in order, where transcript storage and intent
-processing remain serialised. An error while processing one transcript drops
+processing remain serialised. A transcription job that fails costs only that
+utterance; the worker keeps transcribing later ones. An error while processing one transcript drops
 that utterance with a warning and a debug log; the loop keeps listening. Echo
 timing estimates use the default speech rate when `tts_rate` is empty. The bounded transcription backlog reports an
 explicit warning when full rather than blocking microphone-frame consumption
