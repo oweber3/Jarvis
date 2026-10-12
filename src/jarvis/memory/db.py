@@ -73,6 +73,37 @@ CREATE TABLE IF NOT EXISTS summary_vec (
 """
 
 
+# ``PRAGMA user_version`` of the Jarvis database, owned by ``Database``. Version 1 means the
+# summaries FTS index matches its rows and no embedding is stored for an ID no summary has.
+SCHEMA_VERSION = 1
+
+# How long the one-off repair waits for another connection's write lock before postponing.
+_REPAIR_BUSY_TIMEOUT_MS = 250
+
+# Plain tables that map a summary ID to its embedding: written by the vector stores
+# (``utils/vector_store.py``, ``utils/fast_vector_store.py``) and by the sqlite-vss path.
+_VECTOR_TABLES = ("faiss_vector_store", "python_vector_store", "summary_vec")
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (name,)).fetchone() is not None
+
+
+def delete_summary_rows(conn: sqlite3.Connection, summary_id: int) -> bool:
+    """Delete one diary summary and every stored embedding of it, on any connection to the database.
+
+    The FTS index follows through its delete trigger. A sqlite-vss ``embeddings`` row is removed by
+    ``Database.delete_conversation_summary``, the only place that has the extension loaded; here
+    its mapping row goes, so it is never matched to a summary again. Returns whether a summary
+    was deleted. The caller commits.
+    """
+    cur = conn.execute("DELETE FROM conversation_summaries WHERE id = ?", (summary_id,))
+    for table in _VECTOR_TABLES:
+        if _table_exists(conn, table):
+            conn.execute(f"DELETE FROM {table} WHERE summary_id = ?", (summary_id,))
+    return cur.rowcount > 0
+
+
 def _normalize_fts_query(raw: str) -> str:
     # Use improved fuzzy search query generation
     try:
@@ -119,7 +150,10 @@ class Database:
                 self.is_vss_enabled = True
             except Exception:
                 self.is_vss_enabled = False
-        
+
+        # Schema and repairs first, so a vector store loads only embeddings of live summaries.
+        self._init_schema()
+
         # If sqlite-vss is not available, use best available vector store (FAISS or Python fallback)
         if not self.is_vss_enabled:
             from ..utils.vector_store import get_best_vector_store
@@ -132,8 +166,11 @@ class Database:
                 debug_log("Using FAISS vector store for fast search", "jarvis")
             else:
                 debug_log("Using Python fallback vector store", "jarvis")
-        
-        self._init_schema()
+
+    @property
+    def can_store_embeddings(self) -> bool:
+        """Whether diary summaries can be embedded for vector search (sqlite-vss, FAISS or Python store)."""
+        return self.is_vss_enabled or self._python_vector_store is not None
 
     def _init_schema(self) -> None:
         with self._lock:
@@ -142,8 +179,47 @@ class Database:
             if self.is_vss_enabled:
                 cur.executescript(_VSS_SCHEMA_SQL)
             self.conn.commit()
+            self._migrate()
 
-    
+    def _migrate(self) -> None:
+        """Bring an existing database up to ``SCHEMA_VERSION`` once. Caller holds the lock.
+
+        A repair that cannot run now (the file is busy, for example) is logged and tried again at
+        the next open; the database stays usable meanwhile."""
+        version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+        if version >= SCHEMA_VERSION:
+            return
+        # A busy file postpones the repair quickly instead of holding up start-up.
+        busy_timeout_ms = self.conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        self.conn.execute(f"PRAGMA busy_timeout = {_REPAIR_BUSY_TIMEOUT_MS}")
+        try:
+            if version < 1:
+                self._repair_index_and_embeddings()
+            self.conn.execute(f"PRAGMA user_version = {int(SCHEMA_VERSION)}")
+            self.conn.commit()
+        except sqlite3.Error as exc:
+            self.conn.rollback()
+            debug_log(f"diary repair postponed: {type(exc).__name__}", "memory")
+        finally:
+            self.conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
+
+    def _repair_index_and_embeddings(self) -> None:
+        """Rebuild the summaries FTS index from its rows and drop embeddings of IDs no summary has
+        (rows replaced rather than updated leave both behind)."""
+        self.conn.execute("INSERT INTO summaries_fts(summaries_fts) VALUES('rebuild')")
+        removed = 0
+        for table in _VECTOR_TABLES:
+            if not _table_exists(self.conn, table):
+                continue
+            if table == "summary_vec" and self.is_vss_enabled:
+                self.conn.execute(
+                    "DELETE FROM embeddings WHERE rowid IN (SELECT emb_id FROM summary_vec "
+                    "WHERE summary_id NOT IN (SELECT id FROM conversation_summaries))")
+            cur = self.conn.execute(
+                f"DELETE FROM {table} WHERE summary_id NOT IN (SELECT id FROM conversation_summaries)")
+            removed += max(cur.rowcount, 0)
+        debug_log(f"diary index rebuilt, {removed} orphaned embeddings removed", "memory")
+
 
     def search_hybrid(self, fts_query: str, query_vec_json: Optional[str], top_k: int = 8) -> list[sqlite3.Row]:
         with self._lock:
@@ -293,7 +369,10 @@ class Database:
         source_app: str = "jarvis",
         ts_utc: Optional[str] = None,
     ) -> int:
-        """Insert or update a conversation summary for a given date.
+        """Insert or update a conversation summary for a given date. Returns the row's ID.
+
+        An existing row for the date and source keeps its ID, so its FTS entry (through the
+        update trigger) and its embedding stay attached to it.
 
         ``ts_utc`` defaults to "now". Maintenance ops that rewrite an
         existing row's content without changing what it represents (e.g.
@@ -306,13 +385,44 @@ class Database:
             cur = self.conn.cursor()
             cur.execute(
                 """
-                INSERT OR REPLACE INTO conversation_summaries(date_utc, ts_utc, summary, topics, source_app)
+                INSERT INTO conversation_summaries(date_utc, ts_utc, summary, topics, source_app)
                 VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(date_utc, source_app) DO UPDATE SET
+                  ts_utc = excluded.ts_utc, summary = excluded.summary, topics = excluded.topics
                 """,
                 (date_utc, ts_utc, summary, topics, source_app),
             )
+            row = cur.execute(
+                "SELECT id FROM conversation_summaries WHERE date_utc = ? AND source_app = ?",
+                (date_utc, source_app),
+            ).fetchone()
             self.conn.commit()
-            return int(cur.lastrowid)
+            return int(row["id"])
+
+    def delete_summary_embedding(self, summary_id: int) -> None:
+        """Remove a summary's embedding, for when its text changed and no new embedding is available."""
+        with self._lock:
+            if self.is_vss_enabled:
+                self.conn.execute(
+                    "DELETE FROM embeddings WHERE rowid IN (SELECT emb_id FROM summary_vec WHERE summary_id = ?)",
+                    (summary_id,))
+                self.conn.execute("DELETE FROM summary_vec WHERE summary_id = ?", (summary_id,))
+                self.conn.commit()
+        if self._python_vector_store is not None:
+            self._python_vector_store.delete_vector(summary_id)
+
+    def delete_conversation_summary(self, summary_id: int) -> bool:
+        """Delete a diary summary together with its FTS entry and its embedding."""
+        with self._lock:
+            if self.is_vss_enabled:
+                self.conn.execute(
+                    "DELETE FROM embeddings WHERE rowid IN (SELECT emb_id FROM summary_vec WHERE summary_id = ?)",
+                    (summary_id,))
+            deleted = delete_summary_rows(self.conn, summary_id)
+            self.conn.commit()
+        if self._python_vector_store is not None:
+            self._python_vector_store.delete_vector(summary_id)
+        return deleted
 
     def get_conversation_summary(self, date_utc: str, source_app: str = "jarvis") -> Optional[sqlite3.Row]:
         """Get conversation summary for a specific date."""
@@ -361,12 +471,15 @@ class Database:
             return rows
 
     def upsert_summary_embedding(self, summary_id: int, vec: Sequence[float]) -> Optional[int]:
-        """Store or update embedding for a conversation summary."""
+        """Store or replace the embedding of a conversation summary (one embedding per summary)."""
         if self.is_vss_enabled:
             # Use sqlite-vss
             import json
             with self._lock:
                 cur = self.conn.cursor()
+                cur.execute(
+                    "DELETE FROM embeddings WHERE rowid IN (SELECT emb_id FROM summary_vec WHERE summary_id = ?)",
+                    (summary_id,))
                 emb_id = cur.execute("SELECT COALESCE(MAX(rowid), 0) + 1 FROM embeddings").fetchone()[0]
                 cur.execute("INSERT INTO embeddings(rowid, vec) VALUES (?, ?)", (emb_id, json.dumps([float(x) for x in vec])))
                 cur.execute(

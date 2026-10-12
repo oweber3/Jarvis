@@ -292,7 +292,7 @@ Spec: `src/jarvis/devices/roku.spec.md`.
 
 ### Gesture snapping
 
-Gesture snapping moves and scrolls windows with your hand through the webcam. It is off by default: turn on **Allow Gesture Control** in Settings → Extras → Gesture control (`gesture_snap_enabled`) and restart Jarvis. That only makes it available; the camera turns on when you say "start gesture control" (or "turn on gesture snapping") and off when you say "stop gesture control".
+Gesture snapping moves and scrolls windows with your hand through the webcam. It is off by default: turn on **Allow Gesture Control** in Settings → Extras → Gesture control (`gesture_snap_enabled`) and restart Jarvis. That only makes it available; the camera turns on when you say "start gesture control" (or "start gesture controls", "turn on gestures", "enable gesture snapping" and similar) and off when you say "stop gesture control" (or "turn off gestures" and similar).
 
 Gestures are recognised by counting your raised fingers (index, middle, ring and little), with your palm towards the camera. A gesture must hold briefly (the debounce) to count.
 

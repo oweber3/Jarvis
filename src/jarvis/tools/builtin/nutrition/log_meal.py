@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import json
+import math
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 
@@ -49,13 +50,14 @@ def _strip_code_fence(text: str) -> str:
 
 
 def _safe_float(x: Any) -> Optional[float]:
-    """Safely convert value to float."""
+    """A finite float from ``x``, or None (missing, not a number, NaN or infinite)."""
     try:
         if x is None:
             return None
-        return float(x)
+        value = float(x)
     except Exception:
         return None
+    return value if math.isfinite(value) else None
 
 
 
@@ -117,30 +119,45 @@ def extract_and_log_meal(db: Database, cfg: Any, original_text: str, source_app:
         micros_json=json.dumps(data.get("micros")) if isinstance(data.get("micros"), dict) else None,
         confidence=_safe_float(data.get("confidence")),
     )
-    # Build a brief confirmation + guidance
-    cals = data.get("calories_kcal")
-    prot = data.get("protein_g")
-    carbs = data.get("carbs_g")
-    fat = data.get("fat_g")
-    fiber = data.get("fiber_g")
-    conf = data.get("confidence")
+    # The meal is stored. What follows is best effort and never raises, so the caller's retry can
+    # never store the same meal twice.
+    try:
+        return _logged_meal_reply(cfg, meal_id, data)
+    except Exception as exc:
+        debug_log(f"logMeal confirmation incomplete after logging: {type(exc).__name__}", "nutrition")
+        return f"Logged meal #{meal_id}."
+
+
+def _logged_meal_reply(cfg: Any, meal_id: int, data: Dict[str, Any]) -> str:
+    """Confirmation with the macro summary and the coach's follow-ups for a stored meal."""
+    description = str(data.get("description") or "meal")
+    cals = _safe_float(data.get("calories_kcal"))
+    prot = _safe_float(data.get("protein_g"))
+    carbs = _safe_float(data.get("carbs_g"))
+    fat = _safe_float(data.get("fat_g"))
+    fiber = _safe_float(data.get("fiber_g"))
+    conf = _safe_float(data.get("confidence"))
     summary_bits = []
     if cals is not None:
-        summary_bits.append(f"~{int(round(float(cals)))} kcal")
+        summary_bits.append(f"~{int(round(cals))} kcal")
     if prot is not None:
-        summary_bits.append(f"{int(round(float(prot)))}g protein")
+        summary_bits.append(f"{int(round(prot))}g protein")
     if carbs is not None:
-        summary_bits.append(f"{int(round(float(carbs)))}g carbs")
+        summary_bits.append(f"{int(round(carbs))}g carbs")
     if fat is not None:
-        summary_bits.append(f"{int(round(float(fat)))}g fat")
+        summary_bits.append(f"{int(round(fat))}g fat")
     if fiber is not None:
-        summary_bits.append(f"{int(round(float(fiber)))}g fiber")
+        summary_bits.append(f"{int(round(fiber))}g fiber")
     approx = ", ".join(summary_bits) if summary_bits else "approximate macros logged"
-    conf_str = f" (confidence {float(conf):.0%})" if isinstance(conf, (int, float)) else ""
+    conf_str = f" (confidence {conf:.0%})" if conf is not None else ""
 
     # Ask for healthy follow-ups for the rest of the day given this meal
-    follow_text = generate_followups_for_meal(cfg, str(data.get('description') or 'meal'), approx)
-    return f"Logged meal #{meal_id}: {data.get('description')} — {approx}{conf_str}.\nFollow-ups: {follow_text}"
+    try:
+        follow_text = generate_followups_for_meal(cfg, description, approx)
+    except Exception as exc:
+        debug_log(f"logMeal follow-ups unavailable after logging: {type(exc).__name__}", "nutrition")
+        follow_text = ""
+    return f"Logged meal #{meal_id}: {description} — {approx}{conf_str}.\nFollow-ups: {follow_text}"
 
 
 def generate_followups_for_meal(cfg: Any, description: str, approx: str) -> str:

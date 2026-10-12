@@ -94,7 +94,7 @@ class LoadedExtensions:
             for callback in reg.on_start:
                 try:
                     callback()
-                except Exception as exc:
+                except (Exception, SystemExit) as exc:  # as when loading: an extension's sys.exit() never stops start-up
                     started = False
                     _warn(f"Extension {reg.name} did not start: {type(exc).__name__}")
                     debug_log(f"extension {reg.name} start failed: {type(exc).__name__}", "extensions")
@@ -228,7 +228,9 @@ def load_extensions(cfg: Any, raw: Optional[Dict[str, Any]] = None, *, quiet: bo
                 registrations.append(registration)
                 debug_log(f"extension {name} registered", "extensions")
                 continue
-            except Exception as exc:
+            # An extension's sys.exit() never stops start-up; KeyboardInterrupt still does (the daemon's stop
+            # signal handlers raise it).
+            except (Exception, SystemExit) as exc:
                 _forget(name)
                 reason = str(exc) if isinstance(exc, AttributeError) else type(exc).__name__
                 debug_log(f"extension {name} failed to load: {type(exc).__name__}", "extensions")

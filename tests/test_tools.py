@@ -211,11 +211,18 @@ def test_fetch_web_page_success(monkeypatch):
             </html>
             '''
             self.text = self.content.decode()
+            self.encoding = None
         
         def raise_for_status(self):
             pass
 
-        # The production tool wraps the response in ``with requests.get(...)``
+        def iter_content(self, chunk_size=None):
+            yield self.content
+
+        def close(self):
+            pass
+
+        # The production tool wraps the response in ``with session.get(...)``
         # so the connection is released deterministically — mirror that here.
         def __enter__(self):
             return self
@@ -223,10 +230,11 @@ def test_fetch_web_page_success(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-    def mock_requests_get(url, **kwargs):
+    def mock_session_get(self, url, **kwargs):
         return MockResponse()
-    
-    monkeypatch.setattr(tools_mod.requests, 'get', mock_requests_get)
+
+    # The guarded fetch reads through a requests Session pinned to the checked address.
+    monkeypatch.setattr(tools_mod.requests.Session, 'get', mock_session_get)
     import socket
     monkeypatch.setattr(socket, 'getaddrinfo', lambda *a, **k: [(2, 1, 6, '', ('93.184.216.34', 0))])
     

@@ -83,6 +83,11 @@ Two passes on the background tier (`resolve_model(cfg, Tier.BACKGROUND)`: the ch
    asking for 2-3 healthy, realistic follow-ups (hydration, protein,
    veggies, sodium/potassium balance, light activity).
 
+Only extraction and parsing are retried. Once the meal is inserted, the
+confirmation and the follow-ups are best effort: a non-numeric macro is left
+out of the summary and a failed follow-up call leaves the follow-ups empty,
+so a retry can never store the same meal twice.
+
 Both passes share `cfg.llm_chat_timeout_sec` and the `llm_thinking_enabled`
 flag.
 

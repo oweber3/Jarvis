@@ -186,6 +186,73 @@ class TestDelivery:
         assert reply is None and spoken == []
         assert dialogue_memory.get_recent_messages() == []
 
+    def test_a_typed_stop_while_the_bridge_works_delivers_and_records_nothing(self, codex_cfg, activate, db,
+                                                                            dialogue_memory, forbid_local):
+        import threading
+
+        from jarvis.reply import engine
+        from jarvis.reply.cancellation import cancel_scope
+
+        stop = threading.Event()
+
+        class StoppedWhileWorking(FakeService):
+            def run_request(self, *args, **kwargs):
+                outcome = super().run_request(*args, **kwargs)
+                stop.set()  # the chat Stop button, pressed before the answer came back
+                return outcome
+
+        service = activate(StoppedWhileWorking())
+        with cancel_scope(stop):
+            reply = engine.run_reply_engine(db, codex_cfg, None, "tell me about black holes", dialogue_memory,
+                                            quiet=True)
+        assert reply is None
+        assert len(service.requests) == 1
+        assert dialogue_memory.get_recent_messages() == []
+
+    def test_a_typed_stop_before_a_confirmation_question_is_shown_leaves_nothing_to_approve(
+            self, codex_cfg, activate, db, dialogue_memory, forbid_local):
+        import threading
+
+        from jarvis.reply import engine
+        from jarvis.reply.cancellation import cancel_scope
+
+        store = get_confirmation_store()
+        stop = threading.Event()
+
+        class AsksToConfirm(FakeService):
+            def run_request(self, *args, **kwargs):
+                super().run_request(*args, **kwargs)
+                pending = store.set_pending(ConfirmationRequest(
+                    tool_name="localFiles", tier=SafetyTier.CONFIRM_VOICE, action="delete", target="a.pdf",
+                    parameters={}))
+                stop.set()  # the chat Stop button, pressed before the question was shown
+                return BridgeOutcome("awaiting_confirmation", "Delete a.pdf?", confirmation_id=pending.request.id)
+
+        activate(AsksToConfirm())
+        with cancel_scope(stop):
+            reply = engine.run_reply_engine(db, codex_cfg, None, "delete a.pdf", dialogue_memory, quiet=True)
+        assert reply is None
+        assert dialogue_memory.get_recent_messages() == []
+        assert store.has_pending_voice() is False
+        assert store.claim_approved() is None
+
+    def test_a_typed_stop_before_the_hand_off_sends_nothing(self, codex_cfg, activate, db, dialogue_memory,
+                                                            forbid_local):
+        import threading
+
+        from jarvis.reply import engine
+        from jarvis.reply.cancellation import cancel_scope
+
+        service = activate(FakeService())
+        stop = threading.Event()
+        stop.set()
+        with cancel_scope(stop):
+            reply = engine.run_reply_engine(db, codex_cfg, None, "tell me about black holes", dialogue_memory,
+                                            quiet=True)
+        assert reply is None
+        assert service.requests == []
+        assert dialogue_memory.get_recent_messages() == []
+
 
 @pytest.mark.unit
 class TestRequestContext:

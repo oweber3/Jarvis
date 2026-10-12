@@ -34,7 +34,7 @@ The server runs in the daemon process, like Phone Access (`remote/remote.spec.md
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `web_chat_enabled` | `false` | Serve the web chat and let the tray open it. Restart Jarvis after changing it |
+| `web_chat_enabled` | `false` | Serve the web chat and let the tray open it. Takes effect at the next daemon start (the tray's "Restart Jarvis now" after saving Settings) |
 | `web_chat_port` | `8766` | Loopback TCP port, 1024 to 65535 |
 
 A port that cannot be bound prints one warning at start-up and the web chat stays off; the Qt chat and the rest of Jarvis are unaffected.

@@ -168,6 +168,10 @@ def get_service() -> Optional[WindowSnapService]:
 
 
 def stop_service() -> None:
-    """Stop gesture snapping if it is on (daemon shutdown)."""
-    if _service is not None:
-        _service.stop()
+    """Stop gesture snapping if it is on and forget the service (daemon shutdown), so a daemon started again in
+    the same process builds a new one from its own settings."""
+    global _service
+    service, _service = _service, None
+    if service is not None:
+        service.stop()
+        debug_log("gesture snapping service released", "gestures")

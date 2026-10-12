@@ -34,7 +34,8 @@ FieldMeta (dataclass)
   ├── section            # Heading the field sits under on its page
   ├── advanced           # Shown only while "Show advanced settings" is ticked
   ├── shown_when         # Optional condition on other fields' current values
-  └── column             # On a page with columns, the column the field sits in
+  ├── column             # On a page with columns, the column the field sits in
+  └── required           # A text field Save refuses to leave blank
 ```
 
 Every built-in field has a section. Numbers show as many decimal places as their step (a step of 10 shows `45 s`, a step of 0.05 shows `0.25`).
@@ -49,7 +50,7 @@ Every built-in field has a section. Numbers show as many decimal places as their
 | `float` | QDoubleSpinBox | With bounds, step, suffix |
 | `str` | QLineEdit | Placeholder if nullable |
 | `secret` | Status label + QLineEdit (EchoMode.Password) + Remove | API keys. Shows only whether a key is stored ("Stored" in the success colour, "Removed on save" in the warning colour, "Not set" muted), never the key. A typed key is stored, or a Remove takes effect, on Save, in the OS credential store (`jarvis.credentials`, Windows Credential Manager). Never written to `config.json`; Reset clears typed input only |
-| `choice` | QComboBox | Pre-defined options |
+| `choice` | QComboBox | Pre-defined options. An offered empty choice ("Model default", "Automatic", "Off", "Same as chat provider") is saved as `""`, a value of its own, never as `null` |
 | `device` | QComboBox | Dynamically populated from sounddevice |
 | `list` | QListWidget + Add/Edit/Remove buttons | Stores as JSON array in config |
 
@@ -121,6 +122,7 @@ The Listening page includes a device dropdown populated at window open time via 
 
 ## Save Behaviour
 
+- A `required` text field left blank (the Wake Word) stops the save: the window shows that field's page and the message "<label> cannot be empty. Enter a value, then save again." and writes nothing, so a blank wake word never reaches `config.json`.
 - Only keys that differ from `get_default_config()` are written.
 - Save re-reads `config.json` and applies only the fields the user changed in the window, so values written while it was open (a voice "go local", the tray's activity-log pause) are kept rather than reverted to what the window showed on opening.
 - API keys (`secret` fields) never reach `config.json`. Opening the window first moves any API key still in the file into the credential store; a typed key the store cannot take is reported and not saved. A key already in the file that could not move (no credential store) stays in the file on Save, because it is the only copy; it moves on a later open once a store is available.

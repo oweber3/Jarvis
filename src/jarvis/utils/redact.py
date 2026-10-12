@@ -44,6 +44,10 @@ _REDACTION_RULES: list[tuple[re.Pattern[str], Any]] = [
     ), r"\1=[REDACTED]"),
     (re.compile(r"\b[0-9A-Fa-f]{32,}\b"), "[REDACTED_HEX]"),
     (re.compile(r"\b\d{6}\b(?=.*(otp|2fa|code))", re.IGNORECASE), "[REDACTED_OTP]"),
+    # The same keywords directly ahead of the code: "OTP 482913", "code: 482913", "code is 482913".
+    # A bare "code" needs the "is", ":" or "=" so "pin code 560001" stays readable.
+    (re.compile(r"\b((?:otp|2fa)\s*(?:is\s*|[:=]\s*)?|code\s*(?:is\s*|[:=]\s*))\d{6}\b", re.IGNORECASE),
+     r"\1[REDACTED_OTP]"),
 ]
 
 

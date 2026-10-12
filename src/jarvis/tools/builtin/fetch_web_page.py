@@ -5,7 +5,26 @@ from typing import Dict, Any, Optional
 from ...debug import debug_log
 from ..base import Tool, ToolContext
 from ..types import ToolExecutionResult
-from .url_guard import NonPublicUrlError, fetch_public
+from .url_guard import MAX_FETCH_BYTES, NonPublicUrlError, fetch_public, read_capped
+from .web_fence import FENCE_NOTE, defang, fence
+
+# Most characters of page text handed to the model.
+MAX_PAGE_CHARS = 50_000
+
+
+def _fenced_reply(url: str, label: str, page_text: str) -> str:
+    """The tool result: the requested URL, then everything the page said inside the untrusted fence.
+
+    Page text past ``MAX_PAGE_CHARS`` is cut before it is fenced, so the closing marker is always there.
+    """
+    lines = []
+    if len(page_text) > MAX_PAGE_CHARS:
+        page_text = page_text[:MAX_PAGE_CHARS]
+        lines.append(f"[Truncated to {MAX_PAGE_CHARS} chars]")
+    lines.append(f"**URL:** {defang(url)}")
+    lines.append(f"**{label}** {FENCE_NOTE}:")
+    lines.append(fence(page_text))
+    return "\n\n".join(lines)
 
 
 class FetchWebPageTool(Tool):
@@ -55,11 +74,17 @@ class FetchWebPageTool(Tool):
                 'Upgrade-Insecure-Requests': '1',
             }
             # ``with`` releases the connection back to the pool deterministically
-            # even if BeautifulSoup or the link extraction raises midway.
-            with fetch_public(url, headers=headers, timeout=15) as response:
+            # even if BeautifulSoup or the link extraction raises midway. The
+            # body is streamed and cut off at MAX_FETCH_BYTES so a hostile
+            # server cannot exhaust memory.
+            with fetch_public(url, headers=headers, timeout=15, stream=True) as response:
                 response.raise_for_status()
-                response_content = response.content
-                response_text = response.text
+                response_content = read_capped(response, MAX_FETCH_BYTES)
+                encoding = response.encoding if isinstance(response.encoding, str) else None
+            try:
+                response_text = response_content.decode(encoding or "utf-8", errors="replace")
+            except LookupError:
+                response_text = response_content.decode("utf-8", errors="replace")
             try:
                 from bs4 import BeautifulSoup
                 soup = BeautifulSoup(response_content, 'html.parser')
@@ -96,24 +121,19 @@ class FetchWebPageTool(Tool):
                                 continue
                             links.append(f"• {link_text}: {href}")
                     if links:
-                        links_section = f"\n\n**Links found on page:**\n" + '\n'.join(links[:20])
-                reply_parts = []
+                        links_section = "**Links found on page:**\n" + '\n'.join(links[:20])
+                page_parts = []
                 if title:
-                    reply_parts.append(f"**Title:** {title}")
-                reply_parts.append(f"**URL:** {url}")
-                reply_parts.append(f"**Content:**\n{content}")
+                    page_parts.append(f"**Title:** {title}")
+                page_parts.append(f"**Content:**\n{content}")
                 if links_section:
-                    reply_parts.append(links_section)
-                reply_text = '\n\n'.join(reply_parts)
-                max_chars = 50_000
-                if len(reply_text) > max_chars:
-                    reply_text = f"[Truncated to {max_chars} chars]\n\n" + reply_text[:max_chars]
+                    page_parts.append(links_section)
+                reply_text = _fenced_reply(url, "Page content", '\n\n'.join(page_parts))
                 debug_log(f"fetchWebPage: extracted {len(content)} chars of content", "web")
                 context.user_print("✅ Page content fetched.")
                 return ToolExecutionResult(success=True, reply_text=reply_text)
             except ImportError:
-                text = response_text[:10000]
-                reply_text = f"**URL:** {url}\n**Raw Content:**\n{text}"
+                reply_text = _fenced_reply(url, "Raw Content", response_text[:10000])
                 debug_log("fetchWebPage: BeautifulSoup not available, returning raw text", "web")
                 context.user_print("✅ Page content fetched (raw).")
                 return ToolExecutionResult(success=True, reply_text=reply_text)

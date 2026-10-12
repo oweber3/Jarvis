@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Callable, Optional, TypeVar
 from urllib.parse import quote, urlparse
+from xml.parsers import expat
 
 import requests
 
@@ -140,10 +141,29 @@ def _text(root: ET.Element, tag: str) -> str:
     return (node.text or "").strip() if node is not None else ""
 
 
+class _Declaration(Exception):
+    """The XML declares a document type or an entity."""
+
+
+def _refuse_declaration(*_args) -> None:
+    raise _Declaration()
+
+
 def _parse(body: bytes) -> ET.Element:
-    upper = body.upper()
-    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
-        raise RokuRequestFailed("The TV sent a response Jarvis does not accept.")
+    """The response's XML tree. A DOCTYPE or entity declaration is refused in any encoding.
+
+    A first pass lets expat decode the bytes (UTF-8, UTF-16 or whatever the XML declaration names) and
+    stops at the first declaration, before anything is built or expanded."""
+    scan = expat.ParserCreate()
+    scan.StartDoctypeDeclHandler = _refuse_declaration
+    scan.EntityDeclHandler = _refuse_declaration
+    try:
+        scan.Parse(body, True)
+    except _Declaration:
+        debug_log("Roku response refused: it declares a document type or an entity.", "tv")
+        raise RokuRequestFailed("The TV sent a response Jarvis does not accept.") from None
+    except (expat.ExpatError, ValueError):
+        raise RokuRequestFailed("The TV sent a response Jarvis could not read.") from None
     try:
         return ET.fromstring(body)
     except ET.ParseError:

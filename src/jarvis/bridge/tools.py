@@ -48,6 +48,8 @@ class BridgeOutcome:
     kind: str
     text: str = ""
     reason: Optional[str] = None
+    # For ``awaiting_confirmation``: the pending confirmation the question belongs to.
+    confirmation_id: Optional[str] = None
 
 
 def execute_input_schema(tools: Dict[str, Dict[str, Any]], *, catalogue: bool = False) -> Dict[str, Any]:

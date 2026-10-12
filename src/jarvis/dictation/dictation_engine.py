@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional
 
 from .. import voice_levels
 from ..debug import debug_log
-from ..utils.audio_lock import portaudio_lock
+from ..utils.audio_lock import portaudio_lock, stream_closed, stream_opened
 from ..utils.audio_capture import mono_capture, open_input_stream, resolve_input_device
 from .history import DictationHistory
 
@@ -91,6 +91,7 @@ def _generate_beep_wav(freq: float = 520, duration: float = 0.10) -> bytes:
 
 _START_BEEP: Optional[bytes] = None
 _STOP_BEEP: Optional[bytes] = None
+_NOT_READY_BEEP: Optional[bytes] = None
 
 
 def _get_start_beep() -> bytes:
@@ -105,6 +106,13 @@ def _get_stop_beep() -> bytes:
     if _STOP_BEEP is None:
         _STOP_BEEP = _generate_beep_wav(freq=440, duration=0.10)
     return _STOP_BEEP
+
+
+def _get_not_ready_beep() -> bytes:
+    global _NOT_READY_BEEP
+    if _NOT_READY_BEEP is None:
+        _NOT_READY_BEEP = _generate_beep_wav(freq=260, duration=0.18)
+    return _NOT_READY_BEEP
 
 
 def _play_beep(wav_data: bytes) -> None:
@@ -570,6 +578,7 @@ def _close_stream(stream: Any) -> None:
     if stream is None:
         return
     with portaudio_lock:
+        stream_closed(stream)
         try:
             stream.stop()
         except Exception as exc:
@@ -672,6 +681,14 @@ class DictationEngine:
         # is still current, so a stale worker from a superseded press can
         # never clobber a newer session or leak a live stream.
         self._session = 0
+        # Sessions pressed but not yet finished (finalised, abandoned or
+        # discarded). The end notice (listener resumed, face idle) fires only
+        # when the last open session finishes, so an older dictation that is
+        # still transcribing never ends a newer recording. ``_end_owed``
+        # remembers an end notice held back for a newer session, so the
+        # listener is resumed even if that newer press finishes silently.
+        self._open_sessions: set = set()
+        self._end_owed = False
 
         # Double-tap detection for hands-free mode
         self._last_hotkey_release_time: float = 0.0
@@ -873,6 +890,7 @@ class DictationEngine:
             self._recording = True
             self._session += 1
             token = self._session
+            self._open_sessions.add(token)
 
         threading.Thread(
             target=self._begin_recording, args=(token,), daemon=True
@@ -882,14 +900,47 @@ class DictationEngine:
         """Roll back a failed session if *token* is still current.
 
         Returns True when this worker owned the active session (so the
-        caller should fire the end callback); False when a newer press has
-        superseded it and no state may be touched.
+        caller must finish it with ``_finish_session``); False when the
+        hotkey was already released, whose stop path finishes the session.
+        A hands-free mode armed by this press is dropped with it.
         """
         with self._lock:
             if self._session != token or not self._recording:
                 return False
             self._recording = False
+            self._hands_free = False
             return True
+
+    def _is_newest_open(self, token: int) -> bool:
+        """True when no newer session than *token* is still open."""
+        with self._lock:
+            return not any(s > token for s in self._open_sessions)
+
+    def _finish_session(self, token: int, *, notify: bool = True) -> None:
+        """Close session *token* and fire the end notice if it is due.
+
+        ``notify`` is False for a press that ends silently (it never sent a
+        start notice). The notice fires when no other session is still open;
+        otherwise it is owed to whichever open session finishes last.
+        """
+        with self._lock:
+            self._open_sessions.discard(token)
+            if self._open_sessions:
+                if notify:
+                    self._end_owed = True
+                fire = False
+            else:
+                fire = notify or self._end_owed
+                self._end_owed = False
+        if not fire:
+            if notify:
+                debug_log("dictation end notice held back: another dictation is still open", "dictation")
+            return
+        if self._on_dictation_end:
+            try:
+                self._on_dictation_end()
+            except Exception as exc:
+                debug_log(f"on_dictation_end callback error: {exc}", "dictation")
 
     def _begin_recording(self, token: int) -> None:
         """Worker: open the audio stream and start capturing."""
@@ -898,7 +949,11 @@ class DictationEngine:
         backend = self._whisper_backend_ref()
         if model is None and backend != "mlx":
             debug_log("whisper model not loaded — dictation skipped", "dictation")
-            self._abandon_session(token)
+            # The "not ready" cue plays here, on this worker, never on the
+            # pynput hook thread.
+            _play_beep(_get_not_ready_beep())
+            if self._abandon_session(token):
+                self._finish_session(token, notify=False)
             return
 
         # Bail early if the press was already released/superseded while the
@@ -918,6 +973,28 @@ class DictationEngine:
             except Exception as exc:
                 debug_log(f"on_dictation_start callback error: {exc}", "dictation")
 
+        # A quick tap can be released while the start notice is on its way, and
+        # its session can finish (end notice given) before that start notice
+        # lands. The end is then given again, so the listener is resumed; with
+        # another dictation still open, that one's finish gives it instead.
+        # The notice is given under the engine lock so a newer press cannot
+        # start between the check and the notice.
+        with self._lock:
+            finished = token not in self._open_sessions
+            released = finished or not self._recording or self._session != token
+            if finished and self._open_sessions:
+                self._end_owed = True
+            elif finished:
+                debug_log("dictation released before it started — listener resumed", "dictation")
+                if self._on_dictation_end:
+                    try:
+                        self._on_dictation_end()
+                    except Exception as exc:
+                        debug_log(f"on_dictation_end callback error: {exc}", "dictation")
+        if released:
+            # A press released but not yet finished gets its end notice from its own finish.
+            return
+
         # Play start beep
         _play_beep(_get_start_beep())
 
@@ -928,16 +1005,17 @@ class DictationEngine:
         except Exception as exc:
             print(f'  ❌ Dictation microphone unavailable: {exc}', flush=True)
             debug_log(f'failed to select dictation microphone: {exc}', 'dictation')
-            if self._abandon_session(token) and self._on_dictation_end:
-                self._on_dictation_end()
+            if self._abandon_session(token):
+                self._finish_session(token)
             return
 
         # Query native sample rate
         try:
-            if "device" in stream_kwargs:
-                dev_info = sd.query_devices(stream_kwargs["device"])
-            else:
-                dev_info = sd.query_devices(kind="input")
+            with portaudio_lock:
+                if "device" in stream_kwargs:
+                    dev_info = sd.query_devices(stream_kwargs["device"])
+                else:
+                    dev_info = sd.query_devices(kind="input")
             native_rate = int(dev_info.get("default_samplerate", self._target_sample_rate))
         except Exception:
             native_rate = self._target_sample_rate
@@ -949,14 +1027,15 @@ class DictationEngine:
                     callback=self._audio_callback, log_category='dictation',
                     fallback_rate=self._target_sample_rate,
                 )
+            stream_opened(stream)
             debug_log(
                 f'dictation stream at {self._stream_sample_rate} Hz, {channels} channel(s) '
                 f'(resamples to {self._target_sample_rate} Hz)', 'dictation',
             )
         except Exception as exc:
             debug_log(f"failed to open dictation audio stream: {exc}", "dictation")
-            if self._abandon_session(token) and self._on_dictation_end:
-                self._on_dictation_end()
+            if self._abandon_session(token):
+                self._finish_session(token)
             return
 
         try:
@@ -965,8 +1044,8 @@ class DictationEngine:
         except Exception as exc:
             debug_log(f"failed to start dictation audio stream: {exc}", "dictation")
             _close_stream(stream)
-            if self._abandon_session(token) and self._on_dictation_end:
-                self._on_dictation_end()
+            if self._abandon_session(token):
+                self._finish_session(token)
             return
 
         # The hotkey may have been released (or pressed again, starting a
@@ -1017,21 +1096,23 @@ class DictationEngine:
             audio_frames = self._audio_frames
             self._audio_frames = []
             start_time = self._record_start_time
+            token = self._session
+            if discard:
+                # Shutdown ends the dictation cycle outright, whatever older
+                # sessions are still transcribing.
+                self._open_sessions.clear()
+                self._end_owed = False
 
         if discard:
             # Shutdown path — tear down synchronously so the caller knows
             # everything is finished before the engine is gone.
             _close_stream(stream)
-            if self._on_dictation_end:
-                try:
-                    self._on_dictation_end()
-                except Exception:
-                    pass
+            self._finish_session(token)
             return
 
         threading.Thread(
             target=self._finalise_and_transcribe,
-            args=(stream, audio_frames, start_time),
+            args=(stream, audio_frames, start_time, token),
             daemon=True,
         ).start()
 
@@ -1040,19 +1121,18 @@ class DictationEngine:
         stream: Any,
         audio_frames: list,
         start_time: float,
+        token: int,
     ) -> None:
         """Worker: close stream, play beep, transcribe, paste.
 
         Runs on a background thread so the pynput hotkey callback returns
         immediately.  See ``_stop_recording`` for the rationale.
 
-        ``_on_dictation_end`` is normally fired from ``_transcribe_and_paste``'s
-        finally block.  We wrap the whole body in try/except so a failure in
-        ``_close_stream`` or ``_play_beep`` (before we reach the transcribe
-        step) still unpauses the voice listener and resets the face state —
-        otherwise a single beep error would strand the UI in ``DICTATING``.
+        Session *token* is finished in the ``finally`` block, so a failure in
+        ``_close_stream`` or ``_play_beep`` still unpauses the voice listener
+        and resets the face state, while a newer recording that is still
+        open keeps both (see ``_finish_session``).
         """
-        end_fired = False
         try:
             _close_stream(stream)
             _play_beep(_get_stop_beep())
@@ -1060,23 +1140,19 @@ class DictationEngine:
             duration = time.time() - start_time
             debug_log(f"dictation recording stopped ({duration:.1f}s)", "dictation")
 
-            if self._on_dictation_processing_start:
+            # A newer press that is already recording owns the face: its
+            # DICTATING state is not replaced by this session's processing.
+            if self._on_dictation_processing_start and self._is_newest_open(token):
                 try:
                     self._on_dictation_processing_start()
                 except Exception as exc:
                     debug_log(f"on_dictation_processing_start callback error: {exc}", "dictation")
 
-            # _transcribe_and_paste has its own finally that fires
-            # _on_dictation_end, so we defer to it on the happy path.
-            end_fired = True
             self._transcribe_and_paste(audio_frames)
         except Exception as exc:
             debug_log(f"dictation finalise error: {exc}", "dictation")
-            if not end_fired and self._on_dictation_end:
-                try:
-                    self._on_dictation_end()
-                except Exception:
-                    pass
+        finally:
+            self._finish_session(token)
 
     # ------------------------------------------------------------------
     # Transcription & paste
@@ -1128,12 +1204,6 @@ class DictationEngine:
                 debug_log("empty transcription — no paste", "dictation")
         except Exception as exc:
             debug_log(f"dictation transcribe/paste error: {exc}", "dictation")
-        finally:
-            if self._on_dictation_end:
-                try:
-                    self._on_dictation_end()
-                except Exception:
-                    pass
 
     def _transcribe(self, audio) -> str:
         """Transcribe audio using the shared Whisper model."""

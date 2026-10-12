@@ -194,3 +194,109 @@ class TestFollowUps:
             cfg.voice_debug = voice_debug
             engine.run_reply_engine(db=Mock(), cfg=cfg, tts=None,
                                     text="how long was I in that spreadsheet?", dialogue_memory=memory)
+
+
+class _FakeBridge:
+    def __init__(self, text):
+        from jarvis.bridge.tools import BridgeOutcome
+        self.outcome = BridgeOutcome("reply", text)
+        self.contexts = []
+
+    def prepare(self):
+        return None
+
+    def is_busy(self):
+        return False
+
+    def cancel_active(self, reason):
+        return False
+
+    def close(self):
+        pass
+
+    def run_request(self, utterance, context, origin, language, db, quiet, desktop=None):
+        self.contexts.append(context)
+        return self.outcome
+
+
+@pytest.mark.unit
+class TestCloudFollowUps:
+    """With sharing on, Codex or Claude sees earlier activity turns; its follow-up reply is as
+    private as a local one."""
+
+    @pytest.fixture
+    def cloud(self, mock_config, monkeypatch):
+        from jarvis.bridge import modes
+        from jarvis.memory import activity_runtime
+        from jarvis.tools.confirmation import get_confirmation_store
+
+        get_confirmation_store().clear_pending()
+        modes.reset()
+        monkeypatch.setattr(activity_runtime, "_sharing_stopped", False)
+        mock_config.reply_mode = "claude"
+        mock_config.claude_enabled = True
+        mock_config.claude_share_recent_dialogue = True
+        mock_config.claude_recent_dialogue_messages = 6
+
+        def ask(memory, sharing, db):
+            mock_config.activity_log_share_with_cloud = sharing
+            bridge = _FakeBridge("You spent about two hours in Budget-2026.xlsx.")
+            modes.start(mock_config, factories={"claude": lambda cfg: bridge}, save=lambda values: True)
+            assert modes.wait_for_warm_up(5)
+            engine.run_reply_engine(db, mock_config, None, "how long was I in that spreadsheet?", memory, quiet=False)
+            return bridge
+
+        yield ask
+        modes.reset()
+        get_confirmation_store().clear_pending()
+
+    def test_a_cloud_reply_built_on_shared_activity_data_stays_private(self, cloud, memory, db, capsys):
+        memory.add_message("user", "what was I working on this afternoon?", diary=False)
+        memory.add_message("assistant", "Mostly Excel, in Budget-2026.xlsx.", diary=False)
+
+        bridge = cloud(memory, True, db)
+
+        assert any("Budget-2026" in m["content"] for m in bridge.contexts[0])  # shared, as opted in
+        assert all("Budget-2026" not in chunk for chunk in memory.get_pending_chunks())
+        assert "Budget-2026" not in capsys.readouterr().out
+
+    def test_an_ordinary_cloud_reply_still_reaches_the_diary(self, cloud, memory, db):
+        memory.add_message("user", "what is the capital of France?")
+        memory.add_message("assistant", "Paris.")
+
+        cloud(memory, True, db)
+
+        assert any("Budget-2026" in chunk for chunk in memory.get_pending_chunks())
+
+    def test_an_old_private_tool_result_does_not_make_later_cloud_replies_private(self, cloud, memory, db):
+        # A local activity question earlier: its tool result stays in the local carry-over only.
+        memory.record_tool_turn(_activity_tool_turn(), private=True)
+        memory.add_message("user", "what is the capital of France?")
+        memory.add_message("assistant", "Paris.")
+
+        bridge = cloud(memory, True, db)
+
+        assert all(m["role"] in ("user", "assistant") for m in bridge.contexts[0])  # no tool results
+        assert any("Budget-2026" in chunk for chunk in memory.get_pending_chunks())
+
+    def test_nothing_shared_means_nothing_marked(self, cloud, memory, db, mock_config):
+        mock_config.claude_recent_dialogue_messages = 0
+        memory.add_message("user", "what was I working on this afternoon?", diary=False)
+        memory.add_message("assistant", "Mostly Excel.", diary=False)
+
+        bridge = cloud(memory, True, db)
+
+        assert bridge.contexts[0] == []
+        assert any("Budget-2026" in chunk for chunk in memory.get_pending_chunks())
+
+    def test_a_private_turn_older_than_the_shared_messages_does_not_count(self, cloud, memory, db, mock_config):
+        mock_config.claude_recent_dialogue_messages = 2
+        memory.add_message("user", "what was I working on this afternoon?", diary=False)
+        memory.add_message("assistant", "Mostly Excel.", diary=False)
+        memory.add_message("user", "what is the capital of France?")
+        memory.add_message("assistant", "Paris.")
+
+        bridge = cloud(memory, True, db)
+
+        assert [m["content"] for m in bridge.contexts[0]] == ["what is the capital of France?", "Paris."]
+        assert any("Budget-2026" in chunk for chunk in memory.get_pending_chunks())

@@ -14,7 +14,12 @@ family (#462, #401, #422).
 Every stream lifecycle call (constructing an ``InputStream``/``OutputStream``
 and calling ``start``/``stop``/``close``/``abort`` on it, plus blocking
 ``sd.play`` which opens a stream internally) must run inside
-``portaudio_lock``. Do NOT hold the lock across playback waits or other
+``portaudio_lock``, as must device queries (``sd.query_devices``) and
+restarting PortAudio to refresh its device list (``sd._terminate`` then
+``sd._initialize``, which closes every open stream and replaces the device
+table). Every long-lived stream is recorded with ``stream_opened`` when it
+opens and ``stream_closed`` when it closes, so a restart can wait until no
+other stream is open. Do NOT hold the lock across playback waits or other
 blocking work, and never acquire another lock while holding it — take it
 innermost, around the direct sounddevice call only.
 
@@ -25,9 +30,31 @@ Accepted exceptions:
 - The Windows mic-permission probe opens its stream WITHOUT the lock: that
   open can hang indefinitely when Windows blocks mic access, and hanging
   while holding this lock would freeze every audio user in the process.
+  A PortAudio restart waits until the probe's thread has finished.
 """
 
 import threading
 
 # Re-entrant so a guarded close inside a guarded open-fallback path is safe.
 portaudio_lock = threading.RLock()
+
+
+_open_streams: dict = {}
+
+
+def stream_opened(stream) -> None:
+    """Record a PortAudio stream as open until ``stream_closed``."""
+    with portaudio_lock:
+        _open_streams[id(stream)] = stream
+
+
+def stream_closed(stream) -> None:
+    """Forget a stream recorded by ``stream_opened``; unknown streams are ignored."""
+    with portaudio_lock:
+        _open_streams.pop(id(stream), None)
+
+
+def open_stream_count() -> int:
+    """How many recorded streams are open in this process."""
+    with portaudio_lock:
+        return len(_open_streams)

@@ -268,7 +268,11 @@ class TestRecordingStateMachine:
     def test_start_recording_checks_whisper_model(self):
         """Should not start recording if Whisper model is None (non-mlx)."""
         engine = _make_engine(whisper_model_ref=lambda: None)
-        engine._start_recording()
+        with patch("src.jarvis.dictation.dictation_engine._play_beep"):
+            engine._start_recording()
+            deadline = time.time() + 5.0
+            while engine._recording and time.time() < deadline:
+                time.sleep(0.01)
         assert engine._recording is False
 
     def test_start_recording_allows_mlx_without_model(self):
@@ -294,6 +298,7 @@ class TestRecordingStateMachine:
         engine = _make_engine(voice_device='Headset')
         engine._recording = True
         engine._session = 1
+        engine._open_sessions.add(1)  # as _start_recording records a press
 
         with patch('src.jarvis.dictation.dictation_engine.sd') as mock_sd, \
              patch('src.jarvis.dictation.dictation_engine._play_beep'):
@@ -335,6 +340,7 @@ class TestRecordingStateMachine:
         engine = _make_engine(voice_device='Disconnected Headset', on_dictation_end=ended.set)
         engine._recording = True
         engine._session = 1
+        engine._open_sessions.add(1)  # as _start_recording records a press
 
         with patch('src.jarvis.dictation.dictation_engine.sd') as mock_sd, \
              patch('src.jarvis.dictation.dictation_engine._play_beep'):
@@ -352,6 +358,7 @@ class TestRecordingStateMachine:
         engine = _make_engine(voice_device='1')
         engine._recording = True
         engine._session = 1
+        engine._open_sessions.add(1)  # as _start_recording records a press
 
         with patch('src.jarvis.dictation.dictation_engine.sd') as mock_sd, \
              patch('src.jarvis.dictation.dictation_engine._play_beep'):
@@ -487,13 +494,8 @@ class TestRecordingStateMachine:
         engine._stop_recording(discard=True)
 
     def test_finalise_fires_on_dictation_end_when_beep_raises(self):
-        """A failure in ``_play_beep`` must not strand the listener paused.
-
-        ``_on_dictation_end`` is normally fired from
-        ``_transcribe_and_paste``'s finally, but that step is never reached
-        if ``_close_stream`` or ``_play_beep`` raises.  ``_finalise_and_transcribe``
-        must therefore guarantee the callback fires on any error.
-        """
+        """A failure in ``_play_beep`` must not strand the listener paused:
+        ``_finalise_and_transcribe`` fires the end callback on any error."""
         import numpy as np
         end_called = threading.Event()
         engine = _make_engine(on_dictation_end=lambda: end_called.set())
@@ -506,6 +508,7 @@ class TestRecordingStateMachine:
                 stream=None,
                 audio_frames=[np.zeros(1600, dtype=np.float32)],
                 start_time=time.time(),
+                token=1,
             )
 
         assert end_called.is_set(), (
@@ -531,6 +534,52 @@ class TestRecordingStateMachine:
 
             engine._stop_recording(discard=True)
             assert end_called.is_set()
+
+    def test_dictation_stream_counts_as_open_audio_only_while_recording(self):
+        """The microphone recovery must not restart PortAudio under a dictation."""
+        from src.jarvis.utils import audio_lock
+        engine = _make_engine()
+        with patch("src.jarvis.dictation.dictation_engine.sd") as mock_sd,              patch("src.jarvis.dictation.dictation_engine._play_beep"):
+            mock_sd.InputStream.return_value = MagicMock()
+            engine._recording = True
+            engine._session = 1
+            engine._open_sessions.add(1)  # as _start_recording records a press
+            engine._begin_recording(1)
+            assert audio_lock.open_stream_count() == 1
+            engine._stop_recording(discard=True)
+        assert audio_lock.open_stream_count() == 0
+
+    def test_quick_tap_whose_end_lands_before_its_start_leaves_the_listener_resumed(self):
+        """A tap released while the worker is starting can deliver its end notice first.
+
+        The daemon pauses the voice listener on the start notice and resumes it
+        on the end notice, so a start landing last would leave Jarvis deaf.
+        """
+        listener_paused = {'value': False}
+        ended = threading.Event()
+        engine = None
+
+        def on_end():
+            listener_paused['value'] = False
+            ended.set()
+
+        def on_start():
+            engine._stop_recording()  # the release, and its end notice, win the race
+            assert ended.wait(2)
+            listener_paused['value'] = True
+
+        engine = _make_engine(on_dictation_start=on_start, on_dictation_end=on_end)
+        with patch("src.jarvis.dictation.dictation_engine.sd") as mock_sd, \
+             patch("src.jarvis.dictation.dictation_engine._play_beep"):
+            mock_sd.InputStream.return_value = MagicMock()
+            engine._recording = True
+            engine._session = 1
+            engine._open_sessions.add(1)  # as _start_recording records a press
+            engine._begin_recording(1)
+
+        assert listener_paused['value'] is False
+        assert engine._stream is None
+        assert not engine._recording
 
 
 # ---------------------------------------------------------------------------
@@ -729,7 +778,10 @@ class TestTranscribeAndPaste:
 
         # 0.1s of audio at 16kHz = 1600 samples (< 4800 needed for 0.3s)
         short_frames = [np.zeros(1600, dtype=np.float32)]
-        engine._transcribe_and_paste(short_frames)
+        with patch("src.jarvis.dictation.dictation_engine._play_beep"), \
+             patch("src.jarvis.dictation.dictation_engine._clipboard_paste") as paste:
+            engine._finalise_and_transcribe(None, short_frames, time.time(), 1)
+        paste.assert_not_called()
         assert end_called.is_set()
 
     def test_empty_frames_handled(self):
@@ -737,7 +789,8 @@ class TestTranscribeAndPaste:
         end_called = threading.Event()
         engine._on_dictation_end = lambda: end_called.set()
 
-        engine._transcribe_and_paste([])
+        with patch("src.jarvis.dictation.dictation_engine._play_beep"):
+            engine._finalise_and_transcribe(None, [], time.time(), 1)
         assert end_called.is_set()
 
     @patch("src.jarvis.dictation.dictation_engine._clipboard_paste")
@@ -931,11 +984,10 @@ class TestDictationProcessingCallback:
 
         # Stub stream teardown and beep audio only. The real
         # _transcribe_and_paste runs; with empty frames it short-circuits
-        # and still fires _on_dictation_end via its finally block, which is
-        # the wiring we want to verify.
+        # and the session still ends.
         with patch.object(de, "_close_stream"), patch.object(de, "_play_beep"):
             engine._finalise_and_transcribe(
-                stream=MagicMock(), audio_frames=[], start_time=time.time()
+                stream=MagicMock(), audio_frames=[], start_time=time.time(), token=1
             )
 
         assert events == ["processing", "end"]
@@ -950,7 +1002,7 @@ class TestDictationProcessingCallback:
              patch.object(de, "_play_beep"), \
              patch.object(engine, "_transcribe_and_paste"):
             # Should not raise
-            engine._finalise_and_transcribe(stream=MagicMock(), audio_frames=[], start_time=time.time())
+            engine._finalise_and_transcribe(stream=MagicMock(), audio_frames=[], start_time=time.time(), token=1)
 
 
 # ---------------------------------------------------------------------------
