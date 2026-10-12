@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { ChatMessage, Notice } from "@/api"
+import type { ChatMessage, Notice, ToolStep } from "@/api"
 import { buildThreadMessages, chatTitle, lastMessageId, mergeMessages, pendingDone } from "@/conversion"
 
 const message = (id: number, role: "user" | "assistant", text: string, source: ChatMessage["source"] = "typed"): ChatMessage => ({
@@ -8,6 +8,7 @@ const message = (id: number, role: "user" | "assistant", text: string, source: C
   text,
   ts: 1_760_000_000 + id,
   source,
+  steps: [],
 })
 
 const notice = (id: number, kind: string, request: string | null = null): Notice => ({
@@ -86,6 +87,61 @@ describe("buildThreadMessages", () => {
     expect(out.map((m) => m.role)).toEqual(["user", "assistant"])
     expect(out[1]?.status).toEqual({ type: "running" })
     expect(out[1]?.content).toEqual([])
+  })
+})
+
+describe("tool steps", () => {
+  const withSteps = (steps: ToolStep[]): ChatMessage => ({ ...message(2, "assistant", "Done."), steps })
+  const volume: ToolStep = { tool: "systemVolume", status: "done", label: "Set the volume to 30%", summary: null }
+  const search: ToolStep = { tool: "webSearch", status: "done", label: "Searched the web", summary: "3 results" }
+
+  it("shows the steps of a reply as tool calls before its text, in order", () => {
+    const [reply] = buildThreadMessages([withSteps([volume, search])], [], null)
+    expect(reply?.content).toMatchObject([
+      { type: "tool-call", toolName: "systemVolume", args: { label: "Set the volume to 30%", status: "done" } },
+      { type: "tool-call", toolName: "webSearch", args: { label: "Searched the web", summary: "3 results" } },
+      { type: "text", text: "Done." },
+    ])
+  })
+
+  it("gives every step of every message its own call id", () => {
+    const out = buildThreadMessages([withSteps([volume, volume]), { ...withSteps([volume]), id: 9 }], [], null)
+    const ids = out.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).flatMap((p) => (p.type === "tool-call" ? [p.toolCallId] : []))
+    expect(ids).toHaveLength(3)
+    expect(new Set(ids).size).toBe(3)
+  })
+
+  it("marks a step as finished, so the thread never shows a call still running", () => {
+    const waiting: ToolStep = { tool: "localFiles", status: "waiting", label: "Local files", summary: null }
+    const [reply] = buildThreadMessages([withSteps([waiting])], [], null)
+    const call = (reply?.content as unknown as { type: string; result?: unknown; isError?: boolean }[])[0]
+    expect(call?.result).toBeDefined()
+    expect(call?.isError).toBeFalsy()
+  })
+
+  it("marks a failed or refused step as an error", () => {
+    const failed: ToolStep = { tool: "tvControl", status: "failed", label: "Tv control", summary: null }
+    const refused: ToolStep = { tool: "localFiles", status: "declined", label: "Local files", summary: null }
+    const [reply] = buildThreadMessages([withSteps([failed, refused])], [], null)
+    const calls = reply?.content as unknown as { isError?: boolean }[]
+    expect(calls.slice(0, 2).map((c) => c.isError)).toEqual([true, true])
+  })
+
+  it("leaves a reply without steps as plain text", () => {
+    const [reply] = buildThreadMessages([message(2, "assistant", "Hi")], [], null)
+    expect(reply?.content).toEqual([{ type: "text", text: "Hi" }])
+  })
+
+  it("copes with a server that sends no steps field", () => {
+    const old = { ...message(2, "assistant", "Hi") } as Partial<ChatMessage>
+    delete old.steps
+    const [reply] = buildThreadMessages([old as ChatMessage], [], null)
+    expect(reply?.content).toEqual([{ type: "text", text: "Hi" }])
+  })
+
+  it("never adds steps to what the owner said", () => {
+    const [user] = buildThreadMessages([{ ...message(1, "user", "hi"), steps: [volume] }], [], null)
+    expect(user?.content).toEqual([{ type: "text", text: "hi" }])
   })
 })
 

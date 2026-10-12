@@ -18,6 +18,11 @@ _MESSAGE_CHARS = 1000
 MODE_LABELS = {"codex": "Codex", "claude": "Claude"}
 
 
+def no_images_text(mode: str) -> str:
+    return (f"{MODE_LABELS.get(mode, mode)} mode cannot take images, so nothing was sent. Remove the image, "
+            "or say \"go local\" or choose Local in the tray to use a local model that can see.")
+
+
 def build_dialogue_context(dialogue_memory: Any, settings: BridgeSettings) -> List[Dict[str, str]]:
     """Bounded, redacted recent user and assistant messages shared with the bridge.
 
@@ -84,19 +89,27 @@ def not_running_text(mode: str) -> str:
 def run_bridge_reply(mode: str, db: Any, cfg: Any, tts: Any, redacted: str, dialogue_memory: Any,
                      language: Optional[str], quiet: bool, deliver: Callable[..., str],
                      origin: Optional[str] = None,
-                     read_foreground: Callable[[], Any] = lambda: None) -> Optional[str]:
-    """Hand ``redacted`` to the running bridge of ``mode`` and deliver the validated result once."""
+                     read_foreground: Callable[[], Any] = lambda: None,
+                     attachments: tuple = ()) -> Optional[str]:
+    """Hand ``redacted`` to the running bridge of ``mode`` and deliver the validated result once.
+
+    ``attachments`` go to the bridge with the request, never into the dialogue; a bridge that takes no
+    images refuses a request that carries one, out loud, and sends nothing."""
     service = runtime.get_service()
     if service is None or getattr(service, "mode", mode) != mode:
         debug_log(f"{mode} mode without a running bridge", "bridge")
         return deliver(not_running_text(mode), redacted, cfg, tts, dialogue_memory, quiet)
+    if any(a.image is not None for a in attachments) and getattr(service, "accepts_images", False) is not True:
+        debug_log(f"{mode} mode takes no images; request not sent", "bridge")
+        return deliver(no_images_text(mode), redacted, cfg, tts, dialogue_memory, quiet, error=True)
+    extra = {"attachments": tuple(attachments)} if attachments else {}
     settings = bridge_settings(cfg, mode)
     origin = origin or ("chat" if quiet else "voice")
     dialogue, shared_private = _shared_dialogue(dialogue_memory, settings)
     outcome = service.run_request(
         redacted, dialogue,
         origin, language, db, quiet,
-        desktop=build_desktop_context(cfg, settings, origin, read_foreground),
+        desktop=build_desktop_context(cfg, settings, origin, read_foreground), **extra,
     )
     debug_log(f"{mode} request outcome: {outcome.kind}" + (f" ({outcome.reason})" if outcome.reason else ""),
               "bridge")

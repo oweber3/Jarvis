@@ -5,13 +5,14 @@ redacted text the dialogue memory holds, never what was typed. See ``webchat/web
 """
 from __future__ import annotations
 
+import json
 import secrets
 import sqlite3
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..debug import debug_log
 
@@ -19,12 +20,18 @@ NAME_MAX_CHARS = 80
 TITLE_MAX_CHARS = 60
 ROLES = ("user", "assistant")
 SOURCES = ("typed", "voice", "confirmed")
+ATTACHMENT_KINDS = ("image", "text", "screenshot")
 
 # ``list_chats`` filters: every chat, or the chats that belong to no project.
 ANY_PROJECT = object()
 UNFILED = object()
 
 _ACTIVE_KEY = "active_chat_id"
+
+# Search: the longest query taken, the most chats returned, and the width of a result's snippet.
+SEARCH_QUERY_MAX_CHARS = 200
+SEARCH_RESULT_LIMIT = 30
+SNIPPET_CONTEXT_CHARS = 40
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS chat_projects (
@@ -40,7 +47,8 @@ CREATE TABLE IF NOT EXISTS chats (
   created_at REAL NOT NULL,
   updated_at REAL NOT NULL,
   last_mode  TEXT NOT NULL DEFAULT '',
-  last_model TEXT NOT NULL DEFAULT ''
+  last_model TEXT NOT NULL DEFAULT '',
+  pinned     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_chats_project ON chats(project_id);
 CREATE INDEX IF NOT EXISTS idx_chats_updated ON chats(updated_at);
@@ -51,7 +59,9 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   content TEXT NOT NULL,
   ts      REAL NOT NULL,
   source  TEXT NOT NULL DEFAULT 'typed',
-  private INTEGER NOT NULL DEFAULT 0
+  private INTEGER NOT NULL DEFAULT 0,
+  steps   TEXT NOT NULL DEFAULT '',
+  attachments TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_chat ON chat_messages(chat_id, id);
 CREATE TABLE IF NOT EXISTS chat_state (
@@ -78,6 +88,16 @@ class Chat:
     updated_at: float
     last_mode: str
     last_model: str
+    pinned: bool = False
+
+
+@dataclass(frozen=True)
+class SearchHit:
+    """The newest message of a chat that contains the searched text, with a short excerpt around it."""
+    chat_id: str
+    message_id: int
+    snippet: str
+    ts: float
 
 
 @dataclass(frozen=True)
@@ -89,6 +109,10 @@ class Message:
     ts: float
     source: str
     private: bool = False
+    # The tool steps taken for this reply, each ``{"tool", "status", "label", "summary"}`` (tools/step_log.py).
+    steps: Tuple[Dict[str, Any], ...] = ()
+    # Kind and size of what was attached to the message, never its content.
+    attachments: Tuple[Dict[str, object], ...] = ()
 
 
 def _new_id() -> str:
@@ -106,6 +130,43 @@ def _title_from(text: str) -> str:
     return " ".join(text.split())[:TITLE_MAX_CHARS]
 
 
+def _fold(text: object) -> str:
+    """Case-insensitive form for any script (SQLite's own LIKE only folds ASCII)."""
+    return str(text).casefold()
+
+
+def _snippet(content: str, query: str) -> str:
+    """A one-line excerpt of ``content`` around the first match of ``query``, marked with ellipses when cut."""
+    flat = " ".join(content.split())
+    at = flat.casefold().find(query.casefold())
+    if at < 0:
+        at = 0
+    start = max(0, at - SNIPPET_CONTEXT_CHARS)
+    end = min(len(flat), at + len(query) + SNIPPET_CONTEXT_CHARS)
+    return ("…" if start > 0 else "") + flat[start:end] + ("…" if end < len(flat) else "")
+
+
+def _attachment_markers(attachments: Sequence[Dict[str, object]]) -> str:
+    """The stored form of a message's attachments: kind and size only, whatever else was passed."""
+    markers = []
+    for item in attachments:
+        kind, size = item.get("kind"), item.get("size")
+        if kind not in ATTACHMENT_KINDS or not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise ValueError("unknown attachment")
+        markers.append({"kind": kind, "size": size})
+    return json.dumps(markers) if markers else ""
+
+
+def _parse_markers(stored: str) -> Tuple[Dict[str, object], ...]:
+    try:
+        parsed = json.loads(stored) if stored else []
+    except ValueError:
+        return ()
+    return tuple({"kind": item["kind"], "size": item["size"]} for item in parsed
+                 if isinstance(item, dict) and item.get("kind") in ATTACHMENT_KINDS
+                 and isinstance(item.get("size"), int))
+
+
 class ChatStore:
     """Projects, chats and messages. Thread-safe: one connection guarded by a re-entrant lock."""
 
@@ -118,8 +179,22 @@ class ChatStore:
         self.conn.execute("PRAGMA secure_delete = ON")
         self.conn.execute("PRAGMA foreign_keys = ON")
         with self._lock:
+            self.conn.create_function("jarvis_fold", 1, _fold, deterministic=True)
             self.conn.executescript(_SCHEMA_SQL)
+            self._migrate()
             self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Bring a database written by an earlier release up to the current schema."""
+        chat_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(chats)")}
+        if "pinned" not in chat_columns:
+            self.conn.execute("ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+            debug_log("web chat database gained the pinned column", "webchat")
+        message_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(chat_messages)")}
+        if "steps" not in message_columns:
+            self.conn.execute("ALTER TABLE chat_messages ADD COLUMN steps TEXT NOT NULL DEFAULT ''")
+        if "attachments" not in message_columns:
+            self.conn.execute("ALTER TABLE chat_messages ADD COLUMN attachments TEXT NOT NULL DEFAULT ''")
 
     def close(self) -> None:
         with self._lock:
@@ -173,7 +248,7 @@ class ChatStore:
         with self._lock:
             if project_id is not None and not self._project_exists(project_id):
                 raise ValueError("unknown project")
-            chat = Chat(_new_id(), project_id, _clean_name(title) if title.strip() else "", now, now, "", "")
+            chat = Chat(_new_id(), project_id, _clean_name(title) if title.strip() else "", now, now, "", "", False)
             self.conn.execute(
                 "INSERT INTO chats(id, project_id, title, created_at, updated_at) VALUES (?,?,?,?,?)",
                 (chat.id, chat.project_id, chat.title, chat.created_at, chat.updated_at))
@@ -181,12 +256,16 @@ class ChatStore:
         debug_log("web chat created", "webchat")
         return chat
 
-    _CHAT_COLUMNS = "id, project_id, title, created_at, updated_at, last_mode, last_model"
+    _CHAT_COLUMNS = "id, project_id, title, created_at, updated_at, last_mode, last_model, pinned"
+
+    @staticmethod
+    def _chat(row) -> Chat:
+        return Chat(*row[:7], bool(row[7]))
 
     def get_chat(self, chat_id: str) -> Optional[Chat]:
         with self._lock:
             row = self.conn.execute(f"SELECT {self._CHAT_COLUMNS} FROM chats WHERE id = ?", (chat_id,)).fetchone()
-        return Chat(*row) if row else None
+        return self._chat(row) if row else None
 
     def list_chats(self, project=ANY_PROJECT) -> List[Chat]:
         """Chats, most recently active first: all of them, only the unfiled ones, or one project's."""
@@ -199,7 +278,7 @@ class ChatStore:
             params = (project,)
         with self._lock:
             rows = self.conn.execute(query + " ORDER BY updated_at DESC, rowid DESC", params).fetchall()
-        return [Chat(*r) for r in rows]
+        return [self._chat(r) for r in rows]
 
     def rename_chat(self, chat_id: str, title: str) -> bool:
         cleaned = _clean_name(title)
@@ -214,6 +293,13 @@ class ChatStore:
             if project_id is not None and not self._project_exists(project_id):
                 return False
             cur = self.conn.execute("UPDATE chats SET project_id = ? WHERE id = ?", (project_id, chat_id))
+            self.conn.commit()
+            return cur.rowcount > 0
+
+    def set_pinned(self, chat_id: str, pinned: bool) -> bool:
+        """Pin or unpin a chat. Does not count as activity, so the chat keeps its place in time."""
+        with self._lock:
+            cur = self.conn.execute("UPDATE chats SET pinned = ? WHERE id = ?", (1 if pinned else 0, chat_id))
             self.conn.commit()
             return cur.rowcount > 0
 
@@ -236,34 +322,50 @@ class ChatStore:
     # -- messages ----------------------------------------------------------------------------
 
     def append_message(self, chat_id: str, role: str, content: str, *, ts: float, source: str = "typed",
-                       private: bool = False) -> Message:
+                       private: bool = False, steps: Optional[Sequence[Dict[str, Any]]] = None,
+                       attachments: Sequence[Dict[str, object]] = ()) -> Message:
         """Add a message. The first user message titles a chat that has no title yet.
 
         ``private`` marks a turn that quotes a private source (the activity log, documents, a calendar or email):
-        it stays out of the diary and of any context that leaves the PC, also when the chat is opened again.
+        it stays out of the diary and of any context that leaves the PC, also when the chat is opened again. ``steps`` are the tool steps taken
+        for an assistant reply. ``attachments`` are recorded as kind
+        and size only.
         """
         if role not in ROLES:
             raise ValueError("unknown role")
         if source not in SOURCES:
             raise ValueError("unknown source")
+        markers = _attachment_markers(attachments)
         with self._lock:
             chat = self.get_chat(chat_id)
             if chat is None:
                 raise ValueError("unknown chat")
+            kept = tuple(dict(step) for step in (steps or ()))
             cur = self.conn.execute(
-                "INSERT INTO chat_messages(chat_id, role, content, ts, source, private) VALUES (?,?,?,?,?,?)",
-                (chat_id, role, content, ts, source, 1 if private else 0))
+                "INSERT INTO chat_messages(chat_id, role, content, ts, source, private, steps, attachments) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (chat_id, role, content, ts, source, 1 if private else 0,
+                 json.dumps(kept, ensure_ascii=False) if kept else "", markers))
             title = chat.title or (_title_from(content) if role == "user" else "")
             self.conn.execute("UPDATE chats SET updated_at = ?, title = ? WHERE id = ?",
                               (max(ts, time.time()), title, chat_id))
             self.conn.commit()
-            return Message(int(cur.lastrowid), chat_id, role, content, ts, source, private)
+            return Message(int(cur.lastrowid), chat_id, role, content, ts, source, private, kept,
+                           _parse_markers(markers))
 
-    _MESSAGE_COLUMNS = "id, chat_id, role, content, ts, source, private"
+    _MESSAGE_COLUMNS = "id, chat_id, role, content, ts, source, private, steps, attachments"
 
     @staticmethod
-    def _message(row) -> Message:
-        return Message(row[0], row[1], row[2], row[3], row[4], row[5], bool(row[6]))
+    def _steps(raw: str) -> Tuple[Dict[str, Any], ...]:
+        try:
+            loaded = json.loads(raw) if raw else []
+        except ValueError:
+            return ()
+        return tuple(step for step in loaded if isinstance(step, dict)) if isinstance(loaded, list) else ()
+
+    @classmethod
+    def _message(cls, row) -> Message:
+        return Message(row[0], row[1], row[2], row[3], row[4], row[5], bool(row[6]), cls._steps(row[7]), _parse_markers(row[8]))
 
     def messages(self, chat_id: str, after_id: int = 0) -> List[Message]:
         with self._lock:
@@ -281,6 +383,32 @@ class ChatStore:
         return [self._message(r) for r in reversed(rows)]
 
     # -- state -------------------------------------------------------------------------------
+
+    def search_messages(self, query: str, limit: int = SEARCH_RESULT_LIMIT) -> List[SearchHit]:
+        """Chats with a message containing ``query`` (plain text, any case), most recently active first.
+
+        One hit per chat, pointing at its newest matching message. The text is bound as a parameter and
+        compared as a substring, so ``%``, ``_`` and quotes mean themselves. At most ``limit`` chats.
+        """
+        needle = " ".join(str(query).split())[:SEARCH_QUERY_MAX_CHARS]
+        if not needle:
+            return []
+        hits: List[SearchHit] = []
+        seen: set = set()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT m.chat_id, m.id, m.content, m.ts FROM chat_messages m JOIN chats c ON c.id = m.chat_id"
+                " WHERE instr(jarvis_fold(m.content), ?) > 0 ORDER BY c.updated_at DESC, c.rowid DESC, m.id DESC",
+                (needle.casefold(),))
+            for chat_id, message_id, content, ts in rows:
+                if chat_id in seen:
+                    continue
+                seen.add(chat_id)
+                hits.append(SearchHit(chat_id, int(message_id), _snippet(content, needle), float(ts)))
+                if len(hits) >= max(0, limit):
+                    break
+        debug_log(f"web chat search found {len(hits)} chats", "webchat")
+        return hits
 
     def get_active_chat_id(self) -> Optional[str]:
         with self._lock:

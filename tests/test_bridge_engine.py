@@ -33,11 +33,14 @@ class FakeService:
     def close(self):
         pass
 
-    def run_request(self, utterance, context, origin, language, db, quiet, desktop=None):
+    accepts_images = True
+
+    def run_request(self, utterance, context, origin, language, db, quiet, desktop=None, attachments=()):
         desktop = dict(desktop or {})
         self.requests.append(SimpleNamespace(utterance=utterance, context=context, origin=origin,
                                              language=language, quiet=quiet, desktop=desktop,
-                                             referents=list(desktop.get("desktop_referents", []))))
+                                             referents=list(desktop.get("desktop_referents", [])),
+                                             attachments=tuple(attachments)))
         return self.outcome
 
 
@@ -494,3 +497,67 @@ class TestForegroundWindow:
         activate(service)
         engine.run_reply_engine(db, sharing, None, "close this", dialogue_memory, quiet=True)
         assert service.requests[0].desktop["foreground_window"]["hwnd"] == 4242
+
+
+@pytest.mark.unit
+class TestAttachments:
+    @staticmethod
+    def file():
+        from jarvis.reply.attachments import RequestAttachment, fence_file_text
+        return RequestAttachment("text", 5, text=fence_file_text("budget 7731"))
+
+    @staticmethod
+    def image():
+        from jarvis.reply.attachments import RequestAttachment
+        from jarvis.tools.types import ToolImage
+        return RequestAttachment("image", 9, image=ToolImage("image/jpeg", "QUJD"))
+
+    def test_attachments_go_to_the_bridge_but_never_into_the_dialogue(self, codex_cfg, activate, db, dialogue_memory,
+                                                                    forbid_local):
+        from jarvis.reply import engine
+
+        service = activate(FakeService())
+        attached = (self.file(), self.image())
+        reply = engine.run_reply_engine(db, codex_cfg, None, "what is this", dialogue_memory, quiet=True,
+                                        attachments=attached)
+        assert reply == "Done, sir."
+        assert service.requests[0].attachments == attached
+        assert [m["content"] for m in dialogue_memory.get_recent_messages()] == ["what is this", "Done, sir."]
+
+    def test_a_deterministic_phrase_is_not_taken_locally_when_something_is_attached(
+            self, codex_cfg, activate, db, dialogue_memory, forbid_local):
+        from jarvis.reply import engine
+
+        service = activate(FakeService())
+        engine.run_reply_engine(db, codex_cfg, None, "What time is it?", dialogue_memory, quiet=True,
+                                attachments=(self.file(),))
+        assert len(service.requests) == 1
+
+    def test_an_image_for_a_bridge_that_takes_none_is_refused_out_loud_and_nothing_is_sent(
+            self, codex_cfg, activate, db, dialogue_memory, forbid_local, mode):
+        from jarvis.reply import engine
+
+        service = FakeService()
+        service.accepts_images = False
+        activate(service)
+        reply = engine.run_reply_engine(db, codex_cfg, None, "what is this", dialogue_memory, quiet=True,
+                                        attachments=(self.image(),))
+        assert "image" in reply.lower() and mode in reply.lower()
+        assert service.requests == []
+
+    def test_file_text_does_not_need_image_support(self, codex_cfg, activate, db, dialogue_memory, forbid_local):
+        from jarvis.reply import engine
+
+        service = FakeService()
+        service.accepts_images = False
+        activate(service)
+        engine.run_reply_engine(db, codex_cfg, None, "summarise", dialogue_memory, quiet=True,
+                                attachments=(self.file(),))
+        assert len(service.requests) == 1
+
+    def test_a_request_without_attachments_is_unchanged(self, codex_cfg, activate, db, dialogue_memory, forbid_local):
+        from jarvis.reply import engine
+
+        service = activate(FakeService())
+        engine.run_reply_engine(db, codex_cfg, None, "tell me about black holes", dialogue_memory, quiet=True)
+        assert service.requests[0].attachments == ()

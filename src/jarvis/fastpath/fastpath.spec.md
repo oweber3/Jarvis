@@ -9,7 +9,7 @@ applications nor calls tools, models or OS APIs.
 
 Command-family phrases, fillers, folder names, vocabulary tables (settings
 pages, power plans, number words, key names) and acknowledgement templates
-are locale data in `phrases/<language>.json`. Only English is supplied. Voice
+are locale data in `phrases/<language>.json`, whose `suggestions` block holds the wording of the web chat's routine and workspace cards (`webchat/webchat.spec.md`, Start screen) and must stay phrases the rules match. Only English is supplied. Voice
 uses the detected language; text without a language signal uses English.
 Unsupported languages fall through. `fast_commands_enabled` defaults to true;
 `fast_commands_locales` defaults to `["en"]`. Disabled routing/locales leave the

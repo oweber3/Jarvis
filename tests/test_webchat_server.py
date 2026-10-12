@@ -322,3 +322,73 @@ class TestPolling:
 
     def test_non_numeric_parameters_are_ignored(self, parts):
         assert call(parts, "GET", "/api/poll?rev=abc&after=xyz")[0] == 200
+
+
+class TestSuggestionsEndpoint:
+    def test_returns_cards_built_from_the_backend_sources(self, parts):
+        parts.backend.suggestion_data = {"routines": ["morning"], "workspaces": ["study"], "workspaces_available": True}
+        status, data, response = call(parts, "GET", "/api/suggestions")
+        assert status == 200 and response.getheader("Cache-Control") == "no-store"
+        assert [c["kind"] for c in data["cards"]][:2] == ["routine", "workspace"]
+        assert data["cards"][0]["action"] == "send" and "morning" in data["cards"][0]["text"]
+
+    def test_nothing_configured_still_offers_examples(self, parts):
+        status, data, _ = call(parts, "GET", "/api/suggestions")
+        assert status == 200 and data["cards"] and {c["kind"] for c in data["cards"]} == {"example"}
+
+    def test_a_foreign_host_is_refused(self, parts):
+        status, _, _ = call(parts, "GET", "/api/suggestions", headers={"Host": "evil.example"})
+        assert status == 403
+
+    def test_only_get_is_allowed(self, parts):
+        status, _, _ = call(parts, "POST", "/api/suggestions", body={})
+        assert status == 404
+
+    def test_a_failing_backend_gives_examples_not_an_error(self, parts):
+        parts.backend.suggestion_data = RuntimeError("boom")
+        status, data, _ = call(parts, "GET", "/api/suggestions")
+        assert status == 200 and {c["kind"] for c in data["cards"]} == {"example"}
+
+
+class TestPinAndSearch:
+    def test_pinning_through_the_api_shows_in_the_library(self, parts):
+        chat_id = call(parts, "GET", "/api/library")[1]["active_chat_id"]
+        assert call(parts, "PATCH", f"/api/chats/{chat_id}", {"pinned": True})[0] == 200
+        assert call(parts, "GET", "/api/library")[1]["chats"][0]["pinned"] is True
+        assert call(parts, "PATCH", f"/api/chats/{chat_id}", {"pinned": False})[0] == 200
+        assert call(parts, "GET", "/api/library")[1]["chats"][0]["pinned"] is False
+
+    def test_pinning_bumps_the_library_revision(self, parts):
+        chat_id = call(parts, "GET", "/api/library")[1]["active_chat_id"]
+        before = parts.hub.snapshot(2 ** 62)["library_rev"]
+        call(parts, "PATCH", f"/api/chats/{chat_id}", {"pinned": True})
+        assert parts.hub.snapshot(2 ** 62)["library_rev"] > before
+
+    def test_a_non_boolean_pin_is_refused(self, parts):
+        chat_id = call(parts, "GET", "/api/library")[1]["active_chat_id"]
+        assert call(parts, "PATCH", f"/api/chats/{chat_id}", {"pinned": "yes"})[0] == 400
+
+    def test_search_finds_message_text(self, parts):
+        call(parts, "POST", "/api/chat", {"text": "tell me about trains"})
+        status, body, _ = call(parts, "GET", "/api/search?q=TRAINS")
+        assert status == 200
+        assert len(body["results"]) == 1
+        hit = body["results"][0]
+        assert hit["chat_id"] == parts.store.get_active_chat_id()
+        assert "trains" in hit["snippet"] and isinstance(hit["message_id"], int)
+
+    def test_search_decodes_the_query_and_is_parameterised(self, parts):
+        call(parts, "POST", "/api/chat", {"text": "100% sure"})
+        assert len(call(parts, "GET", "/api/search?q=100%25")[1]["results"]) == 1
+        status, body, _ = call(parts, "GET", "/api/search?q=%27%3B%20DROP%20TABLE%20chats%3B%20--")
+        assert status == 200 and body["results"] == []
+        assert call(parts, "GET", "/api/library")[1]["chats"]
+
+    def test_search_needs_a_query_of_sensible_length(self, parts):
+        assert call(parts, "GET", "/api/search")[0] == 400
+        assert call(parts, "GET", "/api/search?q=%20%20")[0] == 400
+        assert call(parts, "GET", "/api/search?q=" + "a" * 201)[0] == 400
+
+    def test_search_is_guarded_like_every_route(self, parts):
+        status, _, _ = call(parts, "GET", "/api/search?q=x", headers={"Host": "evil.example"})
+        assert status == 403

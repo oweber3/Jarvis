@@ -36,6 +36,7 @@ from ..bridge.tools import (
 )
 from ..debug import debug_log
 from ..tools.schema_validation import validate_arguments
+from ..reply.attachments import request_images, request_note
 from ..tools.types import ToolImage
 from ..utils.redact import redact
 from .app_server import AppServerError, account_failure, thread_isolation_config
@@ -144,6 +145,8 @@ class _Session:
 
 class BridgeService:
     mode = "codex"
+    # Images attached to a request go to the model as image items of the turn's input.
+    accepts_images = True
 
     def __init__(
         self,
@@ -217,9 +220,11 @@ class BridgeService:
 
     def run_request(self, utterance: str, context: List[Dict[str, Any]], origin: str,
                     language: Optional[str], db: Any, quiet: bool,
-                    desktop: Optional[Mapping[str, Any]] = None) -> BridgeOutcome:
+                    desktop: Optional[Mapping[str, Any]] = None, attachments: tuple = ()) -> BridgeOutcome:
         """Run one request. ``desktop`` is the request's desktop context
-        (``bridge.adapter.build_desktop_context``), already redacted, bounded and gated by its switches."""
+        (``bridge.adapter.build_desktop_context``), already redacted, bounded and gated by its switches.
+        ``attachments`` (``reply.attachments``) travel with the turn only: their text, redacted, in the
+        request and their images as image items of the input. The broker never holds them."""
         if self._closed:
             # The user switched away after the engine picked this service: send nothing.
             debug_log("request for a closed bridge service; not sent", "codex")
@@ -262,7 +267,7 @@ class BridgeService:
                 self.broker.fail(rid, failure)
                 return _error(failure)
             self._drain_stale()
-            return self._run_session(rid, db, language, quiet, redacted)
+            return self._run_session(rid, db, language, quiet, redacted, attachments)
         finally:
             with self._lock:
                 self._active_rid, self._session = None, None
@@ -514,7 +519,7 @@ class BridgeService:
         return None
 
     def _run_session(self, rid: str, db: Any, language: Optional[str], quiet: bool,
-                     redacted: str) -> BridgeOutcome:
+                     redacted: str, attachments: tuple = ()) -> BridgeOutcome:
         client = self._client
         try:
             req = self.broker.request_of(rid)
@@ -534,7 +539,7 @@ class BridgeService:
         try:
             if not self.broker.assign_thread(rid, thread_id):
                 return self._outcome_from_state(rid)
-            turn_params = self._turn_params(rid, thread_id)
+            turn_params = self._turn_params(rid, thread_id, attachments)
             if turn_params is None:
                 return self._outcome_from_state(rid)
             try:
@@ -553,7 +558,7 @@ class BridgeService:
         finally:
             self._close_session(session)
 
-    def _turn_params(self, rid: str, thread_id: str) -> Optional[Dict[str, Any]]:
+    def _turn_params(self, rid: str, thread_id: str, attachments: tuple = ()) -> Optional[Dict[str, Any]]:
         """The turn carrying the request as JSON in its input, with any shared dialogue and desktop
         records as reference data.
 
@@ -569,9 +574,16 @@ class BridgeService:
             payload["context"] = list(req.context)
             payload["context_note"] = _CONTEXT_NOTE
         payload.update(req.desktop)
+        note = redact(request_note(attachments))
+        if note:
+            payload["attachments"] = note
+        inputs: List[Dict[str, Any]] = [
+            {"type": "text", "text": "Jarvis request " + json.dumps(payload, ensure_ascii=False)}]
+        inputs.extend({"type": "image", "url": f"data:{image.mime_type};base64,{image.data}"}
+                      for image in request_images(attachments))
         params: Dict[str, Any] = {
             "threadId": thread_id,
-            "input": [{"type": "text", "text": "Jarvis request " + json.dumps(payload, ensure_ascii=False)}],
+            "input": inputs,
             "outputSchema": ANSWER_SCHEMA,
         }
         effort = getattr(self._cfg, "codex_reasoning_effort", None)

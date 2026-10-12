@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from ....debug import debug_log
 from ....platform.windows import media
 from ...base import Tool, ToolContext
-from ...types import ToolExecutionResult
+from ...types import StepNote, ToolExecutionResult
 from ._common import disabled_result, failure
 
 _ACTIONS = ["play", "pause", "play_pause", "next", "previous", "now_playing"]
@@ -18,6 +18,15 @@ _DONE = {
     "play_pause": "Toggled play/pause.",
     "next": "Skipped to the next track.",
     "previous": "Went back to the previous track.",
+}
+# Steps never name the track: a title and artist are outside content (routines.spec.md).
+_STEP_LABELS = {
+    "play": "Resumed playback",
+    "pause": "Paused playback",
+    "play_pause": "Toggled play and pause",
+    "next": "Skipped to the next track",
+    "previous": "Went back a track",
+    "now_playing": "Checked what is playing",
 }
 _ALREADY = {"play": "Media is already playing.", "pause": "Media is already paused."}
 
@@ -91,6 +100,10 @@ class MediaControlTool(Tool):
     def returns_outside_content_for(self, args: Optional[Dict[str, Any]]) -> bool:
         # A track title and artist are chosen by whoever published the media (routines.spec.md).
         return _action(args) == "now_playing"
+
+    def step_note(self, args: Optional[Dict[str, Any]], result: ToolExecutionResult) -> Optional[StepNote]:
+        label = _STEP_LABELS.get(_action(args))
+        return StepNote(label) if label else None
 
     def run(self, args: Optional[Dict[str, Any]], context: ToolContext) -> ToolExecutionResult:
         blocked = disabled_result(context)

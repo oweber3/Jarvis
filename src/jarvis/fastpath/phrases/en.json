@@ -421,6 +421,10 @@
     "kilopascal": "kPa",
     "kilopascals": "kPa"
   },
+  "suggestions": {
+    "routine": "Run my {name} routine",
+    "workspace": "Open my {name} workspace"
+  },
   "rules": [
     {
       "id": "time",
