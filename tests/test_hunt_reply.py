@@ -194,3 +194,37 @@ class TestSpareSessionAfterModelChange:
                 f"the request after the model change ran on {used.arg('--model')!r}")
         finally:
             service.close()
+
+
+@pytest.mark.unit
+class TestNoProcessAfterClose:
+    """bridge.spec.md, Reply modes and switching: switching "stops the previous bridge's processes" and "a
+    closed service refuses later requests and warm-up as cancelled ... and starts no process". A Codex
+    readiness check (``prepare``, run by ``modes.recheck_active`` after a model change) that is waiting for
+    the turn lock when the user switches away checks ``_closed`` only before it waits, so once the lock is
+    free it starts a fresh ``codex app-server`` (and a spare thread) for a service nobody will ever close."""
+
+    def test_a_waiting_codex_readiness_check_does_not_restart_the_child_after_close(self):
+        server = FakeAppServer(codex_scripted(("answer", "completed", "Done.")))
+        service = BridgeService(codex_cfg(), server, executor=FakeExecutor(), confirmation_store=FakeStore(),
+                                tools_provider=lambda c: dict(TOOLS), runtime_dir=Path("."))
+        assert service.prepare() is None
+        assert server.alive and server.starts == 1
+
+        # A request is running (it holds the turn lock) when the background re-check is scheduled.
+        service._turn_lock.acquire()
+        recheck = threading.Thread(target=service.prepare, daemon=True)
+        recheck.start()
+        time.sleep(0.2)
+        assert recheck.is_alive(), "the re-check should be waiting for the running request"
+
+        # The user switches to local mode: the service is closed and its child stopped.
+        service.close()
+        assert not server.alive
+        service._turn_lock.release()
+        recheck.join(5.0)
+        wait_for(lambda: service._spare_idle.is_set(), 2.0)
+
+        assert not server.alive and server.starts == 1, (
+            f"a closed Codex service started its child again (starts={server.starts}, alive={server.alive}); "
+            "nothing will ever close it")
