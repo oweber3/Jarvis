@@ -23,7 +23,8 @@ HAND_LOST_SEC = 0.25
 # A slow camera (dim light) delivers frames further apart: the hand counts as lost only after this many of its
 # frame intervals without it, when that is longer than HAND_LOST_SEC.
 LOST_FRAME_INTERVALS = 1.5
-# The measured frame interval is a smoothed average of the gaps between delivered frames, counted as at most this.
+# The measured frame interval is a smoothed average of the gaps between consecutive frames that both show the
+# driving hand, counted as at most this.
 MAX_FRAME_INTERVAL_SEC = 1.0
 _INTERVAL_SMOOTHING = 0.2
 # The driving hand is followed only while its palm moves less than this share of the camera's width a frame.
@@ -250,11 +251,14 @@ class WindowSnap:
             if self._closed:
                 return
             arrived = self._clock()
-            self._measure_interval(arrived)
             chosen = self._choose(frame.hands)
             if chosen is None:
+                # Only frames that follow each other with the hand in view measure the camera: without a hand the
+                # tracker thins its searches (its idle rate), which says nothing about the camera.
+                self._last_arrival = None
                 self._check_lost(arrived)
                 return
+            self._measure_interval(arrived)
             self._last_hand = arrived
             # Absolute: the comfort box, centred where the palm was when the hand started driving, spans the
             # desktop's bounding rectangle.
@@ -317,7 +321,8 @@ class WindowSnap:
         return shape_of(frozenset(f for f in FINGERS if self._raised[f]))
 
     def _measure_interval(self, arrived: float) -> None:
-        """Follow how far apart frames arrive, so a slow camera's gaps are not taken for a lost hand."""
+        """Follow how far apart frames showing the hand arrive, so a slow camera's gaps are not taken for a lost
+        hand. Called only for a frame with the driving hand; the gap counts only when the frame before had it too."""
         previous, self._last_arrival = self._last_arrival, arrived
         if previous is None or arrived <= previous:
             return

@@ -557,6 +557,38 @@ def test_a_frozen_slow_camera_lets_go_within_one_and_a_half_seconds():
     assert cam.snap.state == "paused"
 
 
+def test_the_trackers_idle_rate_is_not_taken_for_a_slow_camera(monkeypatch):
+    """With no hand in view the real IdleGate passes about 6 frames a second. A 30 fps camera must still count as
+    a usual-rate camera: no slow-camera log, and the hand coming back is lost after the usual 0.25 s."""
+    from jarvis.gestures import window_snap
+    from jarvis.gestures.hand_tracking import IDLE_AFTER_SEC, IDLE_FPS, IdleGate
+
+    logs = []
+    monkeypatch.setattr(window_snap, "debug_log", lambda message, *a, **k: logs.append(message))
+    clock = Clock()
+    snap = WindowSnap(FakeDesktop(), settings(), clock=clock)
+    gate = IdleGate(IDLE_FPS, IDLE_AFTER_SEC)
+    went_idle = False
+    lost_after = []
+    t = 0.0
+    for seconds, present in ((1.0, True), (IDLE_AFTER_SEC + 3.0, False), (1.0, True)):
+        end = t + seconds
+        while t < end:
+            t += 1 / FPS
+            if not gate.should_search(t):
+                went_idle = went_idle or gate.idle
+                continue
+            hands = (hand(0.5, 0.5),) if present else ()
+            gate.searched(t, bool(hands))
+            clock.now = t
+            snap.on_frame(frame(t, *hands))
+            snap.tick()
+            lost_after.append(snap.lost_after())
+    assert went_idle, "the tracker idled while no hand was in view"
+    assert set(lost_after) == {window_snap.HAND_LOST_SEC}
+    assert not [m for m in logs if "slow camera" in m or "usual rate" in m]
+
+
 def test_closing_while_holding_leaves_the_window_and_later_frames_do_nothing():
     win = window((600, 300, 1200, 800))
     rig = Rig(FakeDesktop(windows=[win]))
