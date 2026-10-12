@@ -125,6 +125,7 @@ class _SpareThread:
     generation: int
     isolation: Dict[str, bool]
     tools: Dict[str, Dict[str, Any]]
+    model: Optional[str] = None
 
 
 class _Session:
@@ -182,7 +183,11 @@ class BridgeService:
         self._turn_lock = threading.Lock()
         self._lock = threading.Lock()
         self._active_rid: Optional[str] = None
+        # Requests submitted but still waiting for the turn lock (behind a readiness check or a request).
+        self._waiting: set = set()
         self._session: Optional[_Session] = None
+        # Bumped by every model or effort change; a spare started before it is never kept.
+        self._settings_generation = 0
         self._ready_generation: Optional[int] = None
         self._models: List[CloudModel] = []
         self._spare: Optional[_SpareThread] = None
@@ -218,19 +223,26 @@ class BridgeService:
             return BridgeOutcome("cancelled", "Cancelled.", "cancelled")
         redacted = redact(utterance)
         redacted_context = [{**m, "content": redact(str(m.get("content", "")))} for m in (context or [])]
-        try:
-            req = self.broker.submit_request(redacted, redacted_context, origin, language,
-                                             self._tools_provider(self._cfg), desktop=desktop)
-        except BusyError:
-            return _error("bridge_busy")
-        except PayloadTooLargeError:
-            return _error("payload_too_large")
-        rid = req.id
+        tools = self._tools_provider(self._cfg)
+        # Submitted and marked waiting in one step, so a stop never misses the request in between.
+        with self._lock:
+            try:
+                req = self.broker.submit_request(redacted, redacted_context, origin, language, tools,
+                                                 desktop=desktop)
+            except BusyError:
+                return _error("bridge_busy")
+            except PayloadTooLargeError:
+                return _error("payload_too_large")
+            rid = req.id
+            self._waiting.add(rid)
         if not self._turn_lock.acquire(timeout=self._deadline_sec):
+            with self._lock:
+                self._waiting.discard(rid)
             self.broker.cancel(rid, "queue_timeout")
             return _error("timeout")
         try:
             with self._lock:
+                self._waiting.discard(rid)
                 self._active_rid, self._session = rid, None
             state = self.broker.state_of(rid)
             if state is State.CANCELLED or self._closed:
@@ -258,6 +270,10 @@ class BridgeService:
         if not self._turn_lock.acquire(timeout=self._deadline_sec):
             return None
         try:
+            if self._closed:
+                # Switched away while this check waited for a request: start nothing.
+                debug_log("readiness check for a closed bridge service skipped", "codex")
+                return None
             failure = self._ensure_ready()
         finally:
             self._turn_lock.release()
@@ -266,8 +282,9 @@ class BridgeService:
         return failure
 
     def is_busy(self) -> bool:
+        """True from a request's submission (including while it waits for the turn) until it ends."""
         with self._lock:
-            return self._active_rid is not None
+            return self._active_rid is not None or bool(self._waiting)
 
     def available_models(self) -> List[CloudModel]:
         """The models and efforts Codex reported at its last check (empty before the first one)."""
@@ -282,6 +299,7 @@ class BridgeService:
         try:
             self._cfg = cfg
             self._ready_generation = None
+            self._settings_generation += 1
             self._discard_spare()
         finally:
             self._turn_lock.release()
@@ -289,13 +307,17 @@ class BridgeService:
         return True
 
     def cancel_active(self, reason: str) -> bool:
+        """Cancel the running request and any request still waiting for its turn."""
         with self._lock:
-            rid, session = self._active_rid, self._session
+            rid, session, waiting = self._active_rid, self._session, list(self._waiting)
+        cancelled = sum(1 for queued in waiting if self.broker.cancel(queued, reason))
+        if cancelled:
+            debug_log(f"{cancelled} waiting request(s) cancelled ({reason})", "codex")
         if rid is None:
-            return False
+            return cancelled > 0
         state = self.broker.state_of(rid)
         if state is None or state in TERMINAL:
-            return False
+            return cancelled > 0
         self.broker.cancel(rid, reason)
         if session is not None and session.turn_id and not session.turn_done:
             threading.Thread(target=self._interrupt, args=(session,), daemon=True,
@@ -404,7 +426,7 @@ class BridgeService:
         """Start one empty thread in the background for the next request, if none is ready."""
         client = self._client
         with self._spare_lock:
-            if (self._spare is not None or not self._spare_idle.is_set() or not client.alive
+            if (self._closed or self._spare is not None or not self._spare_idle.is_set() or not client.alive
                     or self._ready_generation != client.generation):
                 return
             self._spare_idle.clear()
@@ -413,47 +435,56 @@ class BridgeService:
 
     def _create_spare(self, generation: int) -> None:
         spare = None
+        settings_generation = self._settings_generation
         try:
             isolation = self._read_isolation()
             tools = self._tools_provider(self._cfg)
-            spare = _SpareThread(self._start_thread(isolation, tools), generation, isolation, tools)
+            model = getattr(self._cfg, "codex_model", None)
+            spare = _SpareThread(self._start_thread(isolation, tools), generation, isolation, tools, model)
             debug_log(f"spare thread ready (generation {generation})", "codex")
         except Exception as exc:
             debug_log(f"spare thread not started ({getattr(exc, 'reason', type(exc).__name__)})", "codex")
         finally:
+            late = spare is not None and (self._closed or settings_generation != self._settings_generation)
             with self._spare_lock:
-                self._spare = spare
+                self._spare = None if late else spare
                 self._spare_idle.set()
+            if late:
+                # Closed, or the model or effort changed while it started: it is never used.
+                debug_log("late spare thread closed (service closed or settings changed)", "codex")
+                self._unsubscribe_spare(spare)
 
     def _discard_spare(self) -> None:
         """Close the spare thread: it was started with the model that has just been replaced."""
         self._spare_idle.wait(_RPC_TIMEOUT_SEC)
         with self._spare_lock:
             spare, self._spare = self._spare, None
+        if spare is not None:
+            self._unsubscribe_spare(spare)
+
+    def _unsubscribe_spare(self, spare: _SpareThread) -> None:
         client = self._client
-        if spare is not None and client.alive and spare.generation == client.generation:
+        if client.alive and spare.generation == client.generation:
             try:
                 client.request("thread/unsubscribe", {"threadId": spare.thread_id}, _CLOSE_TIMEOUT_SEC)
             except AppServerError as exc:
                 debug_log(f"thread close failed ({exc.reason})", "codex")
 
     def _claim_spare(self, isolation: Dict[str, bool], tools: Dict[str, Dict[str, Any]]) -> Optional[str]:
-        """The spare thread's ID when this process started it with the same isolation and tools."""
+        """The spare thread's ID when this process started it with the current model and the same
+        isolation and tools."""
         self._spare_idle.wait(_RPC_TIMEOUT_SEC)
         with self._spare_lock:
             spare, self._spare = self._spare, None
         if spare is None:
             return None
         client = self._client
-        if spare.generation == client.generation and spare.isolation == isolation and spare.tools == tools:
+        if (spare.generation == client.generation and spare.model == getattr(self._cfg, "codex_model", None)
+                and spare.isolation == isolation and spare.tools == tools):
             debug_log("request uses the spare thread", "codex")
             return spare.thread_id
-        debug_log("spare thread discarded (configuration, tools or process changed)", "codex")
-        if client.alive and spare.generation == client.generation:
-            try:
-                client.request("thread/unsubscribe", {"threadId": spare.thread_id}, _CLOSE_TIMEOUT_SEC)
-            except AppServerError as exc:
-                debug_log(f"thread close failed ({exc.reason})", "codex")
+        debug_log("spare thread discarded (model, configuration, tools or process changed)", "codex")
+        self._unsubscribe_spare(spare)
         return None
 
     def _run_session(self, rid: str, db: Any, language: Optional[str], quiet: bool,
