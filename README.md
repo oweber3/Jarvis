@@ -255,7 +255,7 @@ Jarvis can also let **Claude** interpret requests and use Jarvis's tools, throug
 <summary><strong>Turn it on, and switch back</strong></summary>
 
 1. **Sign in to Claude Code** with your Claude subscription (run `claude auth login` once). `claude auth status` should report that you are logged in.
-2. **Allow the mode.** In Settings, open **Reply Mode**, tick **Allow Claude Mode** and restart Jarvis when asked. Then say "use Claude" or choose it in the tray. The model (`sonnet` by default), effort (`low`) and Claude executable are on the **Claude** page; Jarvis finds `claude` on `PATH` or in `%USERPROFILE%\.local\bin`.
+2. **Allow the mode.** In Settings, open **Reply Mode**, tick **Allow Claude Mode** and restart Jarvis when asked. Then say "use Claude" or choose it in the tray. The model (`haiku` by default), effort (`low`) and Claude executable are on the **Claude** page; Jarvis finds `claude` on `PATH` or in `%USERPROFILE%\.local\bin`.
 3. **Check the output.** When the mode starts, Jarvis prints `✅ Claude is ready in the background`, or the reason it is not (not signed in, signed in with an API key, model or effort not available, Claude Code not found).
 
 To go back, say "go local" or choose **Local** in the tray. Jarvis stops only the Claude Code processes it started.

@@ -7,6 +7,7 @@ Layers (see ``wake_overlay.spec.md``):
   conversation, fades out when it ends, and animates the breathing glow, the
   wake heartbeat and the audio level.
 - ``edge_strips`` / ``frame_thickness`` / ``screens_to_cover``: Qt-free geometry.
+- ``frame_interval_ms`` / ``ToneFade``: Qt-free pacing of the frames and of colour changes.
 - ``FramePainter``: ``QPainter`` renderer of one edge band of a screen's frame, in screen coordinates.
 - ``WakeOverlay``: the Qt controller. Watches the state channel, builds the
   click-through edge windows on wake and removes them once the frame has faded.
@@ -15,11 +16,12 @@ Layers (see ``wake_overlay.spec.md``):
 from __future__ import annotations
 
 import math
+import os
 import sys
 import time as _time
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-from PyQt6.QtCore import QLineF, QObject, QPointF, QRectF, Qt, QTimer
+from PyQt6.QtCore import QFileSystemWatcher, QObject, QPointF, QRectF, Qt, QTimer
 from PyQt6.QtGui import (
     QColor,
     QConicalGradient,
@@ -27,7 +29,6 @@ from PyQt6.QtGui import (
     QImage,
     QLinearGradient,
     QPainter,
-    QPen,
 )
 from PyQt6.QtWidgets import QWidget
 
@@ -35,7 +36,6 @@ from desktop_app.orb_widget import (  # the orb's colour and easing helpers keep
     AudioLevelSource,
     OrbState,
     _approach,
-    _blend,
     _clamp01,
     _with_alpha,
     orb_state_for,
@@ -47,9 +47,11 @@ from desktop_app.themes import ORB_PALETTE
 from jarvis.debug import debug_log
 
 Rect = Tuple[int, int, int, int]
+Palette = Tuple[str, str]          # the (colour, accent) the glow's two tones are tinted in
+Tones = Sequence[Tuple[Palette, float]]
 
 MAX_UNCHANGED_S = 120.0   # safety net: fade out if the state has not moved for this long
-_MAX_DT = 0.1
+_MAX_DT = 0.25            # the longest stretch one frame accounts for: a late frame catches up, a sleep does not
 _ENGAGED_STATES = frozenset({OrbState.LISTENING, OrbState.THINKING, OrbState.SPEAKING})
 
 
@@ -66,7 +68,7 @@ _RHYTHMS = {
     OrbState.THINKING: _Rhythm(1.05, 0.32, 0.38, 0.3, 2.4),   # a quick, crisp pulse
     OrbState.SPEAKING: _Rhythm(1.6, 0.16, 0.44, 1.0, 1.6),    # follows the voice, a light breath under it
 }
-# The wake is a heartbeat: two beats a quarter of a second apart, the first the strongest.
+# The wake is a heartbeat: two beats a third of a second apart, the first the strongest.
 _WAKE_BEATS = ((0.0, 1.0), (0.3, 0.75))
 _BEAT_ATTACK_S = 0.07
 _BEAT_DECAY_S = 0.3
@@ -211,36 +213,98 @@ class OverlayModel:
                                   + 0.35 * self.pulse + 0.25 * self.flash)
 
 
+# -------------------------------------------------------------------- pacing
+
+FRAME_FAST_MS = 16     # about 60 FPS while the light changes quickly: the wake beats and the fades
+FRAME_STEADY_MS = 33   # about 30 FPS for the slow breathing, which is smooth at half the cost
+
+
+def frame_interval_ms(model: OverlayModel) -> int:
+    """How long to wait for the next frame: short while the light changes fast, longer once it breathes."""
+    changing = model.flash > 0.03 or model.pulse > 0.02 or 0.02 < model.presence < 0.98
+    return FRAME_FAST_MS if changing else FRAME_STEADY_MS
+
+
+TONE_FADE_S = 0.35
+
+
+class ToneFade:
+    """Cross-fades the glow from one palette to the next.
+
+    Rendering a palette takes real time, so a new one is asked for (``wanted``) and
+    only starts fading in once the caller says it is ready; until then the palette
+    on screen is left alone. The weights in ``tones`` always add up to one.
+    """
+
+    def __init__(self, palette: Palette) -> None:
+        self._shown = palette
+        self._target = palette
+        self._incoming: Optional[Palette] = None
+        self._mix = 0.0
+
+    def retarget(self, palette: Palette) -> None:
+        self._target = palette
+
+    @property
+    def wanted(self) -> Optional[Palette]:
+        """The palette to get ready, if the one wanted is not on screen (or on its way in)."""
+        if self._incoming is None and self._target != self._shown:
+            return self._target
+        return None
+
+    @property
+    def tones(self) -> List[Tuple[Palette, float]]:
+        if self._incoming is None:
+            return [(self._shown, 1.0)]
+        weight = self._mix * self._mix * (3.0 - 2.0 * self._mix)
+        return [(self._shown, 1.0 - weight), (self._incoming, weight)]
+
+    def step(self, dt: float, ready: bool) -> None:
+        """Advance by ``dt`` seconds; ``ready`` says the palette in ``wanted`` can be drawn."""
+        if self._incoming is None:
+            if self._target == self._shown or not ready:
+                return
+            self._incoming, self._mix = self._target, 0.0
+        self._mix = min(1.0, self._mix + max(0.0, dt) / TONE_FADE_S)
+        if self._mix >= 1.0:
+            self._shown, self._incoming, self._mix = self._incoming, None, 0.0
+
+
 # ------------------------------------------------------------------- painter
 
 
 # The glow's falloff from the screen edge inward, as (fraction of its depth, strength).
 _GLOW_PROFILE = ((0.0, 1.0), (0.04, 0.85), (0.15, 0.6), (0.4, 0.28), (0.7, 0.08), (1.0, 0.0))
 _SHALLOW, _DEEP = 0.45, 1.0  # the glow's depth (share of the band) breathed out and breathed in
+_DEPTHS = (_SHALLOW, _DEEP)
 _SCANLINE_STEP = 3          # hologram scanlines, as on the orb
 _SCANLINE_CUT = 0.22
+_CUT_TABLE = bytes(round(v * (1.0 - _SCANLINE_CUT)) for v in range(256))   # dims every byte of a row at once
+_ALPHA_STEPS = 128          # alpha steps finer than this are invisible, so such a change is not repainted
 
 
 class FramePainter:
     """Paints one edge band of a screen's frame, in screen coordinates.
 
-    The glow is rendered once per band at two depths, tinted, and the breath
-    cross-fades between them, so the light swells inward and recedes while a
-    frame costs no more than two blits.
+    The glow is rendered once per band at two depths and tinted per palette, and the
+    breath cross-fades between the two depths, so the light swells inward and recedes
+    while a frame costs no more than a few blits. Rendering is split into small steps
+    (``prepare_next``) so it can be done before the light is shown or spread over frames;
+    only the palettes still in use are kept.
     """
 
     def __init__(self, width: int, height: int, region: Optional[Rect] = None):
         self.width, self.height = width, height
         self.thickness = frame_thickness(width, height)
         self.region = QRectF(*(region or (0, 0, width, height)))
-        self._masks: dict = {}
-        self._tinted: dict = {}
+        self._glows: Dict[Palette, Dict[float, QImage]] = {}
         self._shown: Optional[tuple] = None
 
-    def _mask(self, depth: float) -> QImage:
-        """Alpha mask of the edge glow reaching ``depth`` of the band, broken by fine scanlines."""
-        if depth in self._masks:
-            return self._masks[depth]
+    # -- rendering ----------------------------------------------------------
+
+    def _render(self, depth: float, palette: Palette) -> QImage:
+        """The glow reaching ``depth`` of the band, broken by fine scanlines, in the palette's two tones
+        that alternate round the screen."""
         r = self.region
         image = QImage(max(1, int(r.width())), max(1, int(r.height())), QImage.Format.Format_ARGB32_Premultiplied)
         image.fill(Qt.GlobalColor.transparent)
@@ -262,44 +326,59 @@ class FramePainter:
                 g.setColorAt(at, _with_alpha(ink, strength))
             p.setBrush(g)
             p.drawRect(rect)
-        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationOut)
-        p.setPen(QPen(_with_alpha(ink, _SCANLINE_CUT), 1.0))
-        top = int(r.top()) - int(r.top()) % _SCANLINE_STEP
-        p.drawLines([QLineF(r.left(), y + 0.5, r.right(), y + 0.5)
-                     for y in range(top, int(r.bottom()) + 1, _SCANLINE_STEP)])
         p.end()
-        self._masks[depth] = image
-        return image
-
-    def _glow(self, depth: float, colour: QColor, accent: QColor) -> QImage:
-        """The glow in two tones that alternate round the screen, re-tinted only when a colour changes."""
-        key = (depth, colour.name(), accent.name())
-        if key in self._tinted:
-            return self._tinted[key]
-        image = self._mask(depth).copy()
+        self._cut_scanlines(image)
         p = QPainter(image)
-        p.translate(-self.region.x(), -self.region.y())
+        p.translate(-r.x(), -r.y())
         tint = QConicalGradient(QPointF(self.width / 2, self.height / 2), 90)
+        colour, accent = QColor(palette[0]), QColor(palette[1])
         for at, tone in ((0.0, colour), (0.25, accent), (0.5, colour), (0.75, accent), (1.0, colour)):
             tint.setColorAt(at, tone)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        p.fillRect(self.region, tint)
+        p.fillRect(r, tint)
         p.end()
-        self._tinted = {k: v for k, v in self._tinted.items() if k[1:] == key[1:]}   # keep one colour pair
-        self._tinted[key] = image
         return image
 
-    def needs_repaint(self, model: OverlayModel, colour: QColor, accent: QColor) -> bool:
+    def _cut_scanlines(self, image: QImage) -> None:
+        """Dim every third screen row of ``image``: a row at a time, which is far cheaper than painting lines."""
+        stride, rows = image.bytesPerLine(), image.height()
+        pixels = image.bits()
+        pixels.setsize(image.sizeInBytes())
+        view = memoryview(pixels)
+        for row in range((-int(self.region.top())) % _SCANLINE_STEP, rows, _SCANLINE_STEP):
+            start = row * stride
+            view[start:start + stride] = bytes(view[start:start + stride]).translate(_CUT_TABLE)
+
+    def is_ready(self, palette: Palette) -> bool:
+        """Whether the band's glow is rendered in ``palette``."""
+        return len(self._glows.get(palette, ())) == len(_DEPTHS)
+
+    def prepare_next(self, palette: Palette) -> bool:
+        """Render one more piece of the glow in ``palette``; true once nothing is left to render."""
+        have = self._glows.setdefault(palette, {})
+        for depth in _DEPTHS:
+            if depth not in have:
+                have[depth] = self._render(depth, palette)
+                break
+        return len(have) == len(_DEPTHS)
+
+    def retain(self, palettes: Sequence[Palette]) -> None:
+        """Forget the glow of every palette not in ``palettes``."""
+        self._glows = {palette: images for palette, images in self._glows.items() if palette in palettes}
+
+    # -- drawing ------------------------------------------------------------
+
+    def needs_repaint(self, model: OverlayModel, tones: Tones) -> bool:
         """Whether this band looks different from when it was last asked."""
         def q(value: float) -> int:
-            return round(value * 255)   # alpha steps finer than this are invisible
+            return round(value * _ALPHA_STEPS)
 
         key = (q(model.presence), q(model.intensity), q(max(model.breath, model.pulse)),
-               colour.name(), accent.name())
+               tuple((palette, q(weight)) for palette, weight in tones))
         changed, self._shown = key != self._shown, key
         return changed
 
-    def paint(self, p: QPainter, model: OverlayModel, colour: QColor, accent: QColor) -> None:
+    def paint(self, p: QPainter, model: OverlayModel, tones: Tones) -> None:
         """Paint the band: the glow at its breathing strength, swollen inward by each breath and heartbeat."""
         a = model.presence
         if a <= 0.0:
@@ -308,10 +387,14 @@ class FramePainter:
         strength = _clamp01(a * (0.35 + 0.65 * model.intensity))
         swell = max(model.breath, model.pulse)
         p.save()
-        for depth, share in ((_SHALLOW, 1.0 - swell), (_DEEP, swell)):
-            if share * strength > 0.004:
-                p.setOpacity(strength * share)
-                p.drawImage(QPointF(r.x(), r.y()), self._glow(depth, colour, accent))
+        for palette, weight in tones:
+            for depth, share in ((_SHALLOW, 1.0 - swell), (_DEEP, swell)):
+                opacity = strength * share * weight
+                if opacity > 0.004:
+                    while not self.is_ready(palette):   # normally rendered ahead of time
+                        self.prepare_next(palette)
+                    p.setOpacity(opacity)
+                    p.drawImage(QPointF(r.x(), r.y()), self._glows[palette][depth])
         p.restore()
 
 
@@ -345,6 +428,19 @@ class _EdgeWindow(QWidget):
         self._painter = FramePainter(screen[2], screen[3], strip)
         self.setGeometry(screen[0] + strip[0], screen[1] + strip[1], strip[2], strip[3])
 
+    def prepare_next(self, palette: Palette) -> bool:
+        return self._painter.prepare_next(palette)
+
+    def retain(self, palettes: Sequence[Palette]) -> None:
+        self._painter.retain(palettes)
+
+    def is_ready(self, palette: Palette) -> bool:
+        return self._painter.is_ready(palette)
+
+    def is_prepared(self) -> bool:
+        """Whether everything the window draws now is already rendered."""
+        return all(self._painter.is_ready(palette) for palette, _ in self._overlay.tones)
+
     def refresh(self) -> None:
         """Schedule a repaint if this band looks different now."""
         if self._overlay.needs_repaint(self._painter):
@@ -355,6 +451,7 @@ class _EdgeWindow(QWidget):
         p.translate(-self._strip[0], -self._strip[1])
         self._overlay.paint_screen(p, self._painter)
         p.end()
+        self._overlay.note_painted(self)
 
 
 CONFIG_KEY = "wake_overlay_enabled"
@@ -376,6 +473,16 @@ def _default_state() -> OrbState:
     return orb_state_for(get_jarvis_state().state.value)
 
 
+def _default_state_file() -> Optional[str]:
+    """The file the daemon writes its state to, which the effect watches for changes."""
+    try:
+        from desktop_app.face_widget import _get_jarvis_state_file
+        return _get_jarvis_state_file()
+    except Exception as exc:
+        debug_log(f"wake screen effect: no state file to watch: {exc}", "desktop")
+        return None
+
+
 def _default_screens() -> List[Rect]:
     screens = []
     for screen in QGuiApplication.screens():
@@ -394,31 +501,51 @@ def _default_screens() -> List[Rect]:
 class WakeOverlay(QObject):
     """Shows the wake screen effect on every screen while Jarvis is awake."""
 
-    WATCH_INTERVAL_MS = 100
-    FRAME_INTERVAL_MS = 30   # Windows rounds coarse timers to 15.6 ms steps: 30 ms gives about 32 FPS
-    COLOUR_RATE = 6.0
+    WATCH_INTERVAL_MS = 100       # the state poll: a safety net under the file watch
+    FILE_SETTLE_MS = 8            # let a write to the state file finish before reading it
+    FIRST_PAINT_TIMEOUT_S = 0.25  # start animating even if the first paint never reports in
+    PREPARE_BUDGET_S = 0.004      # rendering a new palette takes at most this much of any frame
+    MAX_EMPTY_READS = 10          # how many settle periods to give a writer that has truncated the state file
 
     def __init__(self, state_reader: Optional[Callable[[], OrbState]] = None,
                  audio_source: Optional[AudioLevelSource] = None,
                  screens: Optional[Callable[[], List[Rect]]] = None,
-                 enabled: bool = True, parent: Optional[QObject] = None):
+                 enabled: bool = True, parent: Optional[QObject] = None,
+                 clock: Optional[Callable[[], float]] = None,
+                 state_file: Optional[str] = None,
+                 watch_interval_ms: Optional[int] = None):
         super().__init__(parent)
         self._read_state = state_reader or _default_state
         self._audio = audio_source if audio_source is not None else shared_voice_level()
         self._screens = screens or _default_screens
+        self._clock = clock or _time.monotonic
         self._enabled = bool(enabled)
         self._started = False
         self.model = OverlayModel()
         self._windows: List[_EdgeWindow] = []
-        colour, accent = state_colours(OrbState.LISTENING)
-        self._colour, self._accent = QColor(colour), QColor(accent)
-        self._last_frame = _time.monotonic()
+        self._fade = ToneFade(state_colours(OrbState.LISTENING))
+        self._kept: tuple = ()
+        self._shown_at = self._last_frame = self._clock()
+        self._painted = False       # every window has painted since the light was shown
+        self._painted_windows: set = set()
+        self._empty_reads = 0       # times in a row the state file was found empty after a change
+        self._animating = False     # the animation clock is running: it starts at the first painted frame
+        # Only the real state channel is watched; a test or caller with its own reader is polled alone.
+        self._state_file = state_file if state_file is not None else (
+            None if state_reader is not None else _default_state_file())
 
         self._watch = QTimer(self)
-        self._watch.setInterval(self.WATCH_INTERVAL_MS)
+        self._watch.setInterval(watch_interval_ms or self.WATCH_INTERVAL_MS)
         self._watch.timeout.connect(self.poll)
+        self._file_watch = QFileSystemWatcher(self)
+        self._file_watch.fileChanged.connect(self._on_state_file_changed)
+        self._settle = QTimer(self)
+        self._settle.setSingleShot(True)
+        self._settle.setInterval(self.FILE_SETTLE_MS)
+        self._settle.timeout.connect(self._on_settled)
         self._frame = QTimer(self)
-        self._frame.setInterval(self.FRAME_INTERVAL_MS)
+        self._frame.setTimerType(Qt.TimerType.PreciseTimer)   # a coarse timer drifts by whole frames
+        self._frame.setInterval(FRAME_FAST_MS)
         self._frame.timeout.connect(self._on_frame)
 
     # -- public API ---------------------------------------------------------
@@ -427,12 +554,12 @@ class WakeOverlay(QObject):
         """Begin watching for a wake (if enabled)."""
         self._started = True
         if self._enabled:
-            self._watch.start()
+            self._begin_watching()
 
     def shutdown(self) -> None:
         """Stop watching and remove anything on screen."""
         self._started = False
-        self._watch.stop()
+        self._end_watching()
         self._teardown()
 
     def set_enabled(self, enabled: bool) -> None:
@@ -444,9 +571,9 @@ class WakeOverlay(QObject):
         self.model = OverlayModel()
         if enabled:
             if self._started:
-                self._watch.start()
+                self._begin_watching()
         else:
-            self._watch.stop()
+            self._end_watching()
             self._teardown()
 
     def is_enabled(self) -> bool:
@@ -458,13 +585,23 @@ class WakeOverlay(QObject):
     def is_animating(self) -> bool:
         return self._frame.isActive()
 
+    def frame_interval(self) -> int:
+        """Milliseconds between frames right now."""
+        return self._frame.interval()
+
     def windows(self) -> List[QWidget]:
         return list(self._windows)
 
+    @property
+    def tones(self) -> List[Tuple[Palette, float]]:
+        """The palettes the glow is drawn in, with their weights (they add up to one)."""
+        return self._fade.tones
+
     def poll(self) -> None:
         """Read the state once; shows the frame on a wake."""
-        if not self._enabled:
+        if not self._enabled or not self._started:
             return
+        self._watch_state_file()
         try:
             state = self._read_state()
         except Exception:
@@ -482,27 +619,107 @@ class WakeOverlay(QObject):
         if not self._windows:
             return
         self.model.step(dt, self._audio.current())
-        colour, accent = state_colours(self.model.look_state)
-        mix = 1.0 - math.exp(-self.COLOUR_RATE * min(dt, 0.1))
-        self._colour = _blend(self._colour, QColor(colour), mix)
-        self._accent = _blend(self._accent, QColor(accent), mix)
+        self._fade.retarget(state_colours(self.model.look_state))
+        wanted = self._fade.wanted
+        self._fade.step(dt, wanted is not None and self._prepare(wanted))
         if not self.model.visible:
             self._teardown()
             return
+        self._release_unused_palettes()
         for window in self._windows:
             window.refresh()
+        interval = frame_interval_ms(self.model)
+        if interval != self._frame.interval():
+            self._frame.setInterval(interval)
 
     def needs_repaint(self, painter: FramePainter) -> bool:
-        return painter.needs_repaint(self.model, self._colour, self._accent)
+        return painter.needs_repaint(self.model, self.tones)
 
     def paint_screen(self, p: QPainter, painter: FramePainter) -> None:
-        painter.paint(p, self.model, self._colour, self._accent)
+        painter.paint(p, self.model, self.tones)
+
+    def note_painted(self, window: QWidget) -> None:
+        """A window has painted; once every window has, the animation starts counting time."""
+        if self._painted:
+            return
+        self._painted_windows.add(id(window))
+        if len(self._painted_windows) >= len(self._windows):
+            self._painted = True
+            self._start_clock()
 
     # -- internals ----------------------------------------------------------
+
+    def _begin_watching(self) -> None:
+        self._watch.start()
+        self._watch_state_file()
+        debug_log("wake screen effect: watching for a wake"
+                  f"{' (state file watch on)' if self._file_watch.files() else ''}", "desktop")
+
+    def _end_watching(self) -> None:
+        self._watch.stop()
+        self._settle.stop()
+        if self._file_watch.files():
+            self._file_watch.removePaths(self._file_watch.files())
+
+    def _watch_state_file(self) -> None:
+        """Have Qt tell us when the state file changes (and again if it was replaced), so a wake is seen at once."""
+        path = self._state_file
+        if path and path not in self._file_watch.files() and os.path.exists(path):
+            self._file_watch.addPath(path)
+
+    def _on_state_file_changed(self, _path: str) -> None:
+        self._settle.start()
+
+    def _on_settled(self) -> None:
+        """Read the state after a change of the file, but not while the writer has it truncated and unwritten:
+        an empty read counts as an unknown state, which would miss the wake or cut a conversation short."""
+        if self._state_file and self._empty_reads < self.MAX_EMPTY_READS and self._state_file_is_empty():
+            self._empty_reads += 1
+            self._settle.start()
+            return
+        self._empty_reads = 0
+        self.poll()
+
+    def _state_file_is_empty(self) -> bool:
+        try:
+            return os.path.getsize(self._state_file) == 0
+        except OSError:
+            return False
+
+    def _start_clock(self) -> None:
+        self._animating = True
+        self._last_frame = self._clock()
+
+    def _prepare(self, palette: Palette) -> bool:
+        """Render more of ``palette`` for every window within this frame's budget; true when all is ready."""
+        deadline = self._clock() + self.PREPARE_BUDGET_S
+        for window in self._windows:
+            while not window.is_ready(palette):
+                if self._clock() >= deadline:
+                    return False
+                window.prepare_next(palette)
+        return True
+
+    def _release_unused_palettes(self) -> None:
+        keep = tuple(palette for palette, _ in self._fade.tones)
+        if self._fade.wanted is not None:
+            keep += (self._fade.wanted,)
+        if keep != self._kept:
+            self._kept = keep
+            for window in self._windows:
+                window.retain(keep)
 
     def _show(self) -> None:
         if self._windows:
             return  # still fading out from the last conversation: carry on with the same windows
+        try:
+            self._build_and_show()
+        except Exception as exc:
+            debug_log(f"wake screen effect: could not show the light: {exc}", "desktop")
+            self._teardown()
+
+    def _build_and_show(self) -> None:
+        began = self._clock()
         try:
             screens = self._screens()
         except Exception as exc:
@@ -516,19 +733,30 @@ class WakeOverlay(QObject):
                 self._windows.append(_EdgeWindow(self, screen, strip))
         if not self._windows:
             return
-        colour, accent = state_colours(self.model.look_state)
-        self._colour, self._accent = QColor(colour), QColor(accent)
+        # Everything is rendered before anything is shown, so the first frames cost no more than the rest.
+        palette = state_colours(self.model.look_state)
+        self._fade = ToneFade(palette)
+        self._kept = (palette,)
+        for window in self._windows:
+            while not window.prepare_next(palette):
+                pass
+        rendered = self._clock()
         never_activate = None
         if sys.platform == "win32" and QGuiApplication.platformName() == "windows":
             from desktop_app.win32_overlay import make_never_activate
             never_activate = make_never_activate
+        self._painted = self._animating = False
+        self._painted_windows = set()
         for window in self._windows:
             if never_activate is not None:
                 never_activate(int(window.winId()))
             window.show()
-        self._last_frame = _time.monotonic()
+        self._shown_at = self._last_frame = self._clock()
+        self._frame.setInterval(FRAME_FAST_MS)
         self._frame.start()
-        debug_log(f"wake screen effect shown on {len(screens)} screen(s)", "desktop")
+        debug_log(f"wake screen effect shown on {len(screens)} screen(s): rendered in "
+                  f"{(rendered - began) * 1000:.0f} ms, windows up in {(self._shown_at - rendered) * 1000:.0f} ms",
+                  "desktop")
 
     def _teardown(self) -> None:
         self._frame.stop()
@@ -543,6 +771,11 @@ class WakeOverlay(QObject):
         debug_log(f"wake screen effect removed ({count} windows)", "desktop")
 
     def _on_frame(self) -> None:
-        now = _time.monotonic()
+        now = self._clock()
+        if not self._animating:
+            # The animation counts from the first frame that is really on screen, never from the build.
+            if not self._painted and now - self._shown_at < self.FIRST_PAINT_TIMEOUT_S:
+                return
+            self._start_clock()
         dt, self._last_frame = now - self._last_frame, now
         self.tick(dt)

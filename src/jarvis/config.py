@@ -390,7 +390,7 @@ class Settings:
     codex_share_long_term_memory: bool = False
     codex_max_tool_calls: int = 8
     # Optional background Claude reply mode (see src/jarvis/claude_bridge/claude_bridge.spec.md)
-    claude_model: str = "sonnet"
+    claude_model: str = "haiku"
     claude_effort: str = "low"
     claude_executable: str = "claude"
     claude_timeout_sec: float = 90.0
@@ -932,7 +932,7 @@ def get_default_config() -> Dict[str, Any]:
         "codex_share_foreground_window": True,
         "codex_share_long_term_memory": False,
         "codex_max_tool_calls": 8,
-        "claude_model": "sonnet",
+        "claude_model": "haiku",
         "claude_effort": "low",
         "claude_executable": "claude",
         "claude_timeout_sec": 90.0,

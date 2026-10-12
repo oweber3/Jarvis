@@ -5,15 +5,23 @@ left out and nothing is invented when a field is missing. See ``bridge.spec.md``
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+from ..debug import debug_log
 
 MAX_MODELS = 128
 MAX_EFFORTS = 12
 MAX_NAME_CHARS = 120
 MAX_DESCRIPTION_CHARS = 200
 _DESCRIPTION_SEPARATOR = " · "
+# Claude Code's own default alias. Its "recommended" label would read as Jarvis's default, which is
+# ``claude_model``, so it is named as Claude Code's choice.
+_CLAUDE_CODE_DEFAULT = "default"
+_CLAUDE_CODE_DEFAULT_NAME = "Claude Code's choice"
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-\[\]/]{0,199}$")
 
 
@@ -104,7 +112,10 @@ def claude_models(raw: Any) -> List[CloudModel]:
                 level_id = _safe_id(level)
                 if level_id is not None and all(e.id != level_id for e in efforts) and len(efforts) < MAX_EFFORTS:
                     efforts.append(Effort(level_id))
-        name, description = _claude_name(_clean_text(record.get("displayName"), MAX_NAME_CHARS) or model_id,
+        display = _clean_text(record.get("displayName"), MAX_NAME_CHARS) or model_id
+        if model_id == _CLAUDE_CODE_DEFAULT:
+            display = _CLAUDE_CODE_DEFAULT_NAME
+        name, description = _claude_name(display,
                                          _clean_text(record.get("description"), MAX_DESCRIPTION_CHARS))
         models[model_id] = CloudModel(model_id, name, tuple(efforts), description=description)
         if len(models) >= MAX_MODELS:
@@ -120,3 +131,64 @@ def choose_effort(model: CloudModel, preferred: Optional[str]) -> Optional[str]:
         if effort.id == preferred:
             return effort.id
     return next((e.id for e in model.efforts if e.is_default), model.efforts[0].id)
+
+
+REPORTED_MODELS_FILE = "cloud_models.json"
+
+
+def _reported_models_path(path: Optional[Path]) -> Path:
+    from .. import config
+    return path if path is not None else config.default_config_path().parent / REPORTED_MODELS_FILE
+
+
+def _from_dict(record: Dict[str, Any]) -> Optional[CloudModel]:
+    model_id = _safe_id(record.get("id"))
+    if model_id is None:
+        return None
+    efforts: List[Effort] = []
+    for entry in _records(record.get("efforts")):
+        effort_id = _safe_id(entry.get("id"))
+        if effort_id is not None and all(e.id != effort_id for e in efforts) and len(efforts) < MAX_EFFORTS:
+            efforts.append(Effort(effort_id, is_default=entry.get("is_default") is True,
+                                  description=_clean_text(entry.get("description"), MAX_NAME_CHARS)))
+    return CloudModel(model_id, _clean_text(record.get("name"), MAX_NAME_CHARS) or model_id, tuple(efforts),
+                      is_default=record.get("is_default") is True,
+                      description=_clean_text(record.get("description"), MAX_DESCRIPTION_CHARS))
+
+
+def _read_reported(path: Path) -> Dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def load_reported_models(mode: str, path: Optional[Path] = None) -> List[CloudModel]:
+    """The models ``mode``'s runtime last reported, read back and cleaned like a runtime list (empty when
+    none was ever reported). Settings offers them, so they never need a running bridge."""
+    models: Dict[str, CloudModel] = {}
+    for record in _records(_read_reported(_reported_models_path(path)).get(mode)):
+        model = _from_dict(record)
+        if model is not None and model.id not in models:
+            models[model.id] = model
+        if len(models) >= MAX_MODELS:
+            break
+    return list(models.values())
+
+
+def save_reported_models(mode: str, models: List[CloudModel], path: Optional[Path] = None) -> None:
+    """Keep the list ``mode``'s runtime just reported. An empty list keeps the last good one, an unchanged
+    list is not written again, and a failed write is logged and ignored."""
+    if not models:
+        return
+    target = _reported_models_path(path)
+    if load_reported_models(mode, target) == list(models):
+        return
+    data = _read_reported(target)
+    data[mode] = [model.to_dict() for model in models]
+    from ..config import _save_json
+    if _save_json(target, data):
+        debug_log(f"{mode} model list kept for settings ({len(models)} models)", "bridge")
+    else:
+        debug_log(f"{mode} model list could not be kept for settings", "bridge")

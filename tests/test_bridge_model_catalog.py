@@ -3,9 +3,13 @@
 The runtimes' lists are untrusted data: bounded, with safe identifiers, no hidden models, and nothing
 invented when a field is missing. See ``bridge/bridge.spec.md``, Cloud models.
 """
+import json
+
 import pytest
 
-from jarvis.bridge.model_catalog import choose_effort, claude_models, codex_models
+from jarvis.bridge.model_catalog import (
+    REPORTED_MODELS_FILE, choose_effort, claude_models, codex_models, load_reported_models, save_reported_models,
+)
 
 
 def ids(models):
@@ -80,7 +84,7 @@ class TestClaudeModels:
     def test_models_use_the_value_and_the_display_name(self):
         models = claude_models(self.RECORDS)
         assert ids(models) == ["default", "haiku", "opus"]
-        assert models[0].name == "Default (recommended)" and models[2].name == "opus"
+        assert models[0].name == "Claude Code's choice" and models[2].name == "opus"
 
     def test_a_model_that_lists_no_effort_levels_gets_no_effort_control(self):
         assert claude_models(self.RECORDS)[1].efforts == ()
@@ -108,8 +112,9 @@ class TestClaudeModels:
         names = {m.id: m.name for m in claude_models(self.REAL)}
         assert names["sonnet"] == "Sonnet 5.5" and names["haiku"] == "Haiku 4.5"
 
-    def test_a_default_alias_shows_the_model_it_points_at(self):
-        assert claude_models(self.REAL)[0].name == "Default (recommended) · Opus 5.5"
+    def test_claude_codes_own_default_is_not_presented_as_a_recommendation(self):
+        # Jarvis has its own default (``claude_model``), so Claude Code's "recommended" label would mislead.
+        assert claude_models(self.REAL)[0].name == "Claude Code's choice · Opus 5.5"
 
     def test_the_rest_of_the_description_is_kept_for_the_picker(self):
         by_id = {m.id: m for m in claude_models(self.REAL)}
@@ -135,3 +140,57 @@ class TestChooseEffort:
 
     def test_a_model_without_efforts_has_no_effort(self):
         assert choose_effort(codex_models([{"id": "plain"}])[0], "low") is None
+
+
+class TestReportedModels:
+    """The last list each runtime reported is kept on disk so Settings can offer the real models."""
+
+    def claude(self):
+        return claude_models([
+            {"value": "sonnet", "displayName": "Sonnet", "description": "Sonnet 5.5 · Efficient",
+             "supportedEffortLevels": ["low", "high"]},
+            {"value": "haiku", "displayName": "Haiku", "description": "Haiku 4.5 · Fastest"},
+        ])
+
+    def test_a_saved_list_reads_back_with_its_names_and_efforts(self, tmp_path):
+        path = tmp_path / "cloud_models.json"
+        save_reported_models("claude", self.claude(), path)
+        loaded = load_reported_models("claude", path)
+        assert loaded == self.claude()
+        assert [m.name for m in loaded] == ["Sonnet 5.5", "Haiku 4.5"]
+
+    def test_each_mode_keeps_its_own_list(self, tmp_path):
+        path = tmp_path / "cloud_models.json"
+        save_reported_models("claude", self.claude(), path)
+        save_reported_models("codex", codex_models([{"id": "gpt-6-sol"}]), path)
+        assert ids(load_reported_models("claude", path)) == ["sonnet", "haiku"]
+        assert ids(load_reported_models("codex", path)) == ["gpt-6-sol"]
+
+    def test_nothing_is_known_without_a_file_or_from_a_broken_one(self, tmp_path):
+        path = tmp_path / "cloud_models.json"
+        assert load_reported_models("claude", path) == []
+        path.write_text("{not json", encoding="utf-8")
+        assert load_reported_models("claude", path) == []
+
+    def test_an_edited_file_is_cleaned_like_a_runtime_list(self, tmp_path):
+        path = tmp_path / "cloud_models.json"
+        path.write_text(json.dumps({"claude": [
+            {"id": "bad id; rm", "name": "Evil"},
+            {"id": "opus", "name": "Opus\n5.5", "efforts": [{"id": "high"}, {"id": "no way"}]},
+            "junk",
+        ]}), encoding="utf-8")
+        loaded = load_reported_models("claude", path)
+        assert ids(loaded) == ["opus"]
+        assert loaded[0].name == "Opus 5.5" and [e.id for e in loaded[0].efforts] == ["high"]
+
+    def test_an_empty_report_does_not_erase_the_last_good_list(self, tmp_path):
+        path = tmp_path / "cloud_models.json"
+        save_reported_models("claude", self.claude(), path)
+        save_reported_models("claude", [], path)
+        assert ids(load_reported_models("claude", path)) == ["sonnet", "haiku"]
+
+    def test_the_default_location_is_beside_the_config_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("jarvis.config.default_config_path", lambda: tmp_path / "config.json")
+        save_reported_models("claude", self.claude())
+        assert (tmp_path / REPORTED_MODELS_FILE).exists()
+        assert ids(load_reported_models("claude")) == ["sonnet", "haiku"]

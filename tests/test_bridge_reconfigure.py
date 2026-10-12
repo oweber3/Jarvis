@@ -15,6 +15,7 @@ from claude_bridge_fakes import scripted as claude_scripted
 from codex_bridge_fakes import FakeAppServer, FakeExecutor, FakeStore, LUNA
 from codex_bridge_fakes import make_cfg as codex_cfg
 from codex_bridge_fakes import scripted as codex_scripted
+from jarvis.bridge.model_catalog import load_reported_models
 from jarvis.claude_bridge.service import ClaudeBridgeService
 from jarvis.codex_bridge.service import BridgeService
 
@@ -63,6 +64,12 @@ class TestCodex:
         assert service.prepare() is None
         assert [m.id for m in service.available_models()] == ["gpt-6-luna", "gpt-6-sol"]
         assert [e.id for e in service.available_models()[1].efforts] == ["medium", "high", "xhigh"]
+        service.close()
+
+    def test_the_reported_models_are_kept_for_settings(self):
+        service, _ = codex(self.ok())
+        service.prepare()
+        assert load_reported_models("codex") == service.available_models()
         service.close()
 
     def test_the_next_request_uses_the_new_model_and_effort(self):
@@ -135,6 +142,12 @@ class TestClaude:
         assert set(models) == {"default", "sonnet", "haiku"}
         assert [e.id for e in models["sonnet"].efforts] == ["low", "medium", "high", "xhigh", "max"]
         assert models["haiku"].efforts == ()
+        service.close()
+
+    def test_the_reported_models_are_kept_for_settings(self):
+        service, _ = claude(self.ok())
+        service.prepare()
+        assert load_reported_models("claude") == service.available_models()
         service.close()
 
     def test_the_next_request_uses_the_new_model_and_effort(self):

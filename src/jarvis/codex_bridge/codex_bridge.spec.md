@@ -24,7 +24,7 @@ Metadata-driven like every setting: one `FieldMeta` entry each, only non-default
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `codex_enabled` | `false` | Allows the `codex` reply mode (see Reply modes in `bridge/bridge.spec.md`). `reply_mode` and runtime switching select it. The mode is independent of `llm_provider`, which still serves embeddings, the intent judge and background work |
-| `codex_model` | `gpt-6-luna` | Model ID as Codex lists it. It must be in the runtime's model list; another model is never substituted. Settings offers it as a dropdown of the models Codex lists; a hand-set ID is shown and kept |
+| `codex_model` | `gpt-6-luna` | Model ID as Codex lists it. It must be in the runtime's model list; another model is never substituted. Settings offers it as a dropdown of the models Codex last reported (`bridge/bridge.spec.md`, Cloud models), or a built-in list before any report; a hand-set ID is shown and kept |
 | `codex_reasoning_effort` | `low` | Must be one of the efforts the model advertises; another value is never substituted. Changeable while Jarvis runs (`bridge/bridge.spec.md`, Cloud models) |
 | `codex_executable` | `codex` | See `app_server.spec.md` for resolution. An explicit path is used as given |
 
