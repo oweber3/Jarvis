@@ -4,6 +4,7 @@ import { useEffect, useState, type FC } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { fieldOf, resolveShortcut, SHORTCUTS } from "@/shortcuts"
 import { useNarrow } from "@/layout"
+import { MicButton } from "@/components/MicButton"
 import { ModelPicker } from "@/components/ModelPicker"
 import { ProjectsSidebar } from "@/components/ProjectsSidebar"
 import { Thread } from "@/components/thread.aui"
@@ -102,7 +103,7 @@ const Shell: FC = () => {
         <StatusBanner reachable={reachable} ready={ready} />
         <ModelReminder />
         <div className="min-h-0 flex-1">
-          <Thread components={{ ComposerLeading: ModelPicker, Welcome: StartScreen }} />
+          <Thread components={{ ComposerLeading: ModelPicker, Welcome: StartScreen, ComposerTrailing: MicButton }} />
         </div>
       </main>
       <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />

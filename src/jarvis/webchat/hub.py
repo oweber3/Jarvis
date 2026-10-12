@@ -17,6 +17,7 @@ from ..debug import debug_log
 from ..memory.chat_store import ANY_PROJECT, Chat, ChatStore, Message
 from ..tools.step_log import StepLog, get_step_log, humanise
 from . import suggestions
+from .mic import MicSessions
 
 DEFAULT_CHAT_TITLE = "Voice and quick questions"
 RESTORE_TURNS = 20
@@ -92,6 +93,7 @@ class ChatHub:
         self._wake = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._unsubscribe: Optional[Callable[[], None]] = None
+        self.mic = MicSessions(backend)
 
     @property
     def store(self) -> ChatStore:
@@ -111,6 +113,7 @@ class ChatHub:
     def stop(self) -> None:
         self._stop.set()
         self._wake.set()
+        self.mic.shutdown()
         with self._sync_lock:
             self._let_go_of_memory()
         if self._unsubscribe is not None:
