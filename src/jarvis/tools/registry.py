@@ -25,6 +25,7 @@ from .builtin.tool_search import ToolSearchTool
 from .builtin.routine_control import RoutineControlTool
 from .builtin.schedule_control import ScheduleControlTool
 from .builtin.lists_notes import ListControlTool, NoteControlTool
+from .builtin.personality_tool import PersonalityTool
 from .request_scope import CallContext, note_outside_content, request_origin, tool_call
 from .types import ToolExecutionResult
 from ..config import Settings
@@ -65,6 +66,7 @@ BUILTIN_TOOLS = {
     "scheduleControl": ScheduleControlTool(),
     "listControl": ListControlTool(),
     "noteControl": NoteControlTool(),
+    "personality": PersonalityTool(),
 }
 
 

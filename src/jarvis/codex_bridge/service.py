@@ -40,7 +40,7 @@ from ..reply.attachments import request_images, request_note
 from ..tools.types import ToolImage
 from ..utils.redact import redact
 from .app_server import AppServerError, account_failure, thread_isolation_config
-from .prompts import assistant_instructions
+from .prompts import session_instructions
 
 BRIDGE_TOOLS = (EXECUTE_TOOL,)
 _POLL_SEC = 0.25
@@ -130,6 +130,8 @@ class _SpareThread:
     isolation: Dict[str, bool]
     tools: Dict[str, Dict[str, Any]]
     model: Optional[str] = None
+    # The base instructions it was started with (they carry the personality's reply voice).
+    instructions: Optional[str] = None
 
 
 class _Session:
@@ -156,7 +158,7 @@ class BridgeService:
         confirmation_store: Any = None,
         tools_provider: Optional[Callable[[Any], Dict[str, Dict[str, Any]]]] = None,
         clock: Callable[[], float] = time.monotonic,
-        instructions_provider: Callable[[], Optional[str]] = assistant_instructions,
+        instructions_provider: Optional[Callable[[], Optional[str]]] = None,
         runtime_dir: Optional[Path] = None,
     ):
         self._cfg = cfg
@@ -170,7 +172,8 @@ class BridgeService:
             confirmation_store = get_confirmation_store()
         self._store = confirmation_store
         self._tools_provider = tools_provider or codex_tool_snapshot
-        self._instructions = instructions_provider
+        # The fixed contract and the active personality's reply voice, read for every thread started.
+        self._instructions = instructions_provider or (lambda: session_instructions(self._cfg))
         self._runtime_dir = Path(runtime_dir) if runtime_dir else Path.cwd()
         settings = bridge_settings(cfg, "codex")
         self._deadline_sec = settings.timeout_sec
@@ -421,7 +424,8 @@ class BridgeService:
 
     # -- one session --------------------------------------------------------------------
 
-    def _thread_params(self, isolation: Dict[str, bool], tools: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    def _thread_params(self, isolation: Dict[str, bool], tools: Dict[str, Dict[str, Any]],
+                       instructions: Optional[str]) -> Dict[str, Any]:
         params: Dict[str, Any] = {
             "ephemeral": True,
             "cwd": str(self._runtime_dir),
@@ -433,7 +437,6 @@ class BridgeService:
             "environments": [],
             "config": isolation,
         }
-        instructions = self._instructions()
         if instructions:
             params["baseInstructions"] = instructions
         return params
@@ -444,8 +447,9 @@ class BridgeService:
         effective = self._client.request("config/read", {"cwd": str(self._runtime_dir)}, _RPC_TIMEOUT_SEC)
         return thread_isolation_config(effective.get("config") or {})
 
-    def _start_thread(self, isolation: Dict[str, bool], tools: Dict[str, Dict[str, Any]]) -> str:
-        return self._client.request("thread/start", self._thread_params(isolation, tools),
+    def _start_thread(self, isolation: Dict[str, bool], tools: Dict[str, Dict[str, Any]],
+                      instructions: Optional[str]) -> str:
+        return self._client.request("thread/start", self._thread_params(isolation, tools, instructions),
                                     _RPC_TIMEOUT_SEC)["thread"]["id"]
 
     # -- spare thread -----------------------------------------------------------------------
@@ -471,7 +475,9 @@ class BridgeService:
             isolation = self._read_isolation()
             tools = self._tools_provider(self._cfg)
             model = getattr(self._cfg, "codex_model", None)
-            spare = _SpareThread(self._start_thread(isolation, tools), generation, isolation, tools, model)
+            instructions = self._instructions()
+            spare = _SpareThread(self._start_thread(isolation, tools, instructions), generation, isolation, tools,
+                                 model, instructions)
             debug_log(f"spare thread ready (generation {generation})", "codex")
         except Exception as exc:
             debug_log(f"spare thread not started ({getattr(exc, 'reason', type(exc).__name__)})", "codex")
@@ -501,9 +507,10 @@ class BridgeService:
             except AppServerError as exc:
                 debug_log(f"thread close failed ({exc.reason})", "codex")
 
-    def _claim_spare(self, isolation: Dict[str, bool], tools: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    def _claim_spare(self, isolation: Dict[str, bool], tools: Dict[str, Dict[str, Any]],
+                     instructions: Optional[str]) -> Optional[str]:
         """The spare thread's ID when this process started it with the current model and the same
-        isolation and tools."""
+        isolation, tools and instructions (a personality switch changes them)."""
         self._spare_idle.wait(_RPC_TIMEOUT_SEC)
         with self._spare_lock:
             spare, self._spare = self._spare, None
@@ -511,10 +518,10 @@ class BridgeService:
             return None
         client = self._client
         if (spare.generation == client.generation and spare.model == getattr(self._cfg, "codex_model", None)
-                and spare.isolation == isolation and spare.tools == tools):
+                and spare.isolation == isolation and spare.tools == tools and spare.instructions == instructions):
             debug_log("request uses the spare thread", "codex")
             return spare.thread_id
-        debug_log("spare thread discarded (model, configuration, tools or process changed)", "codex")
+        debug_log("spare thread discarded (model, configuration, instructions, tools or process changed)", "codex")
         self._unsubscribe_spare(spare)
         return None
 
@@ -525,7 +532,9 @@ class BridgeService:
             req = self.broker.request_of(rid)
             tools = dict(req.allowed_tools) if req is not None else {}
             isolation = self._read_isolation()
-            thread_id = self._claim_spare(isolation, tools) or self._start_thread(isolation, tools)
+            instructions = self._instructions()
+            thread_id = (self._claim_spare(isolation, tools, instructions)
+                         or self._start_thread(isolation, tools, instructions))
         except AppServerError as exc:
             reason = self._session_failure(exc, starting_thread=True)
             self.broker.fail(rid, reason)

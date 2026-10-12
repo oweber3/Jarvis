@@ -182,7 +182,7 @@ class TestPlacementFixtures:
 class TestContractVariants:
     def test_variants_choose_the_session_instructions(self):
         from jarvis.codex_bridge import prompts
-        assert dr.CodexRunner("proposed").instructions() == prompts.assistant_instructions()
+        assert dr.CodexRunner("proposed").instructions() == prompts.session_instructions(None)
         assert dr.CodexRunner("baseline").instructions() == dr.BASELINE_INSTRUCTIONS
         assert "jarvis_execute" in dr.BASELINE_INSTRUCTIONS and "output schema" in dr.BASELINE_INSTRUCTIONS
         with pytest.raises(ValueError):

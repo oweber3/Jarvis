@@ -9,6 +9,7 @@ from typing import Optional, TYPE_CHECKING
 
 from ..utils.redact import redact
 from ..memory.activity_log import consume_turn_private, is_turn_private, mark_turn_private
+from .. import personality
 from ..system_prompt import build_system_prompt
 from .attachments import request_images, request_note
 from ..tools.request_scope import note_outside_content
@@ -1697,8 +1698,10 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
     # steps are preserved unchanged.
     action_plan = strip_memory_directives(action_plan)
 
-    _assistant_name = str(getattr(cfg, "wake_word", "jarvis") or "jarvis").strip().capitalize()
-    _persona_prompt = build_system_prompt(_assistant_name)
+    # The active personality's character, then the fixed rules (personality.spec.md).
+    _personality, _custom_text = personality.current(cfg)
+    _persona_prompt = build_system_prompt(personality.assistant_name(cfg), _personality, _custom_text)
+    debug_log(f"personality: {_personality}", "planning")
 
     def _build_initial_system_message() -> str:
         guidance = [_persona_prompt.strip()]

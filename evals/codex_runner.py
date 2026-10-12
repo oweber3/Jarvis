@@ -1059,7 +1059,9 @@ class ClaudeRunner(_BridgeRunner):
 
     def instructions(self) -> str:
         from jarvis.claude_bridge import prompts
-        return BASELINE_INSTRUCTIONS if self.variant == "baseline" else prompts.assistant_instructions()
+        # The proposed contract carries the configured personality's reply voice, as in Jarvis itself.
+        return (BASELINE_INSTRUCTIONS if self.variant == "baseline"
+                else prompts.session_instructions(getattr(self, "cfg", None)))
 
     def __enter__(self):
         import dataclasses
@@ -1106,7 +1108,9 @@ class CodexRunner(_BridgeRunner):
 
     def instructions(self) -> str:
         from jarvis.codex_bridge import prompts
-        return BASELINE_INSTRUCTIONS if self.variant == "baseline" else prompts.assistant_instructions()
+        # The proposed contract carries the configured personality's reply voice, as in Jarvis itself.
+        return (BASELINE_INSTRUCTIONS if self.variant == "baseline"
+                else prompts.session_instructions(getattr(self, "cfg", None)))
 
     def __enter__(self):
         import dataclasses

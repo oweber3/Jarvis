@@ -2,10 +2,15 @@
 
 Every request runs in a fresh Claude Code session whose system prompt is this text; the request
 itself arrives as the first user message. It is guidance, not enforcement: the bridge's tool
-snapshot, validation, confirmation and bounds are the enforcement. See ``claude_bridge.spec.md``.
+snapshot, validation, confirmation and bounds are the enforcement. The reply voice of the active
+personality (``personality.spec.md``) follows the contract. See ``claude_bridge.spec.md``.
 """
 
-INSTRUCTIONS_VERSION = "2"
+from typing import Any
+
+from ..personality import bridge_voice
+
+INSTRUCTIONS_VERSION = "3"
 MAX_INSTRUCTION_CHARS = 2000
 
 _INSTRUCTIONS = (
@@ -34,6 +39,11 @@ _INSTRUCTIONS = (
 def assistant_instructions() -> str:
     """The system prompt of every request session, at most ``MAX_INSTRUCTION_CHARS`` characters."""
     return _INSTRUCTIONS
+
+
+def session_instructions(cfg: Any) -> str:
+    """The system prompt of a session: the fixed contract, then the active personality's reply voice."""
+    return _INSTRUCTIONS + "\n\n" + bridge_voice(cfg)
 
 
 if __name__ == "__main__":

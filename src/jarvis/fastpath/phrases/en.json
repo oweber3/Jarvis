@@ -1357,6 +1357,124 @@
       ]
     },
     {
+      "id": "personality.butler",
+      "family": "personality",
+      "tool": "personality",
+      "args": {
+        "action": "set",
+        "name": "butler"
+      },
+      "reply": null,
+      "phrases": [
+        "switch to butler mode",
+        "use butler mode",
+        "go back to butler mode",
+        "switch to the butler personality",
+        "use the butler personality",
+        "switch to butler personality",
+        "go back to the butler"
+      ]
+    },
+    {
+      "id": "personality.butler_short",
+      "family": "personality",
+      "tool": "personality",
+      "args": {
+        "action": "set",
+        "name": "butler"
+      },
+      "reply": null,
+      "phrases": [
+        "be the butler",
+        "butler mode"
+      ],
+      "needs_wake_word": true
+    },
+    {
+      "id": "personality.plain",
+      "family": "personality",
+      "tool": "personality",
+      "args": {
+        "action": "set",
+        "name": "plain"
+      },
+      "reply": null,
+      "phrases": [
+        "switch to plain mode",
+        "use plain mode",
+        "go back to plain mode",
+        "switch to the plain personality",
+        "use the plain personality",
+        "switch to plain personality"
+      ]
+    },
+    {
+      "id": "personality.plain_short",
+      "family": "personality",
+      "tool": "personality",
+      "args": {
+        "action": "set",
+        "name": "plain"
+      },
+      "reply": null,
+      "phrases": [
+        "be plain",
+        "plain mode"
+      ],
+      "needs_wake_word": true
+    },
+    {
+      "id": "personality.friendly",
+      "family": "personality",
+      "tool": "personality",
+      "args": {
+        "action": "set",
+        "name": "friendly"
+      },
+      "reply": null,
+      "phrases": [
+        "switch to friendly mode",
+        "use friendly mode",
+        "go back to friendly mode",
+        "switch to the friendly personality",
+        "use the friendly personality",
+        "switch to friendly personality"
+      ]
+    },
+    {
+      "id": "personality.friendly_short",
+      "family": "personality",
+      "tool": "personality",
+      "args": {
+        "action": "set",
+        "name": "friendly"
+      },
+      "reply": null,
+      "phrases": [
+        "be friendly",
+        "friendly mode"
+      ],
+      "needs_wake_word": true
+    },
+    {
+      "id": "personality.custom",
+      "family": "personality",
+      "tool": "personality",
+      "args": {
+        "action": "set",
+        "name": "custom"
+      },
+      "reply": null,
+      "phrases": [
+        "switch to my custom personality",
+        "use my custom personality",
+        "switch to the custom personality",
+        "use the custom personality",
+        "switch to custom mode",
+        "use custom mode"
+      ]
+    },
+    {
       "id": "gesture_control.start",
       "family": "gesture_control",
       "tool": "gestureControl",

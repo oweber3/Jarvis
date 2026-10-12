@@ -545,6 +545,19 @@ class TestSpareThread:
         assert used != stale and stale in server.unsubscribed
         assert server.threads[used]["config"] == {"mcp_servers.other.enabled": False}
 
+    def test_a_thread_started_with_other_instructions_is_not_used(self):
+        voice = {"text": "CONTRACT butler"}
+        service, server, _, _ = build(scripted(("answer", "completed", "ok")),
+                                      instructions_provider=lambda: voice["text"])
+        service.prepare()
+        assert wait_for(lambda: len(server.threads) == 1)
+        stale = next(iter(server.threads))
+        voice["text"] = "CONTRACT plain"
+        assert run(service).text == "ok"
+        used = _turn_threads(server)[0]
+        assert used != stale and stale in server.unsubscribed
+        assert server.threads[used]["baseInstructions"] == "CONTRACT plain"
+
     def test_a_thread_started_with_other_tools_is_not_used(self):
         tools = dict(TOOLS)
         service, server, _, _ = build(scripted(("answer", "completed", "ok")))

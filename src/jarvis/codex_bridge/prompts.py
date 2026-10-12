@@ -2,10 +2,15 @@
 
 Every request runs in a fresh ephemeral Codex thread whose base instructions are this text; the
 request itself arrives in the turn input. It is guidance, not enforcement: the bridge's tool
-snapshot, validation, confirmation and bounds are the enforcement. See ``codex_bridge.spec.md``.
+snapshot, validation, confirmation and bounds are the enforcement. The reply voice of the active
+personality (``personality.spec.md``) follows the contract. See ``codex_bridge.spec.md``.
 """
 
-INSTRUCTIONS_VERSION = "5"
+from typing import Any
+
+from ..personality import bridge_voice
+
+INSTRUCTIONS_VERSION = "6"
 MAX_INSTRUCTION_CHARS = 2000
 
 _INSTRUCTIONS = (
@@ -34,6 +39,11 @@ _INSTRUCTIONS = (
 def assistant_instructions() -> str:
     """The base instructions of every request session, at most ``MAX_INSTRUCTION_CHARS`` characters."""
     return _INSTRUCTIONS
+
+
+def session_instructions(cfg: Any) -> str:
+    """The base instructions of a session: the fixed contract, then the active personality's reply voice."""
+    return _INSTRUCTIONS + "\n\n" + bridge_voice(cfg)
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ from ..tools.schema_validation import validate_arguments
 from ..tools.types import ToolImage
 from ..utils.redact import redact
 from .cli import ClaudeCliError, session_args, sign_in_failure
-from .prompts import INSTRUCTIONS_VERSION, assistant_instructions
+from .prompts import INSTRUCTIONS_VERSION, session_instructions
 
 _POLL_SEC = 0.2
 # A request waiting for its turn checks this often whether it was stopped meanwhile.
@@ -119,6 +119,8 @@ class _Live:
     tools: Dict[str, Dict[str, Any]]
     # The model and effort the session was started with.
     settings: Tuple[str, Optional[str]] = ("", None)
+    # The system prompt it was started with (it carries the personality's reply voice).
+    instructions: str = ""
     turn_id: Optional[str] = None
     turn_done: bool = False
     question: Optional[str] = None
@@ -137,7 +139,7 @@ class ClaudeBridgeService:
         confirmation_store: Any = None,
         tools_provider: Optional[Callable[[Any], Dict[str, Dict[str, Any]]]] = None,
         clock: Callable[[], float] = time.monotonic,
-        instructions_provider: Callable[[], str] = assistant_instructions,
+        instructions_provider: Optional[Callable[[], str]] = None,
         auth_reader: Optional[Callable[[], Dict[str, Any]]] = None,
         start_timeout_sec: float = _START_TIMEOUT_SEC,
     ):
@@ -152,7 +154,8 @@ class ClaudeBridgeService:
             confirmation_store = get_confirmation_store()
         self._store = confirmation_store
         self._tools_provider = tools_provider or claude_tool_snapshot
-        self._instructions = instructions_provider
+        # The fixed contract and the active personality's reply voice, read for every session started.
+        self._instructions = instructions_provider or (lambda: session_instructions(self._cfg))
         self._auth_reader = auth_reader or (lambda: {})
         self._start_timeout = start_timeout_sec
         settings = bridge_settings(cfg, "claude")
@@ -399,11 +402,12 @@ class ClaudeBridgeService:
         """Start a session and complete its handshake: ``initialize`` answered and our tool listed."""
         session_id = str(uuid.uuid4())
         model = str(getattr(self._cfg, "claude_model", "") or "")
+        instructions = self._instructions()
         args = session_args(model=model, effort=effort, max_turns=self._max_turns,
-                            system_prompt=self._instructions(), answer_schema=ANSWER_SCHEMA, session_id=session_id)
+                            system_prompt=instructions, answer_schema=ANSWER_SCHEMA, session_id=session_id)
         session = self._factory(session_id, args)
         session.start()
-        live = _Live(session, dict(tools), settings=(model, effort))
+        live = _Live(session, dict(tools), settings=(model, effort), instructions=instructions)
         try:
             init_id = session.send_control("initialize")
             deadline = time.monotonic() + self._start_timeout
@@ -571,8 +575,8 @@ class ClaudeBridgeService:
                 self._spare_idle.set()
 
     def _claim_spare(self, tools: Dict[str, Dict[str, Any]]) -> Optional[_Live]:
-        """The spare session when it is alive, was started with the current model and effort, lists the
-        same tools and has done nothing yet."""
+        """The spare session when it is alive, was started with the current model, effort and instructions
+        (a personality switch changes them), lists the same tools and has done nothing yet."""
         self._spare_idle.wait(self._start_timeout)
         with self._spare_lock:
             spare, self._spare = self._spare, None
@@ -580,10 +584,11 @@ class ClaudeBridgeService:
             return None
         current = (str(getattr(self._cfg, "claude_model", "") or ""), self._effort)
         if (spare.session.alive and spare.settings == current and spare.tools == tools
-                and not self._spare_tainted(spare)):
+                and spare.instructions == self._instructions() and not self._spare_tainted(spare)):
             debug_log("request uses the spare session", "claude")
             return spare
-        debug_log("spare session discarded (closed, settings or tools changed, or activity before use)", "claude")
+        debug_log("spare session discarded (closed, settings, instructions or tools changed, or activity before use)",
+                  "claude")
         self._stop(spare)
         return None
 

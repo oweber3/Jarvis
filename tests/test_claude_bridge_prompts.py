@@ -24,13 +24,15 @@ class TestInstructions:
     def test_every_session_gets_the_same_text_as_its_system_prompt(self):
         from jarvis.bridge.tools import ANSWER_SCHEMA  # noqa: F401
         claude = FakeClaude(scripted(("answer", "completed", "ok")))
-        service = ClaudeBridgeService(make_cfg(), claude, executor=FakeExecutor(), confirmation_store=FakeStore(),
+        cfg = make_cfg()
+        service = ClaudeBridgeService(cfg, claude, executor=FakeExecutor(), confirmation_store=FakeStore(),
                                       tools_provider=lambda c: {}, auth_reader=lambda: {
                                           "loggedIn": True, "authMethod": "claude.ai"})
         try:
             service.run_request("my secret is 4721", [], "voice", "en", None, False)
             prompts_sent = {s.arg("--system-prompt") for s in claude.sessions}
-            assert prompts_sent == {prompts.assistant_instructions()}
+            assert prompts_sent == {prompts.session_instructions(cfg)}
+            assert all(p.startswith(prompts.assistant_instructions()) for p in prompts_sent)
             assert all("4721" not in s.arg("--system-prompt") for s in claude.sessions)
         finally:
             service.close()

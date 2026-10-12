@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox,
     QComboBox, QScrollArea, QGroupBox, QFormLayout, QGridLayout, QPushButton,
     QMessageBox, QSizePolicy, QListWidget, QListWidgetItem,
-    QStackedWidget, QSplitter, QInputDialog, QFrame,
+    QStackedWidget, QSplitter, QInputDialog, QFrame, QPlainTextEdit,
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont
@@ -30,6 +30,7 @@ from jarvis.config import (
     SUPPORTED_CHAT_MODELS, TOOL_USE_CHAT_MODELS,
 )
 from jarvis.debug import debug_log
+from jarvis.system_prompt import MAX_CUSTOM_CHARS
 from desktop_app.themes import apply_theme, divider, hud_heading, link, set_role
 from desktop_app.mcp_catalogue import CATALOGUE, CATALOGUE_BY_NAME, MCPEntry
 
@@ -45,7 +46,7 @@ class FieldMeta:
     label: str
     description: str
     category: str
-    field_type: str  # "bool", "int", "float", "str", "secret", "choice", "device", "list"
+    field_type: str  # "bool", "int", "float", "str", "text", "secret", "choice", "device", "list"
     choices: Optional[List[tuple[str, str]]] = None  # [(value, display), ...]
     min_val: Optional[float] = None
     max_val: Optional[float] = None
@@ -223,6 +224,20 @@ def _build_field_metadata() -> List[FieldMeta]:
       "general", "choice",
       choices=[("local", "Local (offline, default)"), ("codex", "ChatGPT through Codex (cloud)"),
                ("claude", "Claude through Claude Code (cloud)")])
+    heading("Personality")
+    f("personality", "Personality",
+      "How Jarvis talks, in every reply mode. Butler is dry and lightly witty, Plain gives the shortest "
+      "useful answers with no wit, Friendly is warm and casual, and Custom follows your own description. "
+      "Safety, confirmations and honesty stay the same whichever you pick. Switch at any time by saying "
+      "\"switch to plain mode\", \"be friendly\" or \"switch to butler mode\".",
+      "general", "choice",
+      choices=[("butler", "Butler (dry wit, default)"), ("plain", "Plain (shortest answers)"),
+               ("friendly", "Friendly (warm and casual)"), ("custom", "Custom (your own description)")])
+    f("personality_custom_text", "Custom Personality",
+      f"Describe how Jarvis should sound, for example \"a calm, encouraging coach who keeps it short\". "
+      f"It sets the voice and style only and cannot change Jarvis's rules. Up to {MAX_CUSTOM_CHARS:,} "
+      f"characters; empty uses the Butler.",
+      "general", "text", shown_when=_is("personality", "custom"))
     heading("Windows control")
     f("fast_commands_enabled", "Quick Commands",
       "Run simple, unambiguous commands such as \"open Word\", \"set volume to 30%\" "
@@ -1328,6 +1343,13 @@ class SettingsWindow(QDialog):
         if fm.field_type == "secret":
             return self._create_secret_widget(fm)
 
+        if fm.field_type == "text":
+            w = QPlainTextEdit()
+            w.setPlainText(str(current) if current not in (None, "") else "")
+            w.setFixedHeight(96)
+            w.setToolTip(fm.description)
+            return w
+
         # Default: string field
         w = QLineEdit()
         w.setText(str(current) if current not in (None, "") else "")
@@ -1860,6 +1882,9 @@ class SettingsWindow(QDialog):
         if fm.field_type == "secret":
             return None
 
+        if fm.field_type == "text":
+            return w.toPlainText().strip()
+
         # str
         text = w.text().strip()
         if fm.nullable and text == "":
@@ -2011,6 +2036,9 @@ class SettingsWindow(QDialog):
                 for item in value:
                     if isinstance(item, str) and item.strip():
                         list_w.addItem(item.strip())
+
+        elif fm.field_type == "text":
+            w.setPlainText(str(value) if value not in (None, "") else "")
 
         else:  # str
             w.setText(str(value) if value not in (None, "") else "")

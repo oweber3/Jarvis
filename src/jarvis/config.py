@@ -371,6 +371,12 @@ class Settings:
     # Folder holding the extension folders; empty means extensions/ at the root of the checkout.
     extensions_dir: str = ""
 
+    # Personality (see src/jarvis/personality.spec.md): the character replies use in every reply mode,
+    # the user's own description for "custom", and optional voice settings paired with a personality.
+    personality: str = "butler"
+    personality_custom_text: str = ""
+    personality_voices: dict = field(default_factory=dict)
+
     # Reply mode: who answers requests (see src/jarvis/bridge/bridge.spec.md). Cloud modes can be
     # switched to only when allowed here.
     reply_mode: str = "local"
@@ -1005,6 +1011,9 @@ def get_default_config() -> Dict[str, Any]:
         "fast_commands_locales": ["en"],
         "extensions_enabled": [],
         "extensions_dir": "",
+        "personality": "butler",
+        "personality_custom_text": "",
+        "personality_voices": {},
         "reply_mode": "local",
         "codex_enabled": False,
         "claude_enabled": False,
@@ -1292,6 +1301,15 @@ def load_settings() -> Settings:
     defaults = get_default_config()
     merged: Dict[str, Any] = {**defaults, **cfg_json}
 
+    # A personality may name a voice: its paired voice settings win for this run (personality.spec.md).
+    from .personality import effective as _effective_personality, normalise as _personality_name, voice_overrides
+    _personality, _ = _effective_personality(merged.get("personality"), merged.get("personality_custom_text"))
+    _paired_voice = voice_overrides(merged.get("personality_voices"), _personality, defaults)
+    if _paired_voice:
+        merged.update(_paired_voice)
+        from .debug import debug_log
+        debug_log(f"personality {_personality} voice applied ({', '.join(sorted(_paired_voice))})", "config")
+
     # Build Settings. Some fields support env var overrides.
     # Env overrides: JARVIS_VOICE_DEBUG, JARVIS_WHISPER_BACKEND
     voice_debug = os.environ.get("JARVIS_VOICE_DEBUG", "0") == "1"
@@ -1568,6 +1586,11 @@ def load_settings() -> Settings:
                             if isinstance(name, str) and name.strip()]
         if isinstance(merged.get("extensions_enabled"), list) else [],
         extensions_dir=_text(merged.get("extensions_dir"), ""),
+        personality=_personality_name(merged.get("personality")),
+        personality_custom_text=(merged.get("personality_custom_text")
+                                 if isinstance(merged.get("personality_custom_text"), str) else ""),
+        personality_voices=(merged.get("personality_voices")
+                            if isinstance(merged.get("personality_voices"), dict) else {}),
         windows_tools_enabled=bool(merged.get("windows_tools_enabled", True)),
         windows_app_aliases={key: value for key, value in merged.get("windows_app_aliases", {}).items()
                              if isinstance(key, str) and isinstance(value, str) and key.strip() and value.strip()}

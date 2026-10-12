@@ -1499,6 +1499,9 @@ def main(smoke_test: bool = False) -> None:
         # The desktop app owns our stdout: it shows the mode in the tray and on the orb.
         reply_modes.add_listener(_emit_reply_mode_state)
     reply_modes.start(cfg)
+    # Personality: the character every reply route uses; voice and text can switch it at runtime.
+    from . import personality
+    print(f"🎭 Personality: {personality.LABELS[personality.start(cfg)]}", flush=True)
 
     # Opt-in activity log: starts nothing unless the user turned it on in Settings.
     from .memory import activity_runtime

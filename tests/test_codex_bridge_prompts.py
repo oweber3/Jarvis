@@ -11,6 +11,7 @@ import re
 
 import pytest
 
+from codex_bridge_fakes import make_cfg
 from test_codex_bridge_service import TOOLS, build, run
 
 
@@ -74,7 +75,9 @@ class TestInstructionDelivery:
     def test_every_session_carries_the_instructions_as_base_instructions(self):
         from jarvis.codex_bridge import prompts
         server, _ = capture()
-        assert server.params_of("thread/start")[0]["baseInstructions"] == prompts.assistant_instructions()
+        sent = server.params_of("thread/start")[0]["baseInstructions"]
+        assert sent == prompts.session_instructions(make_cfg())
+        assert sent.startswith(prompts.assistant_instructions())
 
     def test_the_instructions_are_separate_from_the_reference_dialogue(self):
         from jarvis.codex_bridge import prompts

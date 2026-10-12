@@ -540,6 +540,22 @@ class TestSpareSession:
         finally:
             service.close()
 
+    def test_a_spare_started_with_other_instructions_is_discarded(self):
+        voice = {"text": "CONTRACT butler"}
+        service, claude, _, _ = build(scripted(("answer", "completed", "ok")))
+        service._instructions = lambda: voice["text"]
+        try:
+            run(service)
+            assert wait_for(lambda: any(s.alive and not s.user_texts for s in claude.sessions))
+            spare = next(s for s in claude.sessions if s.alive and not s.user_texts)
+            voice["text"] = "CONTRACT plain"
+            run(service)
+            used = claude.used()[1]
+            assert used is not spare and not spare.alive
+            assert used.arg("--system-prompt") == "CONTRACT plain"
+        finally:
+            service.close()
+
     def test_a_spare_that_showed_turn_activity_before_use_is_discarded(self):
         service, claude, _, _ = build(scripted(("answer", "completed", "ok")))
         try:
