@@ -57,7 +57,7 @@ _SERVICE_ERRORS = frozenset({
 })
 
 FAILURE_MESSAGES = {
-    "not_found": "I could not find Codex. Install the Codex app, or set the Codex executable path in settings.",
+    "not_found": "I could not find Codex. Install the Codex app, or set its Program path in Settings, Cloud Modes (an advanced setting).",
     "start_failed": "Codex could not be started in the background.",
     "signed_out": "Codex is not signed in. Open the Codex app and sign in with ChatGPT, then try again.",
     "api_key_auth": "Codex is not signed in with ChatGPT. Background mode only uses ChatGPT sign-in, "

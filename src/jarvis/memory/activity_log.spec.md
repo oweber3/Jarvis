@@ -102,7 +102,7 @@ Paths, process IDs, window handles and command lines are never stored.
 | `activity_log_private_title_markers` | private-browsing markers | Title substrings never recorded |
 | `activity_log_share_with_cloud` | `false` | Whether Codex and Claude reply modes are offered `activityLog` |
 
-Each has a Settings row on the Activity Log page. The enabling row states what is recorded and where it stays.
+Each has a Settings row in the Activity log section of the Privacy page. The enabling row states what is recorded and where it stays.
 
 ## Language
 

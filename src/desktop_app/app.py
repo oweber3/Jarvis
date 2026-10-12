@@ -3399,7 +3399,7 @@ def _build_unreachable_message(cfg) -> str:
         "vLLM) is running with a model loaded, and Jarvis will connect "
         "automatically.\n\n"
         "You can open the Setup Wizard to change your server, or close and "
-        "adjust Settings later via the tray menu \u2192 LLM Provider."
+        "adjust Settings later via the tray menu \u2192 Settings \u2192 AI Models."
     )
 
 

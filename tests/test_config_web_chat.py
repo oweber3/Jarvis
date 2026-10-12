@@ -43,5 +43,5 @@ class TestWebChatSettings:
         keys = {k for k in get_default_config() if k.startswith("web_chat_")}
         fields = {f.key: f for f in FIELD_METADATA}
         assert keys <= set(fields), sorted(keys - set(fields))
-        assert {fields[k].category for k in keys} == {"web_chat"}
-        assert "web_chat" in {key for key, _ in CATEGORIES}
+        assert {fields[k].category for k in keys} == {"extras"}
+        assert "extras" in {key for key, _ in CATEGORIES}

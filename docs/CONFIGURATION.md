@@ -13,7 +13,7 @@ Most users won't need to change anything. Open **Settings** from the tray menu t
 
 By default Jarvis runs everything locally through [Ollama](https://ollama.com): no API keys, nothing leaves your machine. If you already run an OpenAI-compatible server you can point Jarvis at it instead. Your data still only travels to the servers you control.
 
-Pick the provider after speech recognition in the Setup Wizard, or under **Settings → LLM Provider**. No JSON editing required. On the OpenAI-compatible page the wizard does the legwork for you: it auto-detects running local servers, offers a one-click preset for your app, and when you press **Connect** it loads the server's model list and checks the chosen model for chat, tool calling, and embeddings, so you know it works before you finish setup.
+Pick the provider after speech recognition in the Setup Wizard, or under **Settings → AI Models**. No JSON editing required. On the OpenAI-compatible page the wizard does the legwork for you: it auto-detects running local servers, offers a one-click preset for your app, and when you press **Connect** it loads the server's model list and checks the chosen model for chat, tool calling, and embeddings, so you know it works before you finish setup.
 
 Both provider paths include a model-memory budget. Ollama uses its known model estimates; the OpenAI-compatible page lets you edit estimates because servers usually expose model names but not their memory needs. A server on another machine has a separate budget from Whisper on this machine. Estimates are guidance, not a guarantee: quantisation, context length and concurrent workloads affect actual use.
 
@@ -40,7 +40,7 @@ For reference, the underlying config keys are:
 ```
 
 - `llm_base_url`: your server's OpenAI API base URL.
-- API key: only if your server requires one. Enter it in **Settings → LLM Provider** or the setup wizard. API keys (`llm_api_key`, `embedding_api_key`, `brave_search_api_key`) are kept in Windows Credential Manager, never in `config.json`; Settings shows only whether one is stored. A key found in `config.json` (from an older Jarvis or a hand edit) is moved there on the next start.
+- API key: only if your server requires one. Enter it in **Settings → AI Models** or the setup wizard. API keys (`llm_api_key`, `embedding_api_key`, `brave_search_api_key`) are kept in Windows Credential Manager, never in `config.json`; Settings shows only whether one is stored. A key found in `config.json` (from an older Jarvis or a hand edit) is moved there on the next start.
 - `llm_chat_model`: whatever model name your server exposes.
 - `fast_model` (optional): the small, quick model used for real-time work (voice intent, tool routing, quick classifications). Leave empty for automatic: `qwen3.5:0.8b` on Ollama, your chat model on an OpenAI-compatible server. Set it to pin a dedicated small model.
 - `tool_model` (optional, local mode): a separate model that chooses and calls tools, while the chat model writes the reply. Empty (default) keeps the chat model doing both. `gpt-oss:20b` chose tools best in testing; it needs about 13 GB, so unless it fits in your GPU memory beside the chat model, set the chat and fast models to it as well to avoid reloading models on every request.
@@ -64,7 +64,7 @@ Leave `embedding_provider` empty to use the same provider as chat. With no worki
 Jarvis favours fast first responses by default: it warms Whisper, the chat
 model, and the intent judge before announcing that it is listening. On Macs or
 laptops where heat and battery matter more than instant first-token latency,
-enable **Settings → Features → Low Power Mode**.
+enable **Settings → General → Low Power Mode**.
 
 ```json
 {
@@ -99,7 +99,7 @@ Speed is relative to the original large model. [Source](https://github.com/opena
 `large-v3-turbo` is available when MLX Whisper is usable on Apple Silicon or
 faster-whisper 1.1.0 or newer is installed. If the selected faster-whisper
 cannot load turbo, the wizard hides that option and an existing turbo setting
-loads `medium` instead. Choose a different model in Settings → Whisper.
+loads `medium` instead. Choose a different model in Settings → Advanced → Speech recognition (shown when **Show advanced settings** is ticked).
 
 With the faster-whisper backend, `whisper_model` also accepts a Hugging Face
 model ID such as `deepdml/faster-whisper-large-v3-turbo-ct2`, or a local
@@ -118,7 +118,7 @@ Whisper sometimes produces confident but false transcriptions during silence or 
 - `"whisper_min_confidence": 0.3`: drops segments whose `avg_logprob`-derived confidence falls below this value. Raise if you see low-confidence noise leaking through; lower if real speech is being dropped.
 - `"whisper_no_speech_threshold": 0.5`: drops any segment whose `no_speech_prob` is at or above this value, regardless of `avg_logprob`. Catches the case where Whisper is confident about a hallucinated phrase but its own no-speech signal says the audio was silent. Applies to both the faster-whisper and MLX backends.
 
-Both thresholds are exposed in the Settings window under *Whisper*.
+Both thresholds are exposed in the Settings window under *Advanced → Speech recognition* (shown when **Show advanced settings** is ticked).
 
 </details>
 
@@ -196,7 +196,7 @@ The underlying OS interactions live cleanly in `src/jarvis/platform/windows/` (`
 }
 ```
 
-`windows_tools_enabled` (default `true`) toggles all Windows tools. Both it and `fast_commands_enabled` can be adjusted on the Settings window's **Windows Control** page.
+`windows_tools_enabled` (default `true`) toggles all Windows tools. Both it and `fast_commands_enabled` can be adjusted in **Settings → General → Windows control**.
 
 ### System Controls
 
@@ -237,7 +237,7 @@ If you use [PowerToys FancyZones](https://learn.microsoft.com/windows/powertoys/
 - A zone you define in `windows_window_zones` takes priority over a FancyZones zone with the same name.
 - This is read-only: Jarvis never changes PowerToys' files, and the layouts never leave your PC. If PowerToys is not installed, or its files cannot be read, placement works exactly as before with your own zones.
 - FancyZones' option to span zones across monitors is not supported.
-- `windows_fancyzones_enabled` (default `true`, also on the Settings window's **Windows Control** page) turns this off.
+- `windows_fancyzones_enabled` (default `true`, also **Use FancyZones Layouts** in **Settings → General → Windows control**) turns this off.
 
 ### Workspaces
 
@@ -292,13 +292,13 @@ Spec: `src/jarvis/devices/roku.spec.md`.
 
 ### Gesture snapping
 
-Gesture snapping moves and scrolls windows with your hand through the webcam. It is off by default: turn on **Allow Gesture Snapping** in Settings → Gesture Snapping (`gesture_snap_enabled`) and restart Jarvis. That only makes it available; the camera turns on when you say "start gesture control" (or "turn on gesture snapping") and off when you say "stop gesture control".
+Gesture snapping moves and scrolls windows with your hand through the webcam. It is off by default: turn on **Allow Gesture Control** in Settings → Extras → Gesture control (`gesture_snap_enabled`) and restart Jarvis. That only makes it available; the camera turns on when you say "start gesture control" (or "turn on gesture snapping") and off when you say "stop gesture control".
 
 Gestures are recognised by counting your raised fingers (index, middle, ring and little), with your palm towards the camera. A gesture must hold briefly (the debounce) to count.
 
 - **Raise one finger** (your index) to aim the pointer. The pointer follows the middle of your palm, absolutely: a box around where you first raise your hand (the comfort box, half the camera's width by default) is your whole desktop, every monitor included, so raising your hand puts the pointer in the middle of the desktop and every edge is always within reach. To re-centre, take your hand out of view and raise it again. Nothing is ever clicked.
 - **Make a fist** (all four fingers down) to grab the window under the pointer. It comes to the front and follows your hand.
-- **Raise a finger again** (or open your hand) to drop the window and snap it into the zone under the pointer. The zones are the FancyZones layouts you set up in Microsoft PowerToys (only while **FancyZones Zones** is on in Settings → Windows Control); on a monitor without zones the window stays where you drop it.
+- **Raise a finger again** (or open your hand) to drop the window and snap it into the zone under the pointer. The zones are the FancyZones layouts you set up in Microsoft PowerToys (only while **Use FancyZones Layouts** is on in Settings → General → Windows control); on a monitor without zones the window stays where you drop it.
 - **Raise two fingers** (index and middle) to scroll the window under the pointer, like a joystick: where your hand is when you raise them is neutral, holding it higher scrolls up and lower scrolls down, and further from neutral is faster. Back near neutral it stops. The pointer stays still while you scroll.
 - **Open your hand flat** (all four fingers up) to pause the pointer; raising one finger brings it straight back to your hand. To leave a held window where it is without snapping, take your hand out of view.
 
@@ -322,7 +322,7 @@ To check the camera and tune the thresholds, `python -m jarvis.gestures --snap -
 Tool actions follow a centralised safety policy in `src/jarvis/tools/confirmation.py`:
 
 - **`SAFE`**: Routine local actions execute immediately without prompting (opening apps, setting volume, querying system usage, listing windows/files).
-- **`CONFIRM_VOICE`**: Normal destructive actions require spoken or typed confirmation ("yes"/"no"), such as deleting a user file, overwriting a file, or terminating a standard user process. Deleting a file additionally needs `file_delete_enabled` (Settings → Windows Control → Allow File Deletion, off by default); while it is off a delete is refused outright, without a confirmation question.
+- **`CONFIRM_VOICE`**: Normal destructive actions require spoken or typed confirmation ("yes"/"no"), such as deleting a user file, overwriting a file, or terminating a standard user process. Deleting a file additionally needs `file_delete_enabled` (Settings → Privacy → Screen and files → Allow File Deletion, off by default); while it is off a delete is refused outright, without a confirmation question.
 - **`CONFIRM_DIALOG`**: High-risk operations (system shutdown/reboot, uninstalling software, killing critical system processes, bulk deletions, or actions targeting system directories) require explicit confirmation via a desktop dialog. Voice cannot authorise dialog actions.
 - **`DENY`**: Prohibited operations (e.g. formatting a drive or wiping filesystem root) are rejected unconditionally.
 
@@ -354,7 +354,7 @@ Run the test suite using the project environment:
 Jarvis can learn your voice so that, after a wake, it ignores speech that is clearly someone else (a game, a video, another person) and lowers its own voice when you talk over it. Everything runs locally on the CPU.
 
 1. Enrol once: `python scripts/enrol_voice.py` and read the six prompts aloud in a quiet room. The first run downloads a 26 MB speaker model (WeSpeaker ResNet34, CC-BY-4.0). To enrol from recordings instead: `python scripts/enrol_voice.py --wav a.wav b.wav c.wav`. `--status` shows whether a voice is enrolled and `--delete` removes it.
-2. Turn it on in Settings, Voice Input, **Speaker Verification**: `soft` ignores voices that are confidently someone else, `strict` responds to your voice only.
+2. Turn it on in Settings → Listening → Your voice, **Speaker Verification**: `soft` ignores voices that are confidently someone else, `strict` responds to your voice only.
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
@@ -614,7 +614,7 @@ Get API key at [composio.dev](https://composio.dev)
 
 **Responses are slow** - Try a smaller model and check available memory. See [hardware and model choices](../README.md#quick-install); requirements depend on model size, quantisation and context length.
 
-**Mac gets warm while Jarvis is active** - Enable **Settings → Features → Low Power Mode**. This keeps voice recognition ready while avoiding background LLM warmup and shortening Ollama's idle residency window.
+**Mac gets warm while Jarvis is active** - Enable **Settings → General → Low Power Mode**. This keeps voice recognition ready while avoiding background LLM warmup and shortening Ollama's idle residency window.
 
 **Mac is still warm after quitting** - If Jarvis starts Ollama for you, quitting Jarvis also stops that owned Ollama runtime. If Ollama was already running before Jarvis opened, Jarvis leaves it running so it does not interrupt your other local AI tools.
 
@@ -696,7 +696,7 @@ Jarvis answers with the local model unless you allow a cloud mode. `codex_enable
 }
 ```
 
-Switch at runtime by saying "use Claude", "use ChatGPT" or "go local", or from the tray's **Reply Mode** menu; the choice is written back to `reply_mode`. Each mode has its own sharing switches and bounds (`codex_*`, `claude_*`: recent conversation, Jarvis's records of what it acted on (`_share_desktop_referents`), the window you're looking at (`_share_foreground_window`, never sent for phone requests), personal-data tools, deadline, queue and tool calls), all on its Settings page. Each page picks the mode's model (`codex_model`, `claude_model`) and effort from a dropdown; a model ID set by hand in `config.json` is shown there and kept. See the README for what each mode sends and how it signs in.
+Switch at runtime by saying "use Claude", "use ChatGPT" or "go local", or from the tray's **Reply Mode** menu; the choice is written back to `reply_mode`. Each mode has its own sharing switches and bounds (`codex_*`, `claude_*`: recent conversation, Jarvis's records of what it acted on (`_share_desktop_referents`), the window you're looking at (`_share_foreground_window`, never sent for phone requests), personal-data tools, deadline, queue and tool calls), all in its column of **Settings → Cloud Modes**. Each column picks the mode's model (`codex_model`, `claude_model`) and effort from a dropdown; a model ID set by hand in `config.json` is shown there and kept. See the README for what each mode sends and how it signs in.
 
 ## Activity log
 
@@ -767,7 +767,7 @@ including startup probes. Its default is 8192. Increase it if your model needs
 more room for long conversations or tool results, allowing for extra memory use.
 
 `llm_keep_alive` sets how long Ollama keeps a model loaded after each request
-(**Settings → LLM & AI Models → Model Residency**). Use a duration with a unit
+(**Settings → Advanced → Keep Model Loaded For**, shown when **Show advanced settings** is ticked). Use a duration with a unit
 such as `"30m"` (the default) or `"2h"`, or whole seconds: `-1` keeps models
 loaded until Ollama stops, `0` unloads them straight away. Longer residency
 avoids a reload delay on the next request and holds GPU memory meanwhile.

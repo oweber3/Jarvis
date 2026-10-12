@@ -29,7 +29,7 @@ _RESERVED_NAMES = {'con', 'prn', 'aux', 'nul', *(f'com{i}' for i in range(1, 10)
 _EXTENSION = re.compile(r'\.[^\W_]{1,10}', re.UNICODE)
 _PAST = {'move': 'moved', 'copy': 'copied', 'rename': 'renamed'}
 DELETE_OFF = ("File deletion is turned off, so no file was deleted. It can be turned on in Settings, "
-              "Windows Control, Allow File Deletion.")
+              "Privacy, Screen and files, Allow File Deletion.")
 
 
 def _delete_allowed(cfg: Any) -> bool:

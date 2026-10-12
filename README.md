@@ -49,7 +49,7 @@ Open **Chat** from the tray menu when you would rather type. Text replies are si
 
 Click the orb in the Jarvis window to wake him without speaking, exactly as if you had said "Jarvis". Click it again to deactivate him.
 
-When you wake him, the edges of every screen fill with soft holographic light that breathes with what he is doing (a slow breath while listening, a quicker pulse while thinking, following his voice while speaking) and fades once the conversation ends. It never takes focus, clicks pass straight through it, and screens showing a full-screen game or video are left alone. Turn it off in **Settings → Features → Wake Screen Effect**.
+When you wake him, the edges of every screen fill with soft holographic light that breathes with what he is doing (a slow breath while listening, a quicker pulse while thinking, following his voice while speaking) and fades once the conversation ends. It never takes focus, clicks pass straight through it, and screens showing a full-screen game or video are left alone. Turn it off in **Settings → Listening → Wake Screen Effect**.
 
 <details>
 <summary><strong>Hardware and model choices</strong></summary>
@@ -66,7 +66,7 @@ Memory needs depend on model size, quantisation, context length and speech recog
 
 Budget memory for Whisper and, when different from chat, the fast model used for voice intent and tool routing. Apple Silicon uses unified memory; other GPUs use dedicated VRAM.
 
-Optionally, **Settings → LLM & AI Models → Tool Model** lets a separate model choose and call tools while the chat model writes the reply. Setting it to the same model as chat costs no extra memory and made Qwen 3.5 noticeably more reliable; a different model only helps if both fit in memory together, or every request reloads them.
+Optionally, **Settings → AI Models → Tool Model** lets a separate model choose and call tools while the chat model writes the reply. Setting it to the same model as chat costs no extra memory and made Qwen 3.5 noticeably more reliable; a different model only helps if both fit in memory together, or every request reloads them.
 
 **Quick reference for PC control.** 28 everyday requests (volume, media, settings, windows, files, websites, PDFs, weather, web search), each run three times through Jarvis in local mode on an RTX 5070 (12 GB). "Correct" means the right tool with the right arguments and a sensible reply. Speed is the median time from request to reply.
 
@@ -119,9 +119,9 @@ On Windows, Jarvis's built-in tools understand requests like these. Simple Engli
 | Everything else | Web search, weather, time, nutrition tracking and optional location awareness |
 
 - **Follow-ups just work.** "Close this" acts on the window in front of you, and after Jarvis opens or moves something, "move it" or "close it" act on that exact window.
-- **Asks before anything risky.** Deleting, overwriting, shutting down, opening an app's uninstaller or clicking a control that sends, deletes or buys needs your confirmation. Password fields are never touched, files are only moved, copied or renamed inside your home folder, and nothing is ever overwritten silently. Jarvis cannot delete files at all until you turn on **Allow File Deletion** in Settings → Windows Control.
+- **Asks before anything risky.** Deleting, overwriting, shutting down, opening an app's uninstaller or clicking a control that sends, deletes or buys needs your confirmation. Password fields are never touched, files are only moved, copied or renamed inside your home folder, and nothing is ever overwritten silently. Jarvis cannot delete files at all until you turn on **Allow File Deletion** in Settings → Privacy.
 - **Sees your screen only when you ask.** The screenshot is read offline and never stored, and one switch in Settings removes the ability entirely.
-- **Gesture snapping.** Turn on **Allow Gesture Snapping** in Settings, then say "start gesture control": your webcam counts your raised fingers, so you raise one finger to aim, make a fist to grab the window under the pointer and move it, then raise a finger or open your hand to snap the window into one of your PowerToys FancyZones zones on any monitor. Raise two fingers and hold your hand higher or lower to scroll. Open your hand flat to pause, and say "stop gesture control" to turn the camera off. A glowing ring round the pointer shows where it is while gesture control is on. Tracking runs on this PC: no camera image or hand position is kept, logged or sent to a cloud model, and the camera can only be turned on at the PC, not from the phone. [More →](docs/CONFIGURATION.md#gesture-snapping)
+- **Gesture snapping.** Turn on **Allow Gesture Control** in Settings → Extras, then say "start gesture control": your webcam counts your raised fingers, so you raise one finger to aim, make a fist to grab the window under the pointer and move it, then raise a finger or open your hand to snap the window into one of your PowerToys FancyZones zones on any monitor. Raise two fingers and hold your hand higher or lower to scroll. Open your hand flat to pause, and say "stop gesture control" to turn the camera off. A glowing ring round the pointer shows where it is while gesture control is on. Tracking runs on this PC: no camera image or hand position is kept, logged or sent to a cloud model, and the camera can only be turned on at the PC, not from the phone. [More →](docs/CONFIGURATION.md#gesture-snapping)
 - **Smart devices.** A Roku TV on your home network ("turn off the TV", "put on Netflix") is built in ([setup](docs/CONFIGURATION.md#roku-tv)); other devices connect through MCP, for example Home Assistant.
 
 ### Routines, workspaces and your own tools
@@ -175,7 +175,7 @@ This fork is developed and tested on Windows 11, and the desktop controls are Wi
 - **Stopping Jarvis by voice can lag over loud playback.** A plain “Stop” or “Jarvis, stop” stops it (say “Jarvis, stop” if Jarvis is saying the word “stop” at that moment). When the microphone hears Jarvis's own voice loudly, the stop can wait for a few seconds of audio, and a stop that Whisper merges with several of Jarvis's words, or phrased differently (“please stop”), depends on the intent judge. Headphones or a lower speaker volume help.
 - **No mobile app store app.** Phone access is a web page your PC serves to your phone's browser. It is text only (browsers allow the microphone only over HTTPS), works only while the PC is on, and needs the phone on your home network or your own VPN.
 - **The web chat is a first version.** It cannot rewind a message yet (the classic chat can), and it needs Jarvis running: with Jarvis stopped it shows a status page instead of your chats.
-- **Gesture snapping is new and tuned on one webcam.** Finger up and down thresholds, scroll speed and smoothing are adjustable in Settings → Gesture Snapping, and `python -m jarvis.gestures --preview` shows what the camera sees. Windows does not let it move or scroll apps running as administrator, and it snaps only into FancyZones zones (without PowerToys a window stays where you drop it).
+- **Gesture snapping is new and tuned on one webcam.** Finger up and down thresholds, scroll speed and smoothing are adjustable in Settings → Extras → Gesture control, and `python -m jarvis.gestures --preview` shows what the camera sees. Windows does not let it move or scroll apps running as administrator, and it snaps only into FancyZones zones (without PowerToys a window stays where you drop it).
 - **First-run downloads can take time.** Whisper and language models can be large. Check Logs for progress before assuming startup is stuck.
 - **Whisper turbo needs a compatible backend.** The wizard hides it when the selected backend cannot load it; an existing unsupported selection uses `medium` instead.
 - **Codex and Claude modes are cloud inference.** They are opt-in, send requests to OpenAI or Anthropic using your own Codex or Claude sign-in, take a few seconds per request, and stop with a clear message if a Codex or Claude Code update changes the interface they use (Codex's is marked experimental).
@@ -214,7 +214,7 @@ Connect MCP servers for browser automation, Home Assistant, GitHub, databases an
 
 ### Switching who answers
 
-Jarvis answers with its local model by default. If you allow them in **Settings → Reply Mode** (or on the setup wizard's optional **Cloud reply modes** step, which also checks that each one is installed and signed in), it can instead hand requests to **ChatGPT through Codex** or **Claude through Claude Code**, both running hidden in the background. Switch at any time, with no restart:
+Jarvis answers with its local model by default. If you allow them in **Settings → Cloud Modes** (or on the setup wizard's optional **Cloud reply modes** step, which also checks that each one is installed and signed in), it can instead hand requests to **ChatGPT through Codex** or **Claude through Claude Code**, both running hidden in the background. Switch at any time, with no restart:
 
 - say "Jarvis, use Claude", "use ChatGPT" or "go local";
 - or pick a mode under **Reply Mode** in the tray menu.
@@ -231,7 +231,7 @@ If the local model is too slow or misreads you, Jarvis can let **Codex**, alread
 <summary>Turn it on, and switch back</summary>
 
 1. **Sign in to Codex with ChatGPT** (open the Codex app once and sign in). Jarvis uses that sign-in and refuses to run with an API-key sign-in, so it never switches you to API billing.
-2. **Allow the mode.** In Settings, open **Reply Mode**, tick **Allow Codex Mode** and restart Jarvis when asked. Then say "use ChatGPT" or choose it in the tray (or make it the start-up mode on the same page). The model (`gpt-6-luna` by default), reasoning effort (`low`) and Codex executable are on the **Codex** page. Jarvis finds the Codex command line on `PATH` or the copy installed with the Codex app (on a Mac also Homebrew and the copy inside the ChatGPT app); if none exists, set the full path to `codex` (on Windows, `codex.exe`).
+2. **Allow the mode.** In Settings, open **Cloud Modes** and tick **Allow** in the Codex column, then restart Jarvis when asked. Then say "use ChatGPT" or choose it in the tray (or make it the start-up mode with **Reply Mode** on the General page). The model (`gpt-6-luna` by default), reasoning effort (`low`) and, with **Show advanced settings** ticked, the **Program** path are in the same Codex column. Jarvis finds the Codex command line on `PATH` or the copy installed with the Codex app (on a Mac also Homebrew and the copy inside the ChatGPT app); if none exists, set the full path to `codex` (on Windows, `codex.exe`).
 3. **Check the start-up output.** Jarvis prints `✓ Codex is ready in the background`, or the reason it is not (not signed in, model or effort not available, Codex not found or too old).
 
 To go back, say "go local" or choose **Local** in the tray. Nothing from this mode runs in local mode, and Jarvis stops only the Codex process it started.
@@ -255,7 +255,7 @@ Jarvis can also let **Claude** interpret requests and use Jarvis's tools, throug
 <summary><strong>Turn it on, and switch back</strong></summary>
 
 1. **Sign in to Claude Code** with your Claude subscription (run `claude auth login` once). `claude auth status` should report that you are logged in.
-2. **Allow the mode.** In Settings, open **Reply Mode**, tick **Allow Claude Mode** and restart Jarvis when asked. Then say "use Claude" or choose it in the tray. The model (`haiku` by default), effort (`low`) and Claude executable are on the **Claude** page; Jarvis finds `claude` on `PATH` or in `%USERPROFILE%\.local\bin`.
+2. **Allow the mode.** In Settings, open **Cloud Modes** and tick **Allow** in the Claude column, then restart Jarvis when asked. Then say "use Claude" or choose it in the tray. The model (`haiku` by default), effort (`low`) and, with **Show advanced settings** ticked, the **Program** path are in the same Claude column; Jarvis finds `claude` on `PATH` or in `%USERPROFILE%\.local\bin`.
 3. **Check the output.** When the mode starts, Jarvis prints `✅ Claude is ready in the background`, or the reason it is not (not signed in, signed in with an API key, model or effort not available, Claude Code not found).
 
 To go back, say "go local" or choose **Local** in the tray. Jarvis stops only the Claude Code processes it started.
@@ -270,7 +270,7 @@ To go back, say "go local" or choose **Local** in the tray. Jarvis stops only th
 
 ### Activity log (optional)
 
-Off by default. When you turn it on in **Settings → Activity Log** (and restart Jarvis), Jarvis records which application is in the foreground, its window title with emails, tokens and similar secrets removed, and when you are idle. It never records keystrokes, screen contents or files. Ask “what was I working on this morning?” or “how long was I in Word yesterday?” and the local model answers from that record.
+Off by default. When you turn it on in **Settings → Privacy → Activity log** (and restart Jarvis), Jarvis records which application is in the foreground, its window title with emails, tokens and similar secrets removed, and when you are idle. It never records keystrokes, screen contents or files. Ask “what was I working on this morning?” or “how long was I in Word yesterday?” and the local model answers from that record.
 
 - **Stays on this PC.** The record lives in Jarvis's database, is kept for 30 days by default and is never added to your diary or memory graph. A reply that quotes it is not printed to the log, so it cannot end up in a bug report.
 - **You stay in control.** The tray has **Pause Activity Log** and **Delete Activity History…** (which asks first). Password managers (1Password, Bitwarden, KeePass and others) and private browsing windows are never recorded, and you can edit both lists in Settings.
@@ -279,7 +279,7 @@ Off by default. When you turn it on in **Settings → Activity Log** (and restar
 
 ### Phone access (optional)
 
-Off by default. Turn it on in **Settings → Phone Access** (or from the tray's **Phone Access**) and restart Jarvis. Your PC then serves a small web app to your phone's browser: the live orb, the same conversation as voice and the chat window, one-tap quick actions, and Approve and Deny for actions that ask for confirmation on the desktop.
+Off by default. Turn it on in **Settings → Extras → Phone access** (or from the tray's **Phone Access**) and restart Jarvis. Your PC then serves a small web app to your phone's browser: the live orb, the same conversation as voice and the chat window, one-tap quick actions, and Approve and Deny for actions that ask for confirmation on the desktop.
 
 1. Open **Phone Access** from the tray and press **Pair a phone**. It shows a six-digit code and the links to open, such as `http://192.168.1.20:8765/`.
 2. Open the link on your phone, enter the code and give the phone a name. Add the page to your home screen if you like.
@@ -292,7 +292,7 @@ Off by default. Turn it on in **Settings → Phone Access** (or from the tray's 
 
 ### Web chat (optional)
 
-Off by default. Turn it on in **Settings → Web Chat** and restart Jarvis; the tray's **Chat** then opens it in place of the classic chat. It is a chat window with a sidebar of **projects** (create, rename, move chats into them) and a **model picker** in the message box: your local models, plus Claude or ChatGPT (Codex) when you have allowed them in Settings. Pick Claude or ChatGPT and the picker lists the models your own sign-in offers, with an **effort** menu (how hard it thinks) for the models that have one. A switch in the corner changes between the dark look and a light one.
+Off by default. Turn it on in **Settings → Extras → Web chat** and restart Jarvis; the tray's **Chat** then opens it in place of the classic chat. It is a chat window with a sidebar of **projects** (create, rename, move chats into them) and a **model picker** in the message box: your local models, plus Claude or ChatGPT (Codex) when you have allowed them in Settings. Pick Claude or ChatGPT and the picker lists the models your own sign-in offers, with an **effort** menu (how hard it thinks) for the models that have one. A switch in the corner changes between the dark look and a light one.
 
 - **Voice joins the open chat.** What you say to Jarvis is added to whichever chat is open, so speaking and typing stay one conversation. Opening another chat gives Jarvis that chat's history.
 - **Switching the model or effort changes it for voice too** and is saved in your settings. Each chat remembers the model it last used and offers one tap to switch back, but opening a chat never turns on a cloud mode by itself.
@@ -334,7 +334,7 @@ Warmup checks model loading with a small probe, not a full request. Voice intent
 <details>
 <summary><strong>The Mac gets warm, or I want lower background usage</strong></summary>
 
-Enable **Settings → Features → Low Power Mode**. It skips LLM startup warmup and shortens Ollama model residency while keeping speech recognition ready. The first model request after idle may take longer.
+Enable **Settings → General → Low Power Mode**. It skips LLM startup warmup and shortens Ollama model residency while keeping speech recognition ready. The first model request after idle may take longer.
 
 </details>
 

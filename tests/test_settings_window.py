@@ -98,11 +98,11 @@ class TestFieldMetadata:
             assert fa.key == fb.key
             assert fa.category == fb.category
 
-    def test_low_power_mode_is_exposed_as_feature_toggle(self):
+    def test_low_power_mode_is_exposed_as_general_toggle(self):
         """Low-power mode should be available without hand-editing config.json."""
         field = next((fm for fm in FIELD_METADATA if fm.key == "low_power_mode"), None)
         assert field is not None
-        assert field.category == "features"
+        assert field.category == "general" and not field.advanced
         assert field.field_type == "bool"
 
 
@@ -117,10 +117,10 @@ class TestLLMProviderFields:
                 return fm
         return None
 
-    def test_provider_category_present(self):
-        """A dedicated 'LLM Provider' category must exist in the sidebar."""
+    def test_models_category_present(self):
+        """The 'AI Models' page holds the provider and its connection."""
         cat_keys = [k for k, _ in CATEGORIES]
-        assert "llm_provider" in cat_keys
+        assert "models" in cat_keys
 
     def test_provider_fields_present(self):
         """All eight provider-aware config keys are surfaced."""
@@ -133,17 +133,16 @@ class TestLLMProviderFields:
         missing = expected - present
         assert not missing, f"Provider fields missing from settings UI: {missing}"
 
-    def test_provider_fields_live_in_provider_category(self):
-        """The provider connection/credential fields group under the
-        'LLM Provider' category, not scattered across 'llm'."""
+    def test_provider_fields_live_on_the_models_page(self):
+        """The provider connection/credential fields sit on the 'AI Models' page."""
         for key in (
             "llm_provider", "llm_base_url", "llm_api_key", "llm_chat_model",
             "embedding_provider", "embedding_base_url", "embedding_api_key",
             "embedding_model",
         ):
             fm = self._field(key)
-            assert fm is not None and fm.category == "llm_provider", (
-                f"'{key}' should be in the 'llm_provider' category"
+            assert fm is not None and fm.category == "models", (
+                f"'{key}' should be on the 'models' page"
             )
 
     def test_llm_provider_choices_match_config(self):
@@ -523,13 +522,13 @@ class TestWindowsControlSettings:
     """The Windows Control page exposes the routing and Windows toggles, a
     capability status panel and the confirmation policy summary."""
 
-    def test_toggles_live_in_windows_category(self):
+    def test_toggles_live_on_the_general_page(self):
         from desktop_app.settings_window import CATEGORIES
-        assert "windows" in {key for key, _ in CATEGORIES}
+        assert "general" in {key for key, _ in CATEGORIES}
         for key in ("fast_commands_enabled", "windows_tools_enabled"):
             field = next((fm for fm in FIELD_METADATA if fm.key == key), None)
             assert field is not None, key
-            assert field.category == "windows"
+            assert field.category == "general"
             assert field.field_type == "bool"
 
     def test_fast_commands_label_avoids_internal_terms(self):

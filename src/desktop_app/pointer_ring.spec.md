@@ -14,7 +14,7 @@ While gesture snapping is on (`jarvis/gestures/gestures.spec.md`, Gesture snappi
 ## When it shows
 
 - **Only while gesture snapping runs**: the controller reads `jarvis.gestures.snap_state.is_on()` about five times a second (every 200 ms). The flag is written by the daemon's gesture snapping with a heartbeat, so it reads off within about a second if the daemon dies; an unreadable flag, or a missing `snap_state` module, counts as off.
-- **Off switch**: `gesture_snap_pointer_ring` (default on, Settings > Gesture Snapping > Pointer Ring). Saving Settings applies it at once, without a restart; turning it off removes the ring and stops polling.
+- **Off switch**: `gesture_snap_pointer_ring` (default on, Settings > Extras > Gesture control > Pointer Ring). Saving Settings applies it at once, without a restart; turning it off removes the ring and stops polling.
 - **Fades**: it fades in when the flag turns on and out when it turns off, each in `FADE_S` (0.2 s).
 
 ## Look

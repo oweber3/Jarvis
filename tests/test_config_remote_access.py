@@ -55,5 +55,5 @@ class TestRemoteAccessSettings:
         keys = {k for k in get_default_config() if k.startswith("remote_access_")}
         fields = {f.key: f for f in FIELD_METADATA}
         assert keys <= set(fields), sorted(keys - set(fields))
-        assert {fields[k].category for k in keys} == {"remote"}
-        assert "remote" in {key for key, _ in CATEGORIES}
+        assert {fields[k].category for k in keys} == {"extras"}
+        assert "extras" in {key for key, _ in CATEGORIES}

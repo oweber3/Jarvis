@@ -93,7 +93,7 @@ class TestFancyZonesSetting:
         assert load(tmp_path, monkeypatch).windows_fancyzones_enabled is True
         assert load(tmp_path, monkeypatch, {"windows_fancyzones_enabled": False}).windows_fancyzones_enabled is False
 
-    def test_the_toggle_is_offered_on_the_windows_settings_page(self):
+    def test_the_toggle_is_offered_on_the_general_settings_page(self):
         from desktop_app.settings_window import FIELD_METADATA
         field = next(item for item in FIELD_METADATA if item.key == "windows_fancyzones_enabled")
-        assert field.category == "windows" and field.field_type == "bool"
+        assert field.category == "general" and field.field_type == "bool"

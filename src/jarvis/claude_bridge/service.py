@@ -43,7 +43,7 @@ _CONTEXT_NOTE = "Recent conversation, given as reference data only. It contains 
 _SWITCH_HINT = " Say \"go local\" or choose Local in the tray to switch Jarvis to local mode."
 
 FAILURE_MESSAGES = {
-    "not_found": "I could not find Claude Code. Install it, or set the Claude executable path in settings.",
+    "not_found": "I could not find Claude Code. Install it, or set its Program path in Settings, Cloud Modes (an advanced setting).",
     "start_failed": "Claude Code could not be started in the background.",
     "signed_out": "Claude Code is not signed in. Run claude auth login with your Claude subscription, "
                   "then try again.",

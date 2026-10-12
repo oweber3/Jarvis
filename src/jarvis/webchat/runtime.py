@@ -37,7 +37,7 @@ def start(cfg, *, backend=None) -> Optional[WebChatServer]:
             store.close()
             debug_log(f"webchat: could not bind {LOOPBACK}:{port}: {type(exc).__name__}", "webchat")
             print(f"⚠️ The web chat could not start on port {port}", flush=True)
-            print(f"   💡 {exc.strerror or exc}. Pick another port in Settings > Web Chat.", flush=True)
+            print(f"   💡 {exc.strerror or exc}. Pick another port in Settings > Extras > Web chat.", flush=True)
             return None
         _server, _store = server, store
     print(f"💬 Web chat is on (port {server.port}, this PC only)", flush=True)

@@ -31,7 +31,7 @@ NOTICES = {
     "stopping": ("Jarvis is shutting down", "The chat is unavailable until Jarvis starts again."),
     "stopped": ("Jarvis isn't running", "Start listening from the tray icon to use the chat."),
     "crashed": ("Jarvis stopped unexpectedly", "Start listening from the tray icon to try again."),
-    "waiting": ("Waiting for the chat", "If it never appears, turn on Web Chat in Settings and restart Jarvis."),
+    "waiting": ("Waiting for the chat", "If it never appears, turn on Use Web Chat in Settings and restart Jarvis."),
     "browser": ("Opened in your browser", "The chat opens in your default web browser on this PC."),
 }
 

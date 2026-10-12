@@ -111,7 +111,7 @@ Jarvis's automation never moves the pointer or sends mouse input on its own (`pl
 
 ### Turning it on and off
 
-- **Off by default.** `gesture_snap_enabled` (default `false`, Settings > Gesture Snapping) offers the `gestureControl` tool and its fast-path phrases. With it off the tool is not registered, nothing can start the camera for gesture snapping, and the phrases fall through to the model, which has no tool for them.
+- **Off by default.** `gesture_snap_enabled` (default `false`, Settings > Extras > Gesture control > Allow Gesture Control) offers the `gestureControl` tool and its fast-path phrases. With it off the tool is not registered, nothing can start the camera for gesture snapping, and the phrases fall through to the model, which has no tool for them.
 - **Started only when asked.** The setting does not start the camera. The user starts the mode by voice or text ("start gesture control") and stops it the same way ("stop gesture control"). Both go through `gestureControl`, the normal tool path and central safety. Both actions are routine (`SAFE`), so the phrases are fast-routed. The camera runs only while the mode is on.
 - **Windows only.** The tool is registered only on Windows, where the output exists.
 - **Not offered to cloud models.** `gestureControl` is never in a Codex or Claude tool snapshot (`bridge/bridge.spec.md`): a cloud model cannot turn the camera on, a call it makes for the tool by name is refused, and a routine it runs that has a `gestureControl` step fails validation before any step runs (`routines/routines.spec.md`). The fast-path phrases work in every reply mode because the fast path runs before any bridge.
@@ -238,7 +238,7 @@ Nothing the camera sees leaves the gesture pipeline: frames, landmarks, finger r
 | `gesture_snap_speed_response` | `0.005` | One Euro speed coefficient (0 to 0.1) |
 | `gesture_snap_pointer_ring` | `true` | Show the desktop app's glowing ring around the pointer while gesture snapping runs (`desktop_app/pointer_ring.spec.md`) |
 
-Values outside the range are clamped on load; values of the wrong type use the default. All are shown in Settings > Gesture Snapping. Changes take effect after Jarvis restarts, except `gesture_snap_pointer_ring`, which applies as soon as Settings are saved.
+Values outside the range are clamped on load; values of the wrong type use the default. All are shown in Settings > Extras > Gesture control. Changes take effect after Jarvis restarts, except `gesture_snap_pointer_ring`, which applies as soon as Settings are saved.
 
 ## Dependencies
 

@@ -250,33 +250,33 @@ class TestSettingsWindowThinking:
         keys = [fm.key for fm in FIELD_METADATA]
         assert "llm_thinking_enabled" in keys
 
-    def test_chat_thinking_field_is_bool_in_llm_category(self):
+    def test_chat_thinking_field_is_bool_on_the_models_page(self):
         from desktop_app.settings_window import FIELD_METADATA
         field = next(fm for fm in FIELD_METADATA if fm.key == "llm_thinking_enabled")
         assert field.field_type == "bool"
-        assert field.category == "llm"
+        assert field.category == "models"
 
     def test_field_metadata_includes_intent_judge_thinking(self):
         from desktop_app.settings_window import FIELD_METADATA
         keys = [fm.key for fm in FIELD_METADATA]
         assert "intent_judge_thinking_enabled" in keys
 
-    def test_intent_judge_thinking_field_is_bool_in_llm_category(self):
+    def test_intent_judge_thinking_field_is_an_advanced_bool(self):
         from desktop_app.settings_window import FIELD_METADATA
         field = next(fm for fm in FIELD_METADATA if fm.key == "intent_judge_thinking_enabled")
         assert field.field_type == "bool"
-        assert field.category == "llm"
+        assert field.advanced
 
     def test_field_metadata_includes_dictation_thinking(self):
         from desktop_app.settings_window import FIELD_METADATA
         keys = [fm.key for fm in FIELD_METADATA]
         assert "dictation_thinking_enabled" in keys
 
-    def test_dictation_thinking_field_is_bool_in_features_category(self):
+    def test_dictation_thinking_field_is_bool_on_the_memory_page(self):
         from desktop_app.settings_window import FIELD_METADATA
         field = next(fm for fm in FIELD_METADATA if fm.key == "dictation_thinking_enabled")
         assert field.field_type == "bool"
-        assert field.category == "features"
+        assert field.category == "memory"
 
 
 # ---------------------------------------------------------------------------

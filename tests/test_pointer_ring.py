@@ -343,7 +343,7 @@ class TestSetting:
 
         field = next(fm for fm in FIELD_METADATA if fm.key == "gesture_snap_pointer_ring")
         assert field.field_type == "bool"
-        assert field.category == "gesture_snap"
+        assert field.category == "extras" and field.section == "Gesture control"
 
 
 class TestTrayWiring:

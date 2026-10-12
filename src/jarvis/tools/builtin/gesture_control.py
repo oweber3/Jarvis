@@ -51,7 +51,7 @@ class GestureControlTool(Tool):
         if action not in _ACTIONS:
             return _fail(f"Unknown action '{action}'. Use one of: {', '.join(_ACTIONS)}.")
         if service is None:
-            return _fail("Gesture snapping is turned off in Settings (Gesture Snapping).")
+            return _fail("Gesture snapping is turned off in Settings (Extras, Gesture control).")
         debug_log(f"gestureControl action={action}", "gestures")
         if action == "status":
             on = service.running
