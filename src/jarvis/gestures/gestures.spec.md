@@ -172,7 +172,7 @@ With `gesture_snap_talk` on (default), holding an open hand up for `TALK_HOLD_SE
 
 ### Clicking by voice
 
-While gesture snapping is on, saying "click", "double click" or "right click" clicks the primary button once, twice (a double click) or the secondary button once at the pointer, wherever the user's hand left it (with the mouse buttons swapped in Windows, the other physical button, as a mouse would). The phrase must be addressed: with the wake word ("Jarvis, click"), after clicking the orb, typed, or after raising a hand to talk; a bare "click" heard only in the hot window is not a click. Aim with one finger and say "Jarvis, click"; or aim, open the hand to hold the pointer still, keep it up to talk and say "click".
+While gesture snapping is on, saying "click", "double click" or "right click" clicks the primary button once, twice (a double click) or the secondary button once at the pointer, wherever the user's hand left it (with the mouse buttons swapped in Windows, the other physical button, as a mouse would). No wake word is needed: while gesture snapping runs, a click phrase is taken even from speech nobody addressed to Jarvis, as long as it is the whole utterance ("click the link in the email" is not a click) and Jarvis is not speaking (so its own voice is never taken for one). The wake word, the orb, typing and the hot window work too. Aim with one finger and say "click".
 
 - **Only where the user points.** The click lands at the pointer's current position; it carries no position of its own. It is refused while a window is held or a scroll or zoom runs ("Let go of the window or finish scrolling first."), and when gesture snapping is off ("Clicking by voice works only while gesture control is on.").
 - **Only at the PC.** A request from a paired phone cannot click ("Clicking by voice works only at the PC."). Like the rest of `gestureControl`, it is never offered to a cloud model.
@@ -240,7 +240,7 @@ Console output: `🖐️ Gesture snapping on` with the gestures indented below, 
 
 The `gesture_control` family in `fastpath/phrases/<language>.json` maps whole utterances such as "start gesture control", "start gesture controls", "turn on gestures", "stop gesture control" and "turn off the gesture controls" to `gestureControl` `start` and `stop` (`fastpath/fastpath.spec.md`). Every phrase pairs a start or stop verb phrase with a name for the feature (in English: gesture control or controls, gestures, hand gestures, gesture snapping or gesture mode); a bare name or a question about the feature falls through to the model. It is available only while the tool is registered.
 
-The `gesture_click` family maps "click", "double click", "right click" and a few variants ("click it", "click here", "click there", "left click", with or without a hyphen) to the click actions. Its rules are marked `needs_wake_word`, so a click overheard in the hot window never fires. These routes are available only while gesture snapping is running (the tool's `fast_available`), so with the mode off the words fall through to the model.
+The `gesture_click` family maps "click", "double click", "right click" and a few variants ("click it", "click here", "click there", "left click", with or without a hyphen) to the click actions. Its rules are marked `ambient`, the only rules offered to speech nobody addressed to Jarvis (`fastpath/fastpath.spec.md`). These routes are available only while gesture snapping is running (the tool's `fast_available`), so with the mode off the words fall through to the model.
 
 ### Privacy and logs
 

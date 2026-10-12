@@ -32,6 +32,9 @@ class FastMatch:
     # Acts on whatever has focus from a phrase short enough to be overheard: offered only to requests
     # addressed with the wake word (or typed), never to hot-window follow-ups.
     needs_wake_word: bool = False
+    # Offered even to speech nobody addressed to Jarvis (no wake word, no hot window), while the tool's
+    # ``fast_available`` holds: the spoken clicks of gesture snapping.
+    ambient: bool = False
 
 
 def normalise(text: str) -> str:
@@ -445,6 +448,6 @@ def match(text: str, language: str | None = 'en', *, targets: tuple[FastTarget, 
             slots[name] = display
         else:
             result = FastMatch(rule['id'], rule['family'], rule['tool'], args, rule['reply'], slots,
-                               bool(rule.get('needs_wake_word')))
+                               bool(rule.get('needs_wake_word')), bool(rule.get('ambient')))
             matches[(result.tool_name, json.dumps(result.args, sort_keys=True))] = result
     return next(iter(matches.values())) if len(matches) == 1 else None

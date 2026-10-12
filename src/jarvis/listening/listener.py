@@ -1012,15 +1012,20 @@ class VoiceListener(threading.Thread):
 
         # A complete routine command reuses normal dispatch, output and query lock.
         # Active/queued TTS and collection fragments need the existing judge path.
+        # Speech nobody addressed to Jarvis is offered only the routes marked ambient (a bare "click" while gesture
+        # snapping runs).
         if (not received_during_tts and not is_speaking_now
-                and not self.state_manager.is_collecting()
-                and (self._wake_timestamp is not None or could_be_hot_window)):
+                and not self.state_manager.is_collecting()):
             from ..fastpath.dispatcher import match_command
             wake_word = getattr(self.cfg, 'wake_word', 'jarvis')
             aliases = list(getattr(self.cfg, 'wake_aliases', []))
             fast_query = extract_query_after_wake(text_lower, wake_word, aliases)
             addressed = self._wake_timestamp is not None
-            fast_match = match_command(fast_query, self.cfg, self._last_detected_language, addressed=addressed)
+            ambient = not addressed and not could_be_hot_window
+            # Never while Jarvis speaks: its own voice must not be taken for a command.
+            jarvis_speaking = bool(self.tts and self.tts.is_speaking())
+            fast_match = None if ambient and jarvis_speaking else match_command(
+                fast_query, self.cfg, self._last_detected_language, addressed=addressed, ambient=ambient)
             if fast_match is not None:
                 self._request_addressed = addressed
                 debug_log(f'FAST_ROUTE voice family={fast_match.family} tool={fast_match.tool_name}; judge and collection skipped', 'routing')

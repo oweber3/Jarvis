@@ -18,7 +18,7 @@ from .window_snap import SWITCH_OFF, TALK, WATCHDOG_SEC, WindowSnap, WindowSnapS
 GESTURE_GUIDE = ("Raise one finger to aim, make a fist to grab the window under the pointer and move it, "
                  "then raise a finger or open your hand to snap it into a zone; raise two fingers and hold your hand "
                  "above or below where you started to scroll; open your hand flat to pause, and hold it up to talk "
-                 "to me. Say \"Jarvis, click\", double click or right click to click at the pointer. Pull two open hands apart "
+                 "to me. Say click, double click or right click to click at the pointer. Pull two open hands apart "
                  "or together to zoom, and cross your wrists to turn gesture control off.")
 
 _talk_handler: Optional[Callable[[], None]] = None
@@ -121,7 +121,7 @@ class WindowSnapService:
              "   ✊ Make a fist to grab the window under it, raise a finger or open your hand to snap it into a zone\n"
              "   ✌️ Raise two fingers, then hold your hand higher or lower to scroll (further is faster)\n"
              "   ✋ Open your hand flat to pause, hold it up for a second to talk to Jarvis\n"
-             "   🖱️ Say \"Jarvis, click\", \"double click\" or \"right click\" to click at the pointer\n"
+             "   🖱️ Say \"click\", \"double click\" or \"right click\" to click at the pointer\n"
              "   👐 Pull two open hands apart or together to zoom\n"
              "   🙅 Cross your wrists, or say \"stop gesture control\", to turn it off")
         return "started"
