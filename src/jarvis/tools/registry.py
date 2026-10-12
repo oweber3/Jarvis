@@ -22,6 +22,7 @@ from .builtin.time_tool import TimeTool
 from .builtin.stop import StopTool
 from .builtin.tool_search import ToolSearchTool
 from .builtin.routine_control import RoutineControlTool
+from .builtin.schedule_control import ScheduleControlTool
 from .request_scope import CallContext, note_outside_content, request_origin, tool_call
 from .types import ToolExecutionResult
 from ..config import Settings
@@ -56,6 +57,7 @@ BUILTIN_TOOLS = {
     "stop": StopTool(),
     "toolSearchTool": ToolSearchTool(),
     "routineControl": RoutineControlTool(),
+    "scheduleControl": ScheduleControlTool(),
 }
 
 
