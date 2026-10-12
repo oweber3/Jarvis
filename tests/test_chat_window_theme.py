@@ -243,14 +243,14 @@ class TestChatWindowWearsTheHud:
 
 @pytest.mark.unit
 class TestChatLookComesFromTheTheme:
-    def test_only_the_mode_badge_carries_a_stylesheet_of_its_own(self, qapp, monkeypatch):
+    def test_no_chat_widget_carries_a_stylesheet_of_its_own(self, qapp, monkeypatch):
         from PyQt6.QtWidgets import QWidget
         win = _open_window(monkeypatch)
         win._append_user("Hello")
         win._append_assistant("Hi")
         win._append_system("Notice")
         styled = [w.objectName() for w in win.findChildren(QWidget) if w.styleSheet()]
-        assert styled == ["modeBadge"]
+        assert styled == []
         win.close()
 
     def test_send_stop_and_rewind_are_line_icons_not_glyphs(self, qapp, monkeypatch):

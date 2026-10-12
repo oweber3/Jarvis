@@ -1210,13 +1210,7 @@ CHAT_THEME_STYLESHEET = _CHAT_TEMPLATE.substitute(_TOKENS)
 
 
 # Small surfaces that wear the HUD outside the shared stylesheet's windows:
-# the mode badge over the orb and the splash screen's status line.
-MODE_BADGE_STYLESHEET = Template(
-    "QLabel { background-color: $bg_primary; color: $accent_secondary;"
-    " border: 1px solid $border_glow; border-radius: 9px;"
-    " padding: 2px 9px; font-size: 11px; font-weight: 600; }"
-).substitute(_TOKENS)
-
+# the splash screen's status line.
 FACE_STYLESHEET = Template("background-color: $bg_primary;").substitute(_TOKENS)
 
 SPLASH_STATUS_STYLESHEET = Template(
