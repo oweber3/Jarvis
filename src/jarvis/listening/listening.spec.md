@@ -92,7 +92,10 @@ invalidates transcription work started before the pause, including a decode
 that finishes after dictation resumes. Listener shutdown discards pending
 transcriptions and results; an in-progress Whisper call is given a bounded
 grace period and cannot dispatch a late transcript. Transcript echo flags use
-the utterance capture interval against TTS timing. The job carries that
+the utterance capture interval against TTS timing. The job also carries the
+voice onset (the VAD trigger, later than the start backdated by the pre-roll),
+from which echo rejection decides whether speech after a reply could hold its
+echo tail. The job carries that
 capture-time context through Whisper to echo rejection, stop-command handling
 and intent processing, so later TTS playback cannot reclassify an older
 utterance.
@@ -211,7 +214,7 @@ An accepted utterance starts a collection: the extracted query is held while the
 - The collection never completes while the user is speaking (VAD utterance in progress), captured audio is still waiting to be processed, or an utterance is still queued for or inside Whisper. Voiced frames during the collection restart the pause, and fragments transcribed during it are appended. `voice_max_collect_seconds` bounds the whole collection regardless.
 - Accepting an utterance keeps audio the user has already started speaking so it can join the request. Audio captured while TTS is playing is discarded at that point as likely echo.
 
-**Gating:** The judge is called only when there is an engagement signal — (a) a wake word was detected in the current utterance, (b) the utterance falls inside (or pending) a hot window, or (c) TTS is currently speaking. Pure ambient speech skips the judge entirely. This keeps the synchronous audio loop from blocking up to `intent_judge_timeout_sec` on every background utterance, which would otherwise freeze the UI when Ollama is slow or contended.
+**Gating:** The judge is called only when there is an engagement signal — (a) a wake word was detected in the current utterance, (b) the utterance falls inside (or pending) a hot window, or (c) TTS is currently speaking. Wake detection runs on every utterance, including one heard while an earlier request is still being collected or its reply generated, so such a wake-word utterance is judged and passed on as addressed like any other; while a reply is being generated it is also offered to the fast path, while a request is being collected it keeps the judge path like other collection fragments. Pure ambient speech skips the judge entirely. This keeps the synchronous audio loop from blocking up to `intent_judge_timeout_sec` on every background utterance, which would otherwise freeze the UI when Ollama is slow or contended.
 
 **Alias normalisation:** Before the transcript is sent to the judge, every configured wake-word alias in each segment is replaced with the primary assistant name (case-insensitive, word-boundary-aware). Aliases are Whisper mishearings of the wake word (e.g. "Jervis", "Jaivis" for "Jarvis"); without this step the small judge model sees the alias, doesn't know it refers to the assistant, and can decide the user is addressing a different person. Normalisation happens at prompt-build time only — the raw transcript buffer is untouched.
 
@@ -276,13 +279,13 @@ System is waiting for wake word activation.
 
 After TTS finishes, allow wake-word-free follow-up.
 
-**Activation:** `echo_tolerance` seconds after TTS ends (allows echo to settle). The end of every spoken reply records the TTS finish time for echo detection first, so with `hot_window_enabled` off echo just after a reply is still flagged as captured during TTS, and the face returns to idle instead of staying on speaking.
+**Activation:** `echo_tolerance` seconds after TTS ends (allows echo to settle). The end of every spoken reply records the TTS finish time for echo detection first, so with `hot_window_enabled` off echo just after a reply is still flagged as captured during TTS, and the face returns to idle instead of staying on speaking. Only the last reply arms the window: when another reply follows the one that ended (already handed to TTS, or still queued for or being generated on the reply worker), the ended reply opens no hot window and does not return the face to idle, with the hot window on or off; the face shows THINKING while the next reply is generated, and the reply that ends last arms the window (or, with it off, returns the face to idle). Stopped replies do not count as following.
 
 **Duration:** Configurable (default: 3 seconds)
 
-**Behaviour:** Speech first passes through an early fuzzy echo check (rapidfuzz `partial_ratio`, threshold 70, with word-count guard to avoid catching mixed echo+speech). Pure echo is silently rejected **without calling the intent judge** — this keeps echo rejection instant and prevents it from blocking the audio loop. The hot window timer is **not** reset on echo rejection. Non-echo speech is sent to the intent judge, but if the judge rejects it, the rejection is overridden — all non-echo speech in the hot window is accepted as a follow-up query.
+**Behaviour:** Echo is acoustic, so only speech that could hold Jarvis's own voice is checked for it: speech captured while TTS played, or whose voice starts less than `echo_tolerance` after the reply finished (measured from the voice onset, not the start backdated by the VAD pre-roll). Speech without a known start time, and speech in the context of a reply whose end was not recorded, counts as possible echo. That speech (in or around the hot window, captured during TTS, or a fragment of a request being collected) first passes through an early fuzzy echo check (rapidfuzz `partial_ratio`, threshold 70, with word-count guard to avoid catching mixed echo+speech). Pure echo is silently rejected **without calling the intent judge** — this keeps echo rejection instant and prevents it from blocking the audio loop. The hot window timer is **not** reset on echo rejection. Speech starting later is never rejected as echo, even when it repeats words of the reply (a "yes" to "... Say yes or no", "and tomorrow?" after a forecast), so it reaches a pending confirmation, the fast path and the intent judge. Non-echo speech is sent to the intent judge, but if the judge rejects it, the rejection is overridden — all non-echo speech in the hot window is accepted as a follow-up query.
 
-**Mixed echo+speech handling:** When Whisper merges TTS echo and user speech into one chunk (e.g. mic picks up TTS then user speaks), the word-count guard detects the extra content and lets it through to the intent judge. The judge extracts the user's actual query from the mixed transcript. Post-judge echo checks also use the word-count guard and keep a pure-echo transcript only when the judge's extracted query is not itself echo and was actually heard (`partial_ratio` of query against transcript ≥ 70). Small judges invent requests from earlier turns when shown nothing but echo, and an invented request never rescues an echo.
+**Mixed echo+speech handling:** When Whisper merges TTS echo and user speech into one chunk (e.g. mic picks up TTS then user speaks), the word-count guard detects the extra content and lets it through to the intent judge. The judge extracts the user's actual query from the mixed transcript. Post-judge echo checks apply to the same speech that could hold echo, also use the word-count guard and keep a pure-echo transcript only when the judge's extracted query is not itself echo and was actually heard (`partial_ratio` of query against transcript ≥ 70). Small judges invent requests from earlier turns when shown nothing but echo, and an invented request never rescues an echo. The judge always receives the last reply as context.
 
 **Early salvage for echo-prefixed follow-ups:** Before the early fuzzy check rejects a chunk as pure echo, the listener calls `cleanup_leading_echo` to strip any TTS-tail prefix. If exact-word cleanup fails (for example because Whisper mis-transcribed the first echo word — *"explores"* → *"laws"* — breaking the word-level comparison), the listener falls back to `salvage_after_echo_tail`, which scans heard-text word boundaries right-to-left looking for the rightmost 5-word window that fuzzy-matches the TTS tail (`partial_ratio >= 85`) and keeps everything after it. This preserves short follow-ups (*"Who made it?"*) that the existing fuzzy-prefix salvage would otherwise truncate by one word because it prefers the shortest suffix. If the surviving remainder has at least `EchoDetector.min_salvage_words` words (default 3), it replaces the transcript segment text and is treated as the user's follow-up. The same minimum-word threshold is shared by the during-TTS and post-TTS merged-chunk salvage paths so the policy is consistent across all three sites.
 
@@ -316,7 +319,7 @@ While TTS is playing, echo rejection and stop commands are handled with fast tex
 
 ### Reply Generation and Stopping a Pending Reply
 
-Dispatch hands the query to a single serial reply worker and returns at once, so the listener keeps capturing, transcribing and processing speech while a reply is generated. Queries dispatched while another reply is pending are answered in order; the shared voice+text query lock still serialises them with text chat. The reply worker runs the reply engine, then speaks the reply through the normal TTS path and arms the hot window when it finishes. When the reply engine fails, the spoken apology goes through the same path.
+Dispatch hands the query to a single serial reply worker and returns at once, so the listener keeps capturing, transcribing and processing speech while a reply is generated. Queries dispatched while another reply is pending are answered in order; the shared voice+text query lock still serialises them with text chat. The reply worker runs the reply engine, then speaks the reply through the normal TTS path and arms the hot window when it finishes, unless another reply follows it (see Hot Window Mode, Activation). When the reply engine fails, the spoken apology goes through the same path. A reply with nothing to say returns the face to idle, unless another reply is still queued, playing or being generated.
 
 An engaged utterance (wake word or hot window) that is a bare stop (nothing but the wake word and configured stop phrases, as above) while a request is still being collected or its reply is being generated cancels it immediately: the collection is dropped, every queued or in-flight voice reply is discarded and not spoken, a background Codex request (from voice or chat) is cancelled, a routine in progress stops between steps (`routines/routines.spec.md`), and the face state reverts to IDLE. The stop utterance is not dispatched, not judged and is marked processed. Without the wake word, ambient "stop" does nothing. The chat window's Stop button cancels the same Codex request and routine. Once TTS is playing, the during-TTS stop handling applies instead. The intent judge remains a local FAST-tier call, so automatic wake-word conversation in `codex` reply mode still includes one small local inference.
 
@@ -433,11 +436,13 @@ Current state: wake_word_mode
 }
 ```
 
+Parsing is strict: `directed` and `stop` count only as JSON `true` or the string `"true"` (any case), so a quoted `"false"` is false; a `null` query, confidence or reasoning is treated as absent (an empty query, `low` confidence), never as the text "None".
+
 ### Multi-Layer Echo Detection
 
 Echo detection uses a layered approach for reliability:
 
-1. **Fuzzy text matching (safety net):** `rapidfuzz.fuzz.partial_ratio` compares transcript against last TTS text. Score ≥ 70 = echo. This runs before the intent judge and catches obvious echoes quickly, including in the hot window directed path.
+1. **Fuzzy text matching (safety net):** `rapidfuzz.fuzz.partial_ratio` compares transcript against last TTS text. Score ≥ 70 = echo. This runs before the intent judge and catches obvious echoes quickly, including in the hot window directed path. It applies only to speech that could hold echo (captured while TTS played, or whose voice starts within `echo_tolerance` of its end; see Hot Window Mode).
 2. **Intent judge (contextual):** Receives `last_tts_text` and timing context. Can identify echo even when fuzzy matching misses subtle cases, and can extract real user speech from mixed echo+speech chunks.
 
 The fuzzy check acts as a fast, reliable safety net. The intent judge provides deeper understanding but may be unreliable with smaller models (e.g. gemma4).
@@ -448,8 +453,8 @@ TTS: "The weather is sunny and 72 degrees"
 TTS finished: 12:30:14
 
 Transcript:
-[12:30:15] "The weather is sunny and 72 degrees" ← Echo (fuzzy score 100, rejected)
-[12:30:18] "Ni hao" ← Real speech (fuzzy score < 70, sent to judge)
+[12:30:12] "The weather is sunny and 72 degrees" ← Captured during TTS: echo (fuzzy score 100, rejected)
+[12:30:18] "Ni hao" ← Real speech (starts after the echo window, sent to judge)
 
 Judge output: {"directed": true, "query": "Ni hao", "reasoning": "New speech directed at assistant"}
 ```
@@ -463,6 +468,8 @@ Jarvis plays no listening or thinking sound; the orb is the only acknowledgement
 - **No trigger:** If neither condition is met, no feedback is given.
 
 If the intent judge later rejects the query (and no hot window override applies), face state reverts to IDLE. This brief false-positive acknowledgement is acceptable — users prefer immediate acknowledgement over delayed but perfect accuracy.
+
+While an engagement is already in progress (a request being collected or its reply generated), speech heard meanwhile leaves the face as it is, and speech that is not taken never ends that engagement or returns its face to idle: only an utterance that started the engagement ends it.
 
 **Face state is not set during TTS**, to avoid self-triggering.
 
@@ -570,7 +577,7 @@ Wake Detection Check:
     └→ Text contains wake word? → LISTENING face
     ↓
 If wake detected OR in hot window:
-    → Fuzzy echo check (partial_ratio ≥ 70 = echo → reject + reset timer)
+    → Fuzzy echo check, for speech that could hold echo (partial_ratio ≥ 70 = echo → reject)
     → Send buffer + context to Intent Judge
     ↓
 If judge.directed and judge.query:
@@ -586,7 +593,7 @@ When components are unavailable, the system degrades gracefully:
 
 | Component | Unavailable Behaviour |
 |-----------|---------------------|
-| Intent Judge | Simple text-based wake word + query extraction; hot window override still applies |
+| Intent Judge (not configured, failed, or backing off for 30 s after a request error) | Simple text-based wake word + query extraction; hot window override still applies: non-echo hot-window speech is accepted as a follow-up. Speech that could hold echo has its leading echo stripped first (`cleanup_leading_echo`, `salvage_after_echo_tail`, then a leading run of at least `min_salvage_words` words Jarvis said anywhere in the reply), and only the rest is taken when it has at least `min_salvage_words` words |
 | Unsupported input format | Retry channel count and native sample rate on the selected device, then convert to 16 kHz mono for Whisper |
 | Transcript Buffer | Process each utterance independently |
 | Speaker verification (voiceprint, model or runtime missing) | One warning, then the mode behaves as `off`; no gate and no barge-in |

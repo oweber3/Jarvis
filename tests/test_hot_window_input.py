@@ -1278,7 +1278,7 @@ class TestEchoCaughtBeforeEngagementAndIntentJudge:
         _simulate_tts_finish(listener)
         _wait_for_hot_window_active(listener)
 
-        # First echo chunk
+        # First chunk: echo of the reply's opening, then words Jarvis did not say
         _process_transcript(listener,
             "Tbilisi is a must-see especially the colourful old town",
             utterance_energy=0.01)
@@ -1288,14 +1288,18 @@ class TestEchoCaughtBeforeEngagementAndIntentJudge:
             "For breathtaking scenery you should explore Steneti",
             utterance_energy=0.01)
 
-        # Both should be rejected
-        assert _accepted_query(listener) == ""
+        # Without a judge the hot window keeps only what is not echo: the echo
+        # prefix of the first chunk is stripped and the pure-echo second chunk
+        # never joins the request.
+        assert _accepted_query(listener) == "especially the colourful old town"
 
         # Window should still expire on original schedule
         time.sleep(0.15)
         assert not listener.state_manager.is_hot_window_active()
 
-        # Speech after expiry requires wake word
+        # Speech after expiry requires wake word (once that request is dispatched)
+        listener.state_manager.clear_collection()
+        listener._end_engagement()
         _install_intent_judge(listener, _make_judgment(
             directed=True, query="what the hell"))
         _process_transcript(listener, "what the hell", utterance_energy=0.01)
@@ -1695,6 +1699,78 @@ class TestJudgeQueryMustComeFromWhatWasHeard:
         _process_transcript(listener,
             "I couldn't detect your location if city should I check.",
             utterance_energy=0.01)
+
+        assert _accepted_query(listener) == ""
+        listener.state_manager.stop()
+
+
+# ---------------------------------------------------------------------------
+# Tests: the intent judge cannot be reached
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+class TestHotWindowWithoutTheJudge:
+    """With the judge's server unreachable (or in its error back-off), non-echo
+    hot-window speech is still accepted as a follow-up."""
+
+    @staticmethod
+    def _unreachable_judge(listener, monkeypatch):
+        import requests
+        from jarvis.listening.intent_judge import IntentJudge, IntentJudgeConfig
+        backend = MagicMock()
+        backend.chat.side_effect = requests.exceptions.ConnectionError("connection refused")
+        monkeypatch.setattr("jarvis.listening.intent_judge.get_llm_backend", lambda cfg: backend)
+        listener._intent_judge = IntentJudge(IntentJudgeConfig(cfg=listener.cfg, timeout_sec=1.0))
+
+    @staticmethod
+    def _follow_up(listener, reply, text):
+        listener.echo_detector.track_tts_start(reply)
+        _simulate_tts_finish(listener)
+        _wait_for_hot_window_active(listener)
+        now = time.time()
+        listener._transcript_buffer.add(text, now - 0.4, now - 0.1)
+        _process_transcript(listener, text, utterance_energy=0.01,
+                            utterance_start_time=now - 0.4, utterance_end_time=now - 0.1)
+
+    @patch("builtins.print")
+    def test_every_follow_up_is_accepted_while_the_judge_server_is_unreachable(self, _print, monkeypatch):
+        listener, _ = _create_listener(echo_tolerance=0.02, hot_window_seconds=3.0)
+        self._unreachable_judge(listener, monkeypatch)
+
+        self._follow_up(listener, "It is sunny in London.", "what about paris")
+        assert _accepted_query(listener) == "what about paris"
+        listener.state_manager.clear_collection()   # dispatched ...
+        listener._end_engagement()                  # ... and its reply starts playing
+
+        # The judge is now backing off after the failed request.
+        self._follow_up(listener, "Paris is cloudy.", "and in berlin")
+
+        assert _accepted_query(listener) == "and in berlin"
+        listener.state_manager.stop()
+
+    @patch("builtins.print")
+    def test_follow_up_is_accepted_without_any_judge(self, _print):
+        listener, _ = _create_listener(echo_tolerance=0.02, hot_window_seconds=3.0)
+        assert listener._intent_judge is None
+
+        self._follow_up(listener, "It is sunny in London.", "what about paris")
+
+        assert _accepted_query(listener) == "what about paris"
+        listener.state_manager.stop()
+
+    @patch("builtins.print")
+    def test_echo_is_still_rejected_while_the_judge_is_backing_off(self, _print, monkeypatch):
+        listener, _ = _create_listener(echo_tolerance=0.3, hot_window_seconds=3.0)
+        self._unreachable_judge(listener, monkeypatch)
+        from jarvis.listening.transcript_buffer import TranscriptSegment
+        earlier = TranscriptSegment("hello", time.time() - 1, time.time() - 0.5, 0.0, False)
+        assert listener._intent_judge.judge([earlier]) is None  # fails, so the judge backs off
+        listener.echo_detector.track_tts_start("It is sunny in London today.")
+        _simulate_tts_finish(listener)
+        now = time.time()
+
+        _process_transcript(listener, "sunny in london today", utterance_energy=0.01,
+                            utterance_start_time=now - 0.1, utterance_end_time=now + 0.4)
 
         assert _accepted_query(listener) == ""
         listener.state_manager.stop()
