@@ -148,6 +148,120 @@ def test_an_uninstaller_is_never_fast_routed_or_launched_unconfirmed(windows_too
         get_confirmation_store().clear_pending()
 
 
+UNINSTALL_NODE = next(app for app in CATALOGUE if app.name == 'Uninstall Node.js')
+
+
+def _loading_index(monkeypatch, catalogue, *, ready_after_first_wait):
+    """A real application index whose discovery is still running when the first caller waits for it (that
+    wait runs out) and, with ``ready_after_first_wait``, finishes right after."""
+    import threading
+    from jarvis.platform.windows import apps
+    gate = threading.Event()
+
+    class FirstWaitRunsOut(threading.Event):
+        waits = 0
+
+        def wait(self, timeout=None):
+            self.waits += 1
+            if self.waits == 1:
+                if ready_after_first_wait:
+                    gate.set()
+                return False
+            return super().wait(min(timeout or 1, 1))
+
+    def discover():
+        gate.wait(5)
+        return list(catalogue)
+
+    index = apps.ApplicationIndex()
+    index._ready = FirstWaitRunsOut()
+    monkeypatch.setattr(apps, 'discover_applications', discover)
+    monkeypatch.setattr(apps, 'APP_INDEX', index)
+    index.start()
+    return gate
+
+
+@pytest.fixture
+def no_launch(monkeypatch):
+    import os
+    from jarvis.platform.windows import windows_mgmt
+    from jarvis.tools.confirmation import set_dialog_callback
+    launched = []
+    monkeypatch.setattr(os, 'startfile', launched.append, raising=False)
+    monkeypatch.setattr(windows_mgmt, 'list_windows', lambda: [])
+    set_dialog_callback(None)
+    yield launched
+
+
+def _open(cfg, target):
+    from jarvis.tools.confirmation import get_confirmation_store
+    from jarvis.tools.registry import run_tool_with_retries
+    try:
+        return run_tool_with_retries(None, cfg, 'appControl', {'action': 'open', 'target': target}, '', '', '')
+    finally:
+        get_confirmation_store().clear_pending()
+
+
+def test_an_uninstaller_never_launches_unconfirmed_while_the_catalogue_is_loading(windows_tools, monkeypatch,
+                                                                                 no_launch):
+    """The catalogue is still loading when the call is classified and ready when it would launch."""
+    gate = _loading_index(monkeypatch, CATALOGUE, ready_after_first_wait=True)
+    try:
+        result = _open(windows_tools, 'Uninstall Node.js')
+    finally:
+        gate.set()
+    assert not result.success and no_launch == []
+
+
+def test_without_a_catalogue_opening_an_application_asks_on_the_desktop(windows_tools, monkeypatch):
+    """With no catalogue nothing shows that a launch is not an uninstaller, so it needs desktop confirmation."""
+    from jarvis.tools.builtin.windows.desktop_control import AppControlTool
+    from jarvis.tools.confirmation import SafetyTier, evaluate_safety
+    gate = _loading_index(monkeypatch, CATALOGUE, ready_after_first_wait=False)
+    try:
+        request = evaluate_safety('appControl', {'action': 'open', 'target': 'Microsoft Word'}, windows_tools,
+                                  tool=AppControlTool())
+    finally:
+        gate.set()
+    assert request.tier == SafetyTier.CONFIRM_DIALOG
+
+
+def test_launching_an_uninstaller_needs_the_users_approval(windows_tools, no_launch):
+    from jarvis.platform.windows.apps import open_application
+    with pytest.raises(PermissionError):
+        open_application('Uninstall Node.js', {})
+    assert no_launch == []
+    open_application('Uninstall Node.js', {}, allow_uninstaller=True)
+    assert no_launch == [UNINSTALL_NODE.target]
+
+
+def test_an_uninstaller_launches_once_the_user_confirms_on_the_desktop(windows_tools, no_launch):
+    from types import SimpleNamespace
+    from jarvis.tools.confirmation import get_confirmation_store, set_dialog_callback
+    from jarvis.tools.registry import run_tool_with_retries
+    shown = []
+    set_dialog_callback(lambda request, resolve: shown.append(resolve) or SimpleNamespace(close=lambda: None))
+    try:
+        run_tool_with_retries(None, windows_tools, 'appControl',
+                              {'action': 'open', 'target': 'Uninstall Node.js'}, '', '', '')
+        assert len(shown) == 1 and no_launch == []
+        shown[0](True)
+        assert _wait_until(lambda: no_launch == [UNINSTALL_NODE.target])
+    finally:
+        set_dialog_callback(None)
+        get_confirmation_store().clear_pending()
+
+
+def _wait_until(predicate, timeout=5.0):
+    import time
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
 @pytest.fixture
 def start_menu(tmp_path, monkeypatch):
     """Two empty Start Menu folders, no App Paths and no packaged apps; shortcuts are described by a fake

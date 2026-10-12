@@ -39,8 +39,8 @@ At shutdown it **stops** them: state callbacks are unsubscribed, stop callbacks 
 
 A failure prints one line and Jarvis carries on:
 
-- loading (a missing folder, an import error, no `register`, or an exception from `register`): `🧩 Extension <name> not loaded: <reason>`. Anything that extension declared is discarded and its modules are dropped, so the next load imports it afresh.
-- a start callback raising: `🧩 Extension <name> did not start: <exception type>`. Its other start callbacks and other extensions still run; that extension's state callbacks are not subscribed, and its stop callbacks still run at shutdown so it can release what it opened.
+- loading (a missing folder, an import error, no `register`, or an exception from `register`, `SystemExit` and `KeyboardInterrupt` included): `🧩 Extension <name> not loaded: <reason>`. Anything that extension declared is discarded and its modules are dropped, so the next load imports it afresh.
+- a start callback raising (any exception, `SystemExit` included): `🧩 Extension <name> did not start: <exception type>`. Its other start callbacks and other extensions still run; that extension's state callbacks are not subscribed, and its stop callbacks still run at shutdown so it can release what it opened.
 
 Loading prints `🧩 Extensions: <names>` once for those that loaded. With `extensions_enabled` empty nothing is imported and nothing is printed. Logs carry extension names and exception types only.
 
@@ -112,9 +112,9 @@ Extensions load from source checkouts. A packaged build loads them too, but only
 Behaviours that automated tests assert with throwaway extensions written to a temporary folder (`tests/test_extensions.py`, `tests/test_settings_extensions.py`, `tests/test_tts_voice_outputs.py`, `tests/test_config_extensions.py`):
 
 - Nothing is imported or printed when `extensions_enabled` is empty; a named extension is imported and registered once; its modules import each other relatively; loading again from the same folder keeps module state.
-- A missing folder, an invalid name, an import error, a missing `register` and an exception in `register` each print one warning, leave nothing behind (no tools, callbacks or modules), and do not stop other extensions.
+- A missing folder, an invalid name, an import error, a missing `register` and an exception in `register` (`sys.exit()` and `KeyboardInterrupt` included) each print one warning, leave nothing behind (no tools, callbacks or modules), and do not stop other extensions.
 - An extension tool runs through central safety; a CONFIRM tool asks before running; a name clash is refused; a personal-data tool stays out of cloud snapshots unless memory is shared.
 - Extension phrases match whole utterances for the extension's own tools; a file naming another tool, with phrases that are not a list or that do not compile is ignored with a warning and built-in commands keep working; the fast path skips an uncompilable rule; stop removes tools and phrases.
 - Declared settings read their defaults and `config.json` values; an undeclared key fails the load; the Settings window shows an enabled extension's page last, saves its fields like built-in ones, lets `register` read any config value, shows a key two extensions declare once, shows no page for a disabled or broken extension and keeps a disabled extension's values.
-- Start, state and stop callbacks run in order, once, and stop unsubscribes; a failing start callback warns, the others still start and that extension gets no state changes; `record_device` makes a follow-up referent.
+- Start, state and stop callbacks run in order, once, and stop unsubscribes; a failing start callback (`SystemExit` included) warns, the others still start and that extension gets no state changes; `record_device` makes a follow-up referent.
 - Voice outputs: the PC is delayed by the lead and the output runs that far ahead, also after an underrun; the lead is kept to 0..500 ms; output audio is released from the audio callback; the first enabled output that opens takes the reply; PC voice off plays silence with unchanged timing; a switched-off, unavailable or failing output (open, write or conversion) leaves the PC voice unchanged; interruption aborts the sink; ducking applies to both; switch changes apply from the next reply; Chatterbox names each enabled output once; outputs are warmed on the starting thread.
