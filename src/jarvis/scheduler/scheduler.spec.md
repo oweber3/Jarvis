@@ -42,7 +42,7 @@ When the scheduler starts, every pending item that came due more than 2 minutes 
 - prints the sentence (`⏰`) to the console;
 - records it in the shared dialogue memory as an assistant message, so "what was that?" works;
 - shows it in the chat: bundled chat views get it through `add_chat_result_listener`, and in subprocess mode the daemon emits a `notice` chat IPC event (`desktop_app/chat_window.spec.md`);
-- speaks it through `VoiceListener.speak_announcement`, which uses the listener's normal reply output (`_speak_reply`), so a voice stop, the orb or barge-in interrupt it as they interrupt a reply, and the hot window opens after it for a follow-up. Without a listener the TTS engine speaks it directly; with TTS off it is printed and shown only.
+- speaks it through `VoiceListener.speak_announcement`, which uses the listener's normal reply output (`_speak_reply`), so a voice stop, the orb or barge-in interrupt it as they interrupt a reply, and the hot window opens after it for a follow-up. While the user is in the middle of a request or a reply is being generated, the announcement is only queued for speech after it: it never ends that engagement, changes the face or opens the hot window. Without a listener the TTS engine speaks it directly; with TTS off it is printed and shown only.
 
 The text is redacted before it goes anywhere. An announcement is spoken once; alarms do not repeat.
 
@@ -54,7 +54,7 @@ Platform-neutral and always registered. Times arrive as arguments: the model tur
 |----------|---------|
 | `action` | `set_timer`, `set_reminder`, `list` or `cancel` |
 | `seconds` | `set_timer`: the duration. `set_reminder`: optional, that many seconds from now |
-| `at` | `set_reminder`: a local ISO time. A clock time (`14:30`) means the next time it comes round (tomorrow when it has passed today); a date and time (`2026-10-13T09:00`) is local unless it names an offset |
+| `at` | `set_reminder`: a local ISO time. A clock time (`14:30`) means the next time it comes round (tomorrow when it has passed today) and may not name an offset; a date and time (`2026-10-13T09:00`) is local unless it names an offset |
 | `label` | Optional. The timer's name or the reminder's message; omitted for a plain alarm. For `list` and `cancel`, which one |
 | `kind` | Optional. `list` and `cancel` only items of this kind |
 
@@ -67,7 +67,7 @@ Platform-neutral and always registered. Times arrive as arguments: the model tur
 
 ### Fast path
 
-The obvious timer phrasings are deterministic fast commands (`fastpath/fastpath.spec.md`, the `timers` family): setting a timer with a duration and optional name ("set a timer for 5 minutes", "set a 10 minute pasta timer", "set a pasta timer for 10 minutes"), the time left ("how long left on the pasta timer"), cancelling ("cancel the pasta timer", "cancel the timer") and listing timers, reminders or alarms. The phrases, unit words, number words and fixed durations ("half an hour") are locale data. A duration the fast path sets is between one second and a day. Clock times ("remind me at 2:30", "wake me at 7") are never fast commands: they go to the model, which produces the ISO time. The replies are the tool's own sentences.
+The obvious timer phrasings are deterministic fast commands (`fastpath/fastpath.spec.md`, the `timers` family): setting a timer with a duration and optional name ("set a timer for 5 minutes", "set a 10 minute pasta timer", "set a pasta timer for 10 minutes"), the time left ("how long left on the pasta timer"), cancelling ("cancel the pasta timer", "cancel the timer"; an unnamed "stop the timer", often said to quiet a timer that has just gone off, is not a fast command, so it never cancels a different running timer) and listing timers, reminders or alarms. The phrases, unit words, number words and fixed durations ("half an hour") are locale data. A duration the fast path sets is between one second and a day. Clock times ("remind me at 2:30", "wake me at 7") are never fast commands: they go to the model, which produces the ISO time. The replies are the tool's own sentences.
 
 ## Wording
 
@@ -79,7 +79,9 @@ A routine (`routines/routines.spec.md`) runs on its own only when its definition
 
 - Once a check notices a scheduled time between the previous check and now (local time, on one of the schedule's days), the routine runs, once, on a separate worker so the thread keeps checking. A time noticed more than 10 minutes late (the computer was asleep or Jarvis was off) is skipped and logged, never run late. Times before Jarvis started never run.
 - A scheduled run is a manual run with nobody to answer a question. It holds the shared query lock, so it never overlaps a voice or text reply. It validates and classifies the whole routine first (`runner.plan`, central safety included) and runs only when every step is `SAFE`. A routine with a step that needs confirmation does not run at all, no step of it, and no confirmation is left pending; Jarvis says it was not run because a step needs confirmation and that the user can ask to run it. A routine that does not validate (a missing tool, invalid arguments, a denied step) is not run and the reason is said.
-- The steps then run through `runner.run_routine` with no grants, so every step passes through `run_tool_with_retries` and central safety exactly as in a manual run; a step whose classification changes mid-run stops the routine as it would in a manual run.
+- The steps then run through `runner.run_routine` with no grants, so every step passes through `run_tool_with_retries` and central safety exactly as in a manual run; a step whose classification changes mid-run stops the routine as it would in a manual run, and the question it asked is dropped at once, because nobody asked for this run and a stray "yes" must never approve it.
+- Checks never step back in time: if the clock is moved backwards across a time that already ran, it does not run again.
+- At shutdown a scheduled routine in flight is stopped between steps and waited for at most 5 seconds.
 - An action routine that worked is printed, not spoken. One that did not is announced with its report (labels and outcomes only).
 
 ### Briefings
@@ -91,7 +93,7 @@ A routine with `"report": "results"` is a briefing: what its steps found is the 
 
 ## Daemon
 
-`scheduler.runtime.start(cfg, deliver_announcement, db=..., exclusive=query_lock)` runs after the voice listener starts, so missed items are spoken. It prints one `⏰` line with the pending item and scheduled routine counts. If the database cannot be opened it prints a warning and the rest of Jarvis runs without timers. `stop()` runs at shutdown and at the end of the smoke test.
+`scheduler.runtime.start(cfg, deliver_announcement, db=..., exclusive=query_lock)` runs after the voice listener starts, so missed items are spoken. It prints one `⏰` line with the pending item and scheduled routine counts. If the database cannot be opened it prints a warning and the rest of Jarvis runs without timers. `stop()` runs at shutdown. The smoke test never starts the scheduler: it runs against the user's real database, where starting would mark reminders missed, fire them into a headless process and run scheduled routines a second time beside the live Jarvis.
 
 ## Privacy and logging
 

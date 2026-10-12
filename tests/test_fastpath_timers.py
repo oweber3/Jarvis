@@ -112,3 +112,9 @@ def test_a_fast_timer_runs_through_the_dispatcher_and_is_set(tmp_path, mock_conf
     finally:
         runtime.set_service(None)
         service.stop()
+
+
+@pytest.mark.parametrize("text", ["stop the timer", "stop my timer"])
+def test_an_unnamed_stop_is_not_a_cancel(text):
+    # Said to quiet a timer that just went off, it must never cancel a different running timer.
+    assert route(text) is None

@@ -359,7 +359,12 @@ class RoutineControlTool(Tool):
         if report == "results":
             question += " (it will read out what the steps found)"
         if existing is not None:
-            question += f" (it replaces your existing {existing.name})"
+            question += f" (it replaces your existing {existing.name}"
+            if existing.schedule is not None and existing.schedule.enabled:
+                question += f" and keeps running on its own at {existing.schedule.as_config()['time']}"
+            if existing.report == "results" and report != "actions":
+                question += " and keeps reading out what the steps found"
+            question += ")"
         steps = [{"tool": step.tool, "args": dict(step.args)} for step in draft.steps]
         parameters = {"action": "save", "name": name, "steps": [[step["tool"], step["args"]] for step in steps],
                       "replaces": existing.name if existing is not None else None, "report": report}

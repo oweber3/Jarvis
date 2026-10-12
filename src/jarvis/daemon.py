@@ -1457,8 +1457,13 @@ def main(smoke_test: bool = False) -> None:
 
     # Timers, alarms, reminders and scheduled routines (scheduler/scheduler.spec.md). Missed reminders
     # are announced once now; a scheduled routine holds the shared query lock while it runs.
+    # The smoke test runs against the user's real database, so it never starts the scheduler: that would mark
+    # reminders missed, fire them into a headless process and run scheduled routines a second time.
     from .scheduler import runtime as scheduler_runtime
-    scheduler_runtime.start(cfg, deliver_announcement, db=db, exclusive=query_lock)
+    if smoke_test:
+        print("⏰ Scheduler not started in the smoke test", flush=True)
+    else:
+        scheduler_runtime.start(cfg, deliver_announcement, db=db, exclusive=query_lock)
 
     # Initialize dictation engine (hold-to-dictate)
     dictation = None

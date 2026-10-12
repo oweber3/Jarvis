@@ -58,6 +58,8 @@ def _due_at(value: str, now: float) -> float:
             due = moment.timestamp()
         else:
             wall = clock_time.fromisoformat(text)
+            if wall.tzinfo is not None:
+                raise ValueError("A clock time is local; give a full date and time to name an offset.")
             moment = datetime.combine(current.date(), wall.replace(tzinfo=None))
             if moment.timestamp() <= now:
                 moment += timedelta(days=1)
@@ -83,9 +85,9 @@ class ScheduleControlTool(Tool):
 
     @property
     def description(self) -> str:
-        return ("Timers, alarms and reminders: set a countdown timer, an alarm or a reminder for a time, ask how "
-                "long is left, list or cancel them. Timers exist only in this tool: call it every time, never just say "
-                "it is done. NOT for routines (routineControl).")
+        return ("Timers, alarms and reminders: set a timer, an alarm or a reminder for a time, ask how long is "
+                "left, list or cancel them. They exist only in this tool: always call it. NOT for routines "
+                "(routineControl).")
 
     @property
     def inputSchema(self) -> Dict[str, Any]:

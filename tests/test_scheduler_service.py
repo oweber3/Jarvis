@@ -183,3 +183,19 @@ def test_the_background_thread_fires_a_timer_on_its_own(tmp_path, said):
         assert said.said == [phrases.text("timer_done", "en", label="quick")]
     finally:
         service.stop()
+
+
+def test_a_clock_moved_back_never_runs_a_scheduled_routine_twice(tmp_path, clock, said):
+    from jarvis.routines import definitions
+    routines = definitions.load_routines({"b": {"steps": [{"tool": "getTime"}], "schedule": {"time": "12:05"}}})
+    ran = []
+    service = make_service(tmp_path, clock, said, routines=lambda: routines.values(), run_routine=ran.append)
+    service.start(thread=False)
+    clock.advance(301)
+    service.tick()
+    clock.advance(-120)  # the clock is corrected backwards across 12:05
+    service.tick()
+    clock.advance(240)
+    service.tick()
+    assert len(ran) == 1
+    service.stop()

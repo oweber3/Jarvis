@@ -24,7 +24,7 @@ def run_scheduled_routine(routine: Any, cfg: Any, *, announce: Callable[[str], N
                           exclusive: Callable[[], ContextManager] = contextlib.nullcontext,
                           compose: Optional[Callable[..., Optional[str]]] = None) -> None:
     from ..routines import runner
-    from ..tools.confirmation import SafetyTier
+    from ..tools.confirmation import SafetyTier, get_confirmation_store
     language = _language(cfg)
     name = runner.display_name(routine.name)
     with exclusive():
@@ -40,7 +40,13 @@ def run_scheduled_routine(routine: Any, cfg: Any, *, announce: Callable[[str], N
             announce(phrases.text("routine_needs_confirmation", language, routine=routine.name))
             return
         print(f"🔁 Running the scheduled routine {name}", flush=True)
+        confirmations = get_confirmation_store()
+        pending_before = confirmations.get_pending()
         result = runner.run_routine(routine, cfg, db=db, language=language, user_print=print, grants=())
+        if confirmations.get_pending() is not pending_before:
+            # A step started to ask after all: nobody asked for this run, so its question never stands.
+            confirmations.clear_pending()
+            debug_log("scheduled routine: a step asked for confirmation; the question was dropped", "scheduler")
     if result.error is not None:
         announce(result.error)
         return

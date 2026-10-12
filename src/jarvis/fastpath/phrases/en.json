@@ -1552,8 +1552,6 @@
         "stop my {label} timer",
         "cancel the timer",
         "cancel my timer",
-        "stop the timer",
-        "stop my timer",
         "cancel timer"
       ]
     },

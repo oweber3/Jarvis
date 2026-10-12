@@ -67,7 +67,8 @@ def test_without_a_listener_the_tts_engine_speaks_it(monkeypatch):
 def test_the_listener_speaks_announcements_through_its_reply_path():
     from jarvis.listening.listener import VoiceListener
     calls = []
-    fake = type("L", (), {"_speak_reply": lambda self, text: calls.append(text)})()
+    fake = type("L", (), {"_is_engaged": lambda self: False, "_pending_replies": (),
+                          "_speak_reply": lambda self, text: calls.append(text)})()
     VoiceListener.speak_announcement(fake, "Your timer is done.")
     assert calls == ["Your timer is done."]
 
@@ -83,3 +84,20 @@ def test_the_chat_window_shows_a_notice_line():
     assert ChatWindow.process_ipc_line(window, daemon.CHAT_IPC_PREFIX + json.dumps(
         {"type": "notice", "data": "Your timer is done."})) is True
     assert received == ["Your timer is done."]
+
+
+def test_an_announcement_during_a_request_is_queued_without_ending_it():
+    from jarvis.listening.listener import VoiceListener
+    spoken, replies = [], []
+
+    class Tts:
+        enabled = True
+
+        def speak(self, text, **kwargs):
+            spoken.append(text)
+
+    fake = type("L", (), {"_is_engaged": lambda self: True, "_pending_replies": (), "tts": Tts(),
+                          "track_tts_start": lambda self, text: None,
+                          "_speak_reply": lambda self, text: replies.append(text)})()
+    VoiceListener.speak_announcement(fake, "Your timer is done.")
+    assert spoken == ["Your timer is done."] and replies == []

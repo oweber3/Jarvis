@@ -26,6 +26,8 @@ ROUTINE_GRACE_SEC = 600.0
 MAX_WAIT_SEC = 30.0
 # Finished items are deleted this long after they finished.
 RETENTION_SEC = 30 * 86400.0
+# How long shutdown waits for a scheduled routine in flight to stop.
+JOB_STOP_WAIT_SEC = 5.0
 # The longest timer or the furthest reminder accepted.
 MAX_AHEAD_SEC = 366 * 86400.0
 
@@ -63,6 +65,7 @@ class SchedulerService:
         self._stopping = False
         self._thread: Optional[threading.Thread] = None
         self._jobs: Optional[ThreadPoolExecutor] = None
+        self._last_job = None
         self._tick_lock = threading.Lock()
         self._routines_checked = clock()
 
@@ -91,7 +94,16 @@ class SchedulerService:
             self._thread.join(timeout=2.0)
             self._thread = None
         if self._jobs is not None:
+            # A scheduled routine in flight stops between steps; wait a bounded time for it to let go of the
+            # query lock and the database before shutdown goes on.
+            from ..routines import runner
+            runner.stop_running()
             self._jobs.shutdown(wait=False, cancel_futures=True)
+            if self._last_job is not None:
+                try:
+                    self._last_job.result(timeout=JOB_STOP_WAIT_SEC)
+                except Exception:  # noqa: BLE001 - timeout or the job's own failure, already logged
+                    debug_log("scheduled routine still running at shutdown", "scheduler")
             self._jobs = None
         self.store.close()
         debug_log("scheduler stopped", "scheduler")
@@ -178,7 +190,9 @@ class SchedulerService:
     # --- scheduled routines -----------------------------------------------------------------
 
     def _check_routines(self, now: float) -> None:
-        start, self._routines_checked = self._routines_checked, now
+        # Never step back: a clock moved backwards must not bring a run that already happened round again.
+        start = self._routines_checked
+        self._routines_checked = max(start, now)
         if self._routines is None or self._run_routine is None:
             return
         try:
@@ -207,7 +221,7 @@ class SchedulerService:
             return
         if self._jobs is None:
             self._jobs = ThreadPoolExecutor(max_workers=1, thread_name_prefix="jarvis-scheduled-routine")
-        self._jobs.submit(job)
+        self._last_job = self._jobs.submit(job)
 
 
 def due_text(item: Item) -> str:

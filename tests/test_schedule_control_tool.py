@@ -180,3 +180,8 @@ def test_a_cloud_mode_gets_reminders_only_while_long_term_memory_is_shared(mode,
     assert "scheduleControl" not in snapshot(mock_config)
     setattr(mock_config, f"{mode}_share_long_term_memory", True)
     assert "scheduleControl" in snapshot(mock_config)
+
+
+def test_a_clock_time_with_an_offset_is_refused(service, mock_config):
+    result = call(mock_config, action="set_reminder", at="14:30+02:00", label="x")
+    assert not result.success and service.pending() == []

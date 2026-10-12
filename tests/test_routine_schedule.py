@@ -309,3 +309,22 @@ def test_saving_a_briefing_marks_it_to_read_out_results(tools, mock_config):
     assert not result.success and "read out" in result.reply_text
     assert answer_yes(mock_config).success
     assert read_config()["routines"]["morning briefing"]["report"] == "results"
+
+
+def test_a_step_that_starts_asking_mid_run_leaves_no_question_behind(tools, mock_config):
+    from jarvis.tools.confirmation import ConfirmationRequest
+    flips = {"n": 0}
+    tv = tools("tvControl")
+
+    def classify(args, cfg):  # SAFE when planned, CONFIRM_VOICE by the time it runs
+        flips["n"] += 1
+        tier = SafetyTier.SAFE if flips["n"] <= 1 else SafetyTier.CONFIRM_VOICE
+        return ConfirmationRequest(tool_name="tvControl", tier=tier, action="launch", target="", parameters=args)
+
+    tv.classify_safety = classify
+    store.load({"wake up": {"steps": [{"tool": "tvControl", "args": {"action": "launch"}}],
+                            "schedule": {"time": "07:00"}}})
+    said = Announcements()
+    run_scheduled_routine(store.current(mock_config)["wake up"], mock_config, announce=said)
+    assert tv.calls == []
+    assert get_confirmation_store().get_pending() is None
