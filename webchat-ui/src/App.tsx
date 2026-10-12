@@ -1,5 +1,6 @@
 import { MicIcon, MoonIcon, PanelLeftIcon, SunIcon, XIcon } from "lucide-react"
 import { useEffect, useState, type FC } from "react"
+import { useNarrow } from "@/layout"
 import { ModelPicker } from "@/components/ModelPicker"
 import { ProjectsSidebar } from "@/components/ProjectsSidebar"
 import { Thread } from "@/components/thread.aui"
@@ -18,13 +19,44 @@ export const App: FC = () => (
 )
 
 const Shell: FC = () => {
-  const { reachable, ready, toast, actions } = useJarvis()
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const { reachable, ready, toast, chat, actions } = useJarvis()
+  const narrow = useNarrow()
+  // Wide windows start with the chat list beside the chat; narrow ones start with it closed.
+  const [sidebarOpen, setSidebarOpen] = useState(() => !narrow)
+  const [seenNarrow, setSeenNarrow] = useState(narrow)
+  if (seenNarrow !== narrow) {
+    setSeenNarrow(narrow)
+    setSidebarOpen(!narrow)
+  }
+  const overlay = narrow && sidebarOpen
+
+  // An overlay closes with Esc, and once a chat has been chosen.
+  useEffect(() => {
+    if (!overlay) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) setSidebarOpen(false)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [overlay])
+  const openId = chat?.id
+  useEffect(() => {
+    if (narrow) setSidebarOpen(false)
+  }, [openId, narrow])
 
   return (
     <div className="bg-background text-foreground relative flex h-dvh w-full overflow-hidden">
+      {overlay && (
+        <div
+          data-testid="sidebar-backdrop"
+          aria-hidden
+          className="fixed inset-0 z-30 bg-black/50"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
       <aside
-        className={`border-border bg-card/60 w-72 shrink-0 border-e max-md:absolute max-md:inset-y-0 max-md:z-30 max-md:shadow-xl ${sidebarOpen ? "" : "hidden"}`}
+        aria-label="Chats"
+        className={`border-border bg-card w-72 max-w-[85vw] shrink-0 border-e max-md:fixed max-md:inset-y-0 max-md:start-0 max-md:z-40 max-md:shadow-xl md:bg-card/60 ${sidebarOpen ? "" : "hidden"}`}
       >
         <ProjectsSidebar />
       </aside>
@@ -66,7 +98,7 @@ const Header: FC<{ onToggleSidebar: () => void }> = ({ onToggleSidebar }) => {
         title="What you say to Jarvis by voice is added to this chat"
       >
         <MicIcon className="text-primary size-3.5" aria-hidden />
-        Voice joins this chat
+        <span className="max-sm:sr-only">Voice joins this chat</span>
       </span>
       <ThemeSwitch />
     </header>

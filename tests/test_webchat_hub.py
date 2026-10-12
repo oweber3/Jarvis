@@ -134,6 +134,25 @@ class TestTypedMessages:
         assert [n["kind"] for n in hub.snapshot(0)["notices"]] == ["stopped"]
         assert store.messages(open_id(store)) == []
 
+    def test_a_notice_goes_once_a_newer_turn_is_stored(self, backend, store):
+        past = ChatHub(backend, store, sync_interval_sec=0.05, clock=lambda: time.time() - 60)
+        past.sync()
+        backend.mode = "busy"
+        past.submit("hello")
+        assert [n["kind"] for n in past.snapshot(0)["notices"]] == ["busy"]
+        backend.speak("what time is it", "Ten past three")
+        past.sync()
+        assert past.snapshot(0)["notices"] == []
+
+    def test_a_notice_newer_than_every_stored_turn_stays(self, hub, backend, store):
+        backend.speak("what time is it", "Ten past three")
+        hub.sync()
+        backend.mode = "busy"
+        hub.submit("hello")
+        notices = hub.snapshot(0)["notices"]
+        assert [n["kind"] for n in notices] == ["busy"]
+        assert notices[0]["ts"] >= store.last_messages(open_id(store), 1)[0].ts
+
     def test_the_page_can_read_a_late_reply_after_it_is_released(self, hub, backend, store):
         backend.mode = "hold"
         hub.submit("slow one")

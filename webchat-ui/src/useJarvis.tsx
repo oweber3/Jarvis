@@ -20,7 +20,8 @@ import {
   type ReplyModes,
   type Snapshot,
 } from "@/api"
-import { buildThreadMessages, chatTitle, lastMessageId, mergeMessages, pendingDone, type Pending } from "@/conversion"
+import { buildThreadMessages, chatTitle, type Pending } from "@/conversion"
+import { ChatSync } from "@/sync"
 
 // All of the page's state. The server owns the conversation (voice and typed turns land in the open chat
 // the same way), so this follows it with a long poll and sends only what the owner does.
@@ -65,8 +66,6 @@ export function useJarvis(): JarvisView {
   return view
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
 function textOf(message: AppendMessage): string {
   return message.content
     .map((part) => (part.type === "text" ? part.text : ""))
@@ -97,24 +96,25 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   const [loadingChat, setLoadingChat] = useState(true)
   const [toast, setToast] = useState<string | null>(null)
 
-  const afterRef = useRef(0)
-  const activeRef = useRef<string | null>(null)
-  const libraryRevRef = useRef(-1)
-  const messagesRef = useRef<ChatMessage[]>([])
-  const pendingRef = useRef<Pending | null>(null)
-  pendingRef.current = pending
   const chatRef = useRef<Chat | null>(null)
   chatRef.current = chat
 
-  const showMessages = useCallback((next: ChatMessage[]) => {
-    messagesRef.current = next
-    afterRef.current = lastMessageId(next)
-    setMessages(next)
-  }, [])
+  // The page follows the server with a long poll and applies the owner's own actions on top (sync.ts).
+  const [sync] = useState(
+    () =>
+      new ChatSync(api, {
+        library: setLibrary,
+        chat: setChat,
+        messages: setMessages,
+        notices: setNotices,
+        meta: setMeta,
+        loading: setLoadingChat,
+        pending: setPending,
+        reachable: setReachable,
+      }),
+  )
 
-  const refreshLibrary = useCallback(async () => {
-    setLibrary(await api.library())
-  }, [])
+  const refreshLibrary = useCallback(() => sync.refreshLibrary(), [sync])
 
   const refreshModels = useCallback(async () => {
     try {
@@ -126,77 +126,13 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const loadChat = useCallback(
-    async (id: string) => {
-      setLoadingChat(true)
-      try {
-        const loaded = await api.chat(id)
-        activeRef.current = id
-        setChat(loaded.chat)
-        setNotices([])
-        showMessages(loaded.messages)
-      } finally {
-        setLoadingChat(false)
-      }
-    },
-    [showMessages],
-  )
-
   const fail = useCallback((error: unknown) => setToast(describeError(error)), [])
 
-  // The long poll: one request waits on the server until something changes.
   useEffect(() => {
     const abort = new AbortController()
-    let rev = -1
-    let backoff = 1000
-
-    const apply = async (snap: Snapshot) => {
-      rev = snap.rev
-      setMeta({
-        ready: snap.ready,
-        busy: snap.busy,
-        busy_query: snap.busy_query,
-        mode: snap.mode,
-        model: snap.model,
-        cloud: snap.cloud,
-      })
-      setNotices(snap.notices)
-      if (snap.library_rev !== libraryRevRef.current) {
-        libraryRevRef.current = snap.library_rev
-        await refreshLibrary()
-      }
-      if (snap.active_chat_id !== activeRef.current) {
-        if (snap.active_chat_id) await loadChat(snap.active_chat_id)
-        else {
-          activeRef.current = null
-          setChat(null)
-          showMessages([])
-          setLoadingChat(false)
-        }
-      } else {
-        if (snap.chat) setChat(snap.chat)
-        showMessages(mergeMessages(messagesRef.current, snap.messages))
-      }
-      // The reply is stored before the query reads done, so the thinking placeholder can go.
-      if (pendingDone(pendingRef.current, snap.busy_query, messagesRef.current)) setPending(null)
-    }
-
-    ;(async () => {
-      while (!abort.signal.aborted) {
-        try {
-          await apply(await api.poll(rev, afterRef.current, abort.signal))
-          setReachable(true)
-          backoff = 1000
-        } catch {
-          if (abort.signal.aborted) return
-          setReachable(false)
-          await sleep(backoff)
-          backoff = Math.min(backoff * 2, 15000)
-        }
-      }
-    })()
+    void sync.run(abort.signal)
     return () => abort.abort()
-  }, [loadChat, refreshLibrary, showMessages])
+  }, [sync])
 
   const mode = meta.mode?.mode
   const current = meta.model.current
@@ -216,7 +152,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     return {
       async newChat(projectId = null) {
         const open = chatRef.current
-        if (open && !open.title && messagesRef.current.length === 0 && pendingRef.current === null) {
+        if (open && !open.title && sync.messages.length === 0 && sync.pending === null) {
           // Already in an empty chat: use it, in the project asked for, instead of piling up empty ones.
           if (open.project_id !== projectId) {
             await guarded(async () => {
@@ -226,16 +162,10 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
           }
           return
         }
-        await guarded(async () => {
-          const created = await api.createChat(projectId)
-          await Promise.all([loadChat(created.chat.id), refreshLibrary()])
-        })()
+        await guarded(() => sync.newChat(projectId))()
       },
       async openChat(id) {
-        await guarded(async () => {
-          await api.openChat(id)
-          await loadChat(id)
-        })()
+        await guarded(() => sync.openChat(id))()
       },
       async moveChat(id, projectId) {
         await guarded(async () => {
@@ -281,13 +211,13 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       async clearHistory() {
         await guarded(async () => {
           await api.clear()
-          setPending(null)
+          sync.clearPending()
           await refreshLibrary()
         })()
       },
       dismissToast: () => setToast(null),
     }
-  }, [fail, loadChat, meta.mode, meta.model.current, refreshLibrary, refreshModels])
+  }, [fail, meta.mode, meta.model.current, refreshLibrary, refreshModels, sync])
 
   const threadMessages = useMemo(() => buildThreadMessages(messages, notices, pending), [messages, notices, pending])
 
@@ -300,12 +230,12 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     onNew: async (message) => {
       const text = textOf(message)
       if (!text) return
-      setPending({ text, accepted: false, afterId: lastMessageId(messagesRef.current) })
+      sync.beginSend(text)
       try {
         await api.send(text)
-        setPending((current) => (current ? { ...current, accepted: true } : current))
+        sync.sendAccepted()
       } catch (error) {
-        setPending(null)
+        sync.sendFailed()
         if (!toldByNotice(error)) fail(error)
       }
     },

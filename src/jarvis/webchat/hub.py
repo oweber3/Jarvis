@@ -429,7 +429,10 @@ class ChatHub:
         active = self._store.get_active_chat_id()
         chat = self._store.get_chat(active) if active else None
         messages = self._store.messages(active, after) if chat is not None else []
+        newest = self._store.last_messages(active, 1) if chat is not None else []
         with self._cond:
+            if newest:  # a notice older than a stored turn belongs to the past and goes
+                self._notices = deque((n for n in self._notices if n["ts"] >= newest[0].ts), maxlen=MAX_NOTICES)
             notices = [dict(n) for n in self._notices]
             rev, library_rev = self._rev, self._library_rev
         return {
