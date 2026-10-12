@@ -216,6 +216,23 @@ def get_meals() -> Response:
         return jsonify({"error": str(e), "meals": [], "count": 0}), 500
 
 
+@app.route("/api/lists_notes")
+def get_lists_notes() -> Response:
+    """Every list with its items and the newest notes, read only (``memory/lists_notes.spec.md``)."""
+    from jarvis.memory.lists_notes import ListsNotesStore
+    try:
+        store = ListsNotesStore(_get_db_path())
+        try:
+            lists = [store.show(entry["name"]) for entry in store.lists()]
+            notes = store.recent_notes(500, cap=500)
+        finally:
+            store.close()
+        return jsonify({"lists": [entry for entry in lists if entry], "notes": notes})
+    except Exception as e:
+        debug_log(f"lists and notes unavailable: {type(e).__name__}", "desktop")
+        return jsonify({"error": type(e).__name__, "lists": [], "notes": []}), 500
+
+
 @app.route("/api/stats")
 def get_stats() -> Response:
     """Get memory statistics."""
@@ -2136,6 +2153,9 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
             <button class="tab" data-tab="meals">
                 <svg class="icon"><use href="#i-meal"/></svg> Meals
             </button>
+            <button class="tab" data-tab="lists">
+                <svg class="icon"><use href="#i-check"/></svg> Lists &amp; Notes
+            </button>
         </div>
 
         <div class="tab-content">
@@ -2231,6 +2251,12 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
                     <div class="loading"><div class="spinner"></div></div>
                 </div>
             </div>
+
+            <div id="lists-content" class="tab-pane" style="display: none;">
+                <div class="memory-list">
+                    <div class="loading"><div class="spinner"></div></div>
+                </div>
+            </div>
         </div>
     </main>
 
@@ -2262,6 +2288,8 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
         const graphContent = document.getElementById('graph-content');
         const memoriesContent = memoriesPane.querySelector('.memory-list');
         const mealsContent = mealsPane.querySelector('.memory-list');
+        const listsPane = document.getElementById('lists-content');
+        const listsContent = listsPane.querySelector('.memory-list');
         const tabs = document.querySelectorAll('.tab');
 
         // Shared utilities
@@ -2514,6 +2542,49 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
             }
         }
 
+        // Lists and notes are read only here; Jarvis changes them by voice or chat.
+        function renderListsNotes(lists, notes) {
+            if (!lists.length && !notes.length) {
+                listsContent.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon"><svg class="icon"><use href="#i-check"/></svg></div>
+                        <div class="empty-title">No lists or notes yet</div>
+                        <p>Ask Jarvis to add something to a list or take a note</p>
+                    </div>
+                `;
+                return;
+            }
+            const listCards = lists.map(list => `
+                <div class="meal-card">
+                    <div class="meal-info">
+                        <div class="meal-header"><h3>${escapeHtml(list.list)}</h3></div>
+                        ${list.items.length ? list.items.map(item => `
+                            <div class="meal-time">${item.done ? '&#10003; <s>' + escapeHtml(item.text) + '</s>' : '&#9675; ' + escapeHtml(item.text)}</div>
+                        `).join('') : '<div class="meal-time">Empty</div>'}
+                    </div>
+                </div>
+            `).join('');
+            const noteCards = notes.map(note => `
+                <div class="meal-card">
+                    <div class="meal-info">
+                        <div class="meal-header"><h3>${escapeHtml(note.text)}</h3></div>
+                        <div class="meal-time">${new Date(note.created).toLocaleString()}</div>
+                    </div>
+                </div>
+            `).join('');
+            listsContent.innerHTML = listCards + noteCards;
+        }
+
+        async function loadListsNotes() {
+            listsContent.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+            try {
+                const { lists, notes } = await (await fetch('/api/lists_notes')).json();
+                renderListsNotes(lists || [], notes || []);
+            } catch (e) {
+                listsContent.innerHTML = '<div class="empty-state"><div class="empty-icon"><svg class="icon"><use href="#i-alert"/></svg></div><div class="empty-title">Failed to load lists and notes</div></div>';
+            }
+        }
+
         async function loadTopics() {
             try {
                 const { topics } = await fetchTopics();
@@ -2590,6 +2661,7 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
             memoriesPane.style.display = 'none';
             graphContent.style.display = 'none';
             mealsPane.style.display = 'none';
+            listsPane.style.display = 'none';
 
             if (currentTab === 'memories') {
                 memoriesPane.style.display = '';
@@ -2597,6 +2669,9 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
             } else if (currentTab === 'graph') {
                 graphContent.style.display = '';
                 initGraph();
+            } else if (currentTab === 'lists') {
+                listsPane.style.display = '';
+                loadListsNotes();
             } else {
                 mealsPane.style.display = '';
                 loadMeals();
