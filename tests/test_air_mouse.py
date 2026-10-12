@@ -369,3 +369,110 @@ def test_settings_come_from_the_config_with_a_release_above_the_start(mock_confi
     loaded = AirMouseSettings.from_config(mock_config)
     assert loaded.pinch_release > loaded.pinch_start
     assert loaded.hold == pytest.approx(0.5)
+
+
+def test_the_state_names_what_the_hand_is_doing():
+    rig = Rig()
+    assert rig.mouse.state == "paused"
+    rig.show(hand(0.5, 0.5))
+    assert rig.mouse.state == "moving"
+    rig.show(hand(0.5, 0.5, pinch=0.35))
+    assert rig.mouse.state == "pinch closing"
+    rig.show(hand(0.5, 0.5, pinch=PINCHED), frames=3)
+    assert rig.mouse.state == "pinched"
+    rig.show(hand(0.5, 0.5, pinch=PINCHED), frames=12)
+    assert rig.mouse.state == "dragging"
+
+
+# --- review regressions ----------------------------------------------------------------------------
+
+def test_another_hand_never_takes_over_during_a_dropout():
+    rig = Rig(FakePointer(at=(900, 500)))
+    rig.show(hand(0.5, 0.5, side="right"))
+    rig.pinch_at(0.5, 0.5, frames=15)
+    assert rig.pointer.down
+    rig.show(hand(0.2, 0.2, palm=True, side="left"))  # the right hand missed for one frame
+    rig.show(hand(0.51, 0.51, pinch=PINCHED, side="right"), hand(0.2, 0.2, palm=True, side="left"), frames=5)
+    assert rig.pointer.down
+    assert [e[0] for e in rig.pointer.buttons()] == ["press"]
+
+
+def test_two_hands_with_the_same_label_do_not_make_the_pointer_jump():
+    rig = Rig(FakePointer(at=(900, 500)))
+    a, b = (0.3, 0.5), (0.7, 0.5)
+    rig.show(hand(*a))
+    for i in range(6):
+        pair = (hand(*a), hand(*b)) if i % 2 else (hand(*b), hand(*a))
+        rig.show(*pair)
+    assert rig.pointer.moves() == []
+
+
+def test_a_release_that_fails_at_first_is_retried_when_stopping():
+    rig = Rig()
+    rig.show(hand(0.5, 0.5))
+    rig.pinch_at(0.5, 0.5, frames=15)
+    failures = {"left": 2}
+    real = rig.pointer.release
+
+    def flaky():
+        if failures["left"]:
+            failures["left"] -= 1
+            raise OSError("locked")
+        real()
+    rig.pointer.release = flaky
+    rig.mouse.close()
+    assert not rig.pointer.down
+
+
+def test_the_watchdog_retries_a_failed_release():
+    rig = Rig()
+    rig.show(hand(0.5, 0.5))
+    rig.pinch_at(0.5, 0.5, frames=15)
+    real = rig.pointer.release
+    rig.pointer.release = lambda: (_ for _ in ()).throw(OSError("locked"))
+    rig.show(frames=10)  # hand lost: the release fails
+    assert rig.pointer.down
+    rig.pointer.release = real
+    rig.wait(0.2)
+    assert not rig.pointer.down
+
+
+def test_a_drop_after_a_refused_press_sends_no_button_up():
+    rig = Rig()
+    rig.show(hand(0.5, 0.5))
+    rig.show(hand(0.5, 0.5, pinch=0.35))
+    real = rig.pointer.press
+    rig.pointer.press = lambda: (_ for _ in ()).throw(OSError("refused"))
+    rig.show(hand(0.5, 0.5, pinch=PINCHED), frames=15)
+    rig.pointer.press = real
+    rig.let_go(0.5, 0.5)
+    assert rig.pointer.buttons() == []
+
+
+def test_slow_detection_does_not_drop_a_drag():
+    """Frames arrive late (captured long before delivery) but steadily: the hand is not lost."""
+    rig = Rig()
+    rig.show(hand(0.5, 0.5))
+    rig.pinch_at(0.5, 0.5, frames=15)
+    for i in range(10):
+        rig.t += 1 / FPS
+        rig.clock.now = rig.t + 0.4  # delivered 400 ms after capture
+        rig.mouse.on_frame(frame(rig.t, hand(0.51, 0.51, pinch=PINCHED)))
+        rig.mouse.tick()
+    assert rig.pointer.down
+
+
+def test_a_hold_shorter_than_the_debounce_still_allows_a_click(mock_config):
+    mock_config.air_mouse_debounce_ms = 300
+    mock_config.air_mouse_hold_ms = 100
+    loaded = AirMouseSettings.from_config(mock_config)
+    assert loaded.hold > loaded.debounce
+
+
+def test_a_side_on_pinch_clicks_even_when_the_trackers_depth_is_off():
+    """Measured on a real webcam: side-on, the tips touch in the image while the 3D estimate keeps them apart."""
+    rig = Rig()
+    rig.show(hand(0.5, 0.5, pinch=0.6, depth_error=0.03))
+    rig.show(hand(0.5, 0.5, pinch=0.15, depth_error=0.03), frames=4)
+    rig.show(hand(0.5, 0.5, pinch=0.6, depth_error=0.03), frames=3)
+    assert [e[0] for e in rig.pointer.buttons()] == ["press", "release"]

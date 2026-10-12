@@ -80,7 +80,7 @@ class TestAirMouse:
                         make_pointer=lambda: pointer) == 0
         out = capsys.readouterr().out
         assert made == [3]
-        assert "Air mouse on" in out and "pinch 0.10" in out and "Air mouse off" in out
+        assert "Air mouse on" in out and "pinch 0.1" in out and "Air mouse off" in out
         assert pointer.buttons() and not pointer.down  # the held pinch pressed, stopping released
 
     def test_an_air_mouse_that_cannot_start_exits_with_an_error(self, capsys):

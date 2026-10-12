@@ -425,7 +425,7 @@ class Settings:
     air_mouse_hand: str = "any"
     air_mouse_comfort_box: float = 0.5
     air_mouse_pinch_start: float = 0.25
-    air_mouse_pinch_release: float = 0.40
+    air_mouse_pinch_release: float = 0.35
     air_mouse_debounce_ms: int = 50
     air_mouse_hold_ms: int = 350
     air_mouse_smoothing: float = 1.0
@@ -554,6 +554,7 @@ def _air_mouse_settings(merged: Dict[str, Any], defaults: Dict[str, Any]) -> Dic
     start = get("air_mouse_pinch_start", 0.05, 1.0)
     release = get("air_mouse_pinch_release", 0.1, 1.5)
     hand = merged.get("air_mouse_hand")
+    debounce = get("air_mouse_debounce_ms", 0, 500, int)
     return {
         "air_mouse_enabled": merged.get("air_mouse_enabled") is True,
         "air_mouse_camera": get("air_mouse_camera", 0, 16, int),
@@ -561,8 +562,9 @@ def _air_mouse_settings(merged: Dict[str, Any], defaults: Dict[str, Any]) -> Dic
         "air_mouse_comfort_box": get("air_mouse_comfort_box", 0.15, 1.0),
         "air_mouse_pinch_start": start,
         "air_mouse_pinch_release": release if release > start else round(start + 0.1, 3),
-        "air_mouse_debounce_ms": get("air_mouse_debounce_ms", 0, 500, int),
-        "air_mouse_hold_ms": get("air_mouse_hold_ms", 100, 2000, int),
+        "air_mouse_debounce_ms": debounce,
+        # The hold always outlasts the debounce, or every pinch would drag and none could click.
+        "air_mouse_hold_ms": max(get("air_mouse_hold_ms", 100, 2000, int), debounce + 100),
         "air_mouse_smoothing": get("air_mouse_smoothing", 0.05, 10.0),
         "air_mouse_speed_response": get("air_mouse_speed_response", 0.0, 0.1),
     }
@@ -953,7 +955,7 @@ def get_default_config() -> Dict[str, Any]:
         "air_mouse_hand": "any",
         "air_mouse_comfort_box": 0.5,
         "air_mouse_pinch_start": 0.25,
-        "air_mouse_pinch_release": 0.40,
+        "air_mouse_pinch_release": 0.35,
         "air_mouse_debounce_ms": 50,
         "air_mouse_hold_ms": 350,
         "air_mouse_smoothing": 1.0,

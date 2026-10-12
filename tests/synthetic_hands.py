@@ -22,11 +22,13 @@ def _finger(base, extended: bool):
 
 
 def hand(x: float = 0.5, y: float = 0.5, *, pinch: float = 1.0, palm: bool = False, side: str = "right",
-         score: float = 0.9) -> Hand:
+         score: float = 0.9, depth_error: float = 0.0) -> Hand:
     """A hand with its index fingertip at image position ``(x, y)``.
 
-    ``pinch`` is the thumb-to-index distance as a fraction of the hand size. ``palm`` extends all four
-    fingers (an open palm); otherwise only the index finger is out (pointing)."""
+    ``pinch`` is the thumb-to-index distance as a fraction of the hand size, as the camera sees it.
+    ``palm`` extends all four fingers (an open palm); otherwise only the index finger is out (pointing).
+    ``depth_error`` (metres) puts the thumb tip that far off in the tracker's depth estimate only, as
+    happens when the hand is side-on to the camera."""
     world: List[Optional[Point]] = [None] * 21
     world[Landmark.WRIST] = Point(0.0, 0.0, 0.0)
     for name, base in _BASES.items():
@@ -39,8 +41,9 @@ def hand(x: float = 0.5, y: float = 0.5, *, pinch: float = 1.0, palm: bool = Fal
     world[Landmark.THUMB_MCP] = Point(-0.05, -0.04, 0.0)
     world[Landmark.THUMB_IP] = Point((thumb_tip.x - 0.05) / 2, (thumb_tip.y - 0.04) / 2, 0.0)
     world[Landmark.THUMB_TIP] = thumb_tip
-    # Image points: the shape scaled into the frame around the fingertip; only the fingertip position matters.
-    points = tuple(Point(x + (p.x - tip.x) * 2, y + (p.y - tip.y) * 2, p.z) for p in world)
+    # Image points: the shape scaled into a 640 x 480 frame around the fingertip, with square pixels.
+    points = tuple(Point(x + (p.x - tip.x) * 1.5, y + (p.y - tip.y) * 2, p.z) for p in world)
+    world[Landmark.THUMB_TIP] = Point(thumb_tip.x, thumb_tip.y, thumb_tip.z + depth_error)
     return Hand(side=side, score=score, points=points, world=tuple(world))
 
 

@@ -68,9 +68,11 @@ The settings window uses a sidebar navigation pattern: a fixed-width `QListWidge
 16. Windows Control (quick commands, Windows control tools, status and safety summary)
 17. Activity Log (optional): the off-by-default switch that states what is recorded (foreground application, redacted window title, idle time) and where it stays, pause, retention, the idle threshold, the two exclusion lists (editable lists whose defaults come from the activity log's data file) and the separate switch that offers the log to the Codex and Claude reply modes (see `memory/activity_log.spec.md`)
 18. Phone Access (optional)
-19. Features (includes web search, Wikipedia fallback, low-power mode and dictation toggles)
-20. MCP Servers
-21. Advanced
+19. Web Chat (optional)
+20. Air Mouse (optional): the switch that offers the air mouse (the camera starts only when asked), the camera, the hand, the comfort box, the pinch thresholds, debounce and hold, and the smoothing (see `gestures/gestures.spec.md`, Air mouse)
+21. Features (includes web search, Wikipedia fallback, low-power mode and dictation toggles)
+22. MCP Servers
+23. Advanced
 
 Each enabled local extension that declares settings adds one page after these, titled with the label it gives (`jarvis/extensions/extensions.spec.md`, Settings). Its fields behave like built-in fields: defaults come from the extension, only non-default values are written and unknown keys are preserved. An extension that fails to load adds no page and the window opens as usual.
 

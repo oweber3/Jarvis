@@ -39,7 +39,7 @@ class TestAirMouseSettings:
         cfg = load(tmp_path, monkeypatch, {"air_mouse_comfort_box": 5, "air_mouse_hold_ms": 1,
                                            "air_mouse_camera": -3, "air_mouse_smoothing": 0})
         assert cfg.air_mouse_comfort_box == 1.0
-        assert cfg.air_mouse_hold_ms == 100
+        assert cfg.air_mouse_hold_ms >= 100 and cfg.air_mouse_hold_ms > cfg.air_mouse_debounce_ms
         assert cfg.air_mouse_camera == 0
         assert cfg.air_mouse_smoothing > 0
 
@@ -59,3 +59,7 @@ class TestAirMouseSettings:
         from desktop_app.settings_window import FIELD_METADATA
         shown = {meta.key for meta in FIELD_METADATA}
         assert {key for key in get_default_config() if key.startswith("air_mouse_")} <= shown
+
+    def test_hold_is_always_longer_than_the_debounce(self, tmp_path, monkeypatch):
+        cfg = load(tmp_path, monkeypatch, {"air_mouse_debounce_ms": 400, "air_mouse_hold_ms": 150})
+        assert cfg.air_mouse_hold_ms > cfg.air_mouse_debounce_ms

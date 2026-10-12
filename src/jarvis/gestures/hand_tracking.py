@@ -163,17 +163,21 @@ class OpenCVCamera:
     def open(self) -> bool:
         import cv2
 
-        # On Windows, Media Foundation directly: the automatic choice also probes depth-camera drivers.
-        backend = cv2.CAP_MSMF if sys.platform == "win32" else cv2.CAP_ANY
-        capture = cv2.VideoCapture(self._index, backend)
-        if not capture.isOpened():
+        # On Windows, Media Foundation then DirectShow (some webcams open through only one of them); the
+        # automatic choice also probes depth-camera drivers.
+        backends = (cv2.CAP_MSMF, cv2.CAP_DSHOW) if sys.platform == "win32" else (cv2.CAP_ANY,)
+        for backend in backends:
+            capture = cv2.VideoCapture(self._index, backend)
+            if capture.isOpened():
+                capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_WIDTH)
+                capture.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_HEIGHT)
+                capture.set(cv2.CAP_PROP_FPS, DEFAULT_MAX_FPS)
+                if capture.read()[0]:
+                    debug_log(f"camera {self._index} opened with capture backend {backend}", "gestures")
+                    self._capture = capture
+                    return True
             capture.release()
-            return False
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_WIDTH)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_HEIGHT)
-        capture.set(cv2.CAP_PROP_FPS, DEFAULT_MAX_FPS)
-        self._capture = capture
-        return True
+        return False
 
     def read(self) -> Optional[Any]:
         if self._capture is None:

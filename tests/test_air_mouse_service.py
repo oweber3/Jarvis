@@ -129,3 +129,13 @@ def test_it_can_be_started_again_after_stopping(mock_config, pointer):
     svc.stop()
     assert svc.start() == "started" and FakeTracker.instances[-1].running
     svc.stop()
+
+
+def test_a_tracker_that_raises_on_start_leaves_nothing_running(mock_config, pointer):
+    class Exploding(FakeTracker):
+        def start(self):
+            raise RuntimeError("boom")
+    svc = AirMouseService(mock_config, output_factory=lambda: pointer, tracker_factory=lambda c: Exploding(c))
+    with pytest.raises(AirMouseUnavailable):
+        svc.start()
+    assert not svc.running and FakeTracker.instances[-1].subscribers == []

@@ -322,3 +322,52 @@ class TestStayingOff:
         tracker = HandTracker(0, hands_factory=broken, camera_factory=lambda index: FakeCamera())
         assert tracker.start() is False
         assert "✋" in capsys.readouterr().out
+
+
+class TestOpenCVCameraBackends:
+    """On Windows the webcam is tried through Media Foundation, then DirectShow."""
+
+    def _fake_cv2(self, monkeypatch, works_with):
+        import cv2
+        opened = []
+
+        class Capture:
+            def __init__(self, index, backend):
+                self.backend = backend
+                opened.append(backend)
+
+            def isOpened(self):
+                return self.backend in works_with
+
+            def read(self):
+                return (True, np.zeros((4, 6, 3), dtype=np.uint8)) if self.backend in works_with else (False, None)
+
+            def set(self, *args):
+                return True
+
+            def release(self):
+                pass
+
+        monkeypatch.setattr(cv2, "VideoCapture", Capture)
+        monkeypatch.setattr(ht.sys, "platform", "win32")
+        return cv2, opened
+
+    def test_a_webcam_that_only_works_through_directshow_opens(self, monkeypatch):
+        cv2, opened = self._fake_cv2(monkeypatch, {cv2_attr("CAP_DSHOW")})
+        camera = ht.OpenCVCamera(0)
+        assert camera.open() and camera.read() is not None
+        assert opened == [cv2.CAP_MSMF, cv2.CAP_DSHOW]
+
+    def test_media_foundation_is_used_when_it_works(self, monkeypatch):
+        cv2, opened = self._fake_cv2(monkeypatch, {cv2_attr("CAP_MSMF"), cv2_attr("CAP_DSHOW")})
+        assert ht.OpenCVCamera(0).open()
+        assert opened == [cv2.CAP_MSMF]
+
+    def test_no_backend_working_means_not_open(self, monkeypatch):
+        self._fake_cv2(monkeypatch, set())
+        assert not ht.OpenCVCamera(0).open()
+
+
+def cv2_attr(name):
+    import cv2
+    return getattr(cv2, name)

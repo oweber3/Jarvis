@@ -43,6 +43,13 @@ class AirMouseService:
         with self._lock:
             return self._mouse is not None
 
+    @property
+    def state(self) -> str:
+        """The air mouse's state for display, or ``off``."""
+        with self._lock:
+            mouse = self._mouse
+        return mouse.state if mouse is not None else "off"
+
     def start(self) -> str:
         """``"started"`` or ``"already"``; raises ``AirMouseUnavailable`` with nothing left running."""
         with self._lock:
@@ -54,11 +61,23 @@ class AirMouseService:
                 debug_log(f"air mouse not started: pointer output unavailable ({type(exc).__name__})", "gestures")
                 raise AirMouseUnavailable("the displays and pointer could not be read") from exc
             camera = int(getattr(self._cfg, "air_mouse_camera", 0) or 0)
-            tracker = self._tracker_factory(camera)
-            unsubscribe = tracker.subscribe(mouse.on_frame)
-            if not tracker.start():
-                unsubscribe()
+            tracker = unsubscribe = None
+            try:
+                tracker = self._tracker_factory(camera)
+                unsubscribe = tracker.subscribe(mouse.on_frame)
+                started = bool(tracker.start())
+            except Exception as exc:  # noqa: BLE001 - treated like a tracker that could not start
+                debug_log(f"air mouse: hand tracker failed to start ({type(exc).__name__})", "gestures")
+                started = False
+            if not started:
+                if unsubscribe is not None:
+                    unsubscribe()
                 mouse.close()
+                if tracker is not None:
+                    try:
+                        tracker.stop()
+                    except Exception:  # noqa: BLE001
+                        pass
                 debug_log("air mouse not started: hand tracking unavailable", "gestures")
                 raise AirMouseUnavailable("hand tracking is not available (MediaPipe or its hand model could not "
                                           "be loaded)")
@@ -70,7 +89,7 @@ class AirMouseService:
             if not self._exit_hook:
                 atexit.register(self.stop)
                 self._exit_hook = True
-        watchdog.start()
+            watchdog.start()
         debug_log(f"air mouse started on camera {camera}", "gestures")
         print("🖐️ Air mouse on\n"
               "   👉 Point with your index finger to move the pointer\n"

@@ -114,7 +114,7 @@ def configure_gesture_tool(cfg, *, platform=None):
     from ..gestures import air_mouse_service
     BUILTIN_TOOLS.pop('gestureControl', None)
     if (platform or sys.platform) != 'win32' or getattr(cfg, 'air_mouse_enabled', False) is not True:
-        air_mouse_service.stop_service()
+        air_mouse_service.set_service(None)
         return
     from ..platform.windows.pointer import WindowsPointer
     from .builtin.gesture_control import GestureControlTool

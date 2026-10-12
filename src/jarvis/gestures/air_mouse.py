@@ -21,10 +21,15 @@ Rectangle = Tuple[int, int, int, int]
 HAND_LOST_SEC = 0.25
 WATCHDOG_SEC = 0.05
 EXTENDED_FACTOR = 1.2
+# A pinch must be able to end as a click: the hold always outlasts the debounce by this much.
+MIN_HOLD_MARGIN = 0.1
+RELEASE_ATTEMPTS = 3
 _DERIVATIVE_CUTOFF_HZ = 1.0
 _FINGERS = ("INDEX", "MIDDLE", "RING", "PINKY")
 
 _IDLE, _TRACKING, _ARMING, _PINCHED, _DRAGGING = "idle", "tracking", "arming", "pinched", "dragging"
+_STATE_NAMES = {_IDLE: "paused", _TRACKING: "moving", _ARMING: "pinch closing", _PINCHED: "pinched",
+                _DRAGGING: "dragging"}
 
 
 # --------------------------------------------------------------------------------------------------
@@ -38,7 +43,7 @@ class AirMouseSettings:
     hand: str = "any"
     comfort_box: float = 0.5
     pinch_start: float = 0.25
-    pinch_release: float = 0.40
+    pinch_release: float = 0.35
     debounce: float = 0.05
     hold: float = 0.35
     min_cutoff: float = 1.0
@@ -57,11 +62,12 @@ class AirMouseSettings:
         release = number("air_mouse_pinch_release", default.pinch_release)
         if release <= start:
             release = start + 0.1
+        debounce = number("air_mouse_debounce_ms", default.debounce * 1000) / 1000
+        hold = max(number("air_mouse_hold_ms", default.hold * 1000) / 1000, debounce + MIN_HOLD_MARGIN)
         return cls(hand=hand if hand in ("any", "left", "right") else default.hand,
                    comfort_box=number("air_mouse_comfort_box", default.comfort_box),
                    pinch_start=start, pinch_release=release,
-                   debounce=number("air_mouse_debounce_ms", default.debounce * 1000) / 1000,
-                   hold=number("air_mouse_hold_ms", default.hold * 1000) / 1000,
+                   debounce=debounce, hold=hold,
                    min_cutoff=number("air_mouse_smoothing", default.min_cutoff),
                    beta=number("air_mouse_speed_response", default.beta))
 
@@ -74,12 +80,17 @@ def _distance(a, b) -> float:
     return math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2)
 
 
-def pinch_ratio(hand: Hand) -> float:
-    """Thumb tip to index tip, as a fraction of the hand size (wrist to middle finger base)."""
-    size = _distance(hand.world_point(Landmark.WRIST), hand.world_point(Landmark.MIDDLE_MCP))
+def pinch_ratio(hand: Hand, width: int, height: int) -> float:
+    """Thumb tip to index tip, as a fraction of the hand size (wrist to middle finger base), both measured
+    in the camera image in pixels. The tracker's depth estimate is not used: with the hand side-on to the
+    camera it keeps touching fingertips apart."""
+    def pixels(a, b) -> float:
+        return math.hypot((a.x - b.x) * width, (a.y - b.y) * height)
+
+    size = pixels(hand.point(Landmark.WRIST), hand.point(Landmark.MIDDLE_MCP))
     if size <= 1e-6:
         return math.inf
-    return _distance(hand.world_point(Landmark.THUMB_TIP), hand.world_point(Landmark.INDEX_TIP)) / size
+    return pixels(hand.point(Landmark.THUMB_TIP), hand.point(Landmark.INDEX_TIP)) / size
 
 
 def is_open_palm(hand: Hand) -> bool:
@@ -166,6 +177,7 @@ class AirMouse:
         self._fy = OneEuroFilter(settings.min_cutoff, settings.beta)
         self._state = _IDLE
         self._side: Optional[str] = None
+        self._tip: Optional[Tuple[float, float]] = None
         self._last_hand: Optional[float] = None
         self._ref: Tuple[float, float] = (0.0, 0.0)
         self._cursor: Tuple[float, float] = (0.0, 0.0)
@@ -176,7 +188,12 @@ class AirMouse:
         self._pinch_started = 0.0
         self._pressed = False
         self._closed = False
-        self._failed_once = False
+        self._failing: set = set()
+
+    @property
+    def state(self) -> str:
+        """What the hand is doing, for display: paused, moving, pinch closing, pinched or dragging."""
+        return _STATE_NAMES[self._state]
 
     # -- entry points ----------------------------------------------------------------------------
 
@@ -184,16 +201,17 @@ class AirMouse:
         with self._lock:
             if self._closed:
                 return
+            arrived = self._clock()
             chosen = self._choose(frame.hands)
             if chosen is None:
-                self._check_lost(frame.time)
+                self._check_lost(arrived)
                 return
-            self._last_hand = frame.time
+            self._last_hand = arrived
             tip = chosen.point(Landmark.INDEX_TIP)
             gain = self._desktop_width / (self._s.comfort_box * max(frame.width, 1))
             position = (self._fx(tip.x * frame.width * gain, frame.time),
                         self._fy(tip.y * frame.height * gain, frame.time))
-            self._step(position, pinch_ratio(chosen), is_open_palm(chosen), frame.time)
+            self._step(position, pinch_ratio(chosen, frame.width, frame.height), is_open_palm(chosen), frame.time)
 
     def tick(self) -> None:
         """Watchdog: let go once the hand has been missing too long, even when no frames arrive."""
@@ -208,22 +226,35 @@ class AirMouse:
         """Stop for good, releasing the button if the air mouse holds it."""
         with self._lock:
             self._closed = True
-            if self._pressed:
+            for attempt in range(RELEASE_ATTEMPTS):
+                if not self._pressed:
+                    break
+                if attempt:
+                    time.sleep(0.02)
                 self._release_button("stopped")
             self._state = _IDLE
 
     # -- hands -----------------------------------------------------------------------------------
 
     def _choose(self, hands: Sequence[Hand]) -> Optional[Hand]:
+        """The driving hand. Once a hand drives, only it is followed (the hand nearest its last fingertip
+        position, so two hands with the same label never swap); another hand can take over only from idle."""
         wanted = self._s.hand
         candidates = [h for h in hands if wanted == "any" or h.side == wanted]
-        if not candidates:
+        if self._side is not None and self._tip is not None:
+            candidates = [h for h in candidates if h.side == self._side]
+            if not candidates:
+                return None
+            last_x, last_y = self._tip
+            chosen = min(candidates, key=lambda h: (h.point(Landmark.INDEX_TIP).x - last_x) ** 2
+                         + (h.point(Landmark.INDEX_TIP).y - last_y) ** 2)
+        elif candidates:
+            chosen = max(candidates, key=lambda h: h.score)
+        else:
             return None
-        for h in candidates:
-            if h.side == self._side:
-                return h
-        chosen = max(candidates, key=lambda h: h.score)
         self._side = chosen.side
+        tip = chosen.point(Landmark.INDEX_TIP)
+        self._tip = (tip.x, tip.y)
         return chosen
 
     def _check_lost(self, now: float) -> None:
@@ -238,6 +269,7 @@ class AirMouse:
             self._release_button(reason)
         self._state = _IDLE
         self._side = None
+        self._tip = None
         self._fx.reset()
         self._fy.reset()
 
@@ -295,7 +327,8 @@ class AirMouse:
                 if self._above_since is None:
                     self._above_since = t
                 if t - self._above_since >= s.debounce:
-                    self._release_button("drop")
+                    if self._pressed:
+                        self._release_button("drop")
                     self._state = _TRACKING
                 return
             self._above_since = None
@@ -367,12 +400,19 @@ class AirMouse:
             self._output_failed("release the button", exc)
             return
         self._pressed = False
+        self._failing.discard("release the button")
         if reason != "click":
             debug_log(f"air mouse: button released ({reason})", "gestures")
 
     def _output_failed(self, what: str, exc: Exception) -> None:
+        """Logged and printed once per kind of failure until it next succeeds, so retries stay quiet."""
+        if what in self._failing:
+            return
+        self._failing.add(what)
         debug_log(f"air mouse could not {what} ({type(exc).__name__})", "gestures")
-        if not self._failed_once:
-            self._failed_once = True
+        try:
             print(f"🖐️ Air mouse could not {what}\n"
-                  "   💡 Windows blocks input to windows running as administrator", flush=True)
+                  "   💡 Windows blocks input to apps running as administrator and while the PC is locked",
+                  flush=True)
+        except Exception:  # noqa: BLE001 - a console that cannot print never stops a release
+            pass

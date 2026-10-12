@@ -18,8 +18,10 @@ def fake_service(mock_config, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _clean_registry():
+def _clean_registry(monkeypatch):
+    from jarvis.gestures import air_mouse_service
     from jarvis.tools.registry import BUILTIN_TOOLS
+    monkeypatch.setattr(air_mouse_service, "_service", None)
     BUILTIN_TOOLS.pop("gestureControl", None)
     yield
     BUILTIN_TOOLS.pop("gestureControl", None)

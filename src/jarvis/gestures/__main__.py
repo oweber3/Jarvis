@@ -48,8 +48,15 @@ class _Readout:
             return self.frames, self.latest
 
 
+def _tap(camera: int):
+    from .hand_tracking import OpenCVCamera
+    from .preview import FrameTap
+    return FrameTap(OpenCVCamera(camera))
+
+
 def _live(args: argparse.Namespace, make_tracker: Callable[[int], HandTracker]) -> int:
-    tracker = make_tracker(args.camera)
+    tap = _tap(args.camera) if args.preview else None
+    tracker = make_tracker(args.camera) if tap is None else HandTracker(args.camera, camera_factory=lambda i: tap)
     readout = _Readout()
     tracker.subscribe(readout)
     recorder = None
@@ -67,7 +74,11 @@ def _live(args: argparse.Namespace, make_tracker: Callable[[int], HandTracker]) 
     started = time.perf_counter()
     last_tick, last_count = started, 0
     try:
-        while not (args.seconds and time.perf_counter() - started >= args.seconds):
+        if tap is not None:
+            from .preview import run_window
+            print("   🪟 Close the preview window to stop", flush=True)
+            run_window(tap, lambda: readout.take()[1], lambda: "watching", args.seconds)
+        while tap is None and not (args.seconds and time.perf_counter() - started >= args.seconds):
             time.sleep(0.05)
             if time.perf_counter() - last_tick >= 1.0:
                 count, latest = readout.take()
@@ -99,15 +110,17 @@ class _PinchReadout:
         self._lock = threading.Lock()
         self.frames = 0
         self.latest: Optional[str] = None
+        self.hand_frame: Optional[HandFrame] = None
 
     def __call__(self, frame: HandFrame) -> None:
         from .air_mouse import is_open_palm, pinch_ratio
 
         text = None
+        self.hand_frame = frame
         if frame.hands:
             hand = max(frame.hands, key=lambda h: h.score)
             pose = "open palm" if is_open_palm(hand) else "pointing"
-            text = f"{hand.side} · pinch {pinch_ratio(hand):.2f} · {pose}"
+            text = f"{hand.side} · pinch {pinch_ratio(hand, frame.width, frame.height):.2f} · {pose}"
         with self._lock:
             self.frames += 1
             self.latest = text
@@ -132,9 +145,10 @@ def _air_mouse(args: argparse.Namespace, make_tracker: Callable[[int], HandTrack
     camera = args.camera if args.camera is not None else cfg.air_mouse_camera
     readout = _PinchReadout()
     recorder = HandRecorder(args.record) if args.record else None
+    tap = _tap(camera) if args.preview else None
 
     def tracker_for(_index: int) -> HandTracker:
-        tracker = make_tracker(camera)
+        tracker = make_tracker(camera) if tap is None else HandTracker(camera, camera_factory=lambda i: tap)
         tracker.subscribe(readout)
         if recorder is not None:
             tracker.subscribe(recorder)
@@ -153,7 +167,12 @@ def _air_mouse(args: argparse.Namespace, make_tracker: Callable[[int], HandTrack
     started = time.perf_counter()
     last_tick, last_count = started, 0
     try:
-        while not (args.seconds and time.perf_counter() - started >= args.seconds):
+        if tap is not None:
+            from .preview import run_window
+            print("   🪟 Close the preview window to stop", flush=True)
+            run_window(tap, lambda: readout.hand_frame, lambda: service.state, args.seconds,
+                       lambda: print(f"   📊 {readout.take()[1] or 'no hands'} · {service.state}", flush=True))
+        while tap is None and not (args.seconds and time.perf_counter() - started >= args.seconds):
             time.sleep(0.05)
             if time.perf_counter() - last_tick >= 1.0:
                 count, latest = readout.take()
@@ -231,6 +250,8 @@ def main(argv: Optional[List[str]] = None, *,
     parser.add_argument("--seconds", type=float, default=None, help="stop after this many seconds")
     parser.add_argument("--record", metavar="PATH", help="also write the landmarks to this file")
     parser.add_argument("--image", metavar="PATH", help="find hands in a photo instead of the webcam")
+    parser.add_argument("--preview", action="store_true",
+                        help="show the camera image with the detected hand drawn on it")
     parser.add_argument("--air-mouse", action="store_true",
                         help="move the real pointer with your hand, showing the pinch ratio to tune thresholds")
     args = parser.parse_args(argv)

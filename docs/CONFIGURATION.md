@@ -304,7 +304,7 @@ The air mouse moves the pointer with your hand through the webcam. It is off by 
 | `air_mouse_camera` | `0` | Webcam index (`python -m jarvis.gestures --camera N` tries one) |
 | `air_mouse_hand` | `any` | `any`, `right` or `left` |
 | `air_mouse_comfort_box` | `0.5` | Share of the camera's width that spans the whole desktop; smaller is more sensitive |
-| `air_mouse_pinch_start` / `air_mouse_pinch_release` | `0.25` / `0.40` | Thumb-to-index distance, as a share of hand size, that starts and ends a pinch |
+| `air_mouse_pinch_start` / `air_mouse_pinch_release` | `0.25` / `0.35` | Thumb-to-index distance, as a share of hand size (as the camera sees it), that starts and ends a pinch |
 | `air_mouse_debounce_ms` | `50` | How long a pinch or release must last to count |
 | `air_mouse_hold_ms` | `350` | A pinch held this long drags; shorter clicks |
 | `air_mouse_smoothing` / `air_mouse_speed_response` | `1.0` / `0.005` | Steadiness when still, and how fast smoothing gives way when you move quickly |
