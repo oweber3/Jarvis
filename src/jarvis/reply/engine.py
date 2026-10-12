@@ -1074,6 +1074,9 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
     if fast_match is not None:
         fast_reply = dispatch(fast_match, db, cfg, redacted, language,
                               executor=run_tool_with_retries, quiet=quiet)
+        if fast_match.silent and not fast_reply:
+            debug_log(f'FAST_ROUTE {fast_match.command_id} done silently', 'routing')
+            return ''
         return _deliver_reply(fast_reply, redacted, cfg, tts, dialogue_memory, quiet)
     from ..bridge import modes as reply_modes
     reply_mode = reply_modes.active_mode()

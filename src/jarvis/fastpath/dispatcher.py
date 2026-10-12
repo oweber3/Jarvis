@@ -89,6 +89,8 @@ def dispatch(result: FastMatch, db, cfg, text, language=None, *, executor=None, 
         return UNEXPECTED_FAILURE
     if not outcome.success:
         return redact(outcome.reply_text or outcome.error_message or 'Action failed.')
+    if result.silent:
+        return ''  # done without a word
     if result.reply_template:
         return redact(result.reply_template.format(**result.slots))
     return redact(outcome.reply_text or 'Action completed.')

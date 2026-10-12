@@ -1591,7 +1591,8 @@
         "left-click",
         "left-click it"
       ],
-      "ambient": true
+      "ambient": true,
+      "silent": true
     },
     {
       "id": "gesture_click.double_click",
@@ -1613,7 +1614,8 @@
         "double-click there",
         "double-click that"
       ],
-      "ambient": true
+      "ambient": true,
+      "silent": true
     },
     {
       "id": "gesture_click.right_click",
@@ -1635,7 +1637,8 @@
         "right-click there",
         "right-click that"
       ],
-      "ambient": true
+      "ambient": true,
+      "silent": true
     },
     {
       "id": "tv.power_on",
