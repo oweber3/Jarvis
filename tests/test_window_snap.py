@@ -237,7 +237,7 @@ def test_a_fist_grabs_the_window_under_where_the_pointer_was_before_the_hand_clo
     assert abs(rig.desk.at[0] - aim[0]) < 10 and abs(rig.desk.at[1] - aim[1]) < 10  # easing towards the palm
 
 
-def test_a_fist_raised_from_the_clutch_grabs_the_window_under_the_pointer():
+def test_a_fist_raised_straight_after_a_pause_grabs_the_window_under_the_pointer():
     win = window((600, 300, 1200, 800))
     rig = Rig(FakeDesktop(windows=[win]))
     rig.show(hand(0.5, 0.5, gesture="fist"), frames=SETTLE)
@@ -325,24 +325,47 @@ def test_a_window_that_refuses_to_move_is_let_go_and_tracking_continues():
     assert rig.desk.of("drop") == [] and rig.desk.at[0] < before[0]
 
 
-# --- scrolling -------------------------------------------------------------------------------------
+# --- scrolling (joystick) -------------------------------------------------------------------------
 
-def test_two_fingers_moved_up_scroll_the_content_up_and_hold_the_pointer_still():
+def hold(rig, y, seconds, gesture="two", x=0.505):
+    rig.show(hand(x, y, gesture=gesture), frames=int(seconds * FPS))
+
+
+def test_two_fingers_held_above_neutral_scroll_up_and_hold_the_pointer_still():
     rig = Rig(FakeDesktop())
     rig.start()
     aim = rig.desk.at
-    rig.two_at(0.5, 0.5)
-    rig.glide((0.51, 0.51), (0.51, 0.41), gesture="two")  # a tenth of the camera's height, upwards
+    rig.two_at(0.5, 0.5)  # neutral at the palm's height now
+    hold(rig, 0.355, 1.0)  # 15% of the camera's height above neutral, for a second
     assert rig.desk.at == aim
-    assert rig.desk.scrolled() == pytest.approx(-5 * 120, abs=30)  # content up: the wheel turns towards the user
+    assert rig.desk.scrolled() == pytest.approx(5 * 1.2 * 120, rel=0.25)  # 6 notches a second, upwards
 
 
-def test_two_fingers_moved_down_scroll_the_other_way():
+def test_two_fingers_held_below_neutral_scroll_down():
     rig = Rig(FakeDesktop())
     rig.start()
     rig.two_at(0.5, 0.5)
-    rig.glide((0.51, 0.51), (0.51, 0.56), gesture="two")
-    assert rig.desk.scrolled() == pytest.approx(5 * 120 / 2, abs=30)
+    hold(rig, 0.655, 1.0)
+    assert rig.desk.scrolled() == pytest.approx(-5 * 1.2 * 120, rel=0.25)
+
+
+def test_a_hand_near_neutral_does_not_scroll():
+    rig = Rig(FakeDesktop())
+    rig.start()
+    rig.two_at(0.5, 0.5)
+    hold(rig, 0.525, 1.0)  # 2% below neutral
+    hold(rig, 0.49, 1.0)
+    assert rig.desk.of("scroll") == []
+
+
+def test_further_from_neutral_scrolls_faster():
+    def amount(offset):
+        rig = Rig(FakeDesktop())
+        rig.start()
+        rig.two_at(0.5, 0.5)
+        hold(rig, 0.505 - offset, 1.0)
+        return rig.desk.scrolled()
+    assert amount(0.25) > 1.8 * amount(0.13)
 
 
 def test_the_scroll_speed_setting_scales_the_scroll():
@@ -350,16 +373,16 @@ def test_the_scroll_speed_setting_scales_the_scroll():
         rig = Rig(FakeDesktop(), scroll_speed=speed)
         rig.start()
         rig.two_at(0.5, 0.5)
-        rig.glide((0.51, 0.51), (0.51, 0.41), gesture="two")
-        return abs(rig.desk.scrolled())
+        hold(rig, 0.355, 1.0)
+        return rig.desk.scrolled()
     assert amount(10) == pytest.approx(2 * amount(5), rel=0.1)
 
 
-def test_slow_movement_scrolls_in_small_steps_not_a_flood_of_events():
+def test_slow_scrolling_comes_in_small_steps_not_a_flood_of_events():
     rig = Rig(FakeDesktop())
     rig.start()
     rig.two_at(0.5, 0.5)
-    rig.glide((0.51, 0.51), (0.51, 0.47), gesture="two", frames=30)
+    hold(rig, 0.435, 1.0)  # just beyond the dead zone
     steps = [e[1] for e in rig.desk.of("scroll")]
     assert steps and all(abs(step) >= 30 for step in steps) and len(steps) < 30
 
@@ -368,19 +391,41 @@ def test_sideways_movement_does_not_scroll():
     rig = Rig(FakeDesktop())
     rig.start()
     rig.two_at(0.5, 0.5)
-    rig.glide((0.51, 0.51), (0.61, 0.51), gesture="two")
+    rig.glide((0.51, 0.505), (0.7, 0.505), gesture="two", frames=30)
     assert rig.desk.of("scroll") == []
 
 
-def test_one_finger_ends_the_scroll_and_aiming_resumes():
+def test_returning_to_neutral_stops_the_scroll():
     rig = Rig(FakeDesktop())
     rig.start()
     rig.two_at(0.5, 0.5)
-    rig.glide((0.51, 0.51), (0.51, 0.45), gesture="two")
-    rig.show(hand(0.51, 0.45), frames=17)
+    hold(rig, 0.355, 0.5)
     count = len(rig.desk.of("scroll"))
-    rig.glide((0.51, 0.45), (0.51, 0.35))
-    assert len(rig.desk.of("scroll")) == count and rig.snap.state == "aiming"
+    hold(rig, 0.505, 1.0)
+    assert len(rig.desk.of("scroll")) <= count + 1
+
+
+def test_misreads_while_held_away_from_neutral_keep_it_scrolling():
+    """Measured on a real webcam at 15 frames a second: a two-finger hand read as a fist for up to 0.4 s."""
+    rig = Rig(FakeDesktop(windows=[window((0, 0, 1920, 1080))]))
+    rig.start()
+    rig.two_at(0.5, 0.5)
+    hold(rig, 0.355, 0.3)
+    before = rig.desk.scrolled()
+    hold(rig, 0.355, 0.4, gesture="fist")
+    hold(rig, 0.355, 0.1)
+    assert rig.snap.state == "scrolling" and rig.desk.scrolled() > before + 120
+
+
+def test_one_finger_held_long_enough_ends_the_scroll_and_aiming_resumes():
+    rig = Rig(FakeDesktop())
+    rig.start()
+    rig.two_at(0.5, 0.5)
+    hold(rig, 0.355, 0.3)
+    hold(rig, 0.355, 0.6, gesture="one")
+    count = len(rig.desk.of("scroll"))
+    hold(rig, 0.355, 0.5, gesture="one")
+    assert rig.snap.state == "aiming" and len(rig.desk.of("scroll")) == count
 
 
 def test_closing_the_hand_from_two_fingers_ends_the_scroll_and_grabs_nothing():
@@ -394,43 +439,14 @@ def test_closing_the_hand_from_two_fingers_ends_the_scroll_and_grabs_nothing():
     assert rig.snap.state == "holding"
 
 
-def test_fingers_bending_briefly_while_scrolling_do_not_end_the_scroll():
-    """Measured on a real webcam: moving the hand bends the two raised fingers to about 0.92 to 1.0."""
-    rig = Rig(FakeDesktop(windows=[window((0, 0, 1920, 1080))]))
-    rig.start()
-    rig.two_at(0.5, 0.5)
-    rig.show(hand(0.51, 0.51, gesture="two", curls={"index": 0.9, "middle": 0.9}), frames=6)  # 0.2 s
-    rig.show(hand(0.51, 0.51, gesture="two"), frames=3)
-    assert rig.snap.state == "scrolling" and rig.desk.of("grab") == []
-
-
-def test_one_finger_held_long_enough_ends_the_scroll():
-    rig = Rig(FakeDesktop())
-    rig.start()
-    rig.two_at(0.5, 0.5)
-    rig.show(hand(0.51, 0.51), frames=17)  # 0.55 s
-    assert rig.snap.state == "aiming"
-
-
-def test_a_fist_misread_while_the_hand_moves_does_not_end_the_scroll():
-    """Measured on a real webcam at 15 frames a second: moving two fingers down read as a fist for up to 6
-    frames (0.4 s) at a time."""
-    rig = Rig(FakeDesktop(windows=[window((0, 0, 1920, 1080))]))
-    rig.start()
-    rig.two_at(0.5, 0.5)
-    rig.show(hand(0.51, 0.55, gesture="fist"), frames=12)  # 0.4 s at 30 frames a second
-    rig.show(hand(0.51, 0.56, gesture="two"), frames=3)
-    assert rig.snap.state == "scrolling"
-
-
 def test_a_window_that_refuses_scrolling_does_not_break_tracking():
     rig = Rig(FakeDesktop())
     rig.start()
     rig.two_at(0.5, 0.5)
     rig.desk.fail = True
-    rig.glide((0.51, 0.51), (0.51, 0.45), gesture="two")
+    hold(rig, 0.355, 0.3)
     rig.desk.fail = False
-    rig.glide((0.51, 0.45), (0.51, 0.40), gesture="two")
+    hold(rig, 0.355, 0.3)
     assert rig.desk.of("scroll")
 
 
@@ -543,7 +559,7 @@ def test_two_hands_with_the_same_label_do_not_make_the_pointer_jump():
 
 # --- smoothing -------------------------------------------------------------------------------------
 
-def test_smoothing_steadies_a_jittery_fingertip():
+def test_smoothing_steadies_a_jittery_palm():
     def spread(**overrides):
         rng = random.Random(7)
         rig = Rig(FakeDesktop(), **overrides)
@@ -604,45 +620,43 @@ def test_a_gesture_change_never_makes_the_pointer_hop_and_it_catches_up_with_the
     assert rig.desk.at[0] == pytest.approx(960 + 0.02 * 640 * 6, abs=3)  # back on the palm's place
 
 
-# --- swiping ---------------------------------------------------------------------------------------
+# --- review regressions ----------------------------------------------------------------------------
 
-def test_the_return_stroke_between_swipes_scrolls_nothing():
+def test_a_brief_misread_while_aiming_does_not_make_the_pointer_jump():
     rig = Rig(FakeDesktop())
     rig.start()
-    rig.two_at(0.5, 0.44)  # the hand at (0.51, 0.45)
-    for _ in range(3):
-        rig.glide((0.51, 0.45), (0.51, 0.55), gesture="two", frames=6)  # swipe down
-        rig.glide((0.51, 0.55), (0.51, 0.45), gesture="two", frames=6)  # bring the fingers back up
-    steps = [e[1] for e in rig.desk.of("scroll")]
-    assert steps and all(step > 0 for step in steps)
-    assert rig.desk.scrolled() == pytest.approx(3 * 5 * 120, rel=0.25)
+    rig.glide((0.5, 0.5), (0.52, 0.5), frames=4)
+    rig.show(hand(0.53, 0.5, gesture="fist"), hand(0.54, 0.5, gesture="fist"))  # 2 frames, moving on
+    before = rig.desk.at
+    rig.show(hand(0.545, 0.5))
+    assert abs(rig.desk.at[0] - before[0]) < 25  # one normal frame of movement, not the frozen distance
 
 
-def test_the_first_stroke_sets_the_direction():
-    rig = Rig(FakeDesktop())
+def test_a_loosening_finger_while_holding_does_not_make_the_window_jump():
+    win = window((600, 300, 1200, 800))
+    rig = Rig(FakeDesktop(windows=[win]))
     rig.start()
-    rig.two_at(0.5, 0.5)
-    rig.glide((0.51, 0.51), (0.51, 0.41), gesture="two")
-    rig.glide((0.51, 0.41), (0.51, 0.51), gesture="two")
-    assert all(e[1] < 0 for e in rig.desk.of("scroll"))
+    rig.grab_at(0.5, 0.5)
+    rig.glide((0.505, 0.505), (0.52, 0.505), gesture="fist", frames=4)
+    for i in range(5):  # little finger loosening while the hand keeps moving
+        rig.show(hand(0.52 + i * 0.004, 0.505, gesture="fist", curls={"pinky": 1.3}))
+    before = win.rect[0]
+    rig.show(hand(0.54, 0.505, gesture="fist", curls={"pinky": 1.3}))
+    assert abs(win.rect[0] - before) < 30 and rig.snap.state == "holding"  # about 15 px a frame of movement
 
 
-def test_a_small_wobble_does_not_set_the_direction():
-    rig = Rig(FakeDesktop())
-    rig.start()
-    rig.two_at(0.5, 0.5)
-    rig.glide((0.51, 0.51), (0.51, 0.52), gesture="two", frames=3)  # 1% down
-    rig.glide((0.51, 0.52), (0.51, 0.42), gesture="two")  # then a real swipe up
-    assert rig.desk.of("scroll") and all(e[1] < 0 for e in rig.desk.of("scroll"))
-
-
-def test_ending_the_scroll_lets_the_next_swipe_go_the_other_way():
+def test_an_unknown_finger_combination_does_not_pause_a_scroll():
     rig = Rig(FakeDesktop())
     rig.start()
     rig.two_at(0.5, 0.5)
-    rig.glide((0.51, 0.51), (0.51, 0.61), gesture="two")
-    rig.show(hand(0.51, 0.61), frames=17)
-    rig.two_at(0.51, 0.61)
-    before = rig.desk.scrolled()
-    rig.glide((0.52, 0.62), (0.52, 0.52), gesture="two")
-    assert rig.desk.scrolled() < before
+    rig.show(hand(0.51, 0.51, gesture="two", curls={"ring": 1.3}), frames=20)  # ring finger drifts up
+    assert rig.snap.state == "scrolling"
+
+
+def test_raising_the_hand_after_using_the_real_mouse_moves_the_pointer():
+    rig = Rig(FakeDesktop([(0, 0, 1920, 1080)]))
+    rig.start()
+    rig.show(frames=15)
+    rig.desk.at = (100, 100)  # the real mouse moved
+    rig.start()
+    assert rig.desk.at == (960, 540)

@@ -487,7 +487,8 @@ def _build_field_metadata() -> List[FieldMeta]:
       "tracking glitches never grab, drop or scroll.",
       "gesture_snap", "int", min_val=0, max_val=500, step=10, suffix="ms")
     f("gesture_snap_scroll_speed", "Scroll Speed",
-      "Wheel notches scrolled for each two-finger swipe across a tenth of the camera's height.",
+      "How fast two-finger scrolling goes: wheel notches a second for each tenth of the camera's height your "
+      "hand is held above or below where the scroll started.",
       "gesture_snap", "float", min_val=0.5, max_val=30.0, step=0.5)
     f("gesture_snap_smoothing", "Steadiness",
       "Smoothing of the pointer when your hand is still (the filter's minimum cutoff in hertz). Lower is "

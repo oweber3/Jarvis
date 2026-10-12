@@ -91,7 +91,7 @@ Recordings capture landmark streams for building and testing gesture logic witho
 
 - **Live (default):** `--camera N` (default 0) starts a `HandTracker` and prints a status line about once a second: frames per second, and for each hand its side, confidence and index fingertip position (or that it is waiting while no frame has arrived yet). It also prints when hands appear and disappear. `--seconds S` stops after `S` seconds; otherwise Ctrl+C stops it. `--record PATH` also writes a recording.
 - **Gesture snapping:** `--snap` runs gesture snapping on the real desktop (Windows only) with the thresholds from the user's config file, whether or not `gesture_snap_enabled` is on, so it can be tried and tuned without restarting Jarvis. The camera is `--camera N` when given, otherwise `gesture_snap_camera`. It prints the same on and off lines as the tool and, about once a second, the side of the hand in view, each finger's curl (index, middle, ring, little), the gesture it reads as and the state, to help choose the thresholds. `--seconds` or Ctrl+C stop it, and stopping lets go of a held window and releases the camera. `--record PATH` also writes a recording.
-- **Preview:** `--preview` (with the live readout or `--snap`) opens a window showing the camera's mirrored image as the detector sees it, with each hand's 21 landmarks and bones drawn on it, the thumb and index tips marked, and a caption with the hand's side, each finger's curl, the gesture it reads as and, with `--snap`, the gesture snapping state. It uses PyQt6 and stays above other windows; the console readout continues once a second. The frame is taken from the camera before detection and only the newest one is kept for drawing; closing the window stops the command like `--seconds` does.
+- **Preview:** `--preview` (with the live readout or `--snap`) opens a window showing the camera's mirrored image as the detector sees it, with each hand's 21 landmarks and bones drawn on it, the palm centre (what the pointer follows) marked, and a caption with the hand's side, each finger's curl, the gesture it reads as and, with `--snap`, the gesture snapping state. It uses PyQt6 and stays above other windows; the console readout continues once a second. The frame is taken from the camera before detection and only the newest one is kept for drawing; closing the window stops the command like `--seconds` does.
 - **Photo:** `--image PATH` runs detection once on a photo, treated as a camera frame (so it is mirrored), prints what was found and exits.
 - Failures to start print the same one-time reason as `start()` and exit with status 1.
 
@@ -120,7 +120,7 @@ The palm faces the camera. Only the index, middle, ring and little fingers are c
 | One finger | Index only | The pointer follows the hand (the centre of the palm) as an aim. Nothing is clicked |
 | Fist | None | Grabs the window under the pointer and brings it to the front. While the fist is held, the window follows the hand with the pointer |
 | Raise a finger or open the hand while holding | Index (with any others) | Snaps the held window into the zone under the pointer |
-| Two fingers | Index and middle | Scrolls the window under the pointer, which stays still, as the hand moves up or down. Moving the hand up moves the content up, as when dragging a page on a touch screen |
+| Two fingers | Index and middle | Scrolls the window under the pointer, which stays still: hold the hand above or below where it was when the scroll started, further for faster |
 | Open hand | All four | Pause: the pointer stays where it is until one finger is raised again |
 | Hand out of view | | Pause, as for an open hand |
 
@@ -144,9 +144,11 @@ Any other combination (for example index and little finger) changes nothing and 
 
 ### Scrolling
 
-- Two fingers hold the pointer where it is, so the wheel events reach the window under it, and turn vertical movement of the palm into mouse-wheel scrolling. `gesture_snap_scroll_speed` (default 5) is the number of wheel notches (120 units each) for a movement of a tenth of the camera's height. Movement is accumulated and sent in steps of at least 30 units, so slow movements scroll smoothly without a flood of events. Horizontal movement is ignored.
-- Moving the hand up scrolls the content up (towards the end of a page), as when dragging a page on a touch screen.
-- **Swipes, not a drag.** Scrolling works like repeated swipes: the first stroke sets the direction for the rest of that two-finger gesture, and movement the other way (bringing the fingers back to swipe again) scrolls nothing. The direction is set once the hand has moved 2% of the camera's height one way, and that movement counts. To scroll the other way, end the scroll (one finger or an open hand) and raise two fingers again.
+Scrolling works like a joystick (or a browser's middle-click autoscroll), because a moving hand is the hardest thing to read: the scroll speed comes from where the hand is, not from each movement.
+
+- **Neutral.** When two fingers start a scroll, the pointer stays where it is (so the wheel events reach the window under it) and the palm's height at that moment becomes the neutral point.
+- **Speed from distance.** Holding the hand above neutral scrolls up (towards the top of the page) and below neutral scrolls down. Within 3% of the camera's height of neutral nothing scrolls, so a steady hand never creeps. Beyond that the speed grows with the distance: `gesture_snap_scroll_speed` (default 5) wheel notches a second for every further tenth of the camera's height. Wheel units (120 a notch) are sent in steps of at least 30, so slow scrolling is smooth without a flood of events. Sideways movement is ignored.
+- **Misreads do not stop it.** While the hand is briefly misread as another gesture the scroll carries on at the speed its position gives.
 - Leaving a scroll needs the new gesture to last at least 0.5 s (or the debounce time, if longer), because a moving hand is misread: measured on a real webcam at about 15 frames a second, two fingers moving up and down read as one finger or a fist for 1 or 2 frames at a time and as a fist for up to 6 frames (0.4 s), and the raised fingers dipped to 0.92 to 1.0. In the same measurement the MediaPipe Gesture Recognizer classified the moving two-finger pose correctly in only 26% of frames against 47% for finger counting, and was not better on any held pose, so it is not used. Then one finger aims again and an open hand pauses. A fist ends the scroll but grabs nothing: a fist grabs only after one finger or straight after a pause, so closing the hand while scrolling never picks up a window. The pointer then stays still until a finger is raised.
 - A scroll the window refuses (a higher-privilege application) is reported once; tracking continues.
 
@@ -200,7 +202,7 @@ Gesture snapping adds nothing that leaves the machine and nothing written to dis
 | `gesture_snap_finger_up` | `1.1` | Finger curl above which a finger counts as raised (0.8 to 2.0) |
 | `gesture_snap_finger_down` | `0.95` | Finger curl below which a finger counts as folded (0.5 to 1.5, below the raised threshold) |
 | `gesture_snap_debounce_ms` | `100` | How long a gesture must last to count (0 to 500 ms) |
-| `gesture_snap_scroll_speed` | `5` | Wheel notches per tenth of the camera's height (0.5 to 30) |
+| `gesture_snap_scroll_speed` | `5` | Wheel notches a second for each tenth of the camera's height the hand is held beyond neutral (0.5 to 30) |
 | `gesture_snap_smoothing` | `1.0` | One Euro minimum cutoff in hertz (0.05 to 10) |
 | `gesture_snap_speed_response` | `0.005` | One Euro speed coefficient (0 to 0.1) |
 

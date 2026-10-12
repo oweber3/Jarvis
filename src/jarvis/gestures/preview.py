@@ -9,8 +9,8 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable, Optional
 
-from .window_snap import describe_hand
-from .hand_tracking import HandFrame, Landmark
+from .window_snap import describe_hand, palm_centre
+from .hand_tracking import HandFrame
 
 _BONES = ((0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (5, 9), (9, 10), (10, 11), (11, 12),
           (9, 13), (13, 14), (14, 15), (15, 16), (13, 17), (0, 17), (17, 18), (18, 19), (19, 20))
@@ -19,12 +19,12 @@ _JOINT = (255, 255, 255)
 _TIP = (0, 220, 255)
 
 
-def caption(hand_frame: Optional[HandFrame], state: str) -> str:
+def caption(hand_frame: Optional[HandFrame], state: str, settings: Any = None) -> str:
     """One line about the strongest hand: side, each finger's curl, the gesture and the gesture snapping state."""
     if hand_frame is None or not hand_frame.hands:
         return f"no hand  ·  {state}"
     hand = max(hand_frame.hands, key=lambda h: h.score)
-    return f"{hand.side} hand  ·  {describe_hand(hand)}  ·  {state}"
+    return f"{hand.side} hand  ·  {describe_hand(hand, settings)}  ·  {state}"
 
 
 def draw_overlay(image: Any, hand_frame: Optional[HandFrame]) -> Any:
@@ -39,8 +39,8 @@ def draw_overlay(image: Any, hand_frame: Optional[HandFrame]) -> Any:
             cv2.line(drawn, pixels[a], pixels[b], _BONE, 2, cv2.LINE_AA)
         for point in pixels:
             cv2.circle(drawn, point, 3, _JOINT, -1, cv2.LINE_AA)
-        for tip in (Landmark.THUMB_TIP, Landmark.INDEX_TIP):
-            cv2.circle(drawn, pixels[tip], 7, _TIP, 2, cv2.LINE_AA)
+        px, py = palm_centre(hand)
+        cv2.circle(drawn, (int(px * width), int(py * height)), 9, _TIP, 2, cv2.LINE_AA)  # what the pointer follows
     return drawn
 
 
@@ -73,7 +73,8 @@ class FrameTap:
 
 
 def run_window(tap: FrameTap, latest_hands: Callable[[], Optional[HandFrame]], state: Callable[[], str],
-               seconds: Optional[float], every_second: Optional[Callable[[], None]] = None) -> None:
+               seconds: Optional[float], every_second: Optional[Callable[[], None]] = None,
+               settings: Any = None) -> None:
     """Show the preview, kept above other windows, until it is closed or ``seconds`` pass (runs Qt on this
     thread). ``every_second`` runs about once a second, for the console readout."""
     from PyQt6.QtCore import Qt, QTimer
@@ -94,7 +95,7 @@ def run_window(tap: FrameTap, latest_hands: Callable[[], Optional[HandFrame]], s
     def refresh() -> None:
         image = tap.take()
         hands = latest_hands()
-        text.setText(caption(hands, state()))
+        text.setText(caption(hands, state(), settings))
         if image is None:
             return
         import cv2

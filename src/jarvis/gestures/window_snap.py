@@ -1,8 +1,8 @@
 """Gesture snapping by raised fingers: one finger aims the pointer, a fist grabs the window under it and the window
 follows the hand, raising a finger snaps it into a zone, two fingers scroll, an open hand pauses.
 
-Pure gesture logic on ``HandFrame``s. The desktop is an output object (``desktop``, ``position``, ``move_to``,
-``grab``, ``move_window``, ``drop``, ``scroll``) supplied by the caller, so this module knows nothing of
+Pure gesture logic on ``HandFrame``s. The desktop is an output object (``desktop``, ``move_to``, ``grab``,
+``move_window``, ``drop``, ``scroll``) supplied by the caller, so this module knows nothing of
 Windows or FancyZones. It never clicks. It is the only code that moves the pointer or windows this way, and
 only from the user's own hand movements. See ``gestures.spec.md``, Gesture snapping.
 """
@@ -29,8 +29,8 @@ WATCHDOG_SEC = 0.05
 WHEEL_NOTCH = 120
 # Wheel units are sent once at least this many have built up, so slow movements do not flood the window.
 MIN_WHEEL_STEP = 30
-# A scroll's direction is set once the hand has moved this share of the camera's height one way.
-SWIPE_LOCK = 0.02
+# Joystick scrolling: no scrolling within this share of the camera's height of the neutral point.
+SCROLL_DEAD_ZONE = 0.03
 _DERIVATIVE_CUTOFF_HZ = 1.0
 FINGERS = ("INDEX", "MIDDLE", "RING", "PINKY")
 
@@ -175,10 +175,6 @@ class OneEuroFilter:
         return self._x
 
 
-
-
-
-
 # --------------------------------------------------------------------------------------------------
 # The gesture model
 # --------------------------------------------------------------------------------------------------
@@ -208,7 +204,7 @@ class WindowSnap:
         self._box: Optional[Tuple[float, float]] = None  # the camera position the comfort box is centred on
         self._last_t: Optional[float] = None
         self._side: Optional[str] = None
-        self._tip: Optional[Tuple[float, float]] = None
+        self._last_palm: Optional[Tuple[float, float]] = None
         self._last_hand: Optional[float] = None
         self._raised: Dict[str, bool] = {}
         self._gesture: Optional[str] = None
@@ -221,8 +217,7 @@ class WindowSnap:
         self._offset: Tuple[float, float] = (0.0, 0.0)
         self._placed: Optional[Tuple[int, int]] = None
         self._wheel = 0.0
-        self._swipe = 0  # the scroll's direction once set: 1 down, -1 up
-        self._swipe_travel = 0.0
+        self._neutral = 0.0  # the palm's height (desktop pixels) when the scroll started
         self._closed = False
         self._failing: set = set()
 
@@ -283,11 +278,11 @@ class WindowSnap:
         so two hands with the same label never swap); another hand can take over only after it is lost."""
         wanted = self._s.hand
         candidates = [h for h in hands if wanted == "any" or h.side == wanted]
-        if self._side is not None and self._tip is not None:
+        if self._side is not None and self._last_palm is not None:
             candidates = [h for h in candidates if h.side == self._side]
             if not candidates:
                 return None
-            last_x, last_y = self._tip
+            last_x, last_y = self._last_palm
             chosen = min(candidates, key=lambda h: (palm_centre(h)[0] - last_x) ** 2
                          + (palm_centre(h)[1] - last_y) ** 2)
         elif candidates:
@@ -295,7 +290,7 @@ class WindowSnap:
         else:
             return None
         self._side = chosen.side
-        self._tip = palm_centre(chosen)
+        self._last_palm = palm_centre(chosen)
         return chosen
 
     def _shape(self, hand: Hand) -> str:
@@ -323,9 +318,10 @@ class WindowSnap:
         self._state = _IDLE
         self._gesture = self._candidate = None
         self._box = None
+        self._shown = None
         self._raised.clear()
         self._side = None
-        self._tip = None
+        self._last_palm = None
         self._fx.reset()
         self._fy.reset()
 
@@ -335,7 +331,10 @@ class WindowSnap:
         dt = 0.0 if self._last_t is None else max(t - self._last_t, 0.0)
         self._last_t = t
         if shape == self._gesture:
-            self._candidate = None
+            if self._candidate is not None:
+                # A change that did not last: carry on from where the pointer stood, fading to the palm.
+                self._candidate = None
+                self._hold_place(p)
         else:
             if shape != self._candidate:
                 self._candidate, self._candidate_since = shape, t
@@ -343,17 +342,22 @@ class WindowSnap:
             if t - self._candidate_since >= needed:
                 self._candidate = None
                 self._confirm(shape, p)
-            # Until the new gesture counts the pointer (and a held window) stays still.
+            # Until the new gesture counts the pointer (and a held window) stays still; a scroll carries on, its
+            # speed set by where the hand is, so misreads do not stop it.
+            if self._state == _SCROLLING:
+                self._scroll(p, dt, scale)
             self._ref = p
             return
         state = self._state
-        if state == _AIMING:
+        if state == _AIMING and self._gesture == OTHER:
+            self._ref = p  # another combination holds the pointer still
+        elif state == _AIMING:
             self._aim(p, dt)
         elif state == _HOLDING:
             self._aim(p, dt)
             self._follow()
         elif state == _SCROLLING:
-            self._scroll_by(p, scale)
+            self._scroll(p, dt, scale)
         else:
             self._ref = p
 
@@ -363,9 +367,14 @@ class WindowSnap:
         paused = self._state == _IDLE
         if self._state in (_HOLDING, _HOLDING_NOTHING):
             if not self._raised.get("INDEX"):
+                self._hold_place(p)
                 return  # still a fist, perhaps with another finger loosening: keep holding
             self._drop()
             self._state = _AIMING
+        if shape == OTHER:
+            # Another combination changes nothing: carry on from where the pointer stood.
+            self._hold_place(p)
+            return
         if self._state == _SCROLLING and shape != TWO:
             self._end_scroll()
             if shape == FIST:
@@ -377,21 +386,25 @@ class WindowSnap:
             if paused:
                 # Resuming after a pause: the pointer goes straight to the palm's place.
                 self._drift = (0.0, 0.0)
+                self._shown = None
                 self._cursor = clamp_to_desktop(p[0], p[1], self._monitors)
                 self._show(self._cursor)
             else:
-                # The pointer continues from where it stood; the difference from the palm fades (see _aim).
-                self._drift = (self._cursor[0] - p[0], self._cursor[1] - p[1])
+                self._hold_place(p)
         if shape == ONE:
             self._state = _AIMING
         elif shape == FIST:
             self._grab()
         elif shape == TWO:
-            self._start_scroll()
+            self._start_scroll(p)
         else:
             if previous in (ONE, TWO, FIST):
-                debug_log(f"gesture snapping: paused ({shape})", "gestures")
+                debug_log("gesture snapping: paused (open hand)", "gestures")
             self._state = _IDLE
+
+    def _hold_place(self, p: Tuple[float, float]) -> None:
+        """Let the pointer continue from where it stands: the difference from the palm fades (see ``_aim``)."""
+        self._drift = (self._cursor[0] - p[0], self._cursor[1] - p[1])
 
     def _aim(self, p: Tuple[float, float], dt: float) -> None:
         """Put the pointer at the palm's place, plus whatever difference is still fading after a gesture change."""
@@ -417,38 +430,31 @@ class WindowSnap:
 
     # -- scrolling -------------------------------------------------------------------------------
 
-    def _start_scroll(self) -> None:
+    def _start_scroll(self, p: Tuple[float, float]) -> None:
         self._wheel = 0.0
-        self._swipe, self._swipe_travel = 0, 0.0
+        self._neutral = p[1]
         self._state = _SCROLLING
         debug_log("gesture snapping: scroll started", "gestures")
 
     def _end_scroll(self) -> None:
         self._wheel = 0.0
-        self._swipe, self._swipe_travel = 0, 0.0
         debug_log("gesture snapping: scroll ended", "gestures")
 
-    def _scroll_by(self, p: Tuple[float, float], scale: float) -> None:
-        """Vertical palm movement since the last frame, as a share of the camera's height, becomes wheel units:
-        moving the hand up turns the wheel towards the user, which moves the content up. Like swipes: the first
-        stroke sets the direction, and movement the other way (the return between swipes) scrolls nothing."""
-        moved = (p[1] - self._ref[1]) / max(scale, 1e-6)
-        self._ref = p
-        if self._swipe == 0:
-            self._swipe_travel += moved
-            if abs(self._swipe_travel) < SWIPE_LOCK:
-                return
-            self._swipe = 1 if self._swipe_travel > 0 else -1
-            moved, self._swipe_travel = self._swipe_travel, 0.0
-        if moved * self._swipe <= 0:
+    def _scroll(self, p: Tuple[float, float], dt: float, scale: float) -> None:
+        """Joystick scrolling: the palm's distance above or below where the scroll started sets the speed.
+        Above scrolls up (the wheel turns away from the user); within the dead zone nothing scrolls."""
+        offset = (p[1] - self._neutral) / max(scale, 1e-6)
+        beyond = abs(offset) - SCROLL_DEAD_ZONE
+        if beyond <= 0 or dt <= 0:
             return
-        self._wheel += moved / 0.1 * self._s.scroll_speed * WHEEL_NOTCH
+        notches_per_second = beyond / 0.1 * self._s.scroll_speed
+        self._wheel += (-1 if offset > 0 else 1) * notches_per_second * WHEEL_NOTCH * dt
         if abs(self._wheel) < MIN_WHEEL_STEP:
             return
         step = int(self._wheel)
         try:
             self._out.scroll(step)
-        except Exception as exc:  # noqa: BLE001 - the next movement tries again
+        except Exception as exc:  # noqa: BLE001 - the next frame tries again
             self._output_failed("scroll", exc)
             self._wheel = 0.0
             return

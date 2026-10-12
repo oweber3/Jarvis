@@ -106,8 +106,9 @@ def _live(args: argparse.Namespace, make_tracker: Callable[[int], HandTracker]) 
 class _FingerReadout:
     """The latest hand's finger curls and gesture, for choosing the gesture snapping thresholds."""
 
-    def __init__(self):
+    def __init__(self, settings: Any = None):
         self._lock = threading.Lock()
+        self._settings = settings
         self.frames = 0
         self.latest: Optional[str] = None
         self.hand_frame: Optional[HandFrame] = None
@@ -119,7 +120,7 @@ class _FingerReadout:
         self.hand_frame = frame
         if frame.hands:
             hand = max(frame.hands, key=lambda h: h.score)
-            text = f"{hand.side} · {describe_hand(hand)}"
+            text = f"{hand.side} · {describe_hand(hand, self._settings)}"
         with self._lock:
             self.frames += 1
             self.latest = text
@@ -145,7 +146,8 @@ def _snap(args: argparse.Namespace, make_tracker: Callable[[int], HandTracker],
             return WindowsSnapOutput(use_fancyzones=getattr(cfg, "windows_fancyzones_enabled", True),
                                      languages=(*getattr(cfg, "fast_commands_locales", ["en"]), "en"))
     camera = args.camera if args.camera is not None else cfg.gesture_snap_camera
-    readout = _FingerReadout()
+    from .window_snap import WindowSnapSettings
+    readout = _FingerReadout(WindowSnapSettings.from_config(cfg))
     recorder = HandRecorder(args.record) if args.record else None
     tap = _tap(camera) if args.preview else None
 
@@ -173,7 +175,8 @@ def _snap(args: argparse.Namespace, make_tracker: Callable[[int], HandTracker],
             from .preview import run_window
             print("   🪟 Close the preview window to stop", flush=True)
             run_window(tap, lambda: readout.hand_frame, lambda: service.state, args.seconds,
-                       lambda: print(f"   📊 {readout.take()[1] or 'no hands'} · {service.state}", flush=True))
+                       lambda: print(f"   📊 {readout.take()[1] or 'no hands'} · {service.state}", flush=True),
+                       readout._settings)
         while tap is None and not (args.seconds and time.perf_counter() - started >= args.seconds):
             time.sleep(0.05)
             if time.perf_counter() - last_tick >= 1.0:
