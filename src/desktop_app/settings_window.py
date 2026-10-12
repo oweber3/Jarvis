@@ -331,6 +331,13 @@ def _build_field_metadata() -> List[FieldMeta]:
     f("wake_fuzzy_ratio", "Fuzzy Match Ratio",
       "How loosely to match the wake word (0.0–1.0)",
       "wake", "float", min_val=0.5, max_val=1.0, step=0.01)
+    f("wake_sound_enabled", "React to the Sound of the Wake Word",
+      "Light up as soon as the wake word is heard, before you finish speaking. The transcript still "
+      "decides whether Jarvis was addressed. Runs locally on the CPU.",
+      "wake", "bool")
+    f("wake_sound_threshold", "Wake Sound Sensitivity",
+      "Lower reacts more readily but also to sound-alike words (0.05–0.95)",
+      "wake", "float", min_val=0.05, max_val=0.95, step=0.05)
     # --- Whisper ---
     f("whisper_model", "Model Size",
       "Whisper model size (tiny/base/small/medium/large)",

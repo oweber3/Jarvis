@@ -36,7 +36,7 @@ from .intent_judge import (
     create_intent_judge,
     warm_up_chat_model,
 )
-from ..assistant_state import AssistantState, set_state
+from ..assistant_state import AssistantState, set_state, current as current_assistant_state
 from .. import voice_levels
 from ..bridge import modes as reply_modes
 from ..debug import debug_log
@@ -447,6 +447,9 @@ class VoiceListener(threading.Thread):
     _last_voice_frame_time: float = 0.0  # Wall time of the latest voiced VAD frame
     _turn: Optional[TurnLatency] = None  # Latency marks for the turn being processed
     _speaker_verifier: Optional[Any] = None  # Set when speaker verification is on and enrolled
+    _wake_sound: Optional[Any] = None  # WakeSoundDetector once its models load (listener thread only)
+    _wake_sound_at: Optional[float] = None  # Capture time of a wake word sound the transcript has not settled
+    _WAKE_SOUND_SETTLE_SEC = 1.0  # a sound with no speech or transcript after it this long was not the wake word
     _barge_in_fired = False  # TTS was ducked for the reply being spoken
     _barge_in_deadline = 0.0
     _barge_in_voiced_frames = 0
@@ -1591,6 +1594,9 @@ class VoiceListener(threading.Thread):
 
         # Clear wake detection state
         self._wake_timestamp = None
+        detector = self._wake_sound
+        if detector is not None:
+            detector.reset()
 
         # Drain the audio queue
         try:
@@ -1897,6 +1903,57 @@ class VoiceListener(threading.Thread):
         # Also check hot window expiry - this ensures the timeout is enforced
         # even when there's no audio being processed
         self.state_manager.check_hot_window_expiry(self.cfg.voice_debug)
+        self._settle_wake_sound()
+
+    def _load_wake_sound(self) -> None:
+        """Load the wake word sound detector (may fetch its models once); runs off the listener thread."""
+        from .wake_sound import create_wake_sound_detector
+
+        detector = create_wake_sound_detector(self.cfg)
+        if detector is not None and not self._should_stop:
+            self._wake_sound = detector
+            print("  👂 Wake word sound detection ready", flush=True)
+
+    def _listen_for_wake_sound(self, frame, captured_at: float) -> None:
+        """Feed one frame to the wake word sound detector; the face reacts while the user is still talking.
+
+        The sound only gives early feedback. Whether Jarvis was addressed is
+        still decided from the transcript, and ``_settle_wake_sound`` returns
+        the face to idle when the transcript does not confirm it.
+        """
+        detector = self._wake_sound
+        try:
+            audio = _resample(frame.flatten(), getattr(self, "_stream_samplerate", self._samplerate), 16000)
+            heard = detector.feed(np.clip(audio * 32768.0, -32768, 32767).astype(np.int16))
+        except Exception as exc:
+            self._wake_sound = None
+            debug_log(f"wake sound detector failed: {type(exc).__name__}: {exc}", "voice")
+            print("  ⚠️  Wake word sound detection stopped after an error; the wake word still works from the transcript.",
+                  flush=True)
+            return
+        if not heard or self._dictation_active or self._is_engaged():
+            return
+        if current_assistant_state() is not AssistantState.IDLE:
+            return
+        self._wake_sound_at = captured_at
+        debug_log("wake word heard by sound; waiting for the transcript to confirm it", "voice")
+        set_state(AssistantState.LISTENING)
+
+    def _settle_wake_sound(self, now: Optional[float] = None) -> None:
+        """Return the face to idle when speech after a wake word sound did not turn out to address Jarvis."""
+        heard_at = self._wake_sound_at
+        if heard_at is None:
+            return
+        now = time.time() if now is None else now
+        if self._speech_pending() or now - heard_at < self._WAKE_SOUND_SETTLE_SEC:
+            return
+        self._wake_sound_at = None
+        if (self._is_engaged() or self.state_manager.is_collecting()
+                or self.state_manager.is_hot_window_active()):
+            return
+        if current_assistant_state() is AssistantState.LISTENING:
+            debug_log("wake word sound not confirmed by the transcript; back to idle", "voice")
+            set_state(AssistantState.IDLE)
 
     def _reset_audio_health(self, now=None):
         now = time.monotonic() if now is None else now
@@ -2569,6 +2626,8 @@ class VoiceListener(threading.Thread):
         print("  🔥 Warming up models...", flush=True)
         self._llm_warmup_started_at = time.time()
         self._llm_warmup_threads = self._start_llm_warmup()
+        if np is not None and getattr(self.cfg, "wake_sound_enabled", False) is True:
+            threading.Thread(target=self._load_wake_sound, name="wake-sound-load", daemon=True).start()
 
         # Determine and initialise Whisper backend
         self._whisper_backend = self._determine_whisper_backend()
@@ -3079,6 +3138,8 @@ class VoiceListener(threading.Thread):
             self._speech_frames_seen += int(is_voice)
             if is_voice:
                 self._last_voice_frame_time = frame_timestamp
+            if self._wake_sound is not None:
+                self._listen_for_wake_sound(frame, frame_timestamp)
 
             if not self.is_speech_active:
                 if is_voice:

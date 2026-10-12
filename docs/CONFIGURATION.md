@@ -369,6 +369,18 @@ Your voiceprint is a file called `voiceprint.npz` next to `config.json`. It is n
 
 Barge-in works best when you speak louder than Jarvis's voice reaches the microphone, for example with a headset microphone, or with the speakers angled away from the microphone. It lowers the voice first and then lets speech recognition decide: a request or stop ends the reply, anything else lets it carry on.
 
+## Reacting to the sound of the wake word
+
+Jarvis reacts as soon as it hears "Jarvis", while you are still talking: the orb and the wake screen effect light up straight away instead of after your sentence has been transcribed. A small local model (openWakeWord, about 4 MB, downloaded once on first start) listens for the sound of the name on the CPU, using about 2% of one core and no GPU. It only changes how soon Jarvis shows it is listening: whether you were talking to Jarvis is still decided from what you said, so a sound-alike word just makes the orb flicker and settle back.
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `wake_sound_enabled` | `true` | React to the sound of the wake word (Settings, Wake Word) |
+| `wake_sound_threshold` | `0.5` | Lower reacts more readily but also to more sound-alike words |
+| `wake_sound_model` | `hey_jarvis` | The built-in model (it hears "Jarvis" and "Hey Jarvis"), or the path to your own openWakeWord `.onnx` model |
+
+The built-in model only knows "Jarvis", so with a different `wake_word` it stays off unless you point `wake_sound_model` at a model trained for your word. openWakeWord's pre-trained models are licensed for non-commercial use (CC BY-NC-SA 4.0). If the model cannot be downloaded, Jarvis prints one warning and wakes from the transcript as before.
+
 ## Dictation Mode
 
 Hold a hotkey to record speech, release to paste the transcription into your editor, browser or other app. Transcription runs locally.

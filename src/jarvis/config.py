@@ -205,6 +205,9 @@ class Settings:
     wake_word: str
     wake_aliases: list[str]
     wake_fuzzy_ratio: float
+    wake_sound_enabled: bool  # the sound of the wake word gives early feedback (transcript still confirms)
+    wake_sound_model: str  # built-in model name or path to an openWakeWord .onnx file
+    wake_sound_threshold: float
 
     # Whisper Speech Recognition
     whisper_model: str
@@ -1081,7 +1084,11 @@ def get_default_config() -> Dict[str, Any]:
         "barge_in_verify_ms": 300,  # voiced audio that must verify as the owner before TTS ducks
         "speaker_barge_in_threshold": 0.2,  # score of a short window mixed with Jarvis's own voice that counts as the owner
 
-        # Audio Wake Word Detection
+        # Wake word sound: early feedback while the wake word is spoken (the transcript still confirms it)
+        "wake_sound_enabled": True,
+        "wake_sound_model": "hey_jarvis",  # built-in model name, or a path to an openWakeWord .onnx file
+        "wake_sound_threshold": 0.5,  # lower hears the wake word more readily but reacts to more sound-alikes
+
         # Intent Judge (LLM-based intent classification)
         # Always used when available, falls back to simple wake word detection
         "llm_thinking_enabled": False,  # Enable thinking/reasoning mode for chat (slower but may improve quality)
@@ -1281,6 +1288,12 @@ def load_settings() -> Settings:
     wake_word = str(merged.get("wake_word", "jarvis")).strip().lower()
     wake_aliases = [a.strip().lower() for a in _ensure_list(merged.get("wake_aliases")) if a.strip()]
     wake_fuzzy_ratio = float(merged.get("wake_fuzzy_ratio", 0.78))
+    wake_sound_enabled = merged.get("wake_sound_enabled") is True
+    wake_sound_model = str(merged.get("wake_sound_model") or "").strip() or defaults["wake_sound_model"]
+    try:
+        wake_sound_threshold = min(0.95, max(0.05, float(merged.get("wake_sound_threshold"))))
+    except (TypeError, ValueError):
+        wake_sound_threshold = defaults["wake_sound_threshold"]
     whisper_model = _expand_model_reference(merged.get("whisper_model")) or "medium"
     whisper_backend = os.environ.get("JARVIS_WHISPER_BACKEND", "").lower() or str(merged.get("whisper_backend", "auto")).lower()
     if whisper_backend not in ("auto", "mlx", "faster-whisper"):
@@ -1539,6 +1552,9 @@ def load_settings() -> Settings:
         wake_word=wake_word,
         wake_aliases=wake_aliases,
         wake_fuzzy_ratio=wake_fuzzy_ratio,
+        wake_sound_enabled=wake_sound_enabled,
+        wake_sound_model=wake_sound_model,
+        wake_sound_threshold=wake_sound_threshold,
 
         # Whisper Speech Recognition
         whisper_model=whisper_model,

@@ -150,7 +150,7 @@ Instead of extracting post-wake-word audio, we:
 
 ### 2. Text-Based Wake Detection
 
-Wake word detection operates on the rolling transcript buffer. When Whisper produces text, it is checked for the configured wake word and aliases using fuzzy matching (`rapidfuzz`). This supports arbitrary wake words in any language.
+Wake word detection operates on the rolling transcript buffer. When Whisper produces text, it is checked for the configured wake word and aliases using fuzzy matching (`rapidfuzz`). This supports arbitrary wake words in any language. The transcript alone decides whether Jarvis was addressed; the wake word sound detector (see Early Feedback) only lets the face react sooner.
 
 ### 3. Context-Aware Intent Judge
 
@@ -284,7 +284,7 @@ An engaged utterance (wake word or hot window) that is a bare stop (nothing but 
 
 ## Speaker Verification and Barge-in
 
-Optional. Active only when `speaker_verification` is `soft` or `strict` **and** the owner's voice is enrolled. There is no acoustic wake model: both uses below rely on VAD plus speaker verification, and wake detection stays transcript-based.
+Optional. Active only when `speaker_verification` is `soft` or `strict` **and** the owner's voice is enrolled. Both uses below rely on VAD plus speaker verification; wake detection stays transcript-based (the wake word sound detector only gives early feedback).
 
 ### Voiceprint
 
@@ -418,7 +418,9 @@ Judge output: {"directed": true, "query": "Ni hao", "reasoning": "New speech dir
 
 ## Early Feedback (Face State)
 
-Jarvis plays no listening or thinking sound; the orb is the only acknowledgement. To minimise perceived latency, visual feedback starts **immediately after Whisper transcription**, before the intent judge runs:
+Jarvis plays no listening or thinking sound; the orb is the only acknowledgement. To minimise perceived latency, visual feedback starts while the wake word is still being said when the wake word sound detector hears it, and otherwise **immediately after Whisper transcription**, before the intent judge runs:
+
+- **Wake word sound:** If the detector hears the wake word, set face state to LISTENING (see below).
 
 - **Wake word mode:** If the transcribed text contains the wake word (fuzzy-matched), set face state to LISTENING.
 - **Hot window:** If voice started during an active (or pending) hot window, set face state to LISTENING.
@@ -427,6 +429,16 @@ Jarvis plays no listening or thinking sound; the orb is the only acknowledgement
 If the intent judge later rejects the query (and no hot window override applies), face state reverts to IDLE. This brief false-positive acknowledgement is acceptable — users prefer immediate acknowledgement over delayed but perfect accuracy.
 
 **Face state is not set during TTS**, to avoid self-triggering.
+
+### Wake word sound
+
+Optional (`wake_sound_enabled`, on by default). openWakeWord's models (`wake_sound.py`) run on ONNX Runtime on the CPU in the listener thread: every captured frame is converted to 16 kHz PCM and fed to the detector, which scores each 80 ms step against the last ~1.3 s of audio and reports a detection once per phrase (rising edge over `wake_sound_threshold`, then a 1.5 s cooldown). It costs about 2% of one CPU core and no GPU. Audio stays in memory and is never written or sent anywhere.
+
+- **Early feedback only.** A detection sets the face to LISTENING when the assistant state is IDLE and nothing is engaged or dictating. It never starts a collection, engages, dispatches or vouches for the wake word: the transcript path above runs unchanged and decides whether Jarvis was addressed.
+- **Settling.** Once the detection is at least 1 s old and no speech is pending (`_speech_pending`: nothing being spoken, captured, queued for Whisper or awaiting processing), the detection is settled. If by then nothing is engaged, collecting or in the hot window and the face is still LISTENING, the face returns to IDLE. A wake word confirmed by the transcript has already engaged by then, so it carries on as usual.
+- **States it never overrides.** THINKING, SPEAKING, DICTATING and any other non-IDLE state are left as they are, so neither Jarvis's own voice nor a typed chat request is disturbed.
+- **Models.** The melspectrogram and speech embedding models plus the phrase model are fetched once from openWakeWord's v0.5.1 release into the Jarvis models folder and checked against pinned SHA-256 hashes before they are saved or used. `wake_sound_model` is `hey_jarvis` (built in; it also scores "Jarvis" on its own) or a path to a custom openWakeWord `.onnx` model. The built-in model is only used while `wake_word` is `jarvis`; any other wake word needs a custom model. openWakeWord's pre-trained models are licensed CC BY-NC-SA 4.0 (non-commercial).
+- **Loading and failure.** The detector loads in a background thread at startup, alongside the model warmups, and prints `👂 Wake word sound detection ready`. A failed download, a checksum mismatch, a missing custom model or an ONNX Runtime error prints one warning and leaves it off. An error while running switches it off for the session with one warning. Either way the transcript-based wake word works as before. Clearing the audio buffers also clears what the detector has heard.
 
 ## Low-Confidence Rejection Events
 
@@ -479,6 +491,9 @@ listener filters and logs rejected segments without notifying any consumer.
 | `voice_collect_seconds` | 1.0 | Silence after the end of speech before a collected query is dispatched. Never elapses while the user is speaking or an utterance awaits transcription. |
 | `voice_wake_wait_seconds` | 4.5 | Silence allowed after a bare wake word while waiting for the request itself. |
 | `voice_max_collect_seconds` | 180 | Upper bound on one collection, even while speech continues. |
+| `wake_sound_enabled` | true | React to the sound of the wake word before transcription (early feedback only). |
+| `wake_sound_model` | `hey_jarvis` | Built-in phrase model name or path to an openWakeWord `.onnx` model. |
+| `wake_sound_threshold` | 0.5 | Detection score (clamped to 0.05–0.95). Lower reacts more readily and to more sound-alikes. |
 | `speaker_verification` | `off` | `off`, `soft` (ignore voices that are confidently someone else after a wake) or `strict` (owner only). Needs an enrolled voice. |
 | `speaker_reject_threshold` | 0.25 | Soft mode: similarity below this is another speaker. |
 | `speaker_accept_threshold` | 0.45 | Strict mode: similarity at or above this is the owner. |
