@@ -107,7 +107,7 @@ class TestOneTimeCodes:
         assert "482913" not in redact("OTP 482913")
 
     @pytest.mark.parametrize("text, number", [
-        ("write code that counts from 1 to 100000 and prints 123456", "123456"),
+        ("write code that counts from 1 to 100000", "100000"),
         ("my pin code 560001 is in Bangalore", "560001"),
         ("the barcode reads 012345", "012345"),
     ])
