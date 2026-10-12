@@ -29,6 +29,8 @@ WATCHDOG_SEC = 0.05
 WHEEL_NOTCH = 120
 # Wheel units are sent once at least this many have built up, so slow movements do not flood the window.
 MIN_WHEEL_STEP = 30
+# A scroll's direction is set once the hand has moved this share of the camera's height one way.
+SWIPE_LOCK = 0.02
 _DERIVATIVE_CUTOFF_HZ = 1.0
 FINGERS = ("INDEX", "MIDDLE", "RING", "PINKY")
 
@@ -219,6 +221,8 @@ class WindowSnap:
         self._offset: Tuple[float, float] = (0.0, 0.0)
         self._placed: Optional[Tuple[int, int]] = None
         self._wheel = 0.0
+        self._swipe = 0  # the scroll's direction once set: 1 down, -1 up
+        self._swipe_travel = 0.0
         self._closed = False
         self._failing: set = set()
 
@@ -415,18 +419,29 @@ class WindowSnap:
 
     def _start_scroll(self) -> None:
         self._wheel = 0.0
+        self._swipe, self._swipe_travel = 0, 0.0
         self._state = _SCROLLING
         debug_log("gesture snapping: scroll started", "gestures")
 
     def _end_scroll(self) -> None:
         self._wheel = 0.0
+        self._swipe, self._swipe_travel = 0, 0.0
         debug_log("gesture snapping: scroll ended", "gestures")
 
     def _scroll_by(self, p: Tuple[float, float], scale: float) -> None:
-        """Vertical fingertip movement since the last frame, as a share of the camera's height, becomes wheel
-        units: moving the hand up turns the wheel towards the user, which moves the content up."""
+        """Vertical palm movement since the last frame, as a share of the camera's height, becomes wheel units:
+        moving the hand up turns the wheel towards the user, which moves the content up. Like swipes: the first
+        stroke sets the direction, and movement the other way (the return between swipes) scrolls nothing."""
         moved = (p[1] - self._ref[1]) / max(scale, 1e-6)
         self._ref = p
+        if self._swipe == 0:
+            self._swipe_travel += moved
+            if abs(self._swipe_travel) < SWIPE_LOCK:
+                return
+            self._swipe = 1 if self._swipe_travel > 0 else -1
+            moved, self._swipe_travel = self._swipe_travel, 0.0
+        if moved * self._swipe <= 0:
+            return
         self._wheel += moved / 0.1 * self._s.scroll_speed * WHEEL_NOTCH
         if abs(self._wheel) < MIN_WHEEL_STEP:
             return

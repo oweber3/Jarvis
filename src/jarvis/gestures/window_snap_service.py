@@ -14,7 +14,7 @@ from .hand_tracking import HandTracker
 from .window_snap import WATCHDOG_SEC, WindowSnap, WindowSnapSettings
 
 GESTURE_GUIDE = ("Raise one finger to aim, make a fist to grab the window under the pointer and move it, "
-                 "then raise a finger or open your hand to snap it into a zone; raise two fingers and move up "
+                 "then raise a finger or open your hand to snap it into a zone; raise two fingers and swipe up "
                  "or down to scroll; open your hand flat to pause.")
 
 
@@ -96,7 +96,7 @@ class WindowSnapService:
         _say("🖐️ Gesture snapping on\n"
              "   ☝️ Raise one finger to aim the pointer\n"
              "   ✊ Make a fist to grab the window under it, raise a finger or open your hand to snap it into a zone\n"
-             "   ✌️ Raise two fingers and move up or down to scroll\n"
+             "   ✌️ Raise two fingers and swipe up or down to scroll (the return stroke does not scroll)\n"
              "   ✋ Open your hand flat to pause\n"
              "   🗣️ Say \"stop gesture control\" to turn it off")
         return "started"

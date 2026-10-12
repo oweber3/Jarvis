@@ -359,7 +359,7 @@ def test_slow_movement_scrolls_in_small_steps_not_a_flood_of_events():
     rig = Rig(FakeDesktop())
     rig.start()
     rig.two_at(0.5, 0.5)
-    rig.glide((0.51, 0.51), (0.51, 0.49), gesture="two", frames=30)
+    rig.glide((0.51, 0.51), (0.51, 0.47), gesture="two", frames=30)
     steps = [e[1] for e in rig.desk.of("scroll")]
     assert steps and all(abs(step) >= 30 for step in steps) and len(steps) < 30
 
@@ -602,3 +602,47 @@ def test_a_gesture_change_never_makes_the_pointer_hop_and_it_catches_up_with_the
     assert abs(first[0] - aim[0]) < 40  # no hop of the full shift (0.02 of the camera = 77 pixels here)
     rig.show(hand(0.52, 0.52), frames=40)
     assert rig.desk.at[0] == pytest.approx(960 + 0.02 * 640 * 6, abs=3)  # back on the palm's place
+
+
+# --- swiping ---------------------------------------------------------------------------------------
+
+def test_the_return_stroke_between_swipes_scrolls_nothing():
+    rig = Rig(FakeDesktop())
+    rig.start()
+    rig.two_at(0.5, 0.44)  # the hand at (0.51, 0.45)
+    for _ in range(3):
+        rig.glide((0.51, 0.45), (0.51, 0.55), gesture="two", frames=6)  # swipe down
+        rig.glide((0.51, 0.55), (0.51, 0.45), gesture="two", frames=6)  # bring the fingers back up
+    steps = [e[1] for e in rig.desk.of("scroll")]
+    assert steps and all(step > 0 for step in steps)
+    assert rig.desk.scrolled() == pytest.approx(3 * 5 * 120, rel=0.25)
+
+
+def test_the_first_stroke_sets_the_direction():
+    rig = Rig(FakeDesktop())
+    rig.start()
+    rig.two_at(0.5, 0.5)
+    rig.glide((0.51, 0.51), (0.51, 0.41), gesture="two")
+    rig.glide((0.51, 0.41), (0.51, 0.51), gesture="two")
+    assert all(e[1] < 0 for e in rig.desk.of("scroll"))
+
+
+def test_a_small_wobble_does_not_set_the_direction():
+    rig = Rig(FakeDesktop())
+    rig.start()
+    rig.two_at(0.5, 0.5)
+    rig.glide((0.51, 0.51), (0.51, 0.52), gesture="two", frames=3)  # 1% down
+    rig.glide((0.51, 0.52), (0.51, 0.42), gesture="two")  # then a real swipe up
+    assert rig.desk.of("scroll") and all(e[1] < 0 for e in rig.desk.of("scroll"))
+
+
+def test_ending_the_scroll_lets_the_next_swipe_go_the_other_way():
+    rig = Rig(FakeDesktop())
+    rig.start()
+    rig.two_at(0.5, 0.5)
+    rig.glide((0.51, 0.51), (0.51, 0.61), gesture="two")
+    rig.show(hand(0.51, 0.61), frames=17)
+    rig.two_at(0.51, 0.61)
+    before = rig.desk.scrolled()
+    rig.glide((0.52, 0.62), (0.52, 0.52), gesture="two")
+    assert rig.desk.scrolled() < before
