@@ -44,6 +44,8 @@ _REDACTION_RULES: list[tuple[re.Pattern[str], Any]] = [
     ), r"\1=[REDACTED]"),
     (re.compile(r"\b[0-9A-Fa-f]{32,}\b"), "[REDACTED_HEX]"),
     (re.compile(r"\b\d{6}\b(?=.*(otp|2fa|code))", re.IGNORECASE), "[REDACTED_OTP]"),
+    # The same keywords ahead of the code ("code is 482913"), within a short distance on one line.
+    (re.compile(r"(otp|2fa|code)([^\n]{0,40}?)\b\d{6}\b", re.IGNORECASE), r"\1\2[REDACTED_OTP]"),
 ]
 
 

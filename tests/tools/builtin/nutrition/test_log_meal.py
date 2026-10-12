@@ -203,3 +203,58 @@ def test_planner_fast_path_accepts_meal_key():
     )
     assert result[0] == "logMeal"
     assert result[1] == {"meal": "Big Mac"}
+
+
+class TestLoggedMealIsNeverDuplicated:
+    """Only extraction is retried: once a meal is stored, a failure in the follow-ups or the
+    confirmation never stores it again."""
+
+    def _run(self, tmp_path, monkeypatch, extracted, follow_up):
+        from types import SimpleNamespace
+
+        from jarvis.memory.db import Database
+        from jarvis.tools.base import ToolContext
+        from jarvis.tools.builtin.nutrition import log_meal
+        from jarvis.utils import fast_vector_store, vector_store
+
+        monkeypatch.setattr(fast_vector_store, "_faiss_vector_store", None)
+        monkeypatch.setattr(vector_store, "_python_vector_store", None)
+
+        def fake_llm(*, system_prompt, **kwargs):
+            if system_prompt == log_meal.NUTRITION_SYS:
+                return extracted
+            return follow_up()
+
+        monkeypatch.setattr(log_meal, "call_llm_direct", fake_llm)
+        monkeypatch.setattr(log_meal, "resolve_model", lambda cfg, tier: "test")
+        db = Database(str(tmp_path / "meals.db"))
+        cfg = SimpleNamespace(use_stdin=False, llm_chat_timeout_sec=5.0, llm_thinking_enabled=False)
+        ctx = ToolContext(db=db, cfg=cfg, system_prompt="", original_prompt="I had porridge",
+                          redacted_text="I had porridge with a banana", max_retries=2, user_print=lambda s: None)
+        result = log_meal.LogMealTool().run({"meal": "porridge with a banana"}, ctx)
+        meals = db.get_meals_between("0000", "9999")
+        db.close()
+        return result, meals
+
+    def test_a_failed_follow_up_call_logs_the_meal_once(self, tmp_path, monkeypatch):
+        import json
+
+        def timeout():
+            raise TimeoutError("follow-up generation timed out")
+
+        extracted = json.dumps({"description": "porridge with banana", "calories_kcal": 350, "protein_g": 10})
+        result, meals = self._run(tmp_path, monkeypatch, extracted, timeout)
+
+        assert len(meals) == 1
+        assert result.success is True
+        assert "porridge with banana" in result.reply_text and "350 kcal" in result.reply_text
+
+    def test_a_non_numeric_macro_logs_the_meal_once(self, tmp_path, monkeypatch):
+        import json
+
+        extracted = json.dumps({"description": "porridge", "calories_kcal": "about 350", "protein_g": 10})
+        result, meals = self._run(tmp_path, monkeypatch, extracted, lambda: "Drink water.")
+
+        assert len(meals) == 1
+        assert result.success is True
+        assert "10g protein" in result.reply_text and "Drink water." in result.reply_text

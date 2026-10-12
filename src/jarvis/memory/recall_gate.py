@@ -13,7 +13,6 @@ import re
 from typing import List
 
 from ..debug import debug_log
-from ..utils.redact import redact
 
 
 _STOPWORDS = {
@@ -82,11 +81,10 @@ def should_recall(
         coverage = len(overlap) / len(q_words) if q_words else 0.0
         if coverage >= min_coverage:
             # Overlap words come from the user query and may carry names or
-            # PII; push them through the structural scrub before logging so
-            # debug logs don't become a side-channel.
-            safe_overlap = redact(" ".join(sorted(overlap)[:5]))
+            # pieces of an address, so the log carries counts only.
             debug_log(
-                f"recall gate: skip (coverage={coverage:.2f}, overlap=[{safe_overlap}])",
+                f"recall gate: skip (coverage={coverage:.2f}, "
+                f"{len(overlap)} of {len(q_words)} query words in the hot window)",
                 "memory",
             )
             return False

@@ -84,3 +84,20 @@ class TestKeywordAnchoredCredentials:
         out = redact("oauth_token=qwertyuiop")
         assert "qwertyuiop" not in out
         assert "oauth_token=[REDACTED]" in out
+
+
+@pytest.mark.unit
+class TestOneTimeCodes:
+    def test_code_after_the_keyword_is_redacted(self):
+        out = redact("Your verification code is 482913")
+        assert "482913" not in out and "[REDACTED_OTP]" in out
+
+    def test_code_before_the_keyword_is_still_redacted(self):
+        assert "482913" not in redact("482913 is your 2FA code")
+
+    def test_keyword_far_from_the_number_on_another_line_is_left_alone(self):
+        out = scrub_secrets("code review notes\nInvoice 482913")
+        assert "482913" in out
+
+    def test_six_digits_without_a_keyword_are_kept(self):
+        assert "482913" in redact("Order 482913 shipped")

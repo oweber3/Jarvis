@@ -117,30 +117,36 @@ def extract_and_log_meal(db: Database, cfg: Any, original_text: str, source_app:
         micros_json=json.dumps(data.get("micros")) if isinstance(data.get("micros"), dict) else None,
         confidence=_safe_float(data.get("confidence")),
     )
-    # Build a brief confirmation + guidance
-    cals = data.get("calories_kcal")
-    prot = data.get("protein_g")
-    carbs = data.get("carbs_g")
-    fat = data.get("fat_g")
-    fiber = data.get("fiber_g")
-    conf = data.get("confidence")
+    # The meal is stored. Everything below is best effort and never raises, so the caller's
+    # retry can never store the same meal twice.
+    description = str(data.get("description") or "meal")
+    cals = _safe_float(data.get("calories_kcal"))
+    prot = _safe_float(data.get("protein_g"))
+    carbs = _safe_float(data.get("carbs_g"))
+    fat = _safe_float(data.get("fat_g"))
+    fiber = _safe_float(data.get("fiber_g"))
+    conf = _safe_float(data.get("confidence"))
     summary_bits = []
     if cals is not None:
-        summary_bits.append(f"~{int(round(float(cals)))} kcal")
+        summary_bits.append(f"~{int(round(cals))} kcal")
     if prot is not None:
-        summary_bits.append(f"{int(round(float(prot)))}g protein")
+        summary_bits.append(f"{int(round(prot))}g protein")
     if carbs is not None:
-        summary_bits.append(f"{int(round(float(carbs)))}g carbs")
+        summary_bits.append(f"{int(round(carbs))}g carbs")
     if fat is not None:
-        summary_bits.append(f"{int(round(float(fat)))}g fat")
+        summary_bits.append(f"{int(round(fat))}g fat")
     if fiber is not None:
-        summary_bits.append(f"{int(round(float(fiber)))}g fiber")
+        summary_bits.append(f"{int(round(fiber))}g fiber")
     approx = ", ".join(summary_bits) if summary_bits else "approximate macros logged"
-    conf_str = f" (confidence {float(conf):.0%})" if isinstance(conf, (int, float)) else ""
+    conf_str = f" (confidence {conf:.0%})" if conf is not None else ""
 
     # Ask for healthy follow-ups for the rest of the day given this meal
-    follow_text = generate_followups_for_meal(cfg, str(data.get('description') or 'meal'), approx)
-    return f"Logged meal #{meal_id}: {data.get('description')} — {approx}{conf_str}.\nFollow-ups: {follow_text}"
+    try:
+        follow_text = generate_followups_for_meal(cfg, description, approx)
+    except Exception as exc:
+        debug_log(f"logMeal follow-ups unavailable after logging: {type(exc).__name__}", "nutrition")
+        follow_text = ""
+    return f"Logged meal #{meal_id}: {description} — {approx}{conf_str}.\nFollow-ups: {follow_text}"
 
 
 def generate_followups_for_meal(cfg: Any, description: str, approx: str) -> str:

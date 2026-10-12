@@ -16,6 +16,32 @@ vector candidates. Both Python/FAISS and sqlite-vss use the same fusion routine.
 `evals/test_hybrid_retrieval.py` measures lexical and semantic recall@3 on a
 controlled corpus. It exercises ranking, not a particular embedding model.
 
+## Summary rows and embeddings
+
+- `upsert_conversation_summary` updates the row for a `(date_utc, source_app)` in
+  place (`ON CONFLICT DO UPDATE`), so the row keeps its ID and the FTS update
+  trigger keeps `summaries_fts` in step with it.
+- `can_store_embeddings` is true when sqlite-vss is loaded or a FAISS or Python
+  vector store is in use; every diary write path embeds when it is true and an
+  embedding model is configured. A summary has at most one embedding:
+  `upsert_summary_embedding` replaces the previous one for that ID.
+- `delete_conversation_summary` (and `delete_summary_rows` for a plain
+  connection such as the memory viewer's) removes the row, its FTS entry
+  (delete trigger) and its stored embedding.
+
+## Schema version
+
+`Database` owns `PRAGMA user_version` of the file (`SCHEMA_VERSION`). On open,
+a lower version is brought up once:
+
+- Version 1 rebuilds `summaries_fts` from `conversation_summaries` and removes
+  embeddings stored for IDs no summary has (left behind by rows that were
+  replaced rather than updated).
+
+The repair runs before the vector store loads, so only live embeddings are
+loaded. A repair that fails (the file is busy, for example) is rolled back and
+logged, the database opens as it is, and the repair runs at the next open.
+
 ## Activity sessions
 
 The opt-in activity log keeps its `activity_sessions` table in the same SQLite

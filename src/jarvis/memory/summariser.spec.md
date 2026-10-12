@@ -12,11 +12,11 @@ The summariser prompt is the only write-time defence. There is no post-process s
 
 ## Core Behaviour
 
-- Input: recent conversation chunks (last 10) plus, if present, the previous summary for the same day.
+- Input: every pending conversation chunk, sent in batches of at most 10 (`DIARY_BATCH_CHUNKS`), each batch with the same day's summary so far (the stored one for the first batch, the previous batch's result after that).
 - Output: a free-form summary (≤ 200 words) and 3–5 comma-separated topic keywords.
-- Storage: one row per `(date_utc, source_app)` in `conversation_summaries`, upserted on each update.
-- Embedding: the concatenation of summary + topics is embedded and stored for vector retrieval.
-- LLM failure is non-fatal — the summariser returns `(None, None)` and the update is skipped entirely. Pending messages remain queued for the next cycle.
+- Storage: one row per `(date_utc, source_app)` in `conversation_summaries`, updated in place after each batch so the row keeps its ID, its FTS entry and its embedding.
+- Embedding: the concatenation of summary + topics is embedded and stored for vector retrieval whenever the database has a vector store (sqlite-vss, FAISS or the Python fallback), one embedding per summary.
+- LLM failure is non-fatal: the summariser returns `(None, None)` and no further batch is sent. Chunks whose batch was stored are marked saved; the rest stay pending for the next cycle.
 
 ## Hygiene Rules
 

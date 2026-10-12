@@ -93,4 +93,21 @@ def run_bridge_reply(mode: str, db: Any, cfg: Any, tts: Any, redacted: str, dial
               "bridge")
     if outcome.kind == "cancelled" or not (outcome.text or "").strip():
         return None
+    _mark_private_if_activity_was_shared(dialogue_memory, settings)
     return deliver(outcome.text, redacted, cfg, tts, dialogue_memory, quiet)
+
+
+def _mark_private_if_activity_was_shared(dialogue_memory: Any, settings: BridgeSettings) -> None:
+    """A reply built from shared activity data is as private as the turn that read it
+    (``memory/activity_log.spec.md``): out of the diary and the console log, like a local follow-up."""
+    if not (settings.share_recent_dialogue and settings.share_activity_log) or dialogue_memory is None:
+        return
+    try:
+        private = dialogue_memory.has_private_context() is True
+    except Exception as exc:
+        debug_log(f"private context check failed: {type(exc).__name__}", "bridge")
+        return
+    if private:
+        from ..memory.activity_log import mark_turn_private
+        mark_turn_private()
+        debug_log("shared dialogue held activity data; reply kept private", "bridge")

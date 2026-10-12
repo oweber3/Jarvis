@@ -203,7 +203,7 @@ def rewrite_all_diary_summaries(
 
     Mirrors ``optimise_diary_topics`` for shape and privacy guarantees.
     """
-    can_reembed = bool(cfg.embedding_model and db.is_vss_enabled)
+    can_reembed = bool(cfg.embedding_model and db.can_store_embeddings)
 
     rows = db.get_all_conversation_summaries()
     for row in rows:
@@ -493,7 +493,7 @@ def optimise_diary_topics(
         return
 
     # Apply the mapping to each row.
-    can_reembed = bool(cfg.embedding_model and db.is_vss_enabled)
+    can_reembed = bool(cfg.embedding_model and db.can_store_embeddings)
     for row in rows:
         date_utc = row["date_utc"]
         original_topics = row["topics"] or ""
@@ -1214,13 +1214,18 @@ class DialogueMemory:
         their own ``time.time()`` snapshot, which can collide with ``_next_ts``
         on low-resolution clocks (Windows ~16ms tick).
         """
+        turns, snapshot = self.get_pending_turns_with_snapshot()
+        return [chunk for _ts, chunk in turns], snapshot
+
+    def get_pending_turns_with_snapshot(self) -> Tuple[List[Tuple[float, str]], float]:
+        """Like ``get_pending_chunks_with_snapshot``, with each chunk's timestamp, so a diary pass
+        that summarises only some of them can mark exactly those as saved."""
         with self._lock:
-            unsaved_messages = [
-                (ts, role, content) for ts, role, content in self._messages
+            turns = [
+                (ts, f"{role.title()}: {content}") for ts, role, content in self._messages
                 if ts > self._last_saved_timestamp and ts not in self._diary_excluded
             ]
-            chunks = [f"{role.title()}: {content}" for _, role, content in unsaved_messages]
-            return chunks, self._last_ts
+            return turns, self._last_ts
 
     def has_pending_chunks(self) -> bool:
         """Check if there are unsaved messages. Thread-safe."""
@@ -1313,7 +1318,8 @@ def generate_conversation_summary(
     Generate a concise conversation summary from recent chunks and previous summary.
 
     Args:
-        recent_chunks: List of conversation chunks to summarise
+        recent_chunks: Conversation chunks to summarise, every one of them is sent. Callers keep
+            a call within ``DIARY_BATCH_CHUNKS`` (``update_daily_conversation_summary`` batches).
         previous_summary: Previous summary for today (if any)
         cfg: Settings object — used for backend dispatch and chat model
         timeout_sec: Request timeout
@@ -1322,7 +1328,7 @@ def generate_conversation_summary(
     Returns:
         Tuple of (summary, topics) where topics is comma-separated
     """
-    chunks_text = "\n".join(recent_chunks[-10:])  # Last 10 chunks to keep context manageable
+    chunks_text = "\n".join(recent_chunks)
 
     system_prompt = """You are a conversation summariser for a personal AI assistant. Your job is to create concise daily summaries of conversations that will be stored in a diary for future reference.
 
@@ -1469,6 +1475,11 @@ TOPICS: [topic1, topic2, topic3]"""
         return None, None
 
 
+# How many conversation chunks one summariser call receives. A longer conversation is folded into
+# the day's summary a batch at a time, so nothing is dropped and the model's input stays bounded.
+DIARY_BATCH_CHUNKS = 10
+
+
 def update_daily_conversation_summary(
     db: Database,
     new_chunks: List[str],
@@ -1479,14 +1490,20 @@ def update_daily_conversation_summary(
     timeout_sec: float = 30.0,
     on_token: Optional[Callable[[str], None]] = None,
     thinking: bool = False,
+    on_batch_stored: Optional[Callable[[int], None]] = None,
 ) -> Optional[int]:
     """
-    Update the conversation summary for today with new chunks.
+    Fold ``new_chunks`` into today's conversation summary, ``DIARY_BATCH_CHUNKS`` at a time.
+
+    Each batch updates the stored summary before the next one is sent, so every chunk is
+    summarised however long the conversation was. ``on_batch_stored(count)`` reports, after each
+    stored batch, how many of ``new_chunks`` the stored summary now covers.
 
     Args:
         on_token: Optional callback for streaming tokens (for live UI updates)
 
-    Returns the summary ID if successful, None otherwise.
+    Returns the summary ID when every chunk was summarised, None otherwise. Batches stored before
+    a failure stay stored.
     """
     if not new_chunks:
         return None
@@ -1506,51 +1523,58 @@ def update_daily_conversation_summary(
 
         # Get existing summary for today
         existing = db.get_conversation_summary(today, source_app)
-        previous_summary = existing['summary'] if existing else None
+        summary: Optional[str] = existing['summary'] if existing else None
+        topics: Optional[str] = None
+        summary_id: Optional[int] = None
+        summarised = 0
 
-        # Generate updated summary using redacted chunks
-        summary, topics = generate_conversation_summary(
-            redacted_chunks, previous_summary, cfg,
-            timeout_sec=timeout_sec, on_token=on_token, thinking=thinking,
-        )
+        for start in range(0, len(redacted_chunks), DIARY_BATCH_CHUNKS):
+            batch = redacted_chunks[start:start + DIARY_BATCH_CHUNKS]
+            new_summary, new_topics = generate_conversation_summary(
+                batch, summary, cfg,
+                timeout_sec=timeout_sec, on_token=on_token, thinking=thinking,
+            )
+            if new_summary is None or new_topics is None:
+                debug_log(f"conversation summary stopped: a batch failed after {summarised} of "
+                          f"{len(redacted_chunks)} chunks", "memory")
+                break
+            summary_id = db.upsert_conversation_summary(
+                date_utc=today,
+                summary=new_summary,
+                topics=new_topics,
+                source_app=source_app,
+            )
+            summary, topics = new_summary, new_topics
+            summarised += len(batch)
+            if on_batch_stored is not None:
+                on_batch_stored(summarised)
 
-        # Skip summarization if LLM failed
-        if summary is None or topics is None:
+        if summary_id is None:
             debug_log("conversation summary skipped - LLM failed to generate summary", "memory")
-            return  # Skip summarization entirely
+            return None
 
         # Debug: Log the generated summary and topics
         summary_preview = summary[:200] + "..." if len(summary) > 200 else summary
         debug_log("conversation memory updated to:", "memory")
         debug_log(f"  summary: {summary_preview}", "memory")
         debug_log(f"  topics: {topics}", "memory")
-        if previous_summary:
-            prev_preview = previous_summary[:100] + "..." if len(previous_summary) > 100 else previous_summary
-            debug_log(f"  previous summary: {prev_preview}", "memory")
-        else:
-            debug_log("  previous summary: (none)", "memory")
-
-        # Store the summary
-        summary_id = db.upsert_conversation_summary(
-            date_utc=today,
-            summary=summary,
-            topics=topics,
-            source_app=source_app,
-        )
 
         # Generate and store embedding for semantic search. Gate on a
         # configured embedding model too (matching the search paths) so an
         # empty model never burns a doomed embed round-trip.
-        if db.is_vss_enabled and cfg.embedding_model:
+        if db.can_store_embeddings and cfg.embedding_model:
             # Combine summary and topics for embedding
             text_for_embedding = f"{summary} {topics}"
             vec = _embed_text(text_for_embedding, cfg, timeout_sec=15.0)
             if vec is not None:
                 db.upsert_summary_embedding(summary_id, vec)
+            else:
+                debug_log("diary summary stored without an embedding (embedding unavailable)", "memory")
 
-        return summary_id
+        return summary_id if summarised == len(redacted_chunks) else None
 
-    except Exception:
+    except Exception as exc:
+        debug_log(f"conversation summary update failed: {type(exc).__name__}", "memory")
         return None
 
 
@@ -1864,9 +1888,10 @@ def update_diary_from_dialogue_memory(
         # land on the same tick, producing identical timestamps. The new
         # message then fails the ``ts > snapshot`` test in
         # ``get_pending_chunks`` and is wrongly treated as already saved.
-        pending_chunks, snapshot_timestamp = (
-            dialogue_memory.get_pending_chunks_with_snapshot()
+        pending_turns, snapshot_timestamp = (
+            dialogue_memory.get_pending_turns_with_snapshot()
         )
+        pending_chunks = [chunk for _ts, chunk in pending_turns]
         debug_log(f"diary update: got {len(pending_chunks)} pending chunks from dialogue_memory", "memory")
 
         if not pending_chunks:
@@ -1876,6 +1901,7 @@ def update_diary_from_dialogue_memory(
         # Update the daily conversation summary
         # This is the slow operation (LLM call) during which new messages might arrive
         debug_log("calling update_daily_conversation_summary...", "memory")
+        summarised = [0]
         summary_id = update_daily_conversation_summary(
             db=db,
             new_chunks=pending_chunks,
@@ -1885,9 +1911,16 @@ def update_diary_from_dialogue_memory(
             timeout_sec=timeout_sec,
             on_token=on_token,
             thinking=thinking,
+            on_batch_stored=lambda count: summarised.__setitem__(0, count),
         )
 
         debug_log(f"update_daily_conversation_summary returned: {summary_id}", "memory")
+
+        if summary_id is None and summarised[0]:
+            # Only some batches reached the diary: those turns are saved, the rest stay pending
+            # for the next pass.
+            dialogue_memory.mark_saved_up_to(pending_turns[summarised[0] - 1][0])
+            debug_log(f"diary update partial: {summarised[0]} of {len(pending_turns)} chunks saved", "memory")
 
         # Mark only the messages that existed at snapshot time as saved
         # New messages that arrived during summarization remain pending
