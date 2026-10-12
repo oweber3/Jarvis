@@ -851,7 +851,7 @@ def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc
                         language=None,
                         quiet=True,
                         origin=origin,
-                        attachments=attachments,
+                        **({"attachments": attachments} if attachments else {}),
                     )
             except RequestCancelled:
                 reply = None

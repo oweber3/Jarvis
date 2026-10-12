@@ -38,5 +38,5 @@ def test_the_engine_receives_the_attachments(monkeypatch):
     assert _submit(monkeypatch, attachments=attached)["attachments"] == tuple(attached)
 
 
-def test_a_plain_request_carries_none(monkeypatch):
-    assert _submit(monkeypatch)["attachments"] == ()
+def test_a_plain_request_is_handed_over_exactly_as_before(monkeypatch):
+    assert "attachments" not in _submit(monkeypatch)
