@@ -731,6 +731,28 @@ An opt-in record of the foreground application, a redacted window title and idle
 
 Details: [`src/jarvis/memory/activity_log.spec.md`](../src/jarvis/memory/activity_log.spec.md).
 
+## Document search
+
+An opt-in local index of your own documents, so you can ask "what did my lease say about pets?". It is off by default; nothing is read or stored until you turn it on and restart Jarvis.
+
+```json
+{
+  "document_search_enabled": true,
+  "document_search_folders": ["Documents", "Desktop/University"],
+  "document_search_share_with_cloud": false,
+  "document_search_max_file_mb": 20,
+  "document_search_rescan_minutes": 60
+}
+```
+
+- `document_search_folders` (default `["Documents"]`) takes the same folder names and paths as the file tools: `Documents`, `Desktop`, `Downloads`, a subfolder such as `Documents/Taxes`, `~/notes`, or a full path. Folders outside your home folder are skipped.
+- `.txt`, `.md`, `.pdf` and `.docx` files are indexed. Hidden and system folders, `node_modules`, Office lock files, OneDrive online-only files and files over `document_search_max_file_mb` are skipped.
+- Indexing uses `embedding_model` (normally `nomic-embed-text` through Ollama), runs in the background only while Jarvis is idle, and checks for new or changed files every `document_search_rescan_minutes`. Changing the embedding model rebuilds the index.
+- `document_search_share_with_cloud` (default `false`) decides whether the Codex and Claude reply modes are offered the `documentSearch` tool. The local model always has it while document search is on.
+- Rebuild or delete the index from the tray (**Rebuild Document Index**, **Delete Document Index…**). To check indexing on a test folder: `PYTHONPATH=src python -m jarvis.documents index --folder <folder> --db <file>`, then `search <words>` or `status` with the same `--db`.
+
+Details: [`src/jarvis/documents/documents.spec.md`](../src/jarvis/documents/documents.spec.md).
+
 ## Phone access
 
 An opt-in web app the daemon serves to paired phones: the orb, the shared conversation, quick actions and desktop confirmations. It is off by default; restart Jarvis after turning it on.

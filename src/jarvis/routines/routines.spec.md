@@ -142,7 +142,7 @@ Routine names are user data, so running one by name is a deterministic fast comm
 
 `routineControl` is in the allowed-tool snapshot of every bridge (`bridge/bridge.spec.md`), with all its actions, so a user in Codex or Claude mode can run, save and manage routines the same way.
 
-- A routine run through `jarvis_execute` may use only tools in that request's snapshot. The bridge's execution path passes the snapshot to `run_tool_with_retries`, which makes it available to the tool for the duration of the call; a step outside it fails validation as unavailable. A routine therefore never widens a cloud model's catalogue: a `replyMode` step, a memory tool without long-term-memory sharing, or `activityLog` without its cloud switch is unavailable there.
+- A routine run through `jarvis_execute` may use only tools in that request's snapshot. The bridge's execution path passes the snapshot to `run_tool_with_retries`, which makes it available to the tool for the duration of the call; a step outside it fails validation as unavailable. A routine therefore never widens a cloud model's catalogue: a `replyMode` step, a memory tool without long-term-memory sharing, or `activityLog` or `documentSearch` without its cloud switch is unavailable there.
 - The routine's steps run on the query thread inside that one `jarvis_execute` call and count as one call against `<mode>_max_tool_calls`. A routine that outlasts the bridge deadline is not interrupted; the bridge records the call as uncertain and never replays it.
 - What reaches the provider is what any tool result carries: labels, positions, statuses and reasons. Step arguments stay in `config.json` and the in-memory journal; the save question carries labels only.
 

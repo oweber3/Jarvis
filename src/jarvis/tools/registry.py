@@ -107,6 +107,14 @@ def configure_activity_log_tool(cfg, *, platform=None):
         BUILTIN_TOOLS['activityLog'] = ActivityLogTool()
 
 
+def configure_document_search_tool(cfg):
+    """Offer ``documentSearch`` only when the user has turned opt-in document search on."""
+    BUILTIN_TOOLS.pop('documentSearch', None)
+    if getattr(cfg, 'document_search_enabled', False) is True:
+        from .builtin.document_search import DocumentSearchTool
+        BUILTIN_TOOLS['documentSearch'] = DocumentSearchTool()
+
+
 def configure_gesture_tool(cfg, *, platform=None):
     """Offer ``gestureControl`` (gesture snapping) only on Windows when ``gesture_snap_enabled`` is on.
 

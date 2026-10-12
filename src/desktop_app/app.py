@@ -2240,6 +2240,14 @@ class JarvisSystemTray:
         self.menu.aboutToShow.connect(self.activity_menu.refresh_from_settings)
         self.activity_menu.add_to(self.menu)
 
+        # Opt-in document search: rebuild the index, or delete it after confirming
+        from desktop_app import documents_menu
+        self.documents_menu = documents_menu.DocumentsMenu()
+        self.documents_menu.rebuild_requested.connect(lambda: documents_menu.send_request(self, "rebuild"))
+        self.documents_menu.delete_confirmed.connect(lambda: documents_menu.send_request(self, "delete"))
+        self.menu.aboutToShow.connect(self.documents_menu.refresh_from_settings)
+        self.documents_menu.add_to(self.menu)
+
         # Setup wizard action
         self.setup_wizard_action = QAction(line_icon("sliders"), "Setup Wizard")
         self.setup_wizard_action.triggered.connect(self.show_setup_wizard)
@@ -2438,12 +2446,15 @@ class JarvisSystemTray:
 
     def _apply_settings_now(self, changed: dict) -> None:
         """Privacy switches take effect without a restart: pausing or resuming the activity log, and
-        switching its cloud sharing off. Switching sharing on waits for the restart."""
-        from desktop_app import activity_menu
+        switching the activity log's or document search's cloud sharing off. Switching sharing on waits for
+        the restart."""
+        from desktop_app import activity_menu, documents_menu
         if "activity_log_paused" in changed:
             activity_menu.send_request(self, "pause" if changed["activity_log_paused"] else "resume")
         if changed.get("activity_log_share_with_cloud") is False:
             activity_menu.send_request(self, "stop_sharing")
+        if changed.get("document_search_share_with_cloud") is False:
+            documents_menu.send_request(self, "stop_sharing")
 
     def collect_runtime_status(self) -> RuntimeStatusSnapshot:
         """Collect current runtime state for the tray diagnostics dialog."""

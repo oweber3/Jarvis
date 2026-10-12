@@ -96,6 +96,8 @@ DEFAULT_FAST_MODEL = "qwen3.5:0.8b"
 REMOTE_QUICK_ACTIONS = (
     "Pause the music", "Play the music", "Next song", "Volume up", "Volume down", "What's using the most RAM?",
 )
+# Folders document search indexes until the user lists others (known folder names, as localFiles reads them).
+DOCUMENT_SEARCH_FOLDERS = ("Documents",)
 
 
 def get_supported_model_ids() -> set[str]:
@@ -403,6 +405,16 @@ class Settings:
     # Whether Codex and Claude reply modes may use the activityLog tool. Off means activity data never
     # leaves this PC.
     activity_log_share_with_cloud: bool = False
+
+    # Opt-in document search (see src/jarvis/documents/documents.spec.md): a local semantic index of the
+    # listed folders inside the home folder, kept in the local database. Off by default.
+    document_search_enabled: bool = False
+    document_search_folders: list[str] = field(default_factory=lambda: list(DOCUMENT_SEARCH_FOLDERS))
+    # Whether Codex and Claude reply modes may use the documentSearch tool. Off means passages never
+    # leave this PC.
+    document_search_share_with_cloud: bool = False
+    document_search_max_file_mb: int = 20
+    document_search_rescan_minutes: int = 60
 
     # Screen awareness (see src/jarvis/tools/builtin/screenshot.spec.md): the screenshot tool looks at the
     # screen only when a request asks about it. Off removes the tool from every reply mode.
@@ -940,6 +952,11 @@ def get_default_config() -> Dict[str, Any]:
         "activity_log_excluded_processes": _activity_defaults()[0],
         "activity_log_private_title_markers": _activity_defaults()[1],
         "activity_log_share_with_cloud": False,
+        "document_search_enabled": False,
+        "document_search_folders": list(DOCUMENT_SEARCH_FOLDERS),
+        "document_search_share_with_cloud": False,
+        "document_search_max_file_mb": 20,
+        "document_search_rescan_minutes": 60,
         "screen_awareness_enabled": True,
         "file_delete_enabled": False,
         "gesture_snap_enabled": False,
@@ -1415,6 +1432,13 @@ def load_settings() -> Settings:
         activity_log_private_title_markers=_string_list(merged.get("activity_log_private_title_markers"),
                                                         defaults["activity_log_private_title_markers"]),
         activity_log_share_with_cloud=merged.get("activity_log_share_with_cloud") is True,
+        document_search_enabled=merged.get("document_search_enabled") is True,
+        document_search_folders=_string_list(merged.get("document_search_folders"),
+                                             defaults["document_search_folders"]),
+        document_search_share_with_cloud=merged.get("document_search_share_with_cloud") is True,
+        document_search_max_file_mb=_bounded_number(merged.get("document_search_max_file_mb", 20), 20, 1, int),
+        document_search_rescan_minutes=_bounded_number(merged.get("document_search_rescan_minutes", 60), 60, 5,
+                                                       int),
         screen_awareness_enabled=merged.get("screen_awareness_enabled", True) is True,
         file_delete_enabled=merged.get("file_delete_enabled") is True,
         **_gesture_snap_settings(merged, defaults),

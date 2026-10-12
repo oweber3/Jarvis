@@ -70,14 +70,14 @@ def resolve_path(raw: Any) -> Path:
     return (_home() / path).resolve()
 
 
-def _inside_home(path: Path) -> bool:
+def inside_home(path: Path) -> bool:
     home = _home()
     return path == home or home in path.parents
 
 
 def _within_home(raw: Any) -> Path:
     resolved = resolve_path(raw)
-    if not _inside_home(resolved):
+    if not inside_home(resolved):
         raise PermissionError(f'Path not allowed: {resolved}')
     return resolved
 
@@ -311,7 +311,7 @@ class LocalFilesTool(Tool):
                         files = list(target.rglob(glob_pattern))
                     else:
                         files = list(target.glob(glob_pattern))
-                    files = [f for f in files if _inside_home(f.resolve())]
+                    files = [f for f in files if inside_home(f.resolve())]
 
                     if not files:
                         return ToolExecutionResult(success=True, reply_text=f"No files found matching '{glob_pattern}' in {target}")

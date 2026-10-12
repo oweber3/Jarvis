@@ -95,6 +95,11 @@
     "\u65e0\u75d5\u6d4f\u89c8"
   ],
   "activity_log_share_with_cloud": false,
+  "document_search_enabled": false,
+  "document_search_folders": ["Documents"],
+  "document_search_share_with_cloud": false,
+  "document_search_max_file_mb": 20,
+  "document_search_rescan_minutes": 60,
   "screen_awareness_enabled": true,
   "file_delete_enabled": false,
   "gesture_snap_enabled": false,
