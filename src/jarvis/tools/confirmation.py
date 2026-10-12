@@ -18,10 +18,11 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from ..debug import debug_log
+from ..utils.path_safety import is_network_or_device_path
 
 
 class SafetyTier(str, enum.Enum):
@@ -254,6 +255,9 @@ def _normalise_target(target: str) -> str:
     """Normalise target resource strings for binding comparisons."""
     if not target:
         return ""
+    if is_network_or_device_path(target):
+        # Never resolved: resolving would connect to that computer.
+        return os.path.normcase(os.path.normpath(target.strip()))
     try:
         p = Path(os.path.expanduser(target)).resolve()
         normalised = str(p)
@@ -264,9 +268,22 @@ def _normalise_target(target: str) -> str:
         return target.strip().lower() if sys.platform == "win32" else target.strip()
 
 
+def _comparable(path: Path) -> str:
+    """``path`` as Windows sees it for comparison: any letter case, and each name without the
+    trailing dots and spaces Windows ignores (``.SSH.`` is ``.ssh``). Unchanged elsewhere."""
+    if sys.platform != "win32":
+        return str(path)
+    anchor = path.anchor
+    names = [part.rstrip(". ") for part in path.parts[1:]] if anchor else [part.rstrip(". ") for part in path.parts]
+    return os.path.join(anchor, *names).lower() if names else anchor.lower()
+
+
 def is_system_or_important_location(path_str: str) -> bool:
     """Check whether a path references a system directory or important configuration file."""
     if not path_str or not isinstance(path_str, str):
+        return False
+    if is_network_or_device_path(path_str):
+        # Judged from the text only; no system or user folder lives on another computer.
         return False
     try:
         p = Path(os.path.expanduser(path_str)).resolve()
@@ -277,7 +294,7 @@ def is_system_or_important_location(path_str: str) -> bool:
     if p == p.parent:
         return True
 
-    p_str = str(p).lower() if sys.platform == "win32" else str(p)
+    p_str = _comparable(p)
 
     # Windows system directories
     if sys.platform == "win32":
@@ -304,19 +321,19 @@ def is_system_or_important_location(path_str: str) -> bool:
             startup = (Path(root) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup").resolve()
         except Exception:
             continue
-        startup_str = str(startup).lower() if sys.platform == "win32" else str(startup)
+        startup_str = _comparable(startup)
         if p_str == startup_str or p_str.startswith(startup_str + os.sep):
             return True
 
     # Sensitive user directories
     try:
         user_home = Path(os.path.expanduser("~")).resolve()
-        if p == user_home:
+        if p_str == _comparable(user_home):
             return True
         sensitive_subdirs = (".ssh", ".gnupg", ".aws", ".azure", ".config")
         for sensitive in sensitive_subdirs:
-            sens_path = user_home / sensitive
-            if p == sens_path or str(p).startswith(str(sens_path) + os.sep):
+            sens_str = _comparable(user_home / sensitive)
+            if p_str == sens_str or p_str.startswith(sens_str + os.sep):
                 return True
     except Exception:
         pass
@@ -330,12 +347,13 @@ def is_bulk_operation(path_str: str, args: Optional[Dict[str, Any]] = None) -> b
         return False
     if "*" in path_str or "?" in path_str:
         return True
-    try:
-        p = Path(os.path.expanduser(path_str)).resolve()
-        if p.exists() and p.is_dir():
-            return True
-    except Exception:
-        pass
+    if not is_network_or_device_path(path_str):
+        try:
+            p = Path(os.path.expanduser(path_str)).resolve()
+            if p.exists() and p.is_dir():
+                return True
+        except Exception:
+            pass
     if args and isinstance(args, dict):
         if args.get("recursive") or args.get("bulk"):
             return True
@@ -354,7 +372,10 @@ def is_prohibited_action(action: str, target: str, args: Optional[Dict[str, Any]
 
     if target:
         try:
-            p = Path(os.path.expanduser(target)).resolve()
+            if is_network_or_device_path(target):
+                p = PureWindowsPath(target.strip())
+            else:
+                p = Path(os.path.expanduser(target)).resolve()
             if p == p.parent and any(kw in action_lower for kw in ("delete", "remove", "erase", "unlink")):
                 return "Deleting the drive or filesystem root is strictly prohibited."
         except Exception:

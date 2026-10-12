@@ -167,8 +167,8 @@ ROUTING_CASES = [
 def _run_extraction(case: RoutingCase, config: MockConfig) -> list[tuple[str, str]]:
     return extract_graph_memories(
         summary=case.summary,
-        ollama_base_url=config.ollama_base_url,
-        ollama_chat_model=config.ollama_chat_model,
+        cfg=config,
+        chat_model=config.ollama_chat_model,
         timeout_sec=config.llm_chat_timeout_sec,
         thinking=False,
         date_utc=case.date_utc,

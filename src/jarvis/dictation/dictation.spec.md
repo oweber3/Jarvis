@@ -36,11 +36,33 @@ window, with four preset options: `ctrl+alt`, `ctrl+cmd`, `ctrl+shift+d`,
    post-processing pipeline, paste result into focused app via clipboard,
    restore face to `IDLE`, resume main voice listener.
 
+A tap released while recording is still starting can have its session
+finish, end notice included, before its start notice is given. Once the
+start notice has been given, the engine checks whether the press was
+released meanwhile; if so it opens no microphone, and if its session has
+already finished it gives the end notice again (or, while another dictation
+is open, leaves it owed to that one, see Overlapping Dictations), so the
+voice listener is always resumed.
+
 The face therefore moves through three distinct states across a dictation
 cycle: `DICTATING` while recording, `DICTATION_PROCESSING` while the captured
 audio is being transcribed / post-processed / pasted, and back to `IDLE` once
 the cycle completes. This gives the user visual confirmation that their voice
 input has been accepted and is being processed.
+
+### Overlapping Dictations
+
+The hotkey can be held again while an earlier dictation is still being
+transcribed or pasted. Each press is a session, and a session stays open
+until it has been transcribed and pasted, or given up.
+
+- The end notice (listener resumed, face `IDLE`) fires only when the last
+  open session finishes. An earlier dictation that finishes while a newer
+  one is open never resumes the listener or idles the face; its end is
+  held back and fires when the newer one finishes, even if that newer press
+  gives up without any notices of its own (Whisper not loaded).
+- An earlier dictation does not switch the face to `DICTATION_PROCESSING`
+  while a newer recording is open; the newer one keeps `DICTATING`.
 
 ### Hands-Free Mode (Double-Tap)
 
@@ -49,6 +71,9 @@ input has been accepted and is being processed.
    explicitly stopped.
 2. **Stop triggers** — re-press the hotkey *or* press Escape.
 3. Same post-processing pipeline as standard mode.
+4. If the hands-free recording is given up before it captures anything
+   (the microphone fails to open or start), hands-free mode ends with it:
+   the next press is an ordinary hold-to-dictate.
 
 ## Post-Processing Pipeline
 
@@ -116,7 +141,7 @@ After transcription, text passes through these stages in order:
 
 | Case                      | Behaviour                                         |
 |---------------------------|----------------------------------------------------|
-| Whisper not yet loaded    | Play "not ready" beep, skip                        |
+| Whisper not yet loaded    | Play "not ready" beep (on the worker, never the hook thread), skip; no start notice, nothing recorded |
 | Max recording duration    | No cap — the user controls when to stop by releasing the hotkey. A cap would paste prematurely mid-dictation and restart recording |
 | Empty transcription       | No paste occurs                                    |
 | Concurrent with assistant | Dictation works independently; pauses listener     |
@@ -142,9 +167,11 @@ After transcription, text passes through these stages in order:
 
 ## Beeps
 
-Two short beeps generated the same way as the existing `TunePlayer` sonar ping:
+Three short beeps generated the same way as the existing `TunePlayer` sonar ping:
 - **Start beep** — higher pitch (700 Hz), signals recording started.
 - **Stop beep** — lower pitch (440 Hz), signals recording stopped.
+- **Not ready beep**: lowest and slightly longer (260 Hz), signals the
+  hotkey was pressed before Whisper finished loading.
 
 ## Setup Wizard
 

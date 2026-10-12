@@ -526,6 +526,64 @@ class TestResponseParserRobustness:
         assert result is not None
         assert result.query == "what is the weather like"
 
+    def test_parse_response_null_query_is_empty(self):
+        """A JSON null query means no query, never the text "None"."""
+        judge = IntentJudge()
+        result = judge._parse_response(
+            '{"directed": true, "query": null, "stop": false, "confidence": "high", "reasoning": null}')
+
+        assert result is not None
+        assert result.query == ""
+        assert result.reasoning == ""
+
+    @pytest.mark.parametrize("field", ["directed", "stop"])
+    def test_parse_response_quoted_false_is_false(self, field):
+        """Small models sometimes quote booleans; "false" must not read as true."""
+        judge = IntentJudge()
+        values = {"directed": "true", "stop": "false"}
+        values[field] = "false"
+        response = (f'{{"directed": "{values["directed"]}", "query": "hi", "stop": "{values["stop"]}", '
+                    '"confidence": "high", "reasoning": "ok"}')
+        result = judge._parse_response(response)
+
+        assert result is not None
+        assert getattr(result, field) is False
+
+    def test_parse_response_quoted_true_is_true(self):
+        judge = IntentJudge()
+        result = judge._parse_response(
+            '{"directed": "true", "query": "", "stop": "TRUE", "confidence": "high", "reasoning": "ok"}')
+
+        assert result is not None
+        assert result.directed is True
+        assert result.stop is True
+
+
+class TestNullQueryInTheListener:
+    """A directed judgment without a query falls back to what the user said."""
+
+    def test_null_query_is_not_collected_as_none(self, monkeypatch):
+        import time
+        from tests.test_hot_window_input import _create_listener
+        listener, _ = _create_listener()
+        backend = MagicMock()
+        backend.chat.return_value = {"message": {"content": (
+            '{"directed": true, "query": null, "stop": false, "confidence": "high", '
+            '"reasoning": "wake word, greeting"}')}}
+        monkeypatch.setattr("jarvis.listening.intent_judge.get_llm_backend", lambda cfg: backend)
+        listener._intent_judge = IntentJudge(IntentJudgeConfig(cfg=listener.cfg))
+        now = time.time()
+        listener._transcript_buffer.add("jarvis can you hear me", now - 0.6, now - 0.1)
+
+        with patch("jarvis.fastpath.dispatcher.match_command", return_value=None):
+            listener._process_transcript(
+                "jarvis can you hear me", 0.01, now - 0.6, now - 0.1,
+                captured_during_tts=False,
+                captured_tts_start_time=listener.echo_detector._tts_start_time)
+
+        assert listener.state_manager.get_pending_query() == "jarvis can you hear me"
+        listener.state_manager.stop()
+
 
 class TestCreateIntentJudge:
     """Tests for create_intent_judge factory function."""

@@ -1063,8 +1063,14 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
     if reply_mode != reply_modes.LOCAL:
         from ..bridge.adapter import run_bridge_reply
         debug_log(f'BRIDGE_ROUTE mode={reply_mode}', 'routing')
+        check_cancelled()  # Stop pressed before the hand-off: nothing is sent
+
+        def _deliver_unless_stopped(*args, **kwargs):
+            check_cancelled()  # Stop pressed while the bridge worked: nothing is delivered or recorded
+            return _deliver_reply(*args, **kwargs)
+
         return run_bridge_reply(reply_mode, db, cfg, tts, redacted, dialogue_memory, language, quiet,
-                                deliver=_deliver_reply, origin=origin,
+                                deliver=_deliver_unless_stopped, origin=origin,
                                 read_foreground=lambda: _foreground_window(cfg, origin))
     debug_log('LLM_ROUTE', 'routing')
 

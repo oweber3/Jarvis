@@ -143,6 +143,24 @@ def test_streamed_playback_keeps_every_sentence_in_order(fake_audio):
     assert durations == [pytest.approx(4500 / voice.config.sample_rate)]
 
 
+def test_jarvis_voice_counts_as_open_audio_only_while_it_plays(fake_audio):
+    # The microphone recovery must not restart PortAudio under a playing reply.
+    from jarvis.utils import audio_lock
+    while_playing = []
+    tts = make_tts(FakeVoice(delay=0.05))
+    tts.start()
+    try:
+        speak_and_wait(tts, "One. Two.",
+                       first_audio_callback=lambda: while_playing.append(audio_lock.open_stream_count()))
+        deadline = time.monotonic() + 3
+        while audio_lock.open_stream_count() and time.monotonic() < deadline:
+            time.sleep(0.01)
+    finally:
+        tts.stop()
+    assert while_playing == [1]
+    assert audio_lock.open_stream_count() == 0
+
+
 def test_interrupt_while_synthesising_stops_without_completing(fake_audio):
     completed = []
     voice = FakeVoice(delay=0.2)
@@ -285,6 +303,23 @@ def test_manual_wake_waits_for_the_request_like_a_spoken_wake_word(mock_config):
     assert obj.state_manager.is_collecting() and obj.dispatched == []
     hear(obj, 'what is the weather', speech_end=time.time())
     time.sleep(0.4)  # the pause after the request is measured from its last speech
+    obj._check_query_timeout()
+    assert obj.dispatched == ['what is the weather']
+    obj.state_manager.stop()
+
+
+@pytest.mark.parametrize('heard_ago', [6.0, 60.0])
+def test_manual_wake_waits_from_the_click_not_from_earlier_speech(mock_config, heard_ago):
+    # Speech heard before the click (a past request, background talk) must not use up the wait.
+    obj = make_voice_listener(mock_config, judged('unused'))
+    hear(obj, 'something said a while ago', speech_end=time.time() - heard_ago)
+    obj._last_voice_frame_time = time.time() - heard_ago
+    obj.toggle_manual_wake()
+    obj._check_query_timeout()
+    obj._check_query_timeout()
+    assert obj.state_manager.is_collecting() and obj.dispatched == []
+    hear(obj, 'what is the weather', speech_end=time.time())
+    time.sleep(0.4)
     obj._check_query_timeout()
     assert obj.dispatched == ['what is the weather']
     obj.state_manager.stop()

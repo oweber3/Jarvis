@@ -26,7 +26,7 @@ def main(argv=None) -> int:
         code = store.start_pairing()
         print("📱 Pair a phone with Jarvis")
         if not cfg.remote_access_enabled:
-            print("   ⚠️ Phone access is off. Turn it on in Settings > Phone Access and restart Jarvis.")
+            print("   ⚠️ Phone access is off. Turn it on in Settings > Extras > Phone access and restart Jarvis.")
         print("   🔗 Open one of these on the phone:")
         for link in phone_links(cfg.remote_access_port):
             print(f"      {link}")

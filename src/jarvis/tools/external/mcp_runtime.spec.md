@@ -30,7 +30,10 @@ resident for the daemon's lifetime.
 | Event | Effect |
 |-------|--------|
 | First `get_runtime()` call | Spawns the background thread + loop. |
-| First call referencing a server | Creates a `_ServerWorker`, awaits `_ready` (the worker signals readiness once `session.initialize()` returns). |
+| First call referencing a server | Creates a `_ServerWorker`, awaits `_ready` (the worker signals readiness once `session.initialize()` returns). A server that does not finish the handshake within 30 s (`_SETUP_TIMEOUT_SEC`) fails the call with `TimeoutError` and its worker is shut down, so the half-started subprocess ends. |
+| A call times out while still queued | Its future is cancelled and the worker skips it: a request reported to its caller as failed never runs later. |
+| A call times out in flight | The session is stuck in that call, so the worker is shut down (its task cancelled, its subprocess ended). Requests queued behind it are drained with `_WorkerDeadError` and retried once on a fresh worker while their callers still wait; the next call gets a fresh session. |
+| A worker is replaced or dropped | The replacement starts only after the old worker has fully stopped (its `_run` has finished, so its subprocess has ended). If it has not stopped within 5 s (`_STOP_WAIT_SEC`) its server process tree is killed first. That process is recorded when the session starts (the MCP SDK does not expose it) as the descendant of the Jarvis process, started just then, whose command line carries the server's command and every argument, with its PID and start time; it is killed only while it is still a descendant of the Jarvis process with that start time. A process outside Jarvis's own tree, such as another Jarvis running the same server command, is never killed, nor is a PID the system has given to another process since. Two processes of one server never run at the same time, so a timed-out call can never act after the next call. Runtime shutdown waits the same way for each worker. |
 | Server config equality holds | Subsequent calls reuse the cached worker. |
 | Server config changes | Old worker is shut down; a fresh worker replaces it. |
 | Worker raises `_WorkerDeadError` | Runtime drops it and retries the call once with a new worker. Second failure surfaces as `MCPServerSessionError` to the public layer. |
@@ -45,6 +48,17 @@ resident for the daemon's lifetime.
 - A worker is never reused after `alive` flips to `False`. The
   finally-block in `_run` drains pending requests, resolving each
   outstanding future with `_WorkerDeadError` so callers do not hang.
+- A request runs only while its caller still waits: the worker marks
+  each future running before calling the server and skips one its
+  caller has cancelled after a timeout.
+- A call still in flight when its worker is stopped (a config change or
+  shutdown) fails with `MCPServerSessionError` and is never retried, since
+  it may already have acted. Only requests that never started are retried.
+- A caller may cancel its request at any moment from its own thread, so
+  the worker resolves every future through a helper that tolerates one
+  already cancelled: losing that race never stops the drain.
+- A dead worker is evicted only if it is still the cached one, so
+  concurrent retries never tear down each other's fresh worker.
 - `MCPClient.invoke_tool_async` is unchanged and still uses one-shot
   sessions. Sync `MCPClient.list_tools` / `invoke_tool` route through
   the runtime.
@@ -89,12 +103,29 @@ Each server entry in `config.mcps` is a dict consumed by
 | Key | Type | Default | Effect |
 |-----|------|---------|--------|
 | `idle_timeout_sec` | float \| null | null | If set, the worker self-terminates after that many seconds with an empty queue. Stateful servers (browser automation) must leave this unset. |
-| `timeout_sec` | float \| null | 120 (`_DEFAULT_INVOKE_TIMEOUT_SEC`) | Bounds a single `call_tool` round trip and `list_tools` discovery. Servers whose tools legitimately run long (e.g. delegating a task to an external CLI agent) should raise this; a bare `concurrent.futures.TimeoutError` propagates on expiry. Non-finite or non-positive values fall back to the default. |
+| `timeout_sec` | float \| null | 120 (`_DEFAULT_INVOKE_TIMEOUT_SEC`) | Bounds a single `call_tool` round trip and `list_tools` discovery. Servers whose tools legitimately run long (e.g. delegating a task to an external CLI agent) should raise this; a bare `concurrent.futures.TimeoutError` propagates on expiry (see Lifecycle for what happens to the session). Non-finite or non-positive values fall back to the default. |
 
 ## Test contract
 
-Behavioural tests live in `tests/test_mcp_client.py`. The contract
-verified there:
+Behavioural tests live in `tests/test_mcp_client.py` (with doubles) and
+`tests/test_mcp_runtime_robustness.py` (with fake stdio servers as Python
+child scripts). The contract verified there:
+
+- After a call times out in flight, the stuck subprocess ends and the
+  next call succeeds on a fresh session.
+- A call that timed out while queued never runs.
+- A call queued behind a call that times out in flight runs exactly
+  once, on a fresh session.
+- After a call times out in flight (its server still running background
+  work), the next call runs only once the old server has ended, and the
+  old server's work never lands afterwards; a session that will not stop
+  is killed after the stop window, while a process outside the test's
+  own tree with the same command line survives, and a recorded PID whose
+  start time no longer matches is never killed.
+- A caller cancelling during the drain does not stop other queued
+  requests being resolved.
+- A server that misses the handshake window leaves no process running.
+- `shutdown_runtime()` ends the server subprocess.
 
 - A second `invoke_tool` does not open a new stdio connection.
 - `list_tools` followed by `invoke_tool` shares one stdio connection.

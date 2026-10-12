@@ -2802,9 +2802,27 @@ class JarvisSystemTray:
         else:
             self.start_daemon()
 
+    def _refresh_web_chat_setting(self) -> None:
+        """Read ``web_chat_enabled`` and ``web_chat_port`` again for the daemon about to start.
+
+        The daemon serves the web chat from the saved settings at each start, so the tray's Chat entry
+        follows them from the same moment. A web chat window on a port no longer served is dropped.
+        """
+        port = web_chat_port_if_enabled()
+        if port == getattr(self, "_web_chat_port", None):
+            return
+        debug_log(f"web chat setting changed: {'on' if port is not None else 'off'}", "desktop")
+        self._web_chat_port = port
+        window = getattr(self, "web_chat_window", None)
+        if window is not None:
+            window.close()
+            window.deleteLater()
+            self.web_chat_window = None
+
     def start_daemon(self) -> None:
         """Start the Jarvis daemon."""
         self._daemon_stop_expected = False
+        self._refresh_web_chat_setting()
         self._set_chat_daemon_status("starting")
         try:
             if self.is_bundled:
@@ -3064,11 +3082,19 @@ class JarvisSystemTray:
             f"show_diary_dialog={show_diary_dialog}",
             "desktop",
         )
+        # The wait below pumps Qt events, so a second Stop or Quit can arrive while it runs.
+        if getattr(self, "_stop_in_progress", False):
+            debug_log("stop_daemon ignored: a stop is already in progress", "desktop")
+            return
+        self._stop_in_progress = True
 
+        # The daemon being stopped. Slots run by the event pump may clear the attributes meanwhile.
+        thread = self.daemon_thread
+        proc = self.daemon_process
         try:
             self._daemon_stop_expected = True
             self._set_chat_daemon_status("stopping")
-            if self.is_bundled and self.daemon_thread:
+            if self.is_bundled and thread:
                 # When running in a QThread, use the stop flag for graceful shutdown
                 # This ensures the daemon's finally block runs (for diary update)
                 self.log_signals.new_log.emit("⏸️ Stopping Jarvis daemon...\n")
@@ -3115,7 +3141,7 @@ class JarvisSystemTray:
                     # If the daemon doesn't stop gracefully, it will be killed on process exit
                     start_time = time.time()
                     warned = False
-                    while not self.daemon_thread.isFinished():
+                    while not thread.isFinished():
                         self.app.processEvents()
                         elapsed = time.time() - start_time
                         if elapsed > shutdown_wait_timeout_sec and not warned:
@@ -3143,14 +3169,14 @@ class JarvisSystemTray:
                     from jarvis.daemon import request_stop
                     request_stop()
 
-                    if not self.daemon_thread.wait(shutdown_wait_timeout_sec * 1000):
+                    if not thread.wait(shutdown_wait_timeout_sec * 1000):
                         self.log_signals.new_log.emit("⚠️ Daemon taking longer than expected...\n")
                         debug_log("daemon thread not responding to stop request", "desktop")
                         # Wait up to 3x timeout total before giving up
-                        self.daemon_thread.wait(shutdown_wait_timeout_sec * 2000)
+                        thread.wait(shutdown_wait_timeout_sec * 2000)
 
                 self.daemon_thread = None
-            elif self.daemon_process:
+            elif proc:
                 # For subprocess mode, show diary dialog with IPC-based updates
                 # The existing log reader thread emits signals; we use a queue to collect lines
                 # and process them in the main loop to avoid cross-thread Qt signal issues
@@ -3180,17 +3206,17 @@ class JarvisSystemTray:
                     # On Windows, signals don't work reliably with CREATE_NO_WINDOW
                     # Close stdin to trigger graceful shutdown in daemon
                     try:
-                        if self.daemon_process.stdin:
-                            self.daemon_process.stdin.close()
+                        if proc.stdin:
+                            proc.stdin.close()
                     except Exception:
                         pass
                     # Also try signal as backup
                     try:
-                        self.daemon_process.send_signal(signal.CTRL_BREAK_EVENT)
+                        proc.send_signal(signal.CTRL_BREAK_EVENT)
                     except Exception:
                         pass
                 else:
-                    self.daemon_process.send_signal(signal.SIGINT)
+                    proc.send_signal(signal.SIGINT)
 
                 # Wait for process to terminate while processing queued log lines
                 start_time = time.time()
@@ -3216,7 +3242,7 @@ class JarvisSystemTray:
                             break
 
                     # Check if process has exited
-                    if self.daemon_process.poll() is not None:
+                    if proc.poll() is not None:
                         # Process exited - drain remaining queue items
                         self.app.processEvents()
                         time.sleep(0.1)  # Brief wait for any final signals
@@ -3244,8 +3270,8 @@ class JarvisSystemTray:
                     # Check timeout
                     if elapsed > shutdown_wait_timeout_sec:
                         debug_log("subprocess shutdown timeout - killing process", "desktop")
-                        self.daemon_process.kill()
-                        self.daemon_process.wait()
+                        proc.kill()
+                        proc.wait()
                         break
 
                     time.sleep(0.02)
@@ -3292,12 +3318,19 @@ class JarvisSystemTray:
             debug_log(f"failed to stop daemon: {e}", "desktop")
             self.log_signals.new_log.emit(f"❌ Failed to stop: {str(e)}\n")
         finally:
+            self._stop_in_progress = False
             # Ensure dialog is closed
             if diary_dialog:
                 diary_dialog.close()
 
     def check_daemon_status(self) -> None:
-        """Check if the daemon process/thread is still running."""
+        """Check if the daemon process/thread is still running.
+
+        ``stop_daemon`` pumps Qt events while it waits, so this poll can run inside it. A stop the
+        user asked for is left to ``stop_daemon``: it is never reported as an unexpected exit.
+        """
+        if getattr(self, "_daemon_stop_expected", False):
+            return
         if self.is_bundled and self.daemon_thread:
             # Check if QThread is still running
             if self.daemon_thread.isFinished() and self.is_listening:
@@ -3399,7 +3432,7 @@ def _build_unreachable_message(cfg) -> str:
         "vLLM) is running with a model loaded, and Jarvis will connect "
         "automatically.\n\n"
         "You can open the Setup Wizard to change your server, or close and "
-        "adjust Settings later via the tray menu \u2192 LLM Provider."
+        "adjust Settings later via the tray menu \u2192 Settings \u2192 AI Models."
     )
 
 

@@ -201,5 +201,5 @@ def main(argv=None, *, recorder=None, embedder=None, out=print) -> int:
     for index, reason in result.rejected:
         out(f"   ⚠️  Clip {index + 1} skipped: {reason}")
     out(f"✅ Voice enrolled from {result.accepted} clips")
-    out("   ➡️  Turn it on in Settings, Voice Input, Speaker verification (soft or strict)")
+    out("   ➡️  Turn it on in Settings, Listening, Speaker verification (soft or strict)")
     return 0

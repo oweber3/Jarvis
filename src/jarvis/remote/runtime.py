@@ -55,7 +55,7 @@ def start(cfg, *, backend=None) -> Optional[RemoteServer]:
             server.hub.stop()
             debug_log(f"remote: could not bind {settings.host}:{settings.port}: {type(exc).__name__}", "remote")
             print(f"⚠️ Phone access could not start on {settings.host}:{settings.port}", flush=True)
-            print(f"   💡 {exc.strerror or exc}. Pick another port in Settings > Phone Access.", flush=True)
+            print(f"   💡 {exc.strerror or exc}. Pick another port in Settings > Extras > Phone access.", flush=True)
             return None
         _server = server
     print(f"📱 Phone access is on (port {server.port})", flush=True)

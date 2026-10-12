@@ -505,6 +505,42 @@ class EchoDetector:
 
         return heard_text
     
+    def strip_echo_prefix(self, heard_text: str) -> str:
+        """Remove a leading run of words that Jarvis said anywhere in its last reply.
+
+        For speech captured while the reply played, the echo can come from any
+        part of it, not only its tail. The run must be at least
+        ``min_salvage_words`` words long, matched word by word (allowing the
+        same small transcription slips as ``cleanup_leading_echo``). Returns
+        the rest, or ``heard_text`` unchanged when no such run leads it.
+        """
+        if not heard_text or not self._last_tts_text:
+            return heard_text
+
+        def _clean(word: str) -> str:
+            return re.sub(r"[^\w']", "", word.lower())
+
+        heard_words = heard_text.strip().split()
+        heard_clean = [_clean(w) for w in heard_words]
+        tts_clean = [w for w in (_clean(w) for w in self._normalize_for_comparison(self._last_tts_text).split()) if w]
+
+        def _same(a: str, b: str) -> bool:
+            return a == b or (bool(a) and bool(b) and fuzz.ratio(a, b) >= 70)
+
+        longest = 0
+        for start in range(len(tts_clean)):
+            run = 0
+            while (run < len(heard_clean) and start + run < len(tts_clean)
+                   and _same(heard_clean[run], tts_clean[start + run])):
+                run += 1
+            longest = max(longest, run)
+
+        if self.min_salvage_words <= longest < len(heard_words):
+            remainder = " ".join(heard_words[longest:])
+            debug_log(f"stripped {longest}-word echo prefix", "echo")
+            return remainder
+        return heard_text
+
     def should_reject_as_echo(self, heard_text: str, current_energy: float,
                             is_during_tts: bool = False, tts_rate: float = 200.0,
                             utterance_start_time: float = 0.0,

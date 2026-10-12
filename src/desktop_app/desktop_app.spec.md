@@ -103,8 +103,8 @@ The central controller that manages:
 - **Orb click wake and stop**: a left click on the orb in the face window wakes Jarvis exactly as saying the wake word alone does (it then waits for the request). A click while he is already woken (waiting for the request, or in the follow-up hot window) deactivates him instead, discarding any partly heard request. A click while he is thinking or speaking (a voice reply being generated or spoken, a typed chat request, or a Codex or Claude request in flight) stops it at once like a spoken stop: the reply is dropped, speech is cut off, no hot window follows and the orb returns to idle; that click does not also wake him. It acts only while the assistant is listening. Bundled mode calls `jarvis.daemon.toggle_manual_wake()` in process; subprocess mode writes a bare `__WAKE__` line to the daemon's stdin.
 - **Activity log items** (`activity_menu.py`, opt-in feature; see `jarvis/memory/activity_log.spec.md`): `Pause Activity Log`, a checkable item that follows `activity_log_paused` and is disabled while the log is off, and `Delete Activity History…`, which asks for confirmation (No by default) and is available even while the log is off. Bundled mode calls `jarvis.daemon.set_activity_paused` and `delete_activity_history` on a worker thread; subprocess mode writes `__ACTIVITY__:{"action": "pause" | "resume" | "delete"}` to the daemon's stdin; with no daemon the stored setting or the database is changed directly. The items read the stored state each time the menu opens.
 - **Reply mode submenu** (`Reply Mode: <active>`, `reply_mode_menu.py`): one radio item per mode (Local with a home icon, ChatGPT (Codex) and Claude with a cloud icon). A cloud mode not allowed in Settings is disabled and labelled "(allow in Settings)". Choosing an item only requests the switch; the checked item, the title and the badges always follow the mode the daemon reports, so a refused or failed switch never shows as active. Bundled mode calls `jarvis.daemon.set_reply_mode` on a worker thread and hears the result through a `bridge.modes` listener; subprocess mode writes `__REPLY_MODE__:{"mode": ...}` to the daemon's stdin and reads `__REPLY_MODE_STATE__:` events from its output (never shown in the log viewer). With no daemon running, the submenu shows and edits the start-up mode from Settings. See `bridge/bridge.spec.md`.
-- **Wake screen effect** (`wake_overlay.py`, see `wake_overlay.spec.md`): from the wake word until the conversation ends, the edges of every screen fill with click-through holographic light in the orb's colours that breathes and pulses with the state, wherever the face window is or when it is hidden. It is switched by `wake_overlay_enabled` (Settings → Features), applied as soon as Settings are saved, and removed on quit.
-- **Pointer ring** (`pointer_ring.py`, see `pointer_ring.spec.md`): while gesture snapping is on, a small click-through ring of holographic light in the orb's colours surrounds the mouse pointer on any monitor, so it is easy to follow. It is switched by `gesture_snap_pointer_ring` (Settings → Gesture Snapping), applied as soon as Settings are saved, and removed on quit.
+- **Wake screen effect** (`wake_overlay.py`, see `wake_overlay.spec.md`): from the wake word until the conversation ends, the edges of every screen fill with click-through holographic light in the orb's colours that breathes and pulses with the state, wherever the face window is or when it is hidden. It is switched by `wake_overlay_enabled` (Settings → Listening), applied as soon as Settings are saved, and removed on quit.
+- **Pointer ring** (`pointer_ring.py`, see `pointer_ring.spec.md`): while gesture snapping is on, a small click-through ring of holographic light in the orb's colours surrounds the mouse pointer on any monitor, so it is easy to follow. It is switched by `gesture_snap_pointer_ring` (Settings → Extras → Gesture control), applied as soon as Settings are saved, and removed on quit.
 - **Mode badge**: the face window shows a small badge over the top of the orb naming the active cloud mode after a cloud line icon; it is hidden in local mode. The chat window shows the same badge (see `chat_window.spec.md`). Its look comes from the theme (`MODE_BADGE_STYLESHEET`).
 - **Daemon lifecycle** (start/stop the Jarvis voice assistant)
 - **Window management** (log viewer, memory viewer, face window)
@@ -224,6 +224,12 @@ completion signals use other names (`check_done`, `completed`, `done`).
 and the slot mutates Qt UI state (menu actions, tray icon, face state), so
 it must run on the main thread.
 
+### Starting, stopping and the status poll
+
+- **Settings read at each start**: `start_daemon` reads `web_chat_enabled` and `web_chat_port` again, so after Settings and the tray's "Restart Jarvis now" the `Chat` entry opens the web chat on the port the new daemon serves (or the classic chat when it is off). A web chat window on a port no longer served is closed.
+- **One stop at a time**: `stop_daemon` pumps Qt events while it waits for the daemon to save its diary, so Stop or Quit can be clicked again meanwhile; a second stop while one is in progress is ignored. The wait works on the process or thread it started stopping, even if a slot run by the event pump clears the tray's reference to it.
+- **A user stop is never a crash**: `check_daemon_status` polls every two seconds and can run inside that wait. While a stop the user asked for is in progress it does nothing, so the stop always ends with "Jarvis Stopped" and the `stopped` chat state, never "ended unexpectedly" or `crashed`. Outside a stop, a daemon that exits is reported as an unexpected exit in both modes.
+
 ### Daemon Callbacks
 
 The desktop app registers callbacks with the daemon for:
@@ -235,7 +241,7 @@ The desktop app registers callbacks with the daemon for:
 
 In bundled mode, the daemon runs in the same process, so callbacks can be set directly via `set_diary_update_callbacks()`. The DiaryUpdateDialog receives:
 - `on_chunks`: List of conversation chunks being summarized
-- `on_token`: Streaming tokens as the diary is generated
+- `on_token`: Streaming tokens as the diary is generated. A long conversation is summarised in batches; each batch streams the updated summary after a blank line, so the last one shown is the one stored
 - `on_status`: Status messages ("Writing diary entry...")
 - `on_complete`: Completion signal (success/failure)
 

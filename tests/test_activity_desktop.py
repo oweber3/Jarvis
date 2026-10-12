@@ -166,15 +166,15 @@ class TestSettingsRows:
         from desktop_app.settings_window import FIELD_METADATA
         return next(f for f in FIELD_METADATA if f.key == key)
 
-    def test_every_activity_setting_is_exposed_on_its_own_page(self):
+    def test_every_activity_setting_is_exposed_on_the_privacy_page(self):
         from desktop_app.settings_window import CATEGORIES, FIELD_METADATA
         from jarvis.config import get_default_config
 
         keys = {k for k in get_default_config() if k.startswith("activity_log_")}
         exposed = {fm.key: fm for fm in FIELD_METADATA if fm.key.startswith("activity_log_")}
         assert keys == set(exposed)
-        assert all(fm.category == "activity" for fm in exposed.values())
-        assert "activity" in {key for key, _ in CATEGORIES}
+        assert all(fm.category == "privacy" and fm.section == "Activity log" for fm in exposed.values())
+        assert "privacy" in {key for key, _ in CATEGORIES}
 
     def test_the_toggle_says_exactly_what_is_recorded_and_where_it_stays(self):
         fm = self.field("activity_log_enabled")

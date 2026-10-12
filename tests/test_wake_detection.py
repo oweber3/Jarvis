@@ -12,6 +12,31 @@ from jarvis.listening.wake_detection import (
 
 
 @pytest.mark.unit
+class TestConfiguredWakeWord:
+    """A blank wake word in config.json falls back to the default, so it cannot match every utterance."""
+
+    @pytest.mark.parametrize("stored", ["", "   ", None, 7])
+    def test_a_blank_or_invalid_wake_word_loads_as_the_default(self, tmp_path, monkeypatch, stored):
+        import json
+        from jarvis.config import get_default_config, load_settings
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps({"_config_version": 6, "wake_word": stored}))
+        monkeypatch.setenv("JARVIS_CONFIG_PATH", str(path))
+        cfg = load_settings()
+        assert cfg.wake_word == get_default_config()["wake_word"]
+        assert not is_wake_word_detected("what should we have for dinner", cfg.wake_word, cfg.wake_aliases,
+                                         cfg.wake_fuzzy_ratio)
+
+    def test_a_chosen_wake_word_is_kept(self, tmp_path, monkeypatch):
+        import json
+        from jarvis.config import load_settings
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps({"_config_version": 6, "wake_word": " Friday "}))
+        monkeypatch.setenv("JARVIS_CONFIG_PATH", str(path))
+        assert load_settings().wake_word == "friday"
+
+
+@pytest.mark.unit
 class TestWakeWordDetection:
     """Tests for is_wake_word_detected."""
 
@@ -26,6 +51,15 @@ class TestWakeWordDetection:
 
     def test_empty_text(self):
         assert is_wake_word_detected("", "jarvis", []) is False
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_a_blank_wake_word_or_alias_never_matches_every_utterance(self, blank):
+        assert is_wake_word_detected("what should we have for dinner", blank, [blank]) is False
+        assert is_wake_word_detected("what should we have for dinner", "jarvis", [blank]) is False
+        assert is_wake_word_detected("hey jarvis what time is it", blank, ["jarvis"]) is True
+
+    def test_removing_the_wake_word_ignores_blank_aliases(self):
+        assert extract_query_after_wake("jarvis what time is it", "jarvis", ["", " "]) == "what time is it"
 
     def test_fuzzy_match(self):
         """Fuzzy matching catches slight transcription errors."""

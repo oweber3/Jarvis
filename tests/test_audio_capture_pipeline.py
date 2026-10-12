@@ -301,6 +301,25 @@ def test_utterance_finalisation_queues_transcription_without_blocking():
     assert job.energy == 0.1
 
 
+def test_a_failing_transcription_job_does_not_stop_the_worker():
+    import threading
+
+    obj = listener()
+    obj._transcription_jobs_q = queue.Queue()
+    obj._transcription_results_q = queue.Queue()
+    obj._transcribe_audio = lambda audio: (str(audio), "en", ())
+    obj._transcription_jobs_q.put(SimpleNamespace(audio="broken"))  # malformed: no timing at all
+    obj._transcription_jobs_q.put(SimpleNamespace(audio="next", start_time=2.0, end_time=3.0, speech_end_time=2.8, energy=0.2, dictation_generation=0, captured_during_tts=False, captured_tts_start_time=0))
+    obj._transcription_jobs_q.put(None)
+
+    worker = threading.Thread(target=obj._run_transcription_worker)
+    worker.start()
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert obj._transcription_results_q.get_nowait().text == "next"
+
+
 def test_transcription_worker_preserves_utterance_order():
     import threading
 
@@ -427,11 +446,14 @@ def test_transcription_result_keeps_language_and_utterance_context():
         energy=0.2,
         is_during_tts=False,
     )
-    obj._process_transcript.assert_called_once_with(
-        "hello there", 0.2, 10.0, 11.0,
-        captured_during_tts=False, captured_tts_start_time=0,
-        speaker_rejected=False,
-    )
+    obj._process_transcript.assert_called_once()
+    args, kwargs = obj._process_transcript.call_args
+    assert args == ("hello there", 0.2, 10.0, 11.0)
+    assert kwargs["captured_during_tts"] is False
+    assert kwargs["captured_tts_start_time"] == 0
+    assert kwargs["speaker_rejected"] is False
+    # A result without a voice onset passes it on as unknown.
+    assert kwargs.get("voice_onset_time", 0.0) == 0.0
 
 
 def test_shutdown_discards_full_backlog_without_waiting_for_whisper():

@@ -209,7 +209,7 @@ class PhoneAccessDialog(QDialog):
             set_role(self.status_label, "status-success")
             debug_log("phone access turned on from the tray", "desktop")
         else:
-            self.status_label.setText("The setting could not be saved. Try Settings > Phone Access.")
+            self.status_label.setText("The setting could not be saved. Try Settings > Extras > Phone access.")
             set_role(self.status_label, "status-warning")
 
     def start_pairing(self) -> None:

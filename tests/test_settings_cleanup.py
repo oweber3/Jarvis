@@ -3,7 +3,11 @@ import json
 
 import pytest
 
-DEAD_KEYS = ("llm_profile_select_timeout_sec", "voice_block_seconds")
+DEAD_KEYS = (
+    "llm_profile_select_timeout_sec", "voice_block_seconds", "whisper_vad", "stop_command_fuzzy_ratio",
+    "allowlist_bundles", "evaluator_enabled", "evaluator_nudge_max", "active_profiles",
+    "whisper_min_word_length",
+)
 
 
 @pytest.fixture
@@ -74,13 +78,11 @@ def test_a_hand_set_mlx_backend_is_shown_and_kept_on_windows(window_with, monkey
 
 
 @pytest.mark.unit
-def test_reply_pages_lead_the_sidebar_in_order():
-    from desktop_app.settings_window import CATEGORIES
+def test_reply_mode_leads_the_first_page():
+    from desktop_app.settings_window import CATEGORIES, FIELD_METADATA
 
-    keys = [k for k, _ in CATEGORIES]
-    assert keys[:4] == ["reply", "codex", "claude", "llm"]
-    rest = [k for k in keys if k not in ("reply", "codex", "claude")]
-    assert rest[:3] == ["llm", "llm_provider", "tts"]
+    first_page = CATEGORIES[0][0]
+    assert next(fm for fm in FIELD_METADATA if fm.category == first_page).key == "reply_mode"
 
 
 @pytest.mark.unit

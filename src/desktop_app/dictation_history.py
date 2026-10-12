@@ -244,7 +244,7 @@ class DictationHistoryWindow(QMainWindow):
             else:
                 placeholder = QLabel(
                     "Dictation mode is currently disabled.\n\n"
-                    "Enable it in Settings \u2192 Features \u2192 Dictation Mode."
+                    "Enable it in Settings \u2192 Memory & Dictation \u2192 Dictation."
                 )
                 placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 placeholder.setObjectName("empty_state")

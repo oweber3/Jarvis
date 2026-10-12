@@ -73,3 +73,23 @@ class TestShouldRecall:
         ]
         # "what is it" has no content words → cannot justify skipping
         assert should_recall("what is it", recent) is True
+
+
+@pytest.mark.unit
+def test_skip_log_carries_counts_never_query_words(monkeypatch):
+    """Query words are split into pieces no redaction can recognise (an email address becomes its
+    name and domain parts), so the skip log line carries counts only."""
+    from src.jarvis.memory import recall_gate
+
+    logged = []
+    monkeypatch.setattr(recall_gate, "debug_log", lambda msg, tag=None: logged.append(msg))
+    query = "send the report to priya.sharma@example.org"
+    recent = [
+        {"role": "user", "content": query},
+        {"role": "tool", "content": "report for priya.sharma@example.org ready to send"},
+    ]
+
+    assert recall_gate.should_recall(query, recent) is False
+    assert logged
+    for word in ("priya", "sharma", "example", "report"):
+        assert all(word not in line for line in logged), logged

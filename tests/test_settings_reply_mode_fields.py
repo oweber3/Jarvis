@@ -22,18 +22,17 @@ class TestReplyModeSettingsFields:
         for fm in FIELD_METADATA:
             assert not fm.key.startswith("codex_desktop_"), fm.key
             text = (fm.label + " " + fm.description).lower()
-            if fm.category == "codex":
+            if fm.key.startswith("codex_"):
                 assert "bind" not in text and "dedicated chat" not in text and "model picker" not in text
 
-    def test_mode_choice_and_permissions_have_their_own_page_and_each_bridge_its_own(self):
-        assert {"reply", "codex", "claude"} <= {key for key, _ in CATEGORIES}
+    def test_the_cloud_page_holds_codex_and_claude_in_their_own_columns(self):
+        assert "cloud" in {key for key, _ in CATEGORIES}
+        assert field("reply_mode").category == "general"
         for fm in FIELD_METADATA:
-            if fm.key in MODE_KEYS:
-                assert fm.category == "reply", fm.key
-            elif fm.key.startswith("codex_"):
-                assert fm.category == "codex", fm.key
+            if fm.key.startswith("codex_"):
+                assert (fm.category, fm.column) == ("cloud", "Codex"), fm.key
             elif fm.key.startswith("claude_"):
-                assert fm.category == "claude", fm.key
+                assert (fm.category, fm.column) == ("cloud", "Claude"), fm.key
 
     def test_reply_mode_is_a_choice_between_local_codex_and_claude(self):
         fm = field("reply_mode")

@@ -241,7 +241,7 @@ A typed request can be stopped (the chat windows' Stop button, the orb). The dae
 - sends its chat calls through `LLMBackend.chat_cancellable`, so a model call in flight is dropped at once (`llm/llm.spec.md`, Cancelling a chat call) instead of running to its end;
 - cannot interrupt a tool that is already running, nor the short planner, router and enrichment calls: a Stop takes effect when they return, at the next check.
 
-A request with no scope (voice) has no signal and behaves exactly as before. Background bridge replies (Codex, Claude) have their own cancel path (`bridge/bridge.spec.md`).
+A request with no scope (voice) has no signal and behaves exactly as before. Background bridge replies (Codex, Claude) have their own cancel path (`bridge/bridge.spec.md`); on that route the engine checks the signal before handing the request to the bridge and again before delivering its answer, with the same outcome as above.
 
 ### Notes
 - This document intentionally excludes ingestion specifics (voice/stdin, wake/hot-window, stop/echo), tool internals, and diary update scheduling. Those are documented separately.

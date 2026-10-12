@@ -230,7 +230,7 @@ def _benchmark_whisper(cfg: Any, repeats: int, wav_path: Optional[Path]) -> Dict
         gpu_after = _gpu_used_bytes()
 
         def transcribe() -> str:
-            segments, _info = model.transcribe(str(audio), vad_filter=cfg.whisper_vad)
+            segments, _info = model.transcribe(str(audio), vad_filter=True)
             return " ".join(s.text for s in segments)
 
         first = _timed(transcribe)

@@ -21,10 +21,10 @@ def test_speaker_verification_offers_off_soft_and_strict_with_off_as_default():
     assert get_default_config()["speaker_verification"] == "off"
 
 
-def test_barge_in_is_a_voice_input_toggle():
+def test_barge_in_is_a_listening_toggle():
     field = _field("barge_in_enabled")
-    assert field.field_type == "bool" and field.category == "voice_input"
-    assert _field("speaker_verification").category == "voice_input"
+    assert field.field_type == "bool" and field.category == "listening"
+    assert _field("speaker_verification").category == "listening"
 
 
 @pytest.fixture

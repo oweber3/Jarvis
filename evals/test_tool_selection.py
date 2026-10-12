@@ -75,6 +75,7 @@ class TestToolSelectionFiltering:
         if "gemma4" not in JUDGE_MODEL:
             pytest.skip(f"Tool selection uses fixed embed model; only runs in gemma4 phase (current: {JUDGE_MODEL})")
 
+        from jarvis.llm import get_embedding_backend
         from jarvis.tools.selection import select_tools, ToolSelectionStrategy
         from jarvis.tools.registry import BUILTIN_TOOLS
 
@@ -83,7 +84,7 @@ class TestToolSelectionFiltering:
             builtin_tools=BUILTIN_TOOLS,
             mcp_tools={},
             strategy=ToolSelectionStrategy.EMBEDDING,
-            llm_base_url=mock_config.ollama_base_url,
+            embedding_backend=get_embedding_backend(mock_config),
             embed_model=mock_config.ollama_embed_model,
             embed_timeout_sec=10.0,
         )
@@ -125,6 +126,7 @@ class TestToolSelectionFilteringLLM:
         must_include,
         max_tools,
     ):
+        from jarvis.llm import get_llm_backend
         from jarvis.tools.selection import select_tools, ToolSelectionStrategy
         from jarvis.tools.registry import BUILTIN_TOOLS
 
@@ -133,7 +135,7 @@ class TestToolSelectionFilteringLLM:
             builtin_tools=BUILTIN_TOOLS,
             mcp_tools={},
             strategy=ToolSelectionStrategy.LLM,
-            llm_base_url=mock_config.ollama_base_url,
+            llm_backend=get_llm_backend(mock_config),
             llm_model=JUDGE_MODEL,
             llm_timeout_sec=15.0,
         )

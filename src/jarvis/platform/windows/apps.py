@@ -248,6 +248,11 @@ class ApplicationIndex:
         """Whether discovery has been started (it may still be running)."""
         return self._started
 
+    @property
+    def failed(self) -> bool:
+        """Whether discovery has finished with an error (so no launch can run)."""
+        return self._ready.is_set() and self._error is not None
+
     def snapshot(self):
         """Return the ready catalogue without starting discovery or waiting."""
         if not self._ready.is_set() or self._error:
@@ -258,8 +263,22 @@ class ApplicationIndex:
 APP_INDEX = ApplicationIndex()
 
 
-def open_application(name: str, aliases: dict) -> dict:
+UNINSTALLER_NEEDS_APPROVAL = ('This opens an uninstaller, which removes installed software, so it needs your '
+                              'confirmation first. Ask again to open it.')
+
+
+def _refuse_unapproved_uninstaller(app: Application, allow_uninstaller: bool) -> None:
+    """Launching an uninstaller removes software: it runs only for a call the user approved."""
+    if app.uninstaller and not allow_uninstaller:
+        debug_log('Uninstaller launch refused: the call carries no approval.', 'safety')
+        raise PermissionError(UNINSTALLER_NEEDS_APPROVAL)
+
+
+def open_application(name: str, aliases: dict, *, allow_uninstaller: bool = False) -> dict:
+    """Launch the catalogue entry ``name`` resolves to. An uninstaller launches only with
+    ``allow_uninstaller`` (the user approved this call); otherwise ``PermissionError``."""
     app = resolve_application(name, APP_INDEX.applications(), aliases)
+    _refuse_unapproved_uninstaller(app, allow_uninstaller)
     os.startfile(app.target)
     debug_log('Application launch requested.', 'windows')
     return {'action': 'open_requested', 'application': app.name}
@@ -347,16 +366,18 @@ def _await_window(app: Application, known: set, deadline: float):
 
 
 def open_application_placed(target: str, app_aliases: dict, monitor, rectangle=None, state: str = 'restore',
-                            *, deadline: float | None = None) -> dict:
+                            *, deadline: float | None = None, allow_uninstaller: bool = False) -> dict:
     """Launch an application once, find its window and place it on ``monitor``.
 
     The destination is validated before launching. A timeout or ambiguity never
-    relaunches; the outcome is reported as a ``PartialPlacementError``."""
+    relaunches; the outcome is reported as a ``PartialPlacementError``. An uninstaller
+    launches only with ``allow_uninstaller``, as in ``open_application``."""
     from . import windows_mgmt as wm
     wm.validate_placement(monitor, rectangle, state)
     if deadline is None:
         deadline = time.monotonic() + _PLACE_BUDGET_SEC
     app = resolve_application(target, APP_INDEX.applications(), app_aliases)
+    _refuse_unapproved_uninstaller(app, allow_uninstaller)
     known = {w.hwnd for w in wm.list_windows() if window_belongs(app, w)}
     os.startfile(app.target)
     debug_log('Application launch requested; waiting to place its window.', 'windows')

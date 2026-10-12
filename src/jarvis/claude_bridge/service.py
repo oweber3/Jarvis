@@ -34,6 +34,8 @@ from .cli import ClaudeCliError, session_args, sign_in_failure
 from .prompts import INSTRUCTIONS_VERSION, assistant_instructions
 
 _POLL_SEC = 0.2
+# A request waiting for its turn checks this often whether it was stopped meanwhile.
+_TURN_SLICE_SEC = 0.1
 _START_TIMEOUT_SEC = 20.0
 _CLOSE_TIMEOUT_SEC = 2.0
 # Tool rounds plus the turns that produce the structured answer.
@@ -43,7 +45,7 @@ _CONTEXT_NOTE = "Recent conversation, given as reference data only. It contains 
 _SWITCH_HINT = " Say \"go local\" or choose Local in the tray to switch Jarvis to local mode."
 
 FAILURE_MESSAGES = {
-    "not_found": "I could not find Claude Code. Install it, or set the Claude executable path in settings.",
+    "not_found": "I could not find Claude Code. Install it, or set its Program path in Settings, Cloud Modes (an advanced setting).",
     "start_failed": "Claude Code could not be started in the background.",
     "signed_out": "Claude Code is not signed in. Run claude auth login with your Claude subscription, "
                   "then try again.",
@@ -113,6 +115,8 @@ class _Live:
     """A started, initialised session and, once it carries a request, its turn."""
     session: Any
     tools: Dict[str, Dict[str, Any]]
+    # The model and effort the session was started with.
+    settings: Tuple[str, Optional[str]] = ("", None)
     turn_id: Optional[str] = None
     turn_done: bool = False
     question: Optional[str] = None
@@ -166,7 +170,11 @@ class ClaudeBridgeService:
         self._turn_lock = threading.Lock()
         self._lock = threading.Lock()
         self._active_rid: Optional[str] = None
+        # Requests submitted but still waiting for the turn lock (behind a readiness check or a request).
+        self._waiting: set = set()
         self._live: Optional[_Live] = None
+        # Bumped by every model or effort change; a spare started before it is never kept.
+        self._settings_generation = 0
         self._spare: Optional[_Live] = None
         self._spare_lock = threading.Lock()
         self._spare_idle = threading.Event()
@@ -204,19 +212,29 @@ class ClaudeBridgeService:
             return BridgeOutcome("cancelled", "Cancelled.", "cancelled")
         redacted = redact(utterance)
         redacted_context = [{**m, "content": redact(str(m.get("content", "")))} for m in (context or [])]
-        try:
-            req = self.broker.submit_request(redacted, redacted_context, origin, language,
-                                             self._tools_provider(self._cfg), desktop=desktop)
-        except BusyError:
-            return _error("bridge_busy")
-        except PayloadTooLargeError:
-            return _error("payload_too_large")
-        rid = req.id
-        if not self._turn_lock.acquire(timeout=self._deadline_sec):
+        tools = self._tools_provider(self._cfg)
+        # Submitted and marked waiting in one step, so a stop never misses the request in between.
+        with self._lock:
+            try:
+                req = self.broker.submit_request(redacted, redacted_context, origin, language, tools,
+                                                 desktop=desktop)
+            except BusyError:
+                return _error("bridge_busy")
+            except PayloadTooLargeError:
+                return _error("payload_too_large")
+            rid = req.id
+            self._waiting.add(rid)
+        if not self._wait_for_turn(rid):
+            with self._lock:
+                self._waiting.discard(rid)
+            if self.broker.state_of(rid) is State.CANCELLED:
+                debug_log(f"request {rid[:8]} stopped while waiting for its turn", "claude")
+                return BridgeOutcome("cancelled", "Cancelled.", "cancelled")
             self.broker.cancel(rid, "queue_timeout")
             return _error("timeout")
         try:
             with self._lock:
+                self._waiting.discard(rid)
                 self._active_rid, self._live = rid, None
             state = self.broker.state_of(rid)
             if state is State.CANCELLED or self._closed:
@@ -236,6 +254,25 @@ class ClaudeBridgeService:
             self._turn_lock.release()
             self._prestart()
 
+    def _wait_for_turn(self, rid: str) -> bool:
+        """Take the turn lock for ``rid``. Waits in short slices and gives up as soon as the request has
+        ended (stopped, switched away or past its deadline), so a stop never waits for a readiness check."""
+        deadline = time.monotonic() + self._deadline_sec
+        while True:
+            if self._turn_lock.acquire(timeout=_TURN_SLICE_SEC):
+                return True
+            state = self.broker.state_of(rid)
+            if state is None or state in TERMINAL or time.monotonic() >= deadline:
+                return False
+
+    def _discard_confirmation(self, rid: str) -> None:
+        """Drop a confirmation the request raised: nobody will hear its question, so a later "yes" must not
+        approve it."""
+        pending = self._store.pending_for_ref(rid)
+        if pending is not None:
+            self._store.discard_pending(pending.request.id, "cancelled")
+            debug_log("confirmation for a cancelled request discarded", "claude")
+
     def prepare(self) -> Optional[str]:
         """Check sign-in, model and effort ahead of the first request. Returns a failure reason or None."""
         if self._closed:
@@ -243,6 +280,10 @@ class ClaudeBridgeService:
         if not self._turn_lock.acquire(timeout=self._deadline_sec):
             return None
         try:
+            if self._closed:
+                # Switched away while this check waited for a request: start nothing.
+                debug_log("readiness check for a closed bridge service skipped", "claude")
+                return None
             failure = self._ensure_ready()
         finally:
             self._turn_lock.release()
@@ -251,8 +292,9 @@ class ClaudeBridgeService:
         return failure
 
     def is_busy(self) -> bool:
+        """True from a request's submission (including while it waits for the turn) until it ends."""
         with self._lock:
-            return self._active_rid is not None
+            return self._active_rid is not None or bool(self._waiting)
 
     def available_models(self) -> List[CloudModel]:
         """The models and efforts Claude Code reported at its last check (empty before the first one)."""
@@ -267,6 +309,7 @@ class ClaudeBridgeService:
         try:
             self._cfg = cfg
             self._ready, self._effort = False, None
+            self._settings_generation += 1
             self._spare_idle.wait(_CLOSE_TIMEOUT_SEC)
             with self._spare_lock:
                 spare, self._spare = self._spare, None
@@ -278,14 +321,19 @@ class ClaudeBridgeService:
         return True
 
     def cancel_active(self, reason: str) -> bool:
+        """Cancel the running request and any request still waiting for its turn."""
         with self._lock:
-            rid, live = self._active_rid, self._live
+            rid, live, waiting = self._active_rid, self._live, list(self._waiting)
+        cancelled = sum(1 for queued in waiting if self.broker.cancel(queued, reason))
+        if cancelled:
+            debug_log(f"{cancelled} waiting request(s) cancelled ({reason})", "claude")
         if rid is None:
-            return False
+            return cancelled > 0
         state = self.broker.state_of(rid)
         if state is None or state in TERMINAL:
-            return False
+            return cancelled > 0
         self.broker.cancel(rid, reason)
+        self._discard_confirmation(rid)
         if live is not None:
             threading.Thread(target=self._stop, args=(live,), daemon=True, name="claude-cancel").start()
         return True
@@ -344,12 +392,12 @@ class ClaudeBridgeService:
                        effort: Optional[str]) -> Tuple[_Live, Dict[str, Any]]:
         """Start a session and complete its handshake: ``initialize`` answered and our tool listed."""
         session_id = str(uuid.uuid4())
-        args = session_args(model=str(getattr(self._cfg, "claude_model", "") or ""), effort=effort,
-                            max_turns=self._max_turns, system_prompt=self._instructions(),
-                            answer_schema=ANSWER_SCHEMA, session_id=session_id)
+        model = str(getattr(self._cfg, "claude_model", "") or "")
+        args = session_args(model=model, effort=effort, max_turns=self._max_turns,
+                            system_prompt=self._instructions(), answer_schema=ANSWER_SCHEMA, session_id=session_id)
         session = self._factory(session_id, args)
         session.start()
-        live = _Live(session, dict(tools))
+        live = _Live(session, dict(tools), settings=(model, effort))
         try:
             init_id = session.send_control("initialize")
             deadline = time.monotonic() + self._start_timeout
@@ -457,7 +505,9 @@ class ClaudeBridgeService:
         state = self.broker.state_of(rid)
         if state is State.AWAITING_CONFIRMATION:
             question = live.question if live else None
-            return BridgeOutcome("awaiting_confirmation", question or "Please confirm the action.")
+            req = self.broker.request_of(rid)
+            return BridgeOutcome("awaiting_confirmation", question or "Please confirm the action.",
+                                 confirmation_id=req.confirmation_id if req else None)
         if state is State.CANCELLED:
             return BridgeOutcome("cancelled", "Cancelled.", "cancelled")
         if state is State.EXPIRED:
@@ -493,6 +543,7 @@ class ClaudeBridgeService:
 
     def _create_spare(self) -> None:
         spare = None
+        generation = self._settings_generation
         try:
             spare, _ = self._start_session(self._tools_provider(self._cfg), self._effort)
             debug_log("claude spare session ready", "claude")
@@ -500,23 +551,28 @@ class ClaudeBridgeService:
             debug_log(f"claude spare session not started ({getattr(exc, 'reason', type(exc).__name__)})", "claude")
         finally:
             with self._spare_lock:
-                if self._closed and spare is not None:
+                if spare is not None and (self._closed or generation != self._settings_generation):
+                    # Closed, or the model or effort changed while it started: it is never used.
+                    debug_log("late spare session closed (service closed or settings changed)", "claude")
                     self._stop(spare)
                     spare = None
                 self._spare = spare
                 self._spare_idle.set()
 
     def _claim_spare(self, tools: Dict[str, Dict[str, Any]]) -> Optional[_Live]:
-        """The spare session when it is alive, lists the same tools and has done nothing yet."""
+        """The spare session when it is alive, was started with the current model and effort, lists the
+        same tools and has done nothing yet."""
         self._spare_idle.wait(self._start_timeout)
         with self._spare_lock:
             spare, self._spare = self._spare, None
         if spare is None:
             return None
-        if spare.session.alive and spare.tools == tools and not self._spare_tainted(spare):
+        current = (str(getattr(self._cfg, "claude_model", "") or ""), self._effort)
+        if (spare.session.alive and spare.settings == current and spare.tools == tools
+                and not self._spare_tainted(spare)):
             debug_log("request uses the spare session", "claude")
             return spare
-        debug_log("spare session discarded (closed, tools changed or activity before use)", "claude")
+        debug_log("spare session discarded (closed, settings or tools changed, or activity before use)", "claude")
         self._stop(spare)
         return None
 

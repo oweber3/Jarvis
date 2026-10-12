@@ -17,6 +17,7 @@ from flask import Flask, jsonify, request, Response
 
 from jarvis.config import load_settings
 from jarvis.debug import debug_log
+from jarvis.memory.db import delete_summary_rows
 from jarvis.memory.graph import FIXED_BRANCH_IDS, GraphMemoryStore
 from jarvis.utils.local_guard import refusal
 
@@ -282,13 +283,13 @@ def get_memory(memory_id: int) -> Response:
 def delete_memory(memory_id: int) -> Response:
     """Delete a memory by ID."""
     conn = get_db()
-    cur = conn.cursor()
 
     try:
-        cur.execute("DELETE FROM conversation_summaries WHERE id = ?", (memory_id,))
+        # The summary goes with its search index entry and its stored embedding.
+        deleted = delete_summary_rows(conn, memory_id)
         conn.commit()
 
-        if cur.rowcount > 0:
+        if deleted:
             return jsonify({"success": True, "message": "Memory deleted"})
         else:
             return jsonify({"error": "Memory not found"}), 404

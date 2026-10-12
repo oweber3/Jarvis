@@ -204,6 +204,10 @@ class FAISSVectorStore:
                     conn.close()
                 except Exception as e:
                     logging.warning(f"Failed to delete vector from database: {e}")
+                # Rebuild now, so the deleted vector is never matched again (also when it was the last one).
+                self._build_empty_index()
+                self._load_vectors()
+                self._needs_rebuild = False
     
     def get_stats(self) -> Dict[str, Any]:
         """Get statistics about the vector store."""
