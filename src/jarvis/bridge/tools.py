@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from ..debug import debug_log
 from ..documents import runtime as documents_runtime
@@ -23,10 +23,36 @@ PERSONAL_DATA_TOOLS = frozenset({"logMeal", "fetchMeals", "deleteMeal"})
 # Timers, reminders, lists and notes: offered while the mode's ``share_lists_reminders`` switch is on,
 # independently of long-term memory.
 LISTS_REMINDERS_TOOLS = frozenset({"scheduleControl", "listControl", "noteControl"})
-# Opt-in personal sources, each offered to a cloud model only while its own sharing switch allows it.
-CLOUD_GATED_TOOLS = {
-    "activityLog": activity_runtime.shared_with_cloud,
-    "documentSearch": documents_runtime.shared_with_cloud,
+
+
+def _switch(key: str) -> Callable[[Any], bool]:
+    return lambda cfg: getattr(cfg, key, False) is True
+
+
+@dataclass(frozen=True)
+class CloudGatedSource:
+    """An opt-in personal source. ``shared``: whether Codex and Claude are offered its tool (only a real
+    ``True`` counts). ``set_up``: whether earlier turns may quote it, so that private turns are shared only
+    when it is shared too (``bridge.settings.share_private_turns``)."""
+    set_up: Callable[[Any], bool]
+    shared: Callable[[Any], bool]
+
+
+def _has_accounts(enabled_key: str, accounts_key: str) -> Callable[[Any], bool]:
+    # Turned off with sources still configured counts as set up: earlier turns may quote them.
+    return lambda cfg: getattr(cfg, enabled_key, False) is True or bool(getattr(cfg, accounts_key, None))
+
+
+# Every opt-in personal source, by tool name. Each tool is offered to a cloud model only while its own
+# sharing switch allows it, and a turn that quoted any of them is private.
+CLOUD_GATED_TOOLS: Dict[str, CloudGatedSource] = {
+    "activityLog": CloudGatedSource(set_up=_switch("activity_log_enabled"),
+                                    shared=activity_runtime.shared_with_cloud),
+    "documentSearch": CloudGatedSource(set_up=documents_runtime.enabled, shared=documents_runtime.shared_with_cloud),
+    "calendar": CloudGatedSource(set_up=_has_accounts("calendar_enabled", "calendar_sources"),
+                                 shared=_switch("calendar_share_with_cloud")),
+    "email": CloudGatedSource(set_up=_has_accounts("email_enabled", "email_accounts"),
+                              shared=_switch("email_share_with_cloud")),
 }
 _DESCRIPTION_CHARS = 600
 _REQUEST_ID = {"type": "string", "description": "The request ID from the turn input."}
@@ -113,7 +139,7 @@ def build_tool_snapshot(cfg: Any, *, share_long_term_memory: bool, share_lists_r
         if name in LISTS_REMINDERS_TOOLS and not share_lists_reminders:
             continue
         gate = CLOUD_GATED_TOOLS.get(name)
-        if gate is not None and not gate(cfg):
+        if gate is not None and not gate.shared(cfg):
             continue
         snapshot[name] = {
             "description": (tool.description or "")[:_DESCRIPTION_CHARS],

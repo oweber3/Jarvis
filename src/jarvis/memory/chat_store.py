@@ -239,8 +239,8 @@ class ChatStore:
                        private: bool = False) -> Message:
         """Add a message. The first user message titles a chat that has no title yet.
 
-        ``private`` marks a turn that quotes the activity log or documents: it stays out of the diary and of any
-        context that leaves the PC, also when the chat is opened again.
+        ``private`` marks a turn that quotes a private source (the activity log, documents, a calendar or email):
+        it stays out of the diary and of any context that leaves the PC, also when the chat is opened again.
         """
         if role not in ROLES:
             raise ValueError("unknown role")

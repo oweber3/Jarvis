@@ -45,7 +45,7 @@ from .output.tts import create_tts_engine
 from .tools.registry import (start_mcp_discovery, configure_windows_tools, configure_reply_mode_tool,
                              configure_activity_log_tool, configure_tv_tool, configure_screen_tool,
                              configure_gesture_tool, configure_document_search_tool,
-                             configure_apple_music_tool)
+                             configure_apple_music_tool, configure_calendar_tool, configure_email_tool)
 from .assistant_state import AssistantState, set_state
 from .extensions import load_extensions
 from .gestures import window_snap_service
@@ -1447,6 +1447,8 @@ def main(smoke_test: bool = False) -> None:
     configure_tv_tool(cfg)
     configure_apple_music_tool(cfg)
     configure_gesture_tool(cfg)
+    configure_calendar_tool(cfg)
+    configure_email_tool(cfg)
     # Local extensions (extensions/extensions.spec.md): after the built-in tools, before the voice engine.
     extensions = load_extensions(cfg)
     extensions.install()

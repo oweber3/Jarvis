@@ -122,6 +122,22 @@ def configure_document_search_tool(cfg):
         BUILTIN_TOOLS['documentSearch'] = DocumentSearchTool()
 
 
+def configure_calendar_tool(cfg):
+    """Offer ``calendar`` only when the user has turned the read-only calendar on (agenda/agenda.spec.md)."""
+    BUILTIN_TOOLS.pop('calendar', None)
+    if getattr(cfg, 'calendar_enabled', False) is True:
+        from .builtin.calendar_tool import CalendarTool
+        BUILTIN_TOOLS['calendar'] = CalendarTool()
+
+
+def configure_email_tool(cfg):
+    """Offer ``email`` only when the user has turned the read-only email on (mail/mail.spec.md)."""
+    BUILTIN_TOOLS.pop('email', None)
+    if getattr(cfg, 'email_enabled', False) is True:
+        from .builtin.email_tool import EmailTool
+        BUILTIN_TOOLS['email'] = EmailTool()
+
+
 def configure_gesture_tool(cfg, *, platform=None):
     """Offer ``gestureControl`` (gesture snapping) only on Windows when ``gesture_snap_enabled`` is on.
 

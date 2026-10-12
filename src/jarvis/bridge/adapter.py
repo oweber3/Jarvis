@@ -21,15 +21,14 @@ MODE_LABELS = {"codex": "Codex", "claude": "Claude"}
 def build_dialogue_context(dialogue_memory: Any, settings: BridgeSettings) -> List[Dict[str, str]]:
     """Bounded, redacted recent user and assistant messages shared with the bridge.
 
-    Turns kept out of the diary because they quote the activity log or the user's documents stay local
-    unless ``settings.share_private_turns`` allows them (``memory/activity_log.spec.md``,
-    ``documents/documents.spec.md``)."""
+    Turns kept out of the diary because they quote a private source (the activity log, the user's
+    documents, a calendar or email) stay local unless ``settings.share_private_turns`` allows them
+    (``bridge.spec.md``)."""
     return _shared_dialogue(dialogue_memory, settings)[0]
 
 
 def _shared_dialogue(dialogue_memory: Any, settings: BridgeSettings) -> Tuple[List[Dict[str, str]], bool]:
-    """The dialogue shared with the bridge, and whether any shared message is a private
-    (activity log or documents) turn."""
+    """The dialogue shared with the bridge, and whether any shared message is a private turn."""
     if not settings.share_recent_dialogue or dialogue_memory is None:
         return [], False
     limit = settings.recent_dialogue_messages

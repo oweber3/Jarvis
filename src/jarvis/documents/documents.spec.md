@@ -90,7 +90,7 @@ Low priority and bounded:
 
 - **Cloud boundary.** In Codex and Claude reply modes the tool is withheld from the request's tool snapshot unless `document_search_share_with_cloud` is true (default false; only a real `true` counts) and sharing has not been stopped since start (`runtime.shared_with_cloud`). The gate lives in the shared `bridge.tools.build_tool_snapshot`, so it applies to both modes, and a call for a withheld tool is refused like any name outside the snapshot. When sharing is on, the passages the model asks for (with file names and paths) are sent to the provider like any other tool result; Settings says so. The local model always has the tool while document search is on.
 - **Private turns.** A turn that used `documentSearch` is a private turn, exactly like one that used `activityLog` (`memory/activity_log.spec.md`, Diary and graph): the tool marks it, its messages stay in the hot window for follow-ups but out of the diary and therefore out of the knowledge graph, its reply is not printed to the console log, and follow-ups answered from the carried-over result are private too.
-- **Shared dialogue.** Private turns stay out of the recent dialogue sent to Codex or Claude unless every opt-in source that is turned on allows cloud sharing and at least one does (`bridge.settings.share_private_turns`): with document search on and its sharing off, no private turn is shared, whatever the activity log's switch says.
+- **Shared dialogue.** Private turns stay out of the recent dialogue sent to Codex or Claude unless at least one opt-in private source (the activity log, document search, the calendar, email) allows cloud sharing and every one that is set up does (`bridge.settings.share_private_turns`, `bridge/bridge.spec.md`): with document search on and its sharing off, no private turn is shared, whatever the other sources' switches say.
 - **Logs** record counts and reason codes (files indexed, skipped, removed, passages returned, why a pass stopped), never names, paths, queries or text. The tag is `documents`.
 - Turning document search off stops indexing and removes the tool at the next start. The index stays until deleted from the tray or the CLI.
 
@@ -128,7 +128,7 @@ No language patterns decide anything. Matching is by embedding similarity, so qu
 - `.doc`, `.odt`, `.rtf` and spreadsheets are not indexed.
 - The first pass over a large folder takes as long as embedding every passage on this PC; answers improve as it progresses.
 - Retrieval quality depends on the embedding model.
-- A private turn does not record which source it quoted, and a source that is turned off is not consulted by `share_private_turns`. A web chat reopened from the archive can therefore hold private turns from a source that has since been turned off, and they are shared when the other source's switch is on.
+- A private turn does not record which source it quoted, and document search or the activity log, once turned off, is not consulted by `share_private_turns`. A web chat reopened from the archive can therefore hold private turns from one of them after it has been turned off, and they are shared when every source still set up is shared.
 
 ## Verification contract
 
