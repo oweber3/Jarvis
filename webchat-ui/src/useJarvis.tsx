@@ -30,6 +30,7 @@ export type JarvisActions = {
   newChat: (projectId?: string | null) => Promise<void>
   openChat: (id: string) => Promise<void>
   moveChat: (id: string, projectId: string | null) => Promise<void>
+  pinChat: (id: string, pinned: boolean) => Promise<void>
   createProject: (name: string) => Promise<void>
   renameProject: (id: string, name: string) => Promise<void>
   deleteProject: (id: string) => Promise<void>
@@ -170,6 +171,12 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       async moveChat(id, projectId) {
         await guarded(async () => {
           await api.moveChat(id, projectId)
+          await refreshLibrary()
+        })()
+      },
+      async pinChat(id, pinned) {
+        await guarded(async () => {
+          await api.pinChat(id, pinned)
           await refreshLibrary()
         })()
       },

@@ -58,11 +58,11 @@ Responses carry `Content-Security-Policy: default-src 'self'` (images may also b
 Tables in the Jarvis database file (`db_path`), created with `CREATE TABLE IF NOT EXISTS` by `ChatStore`, with deleted rows overwritten (`secure_delete`):
 
 - `chat_projects(id, name, position, created_at)`
-- `chats(id, project_id NULL, title, created_at, updated_at, last_mode, last_model)`
+- `chats(id, project_id NULL, title, created_at, updated_at, last_mode, last_model, pinned)` where `pinned` is `0` or `1`; a database written before pinning gains the column when `ChatStore` opens it (`ALTER TABLE ... ADD COLUMN`, default `0`), keeping every chat
 - `chat_messages(id, chat_id, role, content, ts, source, private)` where `source` is `typed`, `voice` or `confirmed`, and `private` marks a turn that quotes the activity log
 - `chat_state(key, value)`: holds `active_chat_id`
 
-A chat with no project is unfiled. Deleting a project keeps its chats and unfiles them. Deleting a chat deletes its messages. A chat's title is the first 60 characters of its first message until the owner renames it (no model call, so `docs/llm_contexts.md` is unaffected). A turn marked `private` keeps its flag, so reopening the chat keeps it out of the diary and out of any context sent off the PC. Identifiers are random hex strings.
+Pinning a chat is not activity: it never changes `updated_at`, so the chat keeps its place in the age groups. A chat with no project is unfiled. Deleting a project keeps its chats and unfiles them. Deleting a chat deletes its messages. A chat's title is the first 60 characters of its first message until the owner renames it (no model call, so `docs/llm_contexts.md` is unaffected). A turn marked `private` keeps its flag, so reopening the chat keeps it out of the diary and out of any context sent off the PC. Identifiers are random hex strings.
 
 ## Chats and the shared memory
 
@@ -109,12 +109,13 @@ All JSON. Errors are `{"error": "<code>"}`.
 | `GET /api/state` | | `ready`, `state`, `busy`, `active_chat_id`, `mode`, `model`, `cloud` |
 | `GET /api/models` | | `mode`, `current`, `switchable`, `models`, and `cloud` (the active cloud mode's model, effort, `ready` and `models` with their `efforts`, or `null` in local mode) |
 | `GET /api/suggestions` | | `cards`: at most 6 of `{kind, text, action}` for the start screen (see Start screen); never fails, a backend that cannot say gives the generic examples |
-| `GET /api/library` | | `projects`, `chats` (newest first) and `active_chat_id` |
+| `GET /api/library` | | `projects`, `chats` (newest first, each with `pinned`) and `active_chat_id` |
+| `GET /api/search?q=<text>` | | `{"results": [{"chat_id", "message_id", "snippet", "ts"}]}`: chats with a message containing the text (see **Search**); `400` for a blank query or one over 200 characters |
 | `POST /api/projects` | `{"name"}` | `201` the project; `400` for an empty name |
 | `PATCH /api/projects/<id>` / `DELETE` | `{"name"}` | Rename / delete (chats are unfiled); `404` unknown |
 | `POST /api/chats` | `{"project_id"?}` | `201 {"chat"}` and opens it; `404` unknown project, `409` busy, `503` not ready |
 | `GET /api/chats/<id>` | | `{"chat", "messages"}`; `404` unknown |
-| `PATCH /api/chats/<id>` | `{"title"?, "project_id"?}` | Rename, move (`null` unfiles); `404` unknown chat or project |
+| `PATCH /api/chats/<id>` | `{"title"?, "project_id"?, "pinned"?}` | Rename, move (`null` unfiles), pin or unpin (`pinned` must be a boolean, `400` otherwise); `404` unknown chat or project |
 | `DELETE /api/chats/<id>` | | Delete; `409` when it is the open chat and Jarvis is busy |
 | `POST /api/chats/<id>/open` | | `{"chat"}`; `404` unknown, `409` busy |
 | `POST /api/chat` | `{"text"}` | Send to the open chat (starting one when none is open): `202 {"query_id"}`, `409` busy, `503` not ready, `400` empty or over 4000 characters |
@@ -141,6 +142,23 @@ The page follows the server. An assistant-ui `ExternalStoreRuntime` holds the op
 **Projects.** A sidebar groups the chats under projects (collapsible, remembered in the browser's storage when it allows) with the unfiled chats below. Projects are created, renamed (inline) and deleted (a second tap confirms; chats stay) from the sidebar; deleting a chat from its menu opens a dialog that names the chat and says its messages are removed for good, and "Delete everything" at the foot of the sidebar opens a dialog that says how many chats and projects go, that the diary is kept, and enables its button only once the owner has typed the confirmation word (`POST /api/clear`); Esc, Cancel and the close button leave without deleting; a chat moves with its menu ("Move to ..."); each project has a button for a new chat inside it. A search box filters chats by title.
 
 **Narrow windows.** Below 768 px the chat list starts closed and, when opened, is an opaque overlay on top of the chat with a dimmed backdrop; a click on the backdrop, Esc or choosing a chat closes it. At 768 px and wider it is a column beside the chat and starts open. The header keeps only the microphone icon of "Voice joins this chat" below 640 px, so the title never overlaps the list.
+
+**Chat list order.** Pinned chats come first, in a **Pinned** group at the top of the sidebar, listed there and nowhere else. The other chats, inside each project and among the unfiled ones, sit in **Today**, **Yesterday**, **Previous 7 days**, **Previous 30 days** and **Older** groups by `updated_at`, newest first, by the browser's local calendar day (so a chat from 23:50 is "Yesterday" at 00:10). Empty groups are not shown. Pin and Unpin are in each chat's menu (`PATCH /api/chats/<id>`); the project's count includes its pinned chats.
+
+**Timestamps.** Every stored message shows its time, small and subdued, under the message (the browser's locale and 12 or 24 hour convention), with the full date and time as the hover title. A line with the day (the browser's own word for today and yesterday, otherwise the date, with the year only when it is not the current one) separates messages sent on different days, and breaks a run of voice messages. Local notices carry no time.
+
+**Search.** The sidebar search box matches chat titles immediately (from the library) and message text through `GET /api/search` once typing has paused (250 ms, at least two characters). Results are chats, each with a short snippet around the newest matching message and the match marked; a title match with no message match shows the title alone. Opening a result opens the chat and scrolls to that message, marking it for a moment. Server side, `ChatStore.search_messages` compares the text as a plain, case-insensitive substring in any script (the query is a bound parameter, so `%`, `_` and quotes mean themselves), returns one hit per chat, most recently active chats first, at most 30, and logs only the number of chats found, never the text searched. The search sees only what the store holds, which is already redacted.
+
+**Keyboard shortcuts.** `shortcuts.ts` decides, the page performs; no plain letter is ever taken, so typing is never captured. They work with focus in the message box too.
+
+| Keys | Action |
+|------|--------|
+| Ctrl+K (Cmd+K) | Open the chat list if hidden and focus the search box |
+| Ctrl+N (Cmd+N) | New chat |
+| Esc | Stop a running reply. Not taken while a dialog, menu or the narrow chat list overlay is open, or while focus is in the search box (where it clears the search, then leaves it) or another text field. The message box stops the reply itself and marks the key as handled |
+| ? | Show the list of shortcuts, only when focus is not in a text field. The keyboard button in the header opens it too |
+
+Browsers keep some combinations for themselves: in an ordinary browser tab Ctrl+N opens a new window before the page sees it. In the desktop app's window (`QWebEngineView`) the page receives it.
 
 **Look.** The palettes are generated from `HUD_COLORS` and `HUD_COLORS_LIGHT` in `themes.py` (`generated/theme.css`); the page maps assistant-ui's colour tokens onto them, so the chat and the Qt windows share one source of colour. Owner messages use the orb's cyan-to-blue gradient. Icons are bundled (`lucide-react`), fonts are the system's, and nothing animates under reduced motion.
 
@@ -179,7 +197,7 @@ An empty chat shows a greeting for the time of day (the browser's local hour: mo
 
 - **Rewind** (re-asking a message from the past), which the Qt chat has, until the owner decides the web chat should replace it.
 - Streaming: the engine returns whole replies.
-- File or image attachments, voice input in the page, sharing and search inside message text.
+- File or image attachments, voice input in the page and sharing.
 - Phone access: the phone app keeps its own conversation view. A request from a paired phone joins the open chat like any other turn and shows as a spoken one, because the dialogue memory does not record where a turn came from.
 
 ## Known limits

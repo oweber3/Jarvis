@@ -17,6 +17,7 @@ from typing import Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..debug import debug_log
+from ..memory.chat_store import SEARCH_QUERY_MAX_CHARS
 from ..utils.local_guard import refusal
 from . import identity
 from .hub import chat_dict
@@ -230,6 +231,7 @@ def _make_handler(server: WebChatServer):
             ("GET", "/api/models"): "_models",
             ("GET", "/api/library"): "_library",
             ("GET", "/api/suggestions"): "_suggestions",
+            ("GET", "/api/search"): "_search",
             ("GET", "/api/poll"): "_poll",
             ("GET", "/api/identity"): "_identity",
             ("POST", "/api/projects"): "_create_project",
@@ -294,6 +296,13 @@ def _make_handler(server: WebChatServer):
 
         def _suggestions(self, _body) -> None:
             self._json(200, hub.suggestions())
+        def _search(self, _body) -> None:
+            query = parse_qs(urlsplit(self.path).query).get("q", [""])[0]
+            if not query.strip() or len(query) > SEARCH_QUERY_MAX_CHARS:
+                raise _Refused(400, "bad_query")
+            self._json(200, {"results": [{"chat_id": h.chat_id, "message_id": h.message_id,
+                                          "snippet": h.snippet, "ts": h.ts}
+                                         for h in store.search_messages(query)]})
 
         def _poll(self, _body) -> None:
             query = parse_qs(urlsplit(self.path).query)
@@ -370,10 +379,14 @@ def _make_handler(server: WebChatServer):
                     raise _Refused(400, "bad_name")
             if "project_id" in body and body["project_id"] is not None and not isinstance(body["project_id"], str):
                 raise _Refused(400, "bad_project")
+            if "pinned" in body and not isinstance(body["pinned"], bool):
+                raise _Refused(400, "bad_pinned")
             if "project_id" in body and not store.move_chat(chat_id, body["project_id"]):
                 raise _Refused(404, "unknown_project")
             if "title" in body:
                 store.rename_chat(chat_id, body["title"])
+            if "pinned" in body:
+                store.set_pinned(chat_id, body["pinned"])
             hub.changed_library()
             self._json(200, {"ok": True})
 
