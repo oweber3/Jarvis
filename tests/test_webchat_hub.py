@@ -472,6 +472,15 @@ class TestSnapshotAndPolling:
         message = hub.snapshot(0)["messages"][0]
         assert set(message) == {"id", "role", "text", "ts", "source", "steps", "attachments"}
 
+    def test_a_stored_message_reaches_the_page_with_its_steps_and_attachments(self, hub, store):
+        chat_id = open_id(store)
+        step = {"tool": "systemVolume", "status": "done", "label": "Set the volume", "summary": ""}
+        store.append_message(chat_id, "user", "look", ts=1.0, attachments=[{"kind": "image", "size": 7}])
+        store.append_message(chat_id, "assistant", "ok", ts=2.0, steps=[step])
+        user, assistant = hub.snapshot(0)["messages"][-2:]
+        assert user["attachments"] == [{"kind": "image", "size": 7}] and user["steps"] == []
+        assert assistant["steps"] == [step] and assistant["attachments"] == []
+
     def test_a_wait_returns_when_something_changes(self, hub, backend):
         rev = hub.snapshot(0)["rev"]
         threading.Timer(0.1, lambda: (backend.speak("hi", "hello"), hub.sync())).start()

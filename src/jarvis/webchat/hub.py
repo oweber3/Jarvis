@@ -54,12 +54,6 @@ class ModelResult:
     reason: Optional[str] = None
 
 
-def message_dict(message) -> Dict[str, Any]:
-    """A stored message as the page reads it: never the private flag, attachments as kind and size only."""
-    return {"id": message.id, "role": message.role, "text": message.content, "ts": message.ts,
-            "source": message.source, "attachments": [dict(a) for a in message.attachments]}
-
-
 def chat_dict(chat: Chat) -> Dict[str, Any]:
     return {"id": chat.id, "project_id": chat.project_id, "title": chat.title, "created_at": chat.created_at,
             "updated_at": chat.updated_at, "last_mode": chat.last_mode, "last_model": chat.last_model,
@@ -67,9 +61,10 @@ def chat_dict(chat: Chat) -> Dict[str, Any]:
 
 
 def message_dict(message: Message) -> Dict[str, Any]:
-    """A stored message as the page gets it: never the private flag."""
+    """A stored message as the page gets it: never the private flag, steps as stored, attachments as kind and size only."""
     return {"id": message.id, "role": message.role, "text": message.content, "ts": message.ts,
-            "source": message.source, "steps": [dict(step) for step in message.steps]}
+            "source": message.source, "steps": [dict(step) for step in message.steps],
+            "attachments": [dict(a) for a in message.attachments]}
 
 
 class ChatHub:
