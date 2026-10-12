@@ -131,15 +131,6 @@ class TestControlsUseTheHudAccent:
         assert HUD_COLORS["accent_glow"] in menu.styleSheet()
         menu.close()
 
-    def test_mode_badge_comes_from_the_palette_on_the_face_and_in_chat(self, qapp, ui_windows):
-        from desktop_app.themes import HUD_COLORS
-        for name in ("face", "chat"):
-            widget = ui_windows.build(name)
-            sheet = widget.mode_badge.styleSheet()
-            assert HUD_COLORS["accent_secondary"] in sheet and HUD_COLORS["bg_primary"] in sheet, name
-            assert widget.mode_badge.isVisibleTo(widget), name
-            widget.close()
-
 
 @pytest.mark.unit
 class TestSplashReusesTheOrb:

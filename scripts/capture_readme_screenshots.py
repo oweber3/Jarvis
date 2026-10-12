@@ -51,8 +51,6 @@ def main():
     with ui_windows.isolated():
         for name, window in SCREENSHOTS.items():
             widget = ui_windows.build(window)
-            if hasattr(widget, 'set_reply_mode'):
-                widget.set_reply_mode('local')  # the README shows the offline baseline, without a cloud badge
             ui_windows.render(widget, OUTPUT / name)
             widget.close()
             print(f'📸 Captured {name}')

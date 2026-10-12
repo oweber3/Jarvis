@@ -17,7 +17,6 @@ from typing import Optional
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QApplication
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
 
-from desktop_app.mode_badge import ModeBadge
 from desktop_app.themes import FACE_STYLESHEET
 from desktop_app.orb_widget import OrbWidget, OrbState
 
@@ -138,23 +137,7 @@ class FaceWindow(QWidget):
         self.orb = OrbWidget()
         layout.addWidget(self.orb)
 
-        # Floats over the orb's top edge; visible only in a cloud reply mode.
-        self.mode_badge = ModeBadge(self)
-
         self._position_on_right()
-
-    def set_reply_mode(self, mode: str) -> None:
-        """Show the active reply mode (badge hidden in local mode)."""
-        self.mode_badge.set_mode(mode)
-        self._place_badge()
-
-    def _place_badge(self) -> None:
-        self.mode_badge.move((self.width() - self.mode_badge.width()) // 2, 12)
-        self.mode_badge.raise_()
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._place_badge()
 
     def _position_on_right(self):
         """Position the window on the right side of the screen, vertically centered."""

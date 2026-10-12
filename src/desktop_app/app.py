@@ -2114,12 +2114,9 @@ class JarvisSystemTray:
             debug_log(f"tray reply mode request failed: {exc}", "desktop")
 
     def _apply_reply_mode_state(self, mode: str, enabled: list) -> None:
-        """Show ``mode`` in the tray submenu and on the orb and chat badges (GUI thread)."""
+        """Show ``mode`` in the tray submenu and (GUI thread)."""
         self._reply_mode = mode
         self.reply_mode_menu.set_state(mode, list(enabled))
-        self.face_window.set_reply_mode(mode)
-        if self.chat_window is not None:
-            self.chat_window.set_reply_mode(mode)
 
     def _on_reply_mode_ipc_line(self, line: str) -> None:
         from desktop_app.reply_mode_menu import parse_state_line
@@ -2631,7 +2628,6 @@ class JarvisSystemTray:
                 cancel_fn=getattr(self, "_chat_cancel_fn", None),
                 control_fn=getattr(self, "_chat_control_fn", None),
             )
-            self.chat_window.set_reply_mode(self._reply_mode)
         else:
             self.chat_window._submit_fn = self._chat_submit_fn
             self.chat_window._cancel_fn = getattr(self, "_chat_cancel_fn", None)
@@ -3059,7 +3055,6 @@ class JarvisSystemTray:
                 cancel_fn=getattr(self, "_chat_cancel_fn", None),
                 control_fn=getattr(self, "_chat_control_fn", None),
             )
-            self.chat_window.set_reply_mode(self._reply_mode)
         self.chat_window.process_ipc_line(line)
 
     def stop_daemon(

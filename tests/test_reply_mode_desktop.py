@@ -48,41 +48,6 @@ class TestTrayMenu:
         assert [m for m, a in menu.actions_by_mode().items() if a.isChecked()] == ["local"]
 
 
-class TestBadge:
-    def test_hidden_in_local_mode_and_named_in_a_cloud_mode(self, qapp):
-        from desktop_app.mode_badge import ModeBadge
-
-        badge = ModeBadge()
-        badge.set_mode("local")
-        assert badge.isHidden()
-        badge.set_mode("claude")
-        assert not badge.isHidden() and "Claude" in badge.text()
-        badge.set_mode("codex")
-        assert "ChatGPT" in badge.text()
-
-    def test_colours_come_from_the_orb_palette(self, qapp):
-        from desktop_app.mode_badge import ModeBadge
-        from desktop_app.themes import HUD_COLORS
-
-        style = ModeBadge().styleSheet()
-        assert HUD_COLORS["accent_secondary"] in style and HUD_COLORS["bg_primary"] in style
-
-    def test_face_and_chat_windows_show_the_mode(self, qapp, monkeypatch, tmp_path):
-        from desktop_app.chat_window import ChatWindow
-        from desktop_app.face_widget import FaceWindow
-
-        monkeypatch.setattr("desktop_app.chat_window.get_hot_window_messages", lambda: [])
-        face, chat = FaceWindow(), ChatWindow(submit_fn=lambda text: None)
-        chat.resize(480, 720)
-        for window in (face, chat):
-            window.set_reply_mode("claude")
-            assert not window.mode_badge.isHidden() and "Claude" in window.mode_badge.text()
-            window.grab().save(str(tmp_path / f"{type(window).__name__}.png"))
-            window.set_reply_mode("local")
-            assert window.mode_badge.isHidden()
-        assert (tmp_path / "FaceWindow.png").stat().st_size > 0
-
-
 class TestIpcLines:
     def test_state_lines_are_parsed(self):
         from desktop_app.reply_mode_menu import parse_state_line

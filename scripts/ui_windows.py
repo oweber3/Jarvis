@@ -101,7 +101,6 @@ def _show_chat():
             patch.object(chat_window, "datetime", _DemoClock):
         window = chat_window.ChatWindow(submit_fn=lambda text: None)
         window.resize(480, 720)
-        window.set_reply_mode("claude")
         window._append_user("Help me make room for a slower morning.")
         window._append_assistant(
             "Start with one small thing.\n\nA coffee without a screen, a short walk, "
@@ -117,7 +116,6 @@ def _face():
     window = FaceWindow()
     window.resize(380, 440)
     window.orb.set_state_override(OrbState.LISTENING)
-    window.set_reply_mode("claude")
     for _ in range(40):
         window.orb.tick(1 / 30)
     return window

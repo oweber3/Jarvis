@@ -39,7 +39,6 @@ from PyQt6.QtWidgets import (
 
 from jarvis.debug import debug_log
 from desktop_app.themes import HUD_COLORS, CHAT_THEME_STYLESHEET, line_icon, set_state, themed_stylesheet
-from desktop_app.mode_badge import ModeBadge
 
 
 class PhoneShell(QWidget):
@@ -333,9 +332,6 @@ class ChatWindow(QMainWindow):
         self._header_status = QLabel("")
         self._header_status.setObjectName('chatPresence')
         name_col.addWidget(self._header_status)
-        # Visible only in a cloud reply mode, so typed requests show where they go.
-        self.mode_badge = ModeBadge()
-        name_col.addWidget(self.mode_badge, alignment=Qt.AlignmentFlag.AlignLeft)
         header.addLayout(name_col)
         header.addStretch(1)
         companion = QLabel('YOUR\nCOMPANION')
@@ -577,10 +573,6 @@ class ChatWindow(QMainWindow):
     def set_daemon_available(self, available: bool) -> None:
         """Enable or disable chat submission based on daemon availability."""
         self.set_daemon_status("running" if available else "stopped")
-
-    def set_reply_mode(self, mode: str) -> None:
-        """Show the active reply mode (badge hidden in local mode)."""
-        self.mode_badge.set_mode(mode)
 
     def set_daemon_status(self, status: str) -> None:
         """Reflect daemon lifecycle state in chat controls and status text."""

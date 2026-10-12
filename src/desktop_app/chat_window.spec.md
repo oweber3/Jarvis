@@ -209,10 +209,8 @@ A `QMainWindow` styled as a futuristic phone with a single contact:
 - A contact header (avatar, "Jarvis", and a presence line such as "Online" or
   "Typing…" while a query is in flight). The presence line is cyan when
   online, the orb's thinking colour while typing, and muted when offline.
-  Under it, a small mode badge (`ModeBadge`, styled by the theme) names
-  the active cloud reply mode after a cloud line icon ("Claude", "ChatGPT (Codex)") so typed
-  requests show where they go; it is hidden in local mode. The tray calls
-  `set_reply_mode` whenever the daemon reports a mode.
+  The header always says "Jarvis", whatever the reply mode; the active reply
+  mode is shown in Settings and the tray's reply mode submenu only.
 - A read-only transcript area: a scrollable stack of speech bubbles (HUD
   colours from `themes.py`). The user's messages are right-aligned bubbles
   filled with the orb's cyan-to-blue gradient, Jarvis's replies are
