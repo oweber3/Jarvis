@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 from ...debug import debug_log
 from ..base import Tool, ToolContext
 from ..types import ToolExecutionResult
-from .url_guard import NonPublicUrlError, fetch_public
+from .url_guard import MAX_FETCH_BYTES, NonPublicUrlError, fetch_public, read_capped
 
 
 class FetchWebPageTool(Tool):
@@ -55,11 +55,17 @@ class FetchWebPageTool(Tool):
                 'Upgrade-Insecure-Requests': '1',
             }
             # ``with`` releases the connection back to the pool deterministically
-            # even if BeautifulSoup or the link extraction raises midway.
-            with fetch_public(url, headers=headers, timeout=15) as response:
+            # even if BeautifulSoup or the link extraction raises midway. The
+            # body is streamed and cut off at MAX_FETCH_BYTES so a hostile
+            # server cannot exhaust memory.
+            with fetch_public(url, headers=headers, timeout=15, stream=True) as response:
                 response.raise_for_status()
-                response_content = response.content
-                response_text = response.text
+                response_content = read_capped(response, MAX_FETCH_BYTES)
+                encoding = response.encoding if isinstance(response.encoding, str) else None
+            try:
+                response_text = response_content.decode(encoding or "utf-8", errors="replace")
+            except LookupError:
+                response_text = response_content.decode("utf-8", errors="replace")
             try:
                 from bs4 import BeautifulSoup
                 soup = BeautifulSoup(response_content, 'html.parser')

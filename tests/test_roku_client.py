@@ -85,6 +85,34 @@ def test_malformed_or_hostile_xml_is_a_clean_failure(roku, monkeypatch):
         client().apps()
 
 
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-16", "utf-16-le", "utf-16-be"])
+@pytest.mark.parametrize("declaration", [
+    '<!DOCTYPE d [<!ENTITY a "Injected by the device">]>',
+    '<!doctype d [<!ENTITY a "Injected by the device">]>',
+    '<!DOCTYPE d SYSTEM "http://192.168.1.9/x.dtd">',
+])
+def test_doctype_and_entity_declarations_are_refused_in_any_encoding(roku, monkeypatch, encoding, declaration):
+    from jarvis.devices import roku as module
+    text = (f'<?xml version="1.0" encoding="{encoding.upper()}"?>{declaration}'
+            '<device-info><user-device-name>&a;</user-device-name></device-info>')
+    body = text.encode(encoding)
+    if encoding == "utf-16-le":
+        body = b"\xff\xfe" + body
+    elif encoding == "utf-16-be":
+        body = b"\xfe\xff" + body
+    monkeypatch.setattr(module.RokuClient, "_get", lambda self, path: body)
+    with pytest.raises(module.RokuRequestFailed):
+        client().device_info()
+
+
+def test_a_utf16_response_without_declarations_is_still_read(roku, monkeypatch):
+    from jarvis.devices import roku as module
+    body = ('<?xml version="1.0" encoding="UTF-16"?>'
+            '<device-info><user-device-name>Bedroom TV</user-device-name></device-info>').encode("utf-16")
+    monkeypatch.setattr(module.RokuClient, "_get", lambda self, path: body)
+    assert client().device_info().name == "Bedroom TV"
+
+
 def test_oversized_responses_are_cut_off(roku, monkeypatch):
     from jarvis.devices import roku as module
     monkeypatch.setattr(module, "MAX_BODY_BYTES", 50)

@@ -11,12 +11,14 @@ from src.jarvis.tools.types import ToolExecutionResult
 
 def _make_response_mock(**attrs) -> Mock:
     """Build a Mock that doubles as both the requests response and a context
-    manager (the production code uses ``with requests.get(...) as resp`` so
+    manager (the production code uses ``with fetch_public(...) as resp`` so
     the connection is released deterministically).
     """
     attrs.setdefault("is_redirect", False)
     attrs.setdefault("is_permanent_redirect", False)
+    attrs.setdefault("encoding", None)
     resp = Mock(**attrs)
+    resp.iter_content = Mock(return_value=[attrs.get("content", b"")])
     resp.__enter__ = Mock(return_value=resp)
     resp.__exit__ = Mock(return_value=False)
     return resp
@@ -62,7 +64,7 @@ class TestFetchWebPageTool:
         assert result.success is False
         assert "url" in result.reply_text.lower()
 
-    @patch('requests.get')
+    @patch('requests.Session.get')
     def test_run_success(self, mock_get):
         """Test successful web page fetch."""
         mock_response = _make_response_mock(
@@ -82,7 +84,7 @@ class TestFetchWebPageTool:
         assert "example.com" in result.reply_text
         self.context.user_print.assert_called()
 
-    @patch('requests.get')
+    @patch('requests.Session.get')
     def test_run_success_without_beautifulsoup(self, mock_get):
         """Test successful web page fetch without BeautifulSoup."""
         mock_response = _make_response_mock(
@@ -102,7 +104,7 @@ class TestFetchWebPageTool:
         assert result.success is True
         assert "Raw Content" in result.reply_text
 
-    @patch('requests.get')
+    @patch('requests.Session.get')
     def test_run_http_error(self, mock_get):
         """Test fetch web page with HTTP error."""
         mock_response = _make_response_mock(status_code=404)
@@ -116,7 +118,7 @@ class TestFetchWebPageTool:
         assert result.success is False
         assert "Failed to fetch page" in result.reply_text
 
-    @patch('requests.get')
+    @patch('requests.Session.get')
     def test_run_request_error(self, mock_get):
         """Test fetch web page with network error."""
         mock_get.side_effect = requests.exceptions.RequestException("Network error")
@@ -128,7 +130,8 @@ class TestFetchWebPageTool:
         assert result.success is False
         assert "Failed to fetch page" in result.reply_text
 
-    def test_run_invalid_url(self):
+    @patch('requests.Session.get', side_effect=requests.exceptions.ConnectionError("unreachable"))
+    def test_run_invalid_url(self, _mock_get):
         """Test fetch web page with invalid URL."""
         args = {"url": "not-a-url"}
         result = self.tool.run(args, self.context)
@@ -136,7 +139,7 @@ class TestFetchWebPageTool:
         assert result.success is False
         assert "failed" in result.reply_text.lower() or "error" in result.reply_text.lower()
 
-    @patch('requests.get')
+    @patch('requests.Session.get')
     def test_run_with_links_extraction(self, mock_get):
         """Test fetch web page including link extraction when include_links=True."""
         html = (
@@ -187,28 +190,28 @@ class TestFetchWebPageRefusesNonPublicAddresses:
         "http://0.0.0.0/",
     ])
     def test_non_public_literal_addresses_are_refused_without_a_request(self, url):
-        with patch("requests.get") as mock_get:
+        with patch("requests.Session.get") as mock_get:
             result = self.tool.run({"url": url}, self.context)
         assert result.success is False
         mock_get.assert_not_called()
 
     def test_hostname_resolving_to_loopback_is_refused(self):
         loopback = [(2, 1, 6, "", ("127.0.0.1", 0))]
-        with patch("socket.getaddrinfo", return_value=loopback), patch("requests.get") as mock_get:
+        with patch("socket.getaddrinfo", return_value=loopback), patch("requests.Session.get") as mock_get:
             result = self.tool.run({"url": "https://rebind.example"}, self.context)
         assert result.success is False
         mock_get.assert_not_called()
 
     def test_hostname_with_any_private_address_is_refused(self):
         mixed = [(2, 1, 6, "", ("1.1.1.1", 0)), (2, 1, 6, "", ("192.168.0.9", 0))]
-        with patch("socket.getaddrinfo", return_value=mixed), patch("requests.get") as mock_get:
+        with patch("socket.getaddrinfo", return_value=mixed), patch("requests.Session.get") as mock_get:
             result = self.tool.run({"url": "https://mixed.example"}, self.context)
         assert result.success is False
         mock_get.assert_not_called()
 
     def test_localhost_name_is_refused(self):
         loopback = [(2, 1, 6, "", ("127.0.0.1", 0)), (23, 1, 6, "", ("::1", 0, 0, 0))]
-        with patch("socket.getaddrinfo", return_value=loopback), patch("requests.get") as mock_get:
+        with patch("socket.getaddrinfo", return_value=loopback), patch("requests.Session.get") as mock_get:
             result = self.tool.run({"url": "http://localhost:5050/api/memories"}, self.context)
         assert result.success is False
         mock_get.assert_not_called()
@@ -219,7 +222,7 @@ class TestFetchWebPageRefusesNonPublicAddresses:
             headers={"Location": "http://127.0.0.1:5050/api/memories"},
         )
         redirect.close = Mock()
-        with _public_dns(), patch("requests.get", return_value=redirect) as mock_get:
+        with _public_dns(), patch("requests.Session.get", return_value=redirect) as mock_get:
             result = self.tool.run({"url": "https://example.com/go"}, self.context)
         assert result.success is False
         assert mock_get.call_count == 1  # the loopback hop was never requested
@@ -236,7 +239,7 @@ class TestFetchWebPageRefusesNonPublicAddresses:
             status_code=200, is_redirect=False, is_permanent_redirect=False,
             text=html, content=html.encode(), raise_for_status=Mock(),
         )
-        with _public_dns() as dns, patch("requests.get", side_effect=[redirect, final]) as mock_get:
+        with _public_dns() as dns, patch("requests.Session.get", side_effect=[redirect, final]) as mock_get:
             result = self.tool.run({"url": "https://example.com/start"}, self.context)
         assert result.success is True
         assert "Landed here" in result.reply_text
@@ -249,7 +252,7 @@ class TestFetchWebPageRefusesNonPublicAddresses:
             headers={"Location": "https://example.com/again"},
         )
         redirect.close = Mock()
-        with _public_dns(), patch("requests.get", return_value=redirect) as mock_get:
+        with _public_dns(), patch("requests.Session.get", return_value=redirect) as mock_get:
             result = self.tool.run({"url": "https://example.com/loop"}, self.context)
         assert result.success is False
         assert mock_get.call_count <= 10
