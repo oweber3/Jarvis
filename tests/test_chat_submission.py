@@ -178,6 +178,25 @@ class TestSubmitTextQueryContract:
         assert events[start_idx][1] == "what is 2+2"
         assert events[complete_idx][1] == "the reply"
 
+    def test_a_message_sent_as_soon_as_the_reply_arrives_is_accepted(self, monkeypatch):
+        """The one-query lock is free by the time ``on_complete`` runs, so a page that sends its next
+        message from the reply callback is never told Jarvis is busy."""
+        _install_dialogue_memory(cfg=object(), db=object())
+        monkeypatch.setattr("jarvis.reply.engine.run_reply_engine", lambda *a, **k: "the reply")
+        events = []
+
+        def send_next(reply):
+            events.append(("complete", reply))
+            if len(events) == 1:
+                daemon.submit_text_query("the next one", on_busy=lambda: events.append(("busy", None)),
+                                         on_complete=lambda r: events.append(("complete", r)))
+
+        daemon.submit_text_query("first", on_complete=send_next)
+        deadline = time.time() + 5
+        while time.time() < deadline and len(events) < 2:
+            time.sleep(0.01)
+        assert events == [("complete", "the reply"), ("complete", "the reply")]
+
     def test_on_complete_none_when_engine_returns_none(self, monkeypatch):
         """An empty/stop reply surfaces as on_complete(None), not silence."""
         _install_dialogue_memory(cfg=object(), db=object())

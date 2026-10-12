@@ -58,6 +58,8 @@ dropping the message. The voice path acquires the same lock blocking (via
 `jarvis.daemon.query_lock`) so a voice query waits for an in-flight text
 query to finish rather than being dropped. Voice and text therefore cannot
 run `run_reply_engine` concurrently against the shared dialogue memory.
+The lock is released before `complete` is delivered, so a caller may send
+its next query from that callback without being told Jarvis is busy.
 
 ### Cancellation
 

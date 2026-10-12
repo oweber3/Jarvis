@@ -98,6 +98,8 @@ class ChatHub:
     def stop(self) -> None:
         self._stop.set()
         self._wake.set()
+        with self._sync_lock:
+            self._let_go_of_memory()
         if self._unsubscribe is not None:
             try:
                 self._unsubscribe()
@@ -145,16 +147,28 @@ class ChatHub:
                     self._bump_locked()
 
     def _attach(self, memory) -> None:
-        """Start following a (new) dialogue memory. An empty one gets the open chat's recent turns back."""
+        """Start following a (new) dialogue memory. An empty one gets the open chat's recent turns back.
+
+        The open chat's latest turns stay in the reply context however old they are, so the model
+        keeps the thread the page shows while the owner reads."""
+        self._let_go_of_memory()
         self._memory, self._cursor = memory, 0.0
         if memory is None:
             return
+        memory.keep_last_turns(self._restore_turns)
+        debug_log(f"webchat: keeping the open chat's last {self._restore_turns} turns in context", "webchat")
         chat_id = self._ensure_open_chat()
         if chat_id is not None and not memory.all_messages():
             turns = self._restore_payload(chat_id)
-            if turns and self._backend.switch_conversation(turns):
-                self._cursor = memory.last_timestamp()
+            cursor = self._backend.switch_conversation(turns) if turns else None
+            if cursor is not None:
+                self._cursor = cursor
                 debug_log("webchat: restored the open chat into the conversation", "webchat")
+
+    def _let_go_of_memory(self) -> None:
+        """Hand the memory back to the dialogue window alone (the web chat stops or the memory changes)."""
+        if self._memory is not None:
+            self._memory.keep_last_turns(0)
 
     def _ensure_open_chat(self) -> Optional[str]:
         chat_id = self._store.get_active_chat_id()
@@ -213,9 +227,10 @@ class ChatHub:
                 return OpResult("unavailable")
             if self._typed_in_flight():
                 return OpResult("busy")
-            if not self._backend.switch_conversation(self._restore_payload(chat_id)):
+            cursor = self._backend.switch_conversation(self._restore_payload(chat_id))
+            if cursor is None:
                 return OpResult("busy")
-            self._opened(chat_id)
+            self._opened(chat_id, cursor)
             return OpResult("ok", self._store.get_chat(chat_id))
 
     def new_chat(self, project_id: Optional[str] = None) -> OpResult:
@@ -226,10 +241,11 @@ class ChatHub:
                 return OpResult("unknown")
             if not self._backend.is_ready():
                 return OpResult("unavailable")
-            if self._typed_in_flight() or not self._backend.switch_conversation([]):
+            cursor = None if self._typed_in_flight() else self._backend.switch_conversation([])
+            if cursor is None:
                 return OpResult("busy")
             chat = self._store.create_chat(project_id=project_id)
-            self._opened(chat.id)
+            self._opened(chat.id, cursor)
             return OpResult("ok", chat)
 
     def delete_chat(self, chat_id: str) -> str:
@@ -242,11 +258,12 @@ class ChatHub:
                 # what Jarvis remembers; with no other chat the conversation starts empty.
                 remaining = [c for c in self._store.list_chats(ANY_PROJECT) if c.id != chat_id]
                 target = remaining[0].id if remaining else None
-                if self._typed_in_flight() or not self._backend.switch_conversation(
-                        self._restore_payload(target) if target else []):
+                cursor = None if self._typed_in_flight() else self._backend.switch_conversation(
+                    self._restore_payload(target) if target else [])
+                if cursor is None:
                     return "busy"
                 self._store.delete_chat(chat_id)
-                self._opened(target)
+                self._opened(target, cursor)
             else:
                 self._store.delete_chat(chat_id)
                 self._bump_library()
@@ -256,15 +273,18 @@ class ChatHub:
         """Remove every project, chat and message, and empty the conversation."""
         with self._sync_lock:
             self.sync()
-            if self._typed_in_flight() or not self._backend.switch_conversation([]):
+            cursor = None if self._typed_in_flight() else self._backend.switch_conversation([])
+            if cursor is None:
                 return "busy"
             self._store.delete_all()
-            self._opened(None)
+            self._opened(None, cursor)
             return "ok"
 
-    def _opened(self, chat_id: Optional[str]) -> None:
+    def _opened(self, chat_id: Optional[str], cursor: float) -> None:
+        """Record ``chat_id`` as open and mirror from ``cursor``, the point the swap returned, so a turn
+        that lands right after the swap still reaches the new chat."""
         self._store.set_active_chat_id(chat_id)
-        self._cursor = self._memory.last_timestamp() if self._memory is not None else 0.0
+        self._cursor = cursor
         with self._cond:
             self._notices.clear()
             self._library_rev += 1

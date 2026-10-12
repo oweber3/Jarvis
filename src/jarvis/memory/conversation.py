@@ -784,6 +784,8 @@ class DialogueMemory:
         # Track the timestamp up to which messages have been saved to diary
         # Messages with timestamp <= this value have been processed
         self._last_saved_timestamp: float = 0.0
+        # How many of the latest turns stay in context however old they are (``keep_last_turns``).
+        self._keep_last: int = 0
         self._lock = threading.RLock()  # Reentrant lock for thread safety
         # Track the last profile used for follow-up detection
         self._last_profile: Optional[str] = None
@@ -821,6 +823,29 @@ class DialogueMemory:
                     self._private_texts.popitem(last=False)
             self._last_activity_time = timestamp
 
+    def keep_last_turns(self, count: int) -> None:
+        """Keep the latest ``count`` turns in the reply context however old they are; 0 lets them go.
+
+        The web chat sets this while it runs, so the open chat's thread (restored when it was opened or
+        when Jarvis started) stays with the model while the owner reads. Turns inside the dialogue
+        window are always in context; this only adds the latest ``count`` older ones, and keeps them in
+        memory after a diary pass. It outlives ``set_messages``.
+
+        Only the text thread is kept. Turns kept out of the diary still follow the window, so one
+        private reply does not make every later one private, and kept turns are not recent activity
+        (``has_recent_activity``), so tool carryover and caches still reset after an idle window.
+        """
+        with self._lock:
+            self._keep_last = max(0, int(count))
+
+    def _context_turns(self) -> List[Tuple[float, str, str]]:
+        """Stored turns the reply context sees: those inside the dialogue window and the latest
+        ``keep_last_turns`` that are not private. Caller holds ``_lock``."""
+        cutoff = time.time() - self.RECENT_WINDOW_SEC
+        kept_from = len(self._messages) - self._keep_last
+        return [msg for i, msg in enumerate(self._messages)
+                if msg[0] >= cutoff or (i >= kept_from and msg[0] not in self._diary_excluded)]
+
     def get_recent_context(self) -> List[str]:
         """Get recent messages formatted as context strings."""
         messages = self.get_recent_messages()
@@ -828,7 +853,8 @@ class DialogueMemory:
 
     def get_recent_messages(self, include_private: bool = True, flag_private: bool = False) -> List[dict]:
         """
-        Get recent messages (last 5 minutes) formatted for LLM API.
+        Get the turns in context (the dialogue window and any kept turns, see ``keep_last_turns``)
+        formatted for LLM API.
 
         ``include_private=False`` leaves out messages added with ``diary=False`` (they quote
         the activity log), for contexts that leave the PC. ``flag_private=True`` adds a
@@ -841,10 +867,8 @@ class DialogueMemory:
             if not self._messages:
                 return []
 
-            # Filter to last 5 minutes
-            cutoff = time.time() - self.RECENT_WINDOW_SEC
-            recent_messages = [msg for msg in self._messages if msg[0] >= cutoff
-                               and (include_private or msg[0] not in self._diary_excluded)]
+            recent_messages = [msg for msg in self._context_turns()
+                               if include_private or msg[0] not in self._diary_excluded]
 
             return [{"role": role, "content": content,
                      **({"private": ts in self._diary_excluded} if flag_private else {})}
@@ -883,7 +907,7 @@ class DialogueMemory:
             return [StoredTurn(stamp, role, content, stamp in self._diary_excluded)
                     for stamp, role, content in self._messages if stamp > ts]
 
-    def set_messages(self, messages: List[dict], *, saved: bool = False) -> None:
+    def set_messages(self, messages: List[dict], *, saved: bool = False) -> float:
         """Replace the stored conversation with ``messages`` (session restore).
 
         ``messages`` must be ``{"role", "content"}`` dicts as produced by
@@ -892,6 +916,8 @@ class DialogueMemory:
         with a monotonic epsilon so the restored turns count as recent
         and keep their order. ``saved=True`` marks the restored turns as
         already in the diary, for a conversation that was summarised before.
+
+        Returns the cursor for ``messages_after``: every turn stored after the swap is newer than it.
         """
         with self._lock:
             now = time.time()
@@ -911,6 +937,7 @@ class DialogueMemory:
             self._hot_cache = OrderedDict()
             if saved:
                 self._last_saved_timestamp = max(self._last_saved_timestamp, self._last_ts)
+            return self._last_ts
 
     def last_timestamp(self) -> float:
         """Timestamp of the newest turn ever stored (0.0 for none): the cursor ``messages_after`` mirrors from."""
@@ -980,8 +1007,7 @@ class DialogueMemory:
 
         A reply built from that context is as private as the turn that first read the data."""
         with self._lock:
-            cutoff = time.time() - self.RECENT_WINDOW_SEC
-            if any(ts >= cutoff and ts in self._diary_excluded for ts, _role, _content in self._messages):
+            if any(ts in self._diary_excluded for ts, _role, _content in self._context_turns()):
                 return True
             return any(ts in self._private_tool_turns for ts, _msgs in self._tool_turns[-max_tool_turns:])
 
@@ -1126,13 +1152,11 @@ class DialogueMemory:
         with self._lock:
             if not self._messages and not self._tool_turns:
                 return []
-            cutoff = time.time() - self.RECENT_WINDOW_SEC
             # Build timeline of (ts, payload) where payload is either a single
             # text message dict or a list of tool messages.
             timeline: list = []
-            for ts, role, content in self._messages:
-                if ts >= cutoff:
-                    timeline.append((ts, "msg", {"role": role, "content": content}))
+            for ts, role, content in self._context_turns():
+                timeline.append((ts, "msg", {"role": role, "content": content}))
             # Keep only the last N tool turns. Tool carryover lives for
             # the conversation, not for RECENT_WINDOW_SEC: an active session
             # past the window still benefits from the prior tool result.
@@ -1165,7 +1189,14 @@ class DialogueMemory:
             return flat
 
     def has_recent_messages(self) -> bool:
-        """Check if there are any messages in the last 5 minutes."""
+        """Whether any turn is in context (the dialogue window or a kept turn)."""
+        with self._lock:
+            return bool(self._context_turns())
+
+    def has_recent_activity(self) -> bool:
+        """Whether a turn landed inside the dialogue window: the conversation is under way. Turns kept
+        by ``keep_last_turns`` alone do not count, so a request after an idle window starts a new
+        conversation (fresh caches, no tool carryover) even while the thread stays in context."""
         with self._lock:
             cutoff = time.time() - self.RECENT_WINDOW_SEC
             return any(ts >= cutoff for ts, _, _ in self._messages)
@@ -1179,8 +1210,7 @@ class DialogueMemory:
         """Get the last profile used, if within the recent window."""
         with self._lock:
             # Only return profile if we have recent messages
-            cutoff = time.time() - self.RECENT_WINDOW_SEC
-            if any(ts >= cutoff for ts, _, _ in self._messages):
+            if self._context_turns():
                 return self._last_profile
             return None
 
@@ -1285,12 +1315,13 @@ class DialogueMemory:
         """
         current_time = time.time()
         # Keep messages that are either:
-        # 1. Recent (within RECENT_WINDOW_SEC) - needed for LLM context
+        # 1. In context (within RECENT_WINDOW_SEC, or one of the kept latest turns) - needed for LLM context
         # 2. Not yet saved (timestamp > _last_saved_timestamp) - needed for diary
         cutoff = current_time - self.RECENT_WINDOW_SEC
+        kept_from = len(self._messages) - self._keep_last
         self._messages = [
-            (ts, role, content) for ts, role, content in self._messages
-            if ts >= cutoff or (ts > self._last_saved_timestamp and ts not in self._diary_excluded)
+            (ts, role, content) for i, (ts, role, content) in enumerate(self._messages)
+            if ts >= cutoff or (ts not in self._diary_excluded and (i >= kept_from or ts > self._last_saved_timestamp))
         ]
         self._diary_excluded &= {ts for ts, _, _ in self._messages}
 

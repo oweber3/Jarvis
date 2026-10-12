@@ -32,6 +32,8 @@ class FakeWebChatBackend:
         self.refuse_mode: Optional[str] = None
         self.refuse_model: Optional[str] = None
         self.switch_calls: List[list] = []
+        # Runs right after a swap, before the hub looks at the memory again (a turn landing in that instant).
+        self.after_switch: Optional[Callable[[], None]] = None
         self._subscribers: List[Callable[[str], None]] = []
         self._held: Optional[tuple] = None
 
@@ -117,12 +119,14 @@ class FakeWebChatBackend:
         self.local_model = {**self.local_model, "current": model}
         return True, None
 
-    def switch_conversation(self, messages: list) -> bool:
+    def switch_conversation(self, messages: list) -> Optional[float]:
         self.switch_calls.append(messages)
         if self.busy or self.memory is None:
-            return False
-        self.memory.set_messages(messages, saved=True)
-        return True
+            return None
+        cursor = self.memory.set_messages(messages, saved=True)
+        if self.after_switch is not None:
+            self.after_switch()
+        return cursor
 
     # -- helpers ---------------------------------------------------------------
 
