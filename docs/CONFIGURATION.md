@@ -647,6 +647,8 @@ A routine is a named chain of things Jarvis can already do, run in one request: 
 - **Create one by doing it once.** Do the steps, then say "save that as movie mode". Jarvis reads every step back and saves nothing until you say yes. To save only some of them, ask what it did recently (`routineControl recent` lists them by number) and name the ones you want, in the order to run them.
 - **Run it** with "start movie mode", "run my movie mode routine" or, after the wake word, just "Jarvis, movie mode". These are recognised without a model when every step is a routine action. A routine with a step that needs confirmation (deleting a file, for example) asks once, naming that step, before anything runs; approving it allows that step for that one run only.
 - **Change it** with "delete my movie mode routine" or "rename movie mode to cinema". Every change asks first, and a change is refused when the same request has just read a web page, a file, the screen or another app (ask again on its own).
+- **Schedule it** with "run my morning briefing every weekday at 7". Jarvis reads the time and days back and changes nothing until you say yes; "stop running the morning briefing on its own" turns it off. Routines never run on their own unless you schedule them. A scheduled routine runs only if every step is a routine action: one with a step that needs confirmation is not run, and Jarvis tells you so instead of approving anything for you. If the computer was asleep or Jarvis was off at the time, the run is skipped rather than done late.
+- **Make a briefing.** Ask for the weather, the time and the news, then say "save that as my morning briefing and read out the results" (the `report` setting below). A briefing reads out what its steps found instead of just saying they were done; on its schedule the local model puts the results into a few spoken sentences. It uses whatever tools its steps name.
 - Steps run in order, each through the same safety checks as when you ask for it alone. A failed step is reported and the next one still runs. One routine runs at a time, for at most two minutes, and a stop (spoken, the chat Stop button or a click on the orb) ends it between steps.
 - In Codex or Claude mode a routine may use only the tools that mode offers, so a step such as switching the reply mode stops the routine before anything runs. Results sent to the model carry step labels and outcomes, never step arguments.
 - Routines live in `config.json` under `routines` and can also be edited there. Each step names a tool and its arguments (at most 20 steps); `label` is optional and is what results and read-backs show. A routine that is not well formed is ignored and left untouched in the file. Changes made through Jarvis take effect at once; restart Jarvis after editing the file by hand.
@@ -661,12 +663,33 @@ A routine is a named chain of things Jarvis can already do, run in one request: 
         {"tool": "systemVolume", "args": {"action": "set", "percent": 30}},
         {"tool": "appControl", "args": {"action": "open", "target": "Apple Music"}}
       ]
+    },
+    "morning briefing": {
+      "report": "results",
+      "schedule": {"time": "07:00", "days": ["mon", "tue", "wed", "thu", "fri"]},
+      "steps": [
+        {"tool": "getTime", "args": {}},
+        {"tool": "getWeather", "args": {}},
+        {"tool": "webSearch", "args": {"search_query": "top news headlines today"}}
+      ]
     }
   }
 }
 ```
 
-Spec: `src/jarvis/routines/routines.spec.md`.
+`schedule` takes a local 24-hour `time` and optional `days` (`mon` to `sun`; every day when left out); `"enabled": false` keeps the time but stops it running on its own. `report` is `results` for a briefing and `actions` (the default) otherwise.
+
+Spec: `src/jarvis/routines/routines.spec.md`; scheduling: `src/jarvis/scheduler/scheduler.spec.md`.
+
+## Timers, alarms and reminders
+
+No setup needed. Say "set a 10 minute pasta timer", "how long left on the pasta timer", "cancel the pasta timer", "remind me at 2:30 to call the dentist", "remind me tomorrow at 9 to email Sam", "wake me at 7" or "what are my reminders". Several timers can run at once. When one is due Jarvis says so out loud (a stop cuts it off like any reply) and shows it in the chat.
+
+- Timer phrasings are recognised without a model; times of day go through the model, which works out the exact time.
+- Alarms and reminders are kept in the local Jarvis database, so they survive a restart. Anything that came due while Jarvis was off is announced once, as missed, when it starts again.
+- Nothing leaves the computer. In Codex or Claude mode, setting reminders by voice needs long-term memory sharing for that mode turned on, because reminders are personal data; timer phrasings work in every mode.
+
+Spec: `src/jarvis/scheduler/scheduler.spec.md`.
 
 ## Local extensions
 

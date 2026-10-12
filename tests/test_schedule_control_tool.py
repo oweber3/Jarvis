@@ -169,3 +169,14 @@ def test_every_action_is_safe(mock_config):
 
 def test_reminders_are_personal_data_for_the_reply_bridges():
     assert BUILTIN_TOOLS["scheduleControl"].personal_data is True
+
+
+@pytest.mark.parametrize("mode", ["codex", "claude"])
+def test_a_cloud_mode_gets_reminders_only_while_long_term_memory_is_shared(mode, mock_config):
+    from jarvis.claude_bridge.service import claude_tool_snapshot
+    from jarvis.codex_bridge.service import codex_tool_snapshot
+    snapshot = codex_tool_snapshot if mode == "codex" else claude_tool_snapshot
+    setattr(mock_config, f"{mode}_share_long_term_memory", False)
+    assert "scheduleControl" not in snapshot(mock_config)
+    setattr(mock_config, f"{mode}_share_long_term_memory", True)
+    assert "scheduleControl" in snapshot(mock_config)

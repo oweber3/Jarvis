@@ -84,7 +84,8 @@ class ScheduleControlTool(Tool):
     @property
     def description(self) -> str:
         return ("Timers, alarms and reminders: set a countdown timer, an alarm or a reminder for a time, ask how "
-                "long is left, list or cancel them. NOT for routines (routineControl).")
+                "long is left, list or cancel them. Timers exist only in this tool: call it every time, never just say "
+                "it is done. NOT for routines (routineControl).")
 
     @property
     def inputSchema(self) -> Dict[str, Any]:
