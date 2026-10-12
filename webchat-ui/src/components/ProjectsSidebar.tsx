@@ -1,9 +1,11 @@
 import { ThreadListPrimitive, useAuiState } from "@assistant-ui/react"
 import { ChevronDownIcon, ChevronRightIcon, FolderPlusIcon, PencilIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type FC } from "react"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { ThreadListItem, ThreadListNew } from "@/components/thread-list.aui"
 import { TooltipIconButton } from "@/components/tooltip-icon-button"
 import { Input } from "@/components/ui/input"
+import { CONFIRM_WORD } from "@/confirm"
 import { cn } from "@/lib/utils"
 import { chatTitle } from "@/conversion"
 import { useJarvis } from "@/useJarvis"
@@ -124,8 +126,48 @@ export const ProjectsSidebar: FC = () => {
             New project
           </button>
         )}
+        <DeleteEverything />
       </div>
     </nav>
+  )
+}
+
+// Wipes every chat and project. Deliberately plain and a long way from "New chat", and it asks twice:
+// a dialog that spells out what goes, and a word to type.
+const DeleteEverything: FC = () => {
+  const { library, actions } = useJarvis()
+  const [open, setOpen] = useState(false)
+  const chats = library.chats.length
+  const projects = library.projects.length
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-sm transition-colors"
+      >
+        <Trash2Icon className="size-4" />
+        Delete everything
+      </button>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Delete everything?"
+        description={
+          <>
+            <p>
+              This deletes all {chats} {chats === 1 ? "chat" : "chats"}
+              {projects > 0 ? ` and ${projects} ${projects === 1 ? "project" : "projects"}` : ""}, with every message in
+              them, and empties the current conversation. This cannot be undone.
+            </p>
+            <p>Jarvis's diary of past conversations is kept.</p>
+          </>
+        }
+        confirmLabel="Delete everything"
+        requireWord={CONFIRM_WORD}
+        onConfirm={() => actions.clearHistory()}
+      />
+    </>
   )
 }
 

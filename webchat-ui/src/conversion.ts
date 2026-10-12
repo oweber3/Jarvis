@@ -4,8 +4,9 @@ import type { Chat, ChatMessage, Notice } from "@/api"
 // Turns what the server stores into messages the thread renders. Pure functions, covered by tests.
 
 // A message being sent: shown at once with a thinking placeholder. ``afterId`` is the newest stored message
-// when it was sent, so a reply stored since then can be told from older turns.
-export type Pending = { text: string; accepted: boolean; afterId: number }
+// when it was sent, so a reply stored since then can be told from older turns. ``acceptedAt`` is how many
+// polls had been made when the server accepted it (0 until then): only a later poll can know about it.
+export type Pending = { text: string; accepted: boolean; afterId: number; acceptedAt: number }
 
 export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
   return {
@@ -51,8 +52,15 @@ export function buildThreadMessages(
   pending: Pending | null,
   now: () => Date = () => new Date(),
 ): ThreadMessageLike[] {
-  const out = messages.map(toThreadMessage)
-  for (const notice of notices) out.push(...noticeMessages(notice))
+  // Notices sit where they happened: after every message that is not newer than them.
+  const out: ThreadMessageLike[] = []
+  const placed = [...notices].sort((a, b) => a.ts - b.ts || a.id - b.id)
+  let next = 0
+  for (const message of messages) {
+    while (next < placed.length && placed[next]!.ts < message.ts) out.push(...noticeMessages(placed[next++]!))
+    out.push(toThreadMessage(message))
+  }
+  while (next < placed.length) out.push(...noticeMessages(placed[next++]!))
   if (pending) {
     const createdAt = now()
     out.push({ id: "pending-user", role: "user", content: [{ type: "text", text: pending.text }], createdAt })
@@ -83,9 +91,17 @@ export function lastMessageId(messages: readonly ChatMessage[]): number {
   return messages.reduce((highest, m) => Math.max(highest, m.id), 0)
 }
 
-// The placeholder goes once Jarvis is no longer working on the request and either the send was confirmed
-// or a reply newer than the message is already stored (a fast answer can land before the confirmation).
-export function pendingDone(pending: Pending | null, busyQuery: boolean, messages: readonly ChatMessage[]): boolean {
+// The placeholder goes once Jarvis is no longer working on the request and either a reply newer than the
+// message is already stored (a fast answer can land before the send is confirmed) or the send was confirmed
+// and the snapshot comes from a poll made after that: an earlier poll's "not busy" can be from before the
+// server had the request. ``snapshotPoll`` is that poll's number.
+export function pendingDone(
+  pending: Pending | null,
+  busyQuery: boolean,
+  messages: readonly ChatMessage[],
+  snapshotPoll: number,
+): boolean {
   if (!pending || busyQuery) return false
-  return pending.accepted || messages.some((m) => m.role === "assistant" && m.id > pending.afterId)
+  if (messages.some((m) => m.role === "assistant" && m.id > pending.afterId)) return true
+  return pending.accepted && snapshotPoll > pending.acceptedAt
 }

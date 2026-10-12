@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -463,7 +464,25 @@ const MoveToProject: FC = () => {
 };
 
 const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
+  const aui = useAui();
+  const title = useAuiState((s) => s.threadListItem.title);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
   return (
+    <>
+      <ConfirmDialog
+        open={confirmingDelete}
+        onOpenChange={setConfirmingDelete}
+        title="Delete this chat?"
+        description={
+          <p>
+            {title ? `"${title}"` : "This chat"} and all its messages will be deleted for good. This cannot be
+            undone.
+          </p>
+        }
+        confirmLabel="Delete chat"
+        onConfirm={() => aui.threadListItem().delete()}
+      />
     <ThreadListItemMorePrimitive.Root sharedFocusGroup>
       <ThreadListItemMorePrimitive.Trigger asChild>
         <Button
@@ -492,16 +511,16 @@ const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
           Rename
         </ThreadListItemMorePrimitive.Item>
         <MoveToProject />
-        <ThreadListItemPrimitive.Delete asChild>
-          <ThreadListItemMorePrimitive.Item
-            data-slot="aui_thread-list-item-more-item"
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
-          >
-            <TrashIcon className="size-4" />
-            Delete
-          </ThreadListItemMorePrimitive.Item>
-        </ThreadListItemPrimitive.Delete>
+        <ThreadListItemMorePrimitive.Item
+          data-slot="aui_thread-list-item-more-item"
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
+          onSelect={() => setConfirmingDelete(true)}
+        >
+          <TrashIcon className="size-4" />
+          Delete
+        </ThreadListItemMorePrimitive.Item>
       </ThreadListItemMorePrimitive.Content>
     </ThreadListItemMorePrimitive.Root>
+    </>
   );
 };
