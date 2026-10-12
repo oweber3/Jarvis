@@ -169,6 +169,79 @@ def _device(value: str, ctx: _Context):
     return ({'name': name}, name) if name else None
 
 
+# One number, then any number of (operator, number) pairs; a number may carry a percent sign or a square or
+# cube. Two operators in a row, a missing number or a bare number is not a sum.
+_TERM = r'-?\d+(?:\.\d+)?(?:\s*%)?(?:\s*\*\*\s*[23])?'
+_SUM = re.compile(rf'{_TERM}(?:\s*(?:\*\*|[+\-*/%])\s*{_TERM})*')
+_OPERATION = re.compile(r'\d\s*(?:\*\*|[+\-*/]|%\s*\S)')
+
+
+def _expression(value: str, ctx: _Context):
+    """Spoken arithmetic as an expression for the calculator. Words come from the locale ``arithmetic``
+    table (operators, and the word that joins a percentage to the value it is taken of) and ``numbers``;
+    digits and + - % pass through. Anything else, or a malformed sum, rejects the rule."""
+    table = ctx.data.get('arithmetic', {})
+    operators = table.get('operators', {})
+    joins = set(table.get('percent_of', ()))
+    numbers = ctx.data.get('numbers', {})
+    phrases = sorted((phrase.split() for phrase in operators), key=len, reverse=True)
+    words, tokens, index = value.split(), [], 0
+    while index < len(words):
+        phrase = next((p for p in phrases if words[index:index + len(p)] == p), None)
+        word = words[index]
+        if phrase:
+            tokens.append(operators[' '.join(phrase)])
+            index += len(phrase)
+            continue
+        if word in joins and tokens and tokens[-1].endswith('%'):
+            tokens.append('*')
+        elif word in numbers:
+            tokens.append(str(numbers[word]))
+        elif re.fullmatch(r'[\d.%+\-]+', word):
+            tokens.append(word)
+        else:
+            return None
+        index += 1
+    expression = ' '.join(tokens)
+    if not _SUM.fullmatch(expression) or not _OPERATION.search(expression):
+        return None
+    from ..maths import MathsError
+    from ..maths.expression import validate  # pure: checks the syntax only
+    try:
+        validate(expression)
+    except MathsError:
+        return None
+    return {'expression': expression}, value
+
+
+def _amount_expression(data: dict) -> str:
+    words = sorted({*data.get('numbers', {}), *data.get('amount_words', {})}, key=len, reverse=True)
+    return '|'.join([r'-?\d{1,9}(?:\.\d{1,9})?', *(re.escape(word) for word in words)])
+
+
+def _amount(value: str, ctx: _Context):
+    if re.fullmatch(r'-?\d+', value):
+        return {'value': int(value)}, value
+    if re.fullmatch(r'-?\d+\.\d+', value):
+        return {'value': float(value)}, value
+    number = ctx.data.get('numbers', {}).get(value, ctx.data.get('amount_words', {}).get(value))
+    return None if number is None else ({'value': number}, value)
+
+
+def _unit(arg: str, other: str):
+    """A unit name from the locale ``units`` table as the calculator's symbol. When the other unit of the
+    conversion is already resolved, both must measure the same thing, or the rule falls through."""
+    def resolve(value: str, ctx: _Context):
+        symbol = ctx.data.get('units', {}).get(value)
+        if symbol is None:
+            return None
+        from ..maths.units import compatible
+        if other in ctx.args and not compatible(symbol, ctx.args[other]):
+            return None
+        return {arg: symbol}, value
+    return resolve
+
+
 # Every ``{slot}`` that locale phrases may use. Rules rename a slot's argument with ``slot_args``.
 SLOTS: dict[str, _Slot] = {
     'app': _Slot(_free_text, _app),
@@ -183,6 +256,10 @@ SLOTS: dict[str, _Slot] = {
     'tv_app': _Slot(_free_text, _tv_app),
     'page_number': _Slot(_page_number_expression, _page_number),
     'routine': _Slot(_free_text, _routine),
+    'expression': _Slot(_free_text, _expression),
+    'amount': _Slot(_amount_expression, _amount),
+    'from_unit': _Slot(lambda _data: r'.{1,40}?', _unit('from_unit', 'to_unit')),
+    'to_unit': _Slot(lambda _data: r'.{1,40}?', _unit('to_unit', 'from_unit')),
 }
 
 

@@ -657,6 +657,7 @@ _HINT_MESSAGE_CHAR_LIMIT = 200
 _DIGEST_SKIP_TOOLS = frozenset({
     "getWeather",
     "getTime",
+    "calculator",
 })
 
 

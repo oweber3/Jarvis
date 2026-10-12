@@ -117,6 +117,7 @@ On Windows, Jarvis's built-in tools understand requests like these. Simple Engli
 | Settings and system | "Set volume to 30%", "pause the music", "turn the brightness down", "open Bluetooth settings", "what's using the most RAM?" |
 | Other apps | "Click Save in this dialog", "in Notepad, open the Format menu", "go to page 42" or "jump to the methods chapter" in an open PDF |
 | Your screen | "What's on my screen?", "what does this error mean?" |
+| Sums and conversions | "What's 15% of 80?", "what is 17 times 23?", "convert 72 Fahrenheit to Celsius", "how many cups in a litre?" (worked out exactly on your PC, not guessed by the model; currency is not supported offline) |
 | Everything else | Web search, weather, time, nutrition tracking and optional location awareness |
 
 - **Follow-ups just work.** "Close this" acts on the window in front of you, and after Jarvis opens or moves something, "move it" or "close it" act on that exact window.

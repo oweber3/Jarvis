@@ -32,6 +32,9 @@ A locale phrase marks a variable part with `{name}`. Every slot a phrase may use
 | `tv_app` | An app or input name on the Roku TV | `app`, resolved against the TV's cached app list (see below) |
 | `page_number` | Up to five digits, or a number word from the locale `numbers` table, of at least 1 | `page`, an integer |
 | `routine` | A routine name or alias | `name`, resolved against the user's routines offered by `routineControl` (see below) |
+| `expression` | Spoken arithmetic: digits, `+ - %`, locale `numbers` words, locale `arithmetic.operators` words, and the `arithmetic.percent_of` word after a percentage | `expression` for the calculator. It must be one number followed by operator and number pairs, contain an operation and be valid calculator syntax (`maths/maths.spec.md`) |
+| `amount` | Digits with an optional sign and decimal point, a locale `numbers` word or a locale `amount_words` word | `value`, a number |
+| `from_unit`, `to_unit` | A unit name from the locale `units` table | the calculator's unit symbol. Once both are resolved they must measure the same thing |
 
 Locale tables are in normalised form (case folded, no apostrophes) so lookups match the normalised utterance, and every value in them refers to something the tools know: slugs exist in the settings page table, plan keys are known power plan keys, key names are known to the input layer.
 
@@ -110,6 +113,8 @@ TV commands use `tvControl` (`devices/roku.spec.md`). Every `tv` phrase names th
 Gesture snapping uses `gestureControl` `start` and `stop` (`gestures/gestures.spec.md`, Gesture snapping) for whole-utterance phrases such as "start gesture control", "turn on the gesture controls", "enable gestures" and "stop gesture snapping". Every phrase pairs a start or stop verb phrase with a name for the feature (in English: gesture control or controls, gestures, hand gestures, gesture snapping or gesture mode, with or without "the"), so no other command is affected, and a bare name, a question about the feature or a name with any other word ("turn off touchpad gestures") falls through. The family is available only while `gestureControl` is registered, which needs `gesture_snap_enabled` on Windows, and does not depend on `windows_tools_enabled`.
 
 A local extension can add phrase files in the same format (`extensions/extensions.spec.md`, Phrases). Their rules follow the built-in rules for that language, may name only tools the same extension added, and obey every rule here: whole-utterance matches, SAFE actions only, and a fall-through when unsure. They are available only while the extension's tools are registered and are removed when Jarvis stops.
+
+Sums and unit conversions use `calculator` (`maths/maths.spec.md`, Fast path): `evaluate` for "what is {expression}", "calculate {expression}" and similar, `convert` for "convert {amount} {from_unit} to {to_unit}", "how many {to_unit} in {amount} {from_unit}" and similar. The bare forms ("{expression}", "{amount} {from_unit} in {to_unit}") are marked `needs_wake_word`. Unknown units, units of different kinds, currencies and anything that is not a well-formed sum fall through to the model. The reply is the tool result ("17 × 23 = 391"). The family does not depend on `windows_tools_enabled`.
 
 Placement (`monitor`, `zone`, `state`, `windowControl displays` and `place`) is not a fast command. An utterance that adds a destination to an open, maximise or other command is not a whole-utterance match, so it falls through to the model path, which can discover displays and use the combined action.
 
