@@ -1,4 +1,5 @@
 import type { ThreadMessageLike } from "@assistant-ui/react"
+type ThreadMessageLikePart = Exclude<ThreadMessageLike["content"], string>[number]
 import type { Chat, ChatMessage, Notice } from "@/api"
 
 // Turns what the server stores into messages the thread renders. Pure functions, covered by tests.
@@ -8,11 +9,26 @@ import type { Chat, ChatMessage, Notice } from "@/api"
 // polls had been made when the server accepted it (0 until then): only a later poll can know about it.
 export type Pending = { text: string; accepted: boolean; afterId: number; acceptedAt: number }
 
+// A reply's steps are tool-call parts ahead of its text. Each already finished (a step is only stored once the
+// call has ended), so every part carries a result and the thread never shows a call still running; how it
+// ended and its words travel in ``args`` for the step list to draw.
+function stepParts(message: ChatMessage): ThreadMessageLikePart[] {
+  if (message.role !== "assistant") return []
+  return (message.steps ?? []).map((step, index) => ({
+    type: "tool-call" as const,
+    toolCallId: `m${message.id}-s${index}`,
+    toolName: step.tool,
+    args: { label: step.label, status: step.status, ...(step.summary ? { summary: step.summary } : {}) },
+    result: step.status,
+    ...(step.status === "failed" || step.status === "declined" ? { isError: true } : {}),
+  }))
+}
+
 export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
   return {
     id: `m${message.id}`,
     role: message.role,
-    content: [{ type: "text", text: message.text }],
+    content: [...stepParts(message), { type: "text", text: message.text }],
     createdAt: new Date(message.ts * 1000),
     ...(message.role === "assistant" ? { status: { type: "complete", reason: "stop" } as const } : {}),
     metadata: {

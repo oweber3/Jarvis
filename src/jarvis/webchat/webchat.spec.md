@@ -19,6 +19,7 @@ The server runs in the daemon process, like Phone Access (`remote/remote.spec.md
 |--------|----------------|
 | `jarvis/memory/chat_store.py` | `ChatStore`: projects, chats and messages in the Jarvis database file. Own connection and schema, following `ActivityStore` (`memory/db.spec.md`) |
 | `jarvis/utils/local_guard.py` | `refusal(host, origin)`: the Host and Origin checks shared with the Memory Viewer |
+| `jarvis/tools/step_log.py` | `StepLog`: the in-memory record of tool steps that `run_tool_with_retries` fills and the hub reads (see **Tool steps**) |
 | `jarvis/webchat/backend.py` | `DaemonBackend`: the only module that touches `jarvis.daemon`, `bridge.modes` and the LLM backend. Tests replace it with a fake |
 | `jarvis/webchat/hub.py` | `ChatHub`: the open chat, mirroring of the dialogue memory into it, query tracking, notices, change notification for long polls |
 | `jarvis/webchat/suggestions.py` | The start screen's cards: `build_cards`, the generic examples, the card wording read from the fast path's locale file. Pure |
@@ -59,7 +60,7 @@ Tables in the Jarvis database file (`db_path`), created with `CREATE TABLE IF NO
 
 - `chat_projects(id, name, position, created_at)`
 - `chats(id, project_id NULL, title, created_at, updated_at, last_mode, last_model, pinned)` where `pinned` is `0` or `1`; a database written before pinning gains the column when `ChatStore` opens it (`ALTER TABLE ... ADD COLUMN`, default `0`), keeping every chat
-- `chat_messages(id, chat_id, role, content, ts, source, private)` where `source` is `typed`, `voice` or `confirmed`, and `private` marks a turn that quotes the activity log
+- `chat_messages(id, chat_id, role, content, ts, source, private, steps)` where `source` is `typed`, `voice` or `confirmed`, `private` marks a turn that quotes the activity log and `steps` holds the reply's tool steps (see **Tool steps**)
 - `chat_state(key, value)`: holds `active_chat_id`
 
 Pinning a chat is not activity: it never changes `updated_at`, so the chat keeps its place in the age groups. A chat with no project is unfiled. Deleting a project keeps its chats and unfiles them. Deleting a chat deletes its messages. A chat's title is the first 60 characters of its first message until the owner renames it (no model call, so `docs/llm_contexts.md` is unaffected). A turn marked `private` keeps its flag, so reopening the chat keeps it out of the diary and out of any context sent off the PC. Identifiers are random hex strings.
@@ -114,7 +115,7 @@ All JSON. Errors are `{"error": "<code>"}`.
 | `POST /api/projects` | `{"name"}` | `201` the project; `400` for an empty name |
 | `PATCH /api/projects/<id>` / `DELETE` | `{"name"}` | Rename / delete (chats are unfiled); `404` unknown |
 | `POST /api/chats` | `{"project_id"?}` | `201 {"chat"}` and opens it; `404` unknown project, `409` busy, `503` not ready |
-| `GET /api/chats/<id>` | | `{"chat", "messages"}`; `404` unknown |
+| `GET /api/chats/<id>` | | `{"chat", "messages"}`, each message with `id`, `role`, `text`, `ts`, `source` and `steps`; `404` unknown |
 | `PATCH /api/chats/<id>` | `{"title"?, "project_id"?, "pinned"?}` | Rename, move (`null` unfiles), pin or unpin (`pinned` must be a boolean, `400` otherwise); `404` unknown chat or project |
 | `DELETE /api/chats/<id>` | | Delete; `409` when it is the open chat and Jarvis is busy |
 | `POST /api/chats/<id>/open` | | `{"chat"}`; `404` unknown, `409` busy |
@@ -125,7 +126,7 @@ All JSON. Errors are `{"error": "<code>"}`.
 | `GET /api/poll?rev=<rev>&after=<id>` | | Long poll (25 s): the changed snapshot |
 | `GET /api/identity?nonce=<hex>` | | `{"proof"}`: HMAC-SHA256 of the nonce (32 to 128 lowercase hex characters, `400` otherwise) keyed with the server's identity token |
 
-The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`; never the private flag), `notices` (the ones not yet overtaken by a newer stored turn, each with its `ts`), `mode`, `model` and `cloud`.
+The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`, `steps`; never the private flag), `notices` (the ones not yet overtaken by a newer stored turn, each with its `ts`), `mode`, `model` and `cloud`.
 
 ## The page
 
@@ -137,7 +138,7 @@ The page follows the server. An assistant-ui `ExternalStoreRuntime` holds the op
 - The library revision is recorded only after the library was fetched, so a failed fetch is retried and the sidebar cannot stay stale.
 - The thinking placeholder is cleared on "not busy" only from a poll made after the send was confirmed, or when a reply newer than the message is stored, so a snapshot taken before the server had the request cannot make the owner's message vanish. A poll that cannot be trusted is replaced by a fresh one.
 
-**Source of the chat components.** The thread, composer, thread list, Markdown text and model selector are assistant-ui's own source, copied into `webchat-ui/src/components` with the `assistant-ui` CLI **0.0.121** (`add thread thread-list markdown-text model-selector`) against `@assistant-ui/react` **0.15.25** and `@assistant-ui/react-markdown` **0.14.19**, then edited: trimmed of attachments, tool and reasoning groups, feedback, editing and branching, restyled with the HUD palette, with a notice line, a slot for the picker and a "Move to project" menu item. The pristine copy is the git commit `a1b2540`; `git diff a1b2540 -- webchat-ui/src/components` is the local change set to compare with upstream when pulling improvements. Written for Jarvis: the API client, the sync logic, the runtime wiring, the projects sidebar, the confirmation dialog and the model picker. `webchat-ui/README.md` lists every file's origin and the update steps.
+**Source of the chat components.** The thread, composer, thread list, Markdown text and model selector are assistant-ui's own source, copied into `webchat-ui/src/components` with the `assistant-ui` CLI **0.0.121** (`add thread thread-list markdown-text model-selector`) against `@assistant-ui/react` **0.15.25** and `@assistant-ui/react-markdown` **0.14.19**, then edited: trimmed of attachments, tool and reasoning groups (a tool call is drawn as a single `ToolStepRow`), feedback, editing and branching, restyled with the HUD palette, with a notice line, a slot for the picker and a "Move to project" menu item. The pristine copy is the git commit `a1b2540`; `git diff a1b2540 -- webchat-ui/src/components` is the local change set to compare with upstream when pulling improvements. Written for Jarvis: the API client, the sync logic, the tool step row and its wording (`steps.ts`, `components/ToolSteps.tsx`), the runtime wiring, the projects sidebar, the confirmation dialog and the model picker. `webchat-ui/README.md` lists every file's origin and the update steps.
 
 **Projects.** A sidebar groups the chats under projects (collapsible, remembered in the browser's storage when it allows) with the unfiled chats below. Projects are created, renamed (inline) and deleted (a second tap confirms; chats stay) from the sidebar; deleting a chat from its menu opens a dialog that names the chat and says its messages are removed for good, and "Delete everything" at the foot of the sidebar opens a dialog that says how many chats and projects go, that the diary is kept, and enables its button only once the owner has typed the confirmation word (`POST /api/clear`); Esc, Cancel and the close button leave without deleting; a chat moves with its menu ("Move to ..."); each project has a button for a new chat inside it. A search box filters chats by title.
 
@@ -168,6 +169,26 @@ Browsers keep some combinations for themselves: in an ordinary browser tab Ctrl+
 
 Desktop confirmations still appear as the desktop dialog, as in the Qt chat, whether the daemon is bundled in the desktop app or runs as its subprocess (`desktop_app.spec.md`, Action Confirmation Dialog). A daemon the desktop app did not start has no dialog and refuses those actions. The reply reads "Please confirm on your desktop" and the outcome arrives as a normal assistant message.
 
+## Tool steps
+
+Under a reply the page shows the tool calls Jarvis made for it as compact rows ("Opened Word", "Set the volume to 30%", "Searched the web"), collapsed by default; a row opens to how the call ended ("Done", "Didn't work", "Not allowed", "Waiting for your confirmation") and, when the tool says so, what it found ("3 results"). They appear on every route, because every executed call goes through one place.
+
+**One place sees every call.** `run_tool_with_retries` (`tools/registry.py`), the same function the journal of `routines/routines.spec.md` is fed from, leaves a step in `tools/step_log.py` (`StepLog`, in memory only, bounded) for each call that went through central safety: the fast path, the local loop and planner, tool-model mode, the Claude and Codex bridges, approved confirmations and each step of a routine. Its status is `done`, `failed` (the tool returned an error), `declined` (central safety denied it, or the desktop dialog it needs is not available) or `waiting` (it asked for a yes; once approved it runs through the same function and leaves its own `done`). An unknown tool, `routineControl`, `stop`, `toolSearchTool` and `refreshMCPTools` leave nothing.
+
+**Wording.** A step holds the tool name, the status, a label and an optional summary, never the arguments, the result or the error text of the call.
+
+- The default label is the tool's identifier read as words (`systemVolume` is "System volume"; an MCP tool is named by its own part), so no phrase list or language pattern is involved.
+- A tool may word its own step with `Tool.step_note(args, result) -> StepNote(label, summary)`. It is asked only for a call that succeeded; every other status keeps the default label. The built-in notes name what was done in the owner's terms (an app's friendly name, a volume percentage, a result count) and nothing a tool spec keeps out of results: no paths, addresses, window titles, track names, queries or window handles.
+- The step log is the last line of defence: a label or summary of more than one line is cut to one (80 and 160 characters), and one that contains a path, an address or an e-mail address is dropped (the label becomes the default one). A note that raises is ignored.
+
+**Belonging to a reply.** Steps are numbered. The hub keeps a cursor, and the assistant turn it mirrors takes every step after the cursor that was recorded no later than the turn, so a typed request, a spoken one and the outcome of a confirmed action each get exactly the steps made for them (the waiting step stays with the reply that asked, the done step arrives with the outcome). The cursor moves when a chat is opened or created and when a request ends without a reply (stopped, failed, not ready), so those steps never turn up under the next reply; a request that is merely busy leaves it alone. Local notices never carry steps.
+
+**Private turns.** A reply that quotes the activity log keeps the tool and status of each step but takes the default label and no summary, so nothing the tool found is stored.
+
+**Storage.** Each message has a `steps` column (JSON, empty when there are none), added to databases made before it with `ALTER TABLE` when the store opens. Steps are stored only on assistant messages, survive reloads, and are deleted with their chat (`secure_delete`).
+
+**Page.** The server sends `steps` (a list of `{tool, status, label, summary}`, empty for the owner's messages) with every message in the poll and in `GET /api/chats/<id>`. The page turns them into assistant-ui tool-call parts ahead of the reply's text (`conversion.ts`), each already finished so the thread never shows one running, and draws each with `ToolStepRow` (`components/ToolSteps.tsx`), in the normal and the spoken message style. The wording of how a step ended lives in `steps.ts`; the label and summary are the server's.
+
 ## Start screen
 
 An empty chat shows a greeting for the time of day (the browser's local hour: morning, afternoon, evening) above a grid of up to six cards, in one column on a narrow window. The cards come from `GET /api/suggestions`, built by `suggestions.build_cards` with no model call, in this order:
@@ -191,6 +212,7 @@ An empty chat shows a greeting for the time of day (the browser's local hour: mo
 ## Privacy and logging
 
 - Stored text is already redacted. No message text, title, project name or path appears in logs or issue reports; `webchat` debug logs record start, stop, bind failures, refused requests and counts.
+- Tool steps hold only a tool name, a status and the words described under **Tool steps**; no argument, result, error text, path, address or window title is stored, served or logged, and `debug_log` records only that a step was recorded and its status.
 - The chat history and the diary are separate stores; deleting a chat does not edit the diary.
 
 ## Not in version 1
@@ -203,4 +225,5 @@ An empty chat shows a greeting for the time of day (the browser's local hour: mo
 ## Known limits
 
 - The server has no sign-in. Anything else running as the same user on this PC can read and send chats, as with the Memory Viewer; the Host, Origin and fetch-site checks stop web pages, not local programs. The identity check protects the window from showing another program's page; it does not authenticate requests to the server.
+- A tool call that finishes after its request was stopped leaves its step for the next reply, because the stop already closed the request's steps.
 - A chat switch during the periodic diary pass can summarise the turns of that pass a second time, because the pass saves its progress only when its summary is done.

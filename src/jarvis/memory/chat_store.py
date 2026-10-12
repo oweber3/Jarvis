@@ -5,13 +5,14 @@ redacted text the dialogue memory holds, never what was typed. See ``webchat/web
 """
 from __future__ import annotations
 
+import json
 import secrets
 import sqlite3
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..debug import debug_log
 
@@ -57,7 +58,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   content TEXT NOT NULL,
   ts      REAL NOT NULL,
   source  TEXT NOT NULL DEFAULT 'typed',
-  private INTEGER NOT NULL DEFAULT 0
+  private INTEGER NOT NULL DEFAULT 0,
+  steps   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_chat ON chat_messages(chat_id, id);
 CREATE TABLE IF NOT EXISTS chat_state (
@@ -105,6 +107,8 @@ class Message:
     ts: float
     source: str
     private: bool = False
+    # The tool steps taken for this reply, each ``{"tool", "status", "label", "summary"}`` (tools/step_log.py).
+    steps: Tuple[Dict[str, Any], ...] = ()
 
 
 def _new_id() -> str:
@@ -157,10 +161,13 @@ class ChatStore:
 
     def _migrate(self) -> None:
         """Bring a database written by an earlier release up to the current schema."""
-        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(chats)")}
-        if "pinned" not in columns:
+        chat_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(chats)")}
+        if "pinned" not in chat_columns:
             self.conn.execute("ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
             debug_log("web chat database gained the pinned column", "webchat")
+        message_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(chat_messages)")}
+        if "steps" not in message_columns:
+            self.conn.execute("ALTER TABLE chat_messages ADD COLUMN steps TEXT NOT NULL DEFAULT ''")
 
     def close(self) -> None:
         with self._lock:
@@ -288,11 +295,12 @@ class ChatStore:
     # -- messages ----------------------------------------------------------------------------
 
     def append_message(self, chat_id: str, role: str, content: str, *, ts: float, source: str = "typed",
-                       private: bool = False) -> Message:
+                       private: bool = False, steps: Optional[Sequence[Dict[str, Any]]] = None) -> Message:
         """Add a message. The first user message titles a chat that has no title yet.
 
         ``private`` marks a turn that quotes the activity log: it stays out of the diary and of any
-        context that leaves the PC, also when the chat is opened again.
+        context that leaves the PC, also when the chat is opened again. ``steps`` are the tool steps taken
+        for an assistant reply.
         """
         if role not in ROLES:
             raise ValueError("unknown role")
@@ -302,20 +310,30 @@ class ChatStore:
             chat = self.get_chat(chat_id)
             if chat is None:
                 raise ValueError("unknown chat")
+            kept = tuple(dict(step) for step in (steps or ()))
             cur = self.conn.execute(
-                "INSERT INTO chat_messages(chat_id, role, content, ts, source, private) VALUES (?,?,?,?,?,?)",
-                (chat_id, role, content, ts, source, 1 if private else 0))
+                "INSERT INTO chat_messages(chat_id, role, content, ts, source, private, steps) VALUES (?,?,?,?,?,?,?)",
+                (chat_id, role, content, ts, source, 1 if private else 0,
+                 json.dumps(kept, ensure_ascii=False) if kept else ""))
             title = chat.title or (_title_from(content) if role == "user" else "")
             self.conn.execute("UPDATE chats SET updated_at = ?, title = ? WHERE id = ?",
                               (max(ts, time.time()), title, chat_id))
             self.conn.commit()
-            return Message(int(cur.lastrowid), chat_id, role, content, ts, source, private)
+            return Message(int(cur.lastrowid), chat_id, role, content, ts, source, private, kept)
 
-    _MESSAGE_COLUMNS = "id, chat_id, role, content, ts, source, private"
+    _MESSAGE_COLUMNS = "id, chat_id, role, content, ts, source, private, steps"
 
     @staticmethod
-    def _message(row) -> Message:
-        return Message(row[0], row[1], row[2], row[3], row[4], row[5], bool(row[6]))
+    def _steps(raw: str) -> Tuple[Dict[str, Any], ...]:
+        try:
+            loaded = json.loads(raw) if raw else []
+        except ValueError:
+            return ()
+        return tuple(step for step in loaded if isinstance(step, dict)) if isinstance(loaded, list) else ()
+
+    @classmethod
+    def _message(cls, row) -> Message:
+        return Message(row[0], row[1], row[2], row[3], row[4], row[5], bool(row[6]), cls._steps(row[7]))
 
     def messages(self, chat_id: str, after_id: int = 0) -> List[Message]:
         with self._lock:

@@ -470,7 +470,7 @@ class TestSnapshotAndPolling:
     def test_private_flags_and_internal_ids_do_not_leak_into_messages(self, hub, backend):
         hub.submit("hello")
         message = hub.snapshot(0)["messages"][0]
-        assert set(message) == {"id", "role", "text", "ts", "source"}
+        assert set(message) == {"id", "role", "text", "ts", "source", "steps"}
 
     def test_a_wait_returns_when_something_changes(self, hub, backend):
         rev = hub.snapshot(0)["rev"]

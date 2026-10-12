@@ -26,7 +26,9 @@ from .request_scope import CallContext, note_outside_content, request_origin, to
 from .types import ToolExecutionResult
 from ..config import Settings
 from ..debug import debug_log
+from ..routines.definitions import NEVER_STEPS
 from ..routines.journal import get_journal
+from .step_log import STATUS_DECLINED, STATUS_DONE, STATUS_FAILED, STATUS_WAITING, get_step_log
 
 # The MCP client class, imported on first use: the ``mcp`` package (with pydantic, anyio and httpx)
 # costs about 0.3 s to import and is never used when no MCP server is configured.
@@ -506,6 +508,35 @@ def _record(name: str, tool_args, schema) -> None:
         debug_log(f"journal not recorded ({type(exc).__name__})", "routines")
 
 
+def _step(name: str, status: str, tool=None, args=None, result=None) -> None:
+    """Leave one step for the web chat's tool steps; recording never changes the result.
+
+    Only a successful call asks the tool for its own words (``step_note``); every other outcome is named
+    after the tool, so error text and arguments of a failed or refused call never reach a step."""
+    if name in NEVER_STEPS:
+        return
+    label = summary = None
+    if status == STATUS_DONE and tool is not None:
+        try:
+            note = tool.step_note(args if isinstance(args, dict) else {}, result)
+            if note is not None:
+                label, summary = note.label, note.summary
+        except Exception as exc:  # noqa: BLE001
+            debug_log(f"tool step note failed ({type(exc).__name__})", "tools")
+    try:
+        get_step_log().record(name, status, label, summary)
+    except Exception as exc:  # noqa: BLE001
+        debug_log(f"tool step not recorded ({type(exc).__name__})", "tools")
+
+
+def _is_known_tool(raw_name: str, tool_obj, cfg) -> bool:
+    """Whether a call names a tool that exists: a built-in, or a tool of a configured MCP server."""
+    if tool_obj is not None:
+        return True
+    server = raw_name.split("__", 1)[0] if "__" in raw_name else ""
+    return bool(server) and server in (getattr(cfg, "mcps", None) or {})
+
+
 def _run_tool(db, cfg, tool_name, tool_args, system_prompt, original_prompt, redacted_text, max_retries,
               language, quiet, request_ref, silent, call: CallContext) -> ToolExecutionResult:
     from dataclasses import replace
@@ -536,6 +567,7 @@ def _run_tool(db, cfg, tool_name, tool_args, system_prompt, original_prompt, red
 
     if safety_req.tier == SafetyTier.DENY:
         debug_log(f"Tool '{name}' denied by safety policy", "safety")
+        _step(name, STATUS_DECLINED)
         return ToolExecutionResult(
             success=False,
             reply_text=None,
@@ -579,6 +611,7 @@ def _run_tool(db, cfg, tool_name, tool_args, system_prompt, original_prompt, red
             }
             if safety_req.tier == SafetyTier.CONFIRM_VOICE:
                 store.set_pending(safety_req, execution_context=exec_ctx)
+                _step(name, STATUS_WAITING)
                 debug_log(f"Tool '{name}' requires voice confirmation; registered pending request.", "safety")
                 what = " ".join(part for part in (safety_req.action, safety_req.target) if part)
                 reply = f"I need your confirmation to {what}. Say yes or no."
@@ -587,6 +620,7 @@ def _run_tool(db, cfg, tool_name, tool_args, system_prompt, original_prompt, red
             dialog_cb = get_dialog_callback()
             if dialog_cb is None:
                 debug_log(f"Tool '{name}' requires dialog confirmation, but no dialog callback registered (headless).", "safety")
+                _step(name, STATUS_DECLINED)
                 return ToolExecutionResult(
                     success=False,
                     reply_text=None,
@@ -595,12 +629,14 @@ def _run_tool(db, cfg, tool_name, tool_args, system_prompt, original_prompt, red
             # Non-blocking: the dialog answer arrives later and schedules the
             # action on a worker, so this call never waits on the user.
             if not store.begin_dialog(safety_req, exec_ctx, dialog_cb):
+                _step(name, STATUS_DECLINED)
                 return ToolExecutionResult(
                     success=False,
                     reply_text=None,
                     error_message=f"Action '{safety_req.action}' could not open the desktop confirmation dialog.",
                 )
             debug_log(f"Tool '{name}' awaiting desktop dialog confirmation.", "safety")
+            _step(name, STATUS_WAITING)
             return ToolExecutionResult(
                 success=False,
                 reply_text="Please confirm on your desktop to " + " ".join(
@@ -609,8 +645,11 @@ def _run_tool(db, cfg, tool_name, tool_args, system_prompt, original_prompt, red
             )
 
     with tool_call(replace(call, approval=approval)):
-        return _execute(db, cfg, name, raw_name, tool_name, tool_args, system_prompt, original_prompt,
-                        redacted_text, max_retries, language, quiet or silent)
+        result = _execute(db, cfg, name, raw_name, tool_name, tool_args, system_prompt, original_prompt,
+                          redacted_text, max_retries, language, quiet or silent)
+    if _is_known_tool(raw_name, tool_obj, cfg):
+        _step(name, STATUS_DONE if result.success else STATUS_FAILED, tool_obj, tool_args, result)
+    return result
 
 
 def _execute(db, cfg, name, raw_name, tool_name, tool_args, system_prompt, original_prompt, redacted_text,

@@ -20,7 +20,7 @@ from ..debug import debug_log
 from ..memory.chat_store import SEARCH_QUERY_MAX_CHARS
 from ..utils.local_guard import refusal
 from . import identity
-from .hub import chat_dict
+from .hub import chat_dict, message_dict
 
 MAX_BODY_BYTES = 64 * 1024
 DRAIN_LIMIT_BYTES = 1024 * 1024
@@ -367,8 +367,7 @@ def _make_handler(server: WebChatServer):
             if chat is None:
                 raise _Refused(404, "unknown")
             self._json(200, {"chat": chat_dict(chat),
-                             "messages": [{"id": m.id, "role": m.role, "text": m.content, "ts": m.ts,
-                                           "source": m.source} for m in store.messages(chat_id)]})
+                             "messages": [message_dict(m) for m in store.messages(chat_id)]})
 
         def _patch_chat(self, chat_id, body) -> None:
             if store.get_chat(chat_id) is None:

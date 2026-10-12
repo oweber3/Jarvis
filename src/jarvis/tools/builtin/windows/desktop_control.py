@@ -1,11 +1,12 @@
 """Thin builtin tool adapters for local Windows control."""
 from dataclasses import dataclass
 import json
+import re
 from pathlib import PureWindowsPath
 from typing import Callable, Optional
 
 from ...base import Tool
-from ...types import ToolExecutionResult
+from ...types import StepNote, ToolExecutionResult
 from ....debug import debug_log
 from ....platform.windows.apps import PartialPlacementError
 from ....platform.windows.files import AmbiguousTargetError
@@ -109,6 +110,9 @@ def _remember_safely(target, data, launch=None):
         _remember(target, data, launch)
     except Exception as exc:  # noqa: BLE001 - remembering never changes an action's result
         debug_log(f'desktop referent not recorded ({type(exc).__name__}).', 'windows')
+
+
+_HANDLE = re.compile(r'(?:0[xX][0-9a-fA-F]+|\d+)')
 
 
 class WindowsTool(Tool):
@@ -288,6 +292,23 @@ class AppControlTool(WindowsTool):
                           'places its window); focus switches to an already open app; close requests graceful '
                           'close; list shows open windows.')
     target_description = 'Friendly application name, e.g. Word, Chrome, MATLAB or Spotify. For existing windows a decimal handle is also accepted. Empty for list.'
+
+    def step_note(self, args, result):
+        """The app's friendly name, never a window handle, a path or a window title."""
+        args = args if isinstance(args, dict) else {}
+        action = args.get('action')
+        if action == 'list':
+            return StepNote('Listed the open windows')
+        target = args.get('target')
+        handle = isinstance(target, str) and bool(_HANDLE.fullmatch(target.strip()))
+        name = None if handle or not isinstance(target, str) or not target.strip() else target.strip()
+        if action == 'open':
+            return StepNote(f'Opened {name}' if name else 'Opened an app')
+        if action == 'focus':
+            return StepNote(f'Switched to {name}' if name else 'Switched to a window')
+        if action == 'close':
+            return StepNote(f'Closed {name}' if name else 'Closed a window')
+        return None
 
     def classify_safety(self, args, cfg):
         """Opening an uninstaller removes software, so it needs desktop confirmation; every other action is

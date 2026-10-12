@@ -2,6 +2,7 @@
 
 import { MarkdownText } from "@/components/markdown-text";
 import { DayDivider, MessageTime } from "@/components/MessageTime";
+import { ToolStepRow } from "@/components/ToolSteps";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -325,7 +326,9 @@ const SpokenMessage: FC = () => {
           {role === "user" ? "You said" : "Assistant said"}
         </span>
         <div className="min-w-0 flex-1 wrap-break-word">
-          <MessagePrimitive.Parts components={{ Text: SpokenText }} />
+          <MessagePrimitive.Parts
+            components={{ Text: SpokenText, tools: { Fallback: ToolStepRow } }}
+          />
         </div>
         <MessageTime className="mt-0.5" />
         <SpokenActionBar />
@@ -452,7 +455,7 @@ const MessageError: FC = () => {
   );
 };
 
-// Replies are plain text, so no parts are grouped (the thinking indicator still arrives as a part).
+// Replies are text after their tool steps, so no parts are grouped (the thinking indicator still arrives as a part).
 const noGroups = () => [] as const;
 
 const AssistantMessage: FC = () => {
@@ -473,6 +476,8 @@ const AssistantMessage: FC = () => {
         <MessagePrimitive.GroupedParts groupBy={noGroups}>
           {({ part }) => {
             switch (part.type) {
+              case "tool-call":
+                return <ToolStepRow args={part.args} />;
               case "text":
                 return <MarkdownText />;
               case "indicator":

@@ -14,12 +14,21 @@ export type Chat = {
   pinned: boolean
 }
 
+// One tool call made for a reply. The words are the tool's own and never hold a path, address or window title.
+export type ToolStep = {
+  tool: string
+  status: "done" | "failed" | "declined" | "waiting"
+  label: string
+  summary: string | null
+}
+
 export type ChatMessage = {
   id: number
   role: "user" | "assistant"
   text: string
   ts: number
   source: "typed" | "voice" | "confirmed"
+  steps: ToolStep[]
 }
 
 export type SearchHit = { chat_id: string; message_id: number; snippet: string; ts: number }

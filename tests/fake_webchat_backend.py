@@ -35,6 +35,8 @@ class FakeWebChatBackend:
         self.switch_calls: List[list] = []
         # Runs right after a swap, before the hub looks at the memory again (a turn landing in that instant).
         self.after_switch: Optional[Callable[[], None]] = None
+        # Runs while a typed request is being answered, before its turns are stored (a tool call happening).
+        self.while_answering: Optional[Callable[[], None]] = None
         self._subscribers: List[Callable[[str], None]] = []
         self._held: Optional[tuple] = None
 
@@ -150,6 +152,8 @@ class FakeWebChatBackend:
             callback(state)
 
     def _answer(self, text: str, on_complete) -> None:
+        if self.while_answering is not None:
+            self.while_answering()
         self.memory.add_message("user", text)
         self.memory.add_message("assistant", self.reply_text)
         on_complete(self.reply_text)

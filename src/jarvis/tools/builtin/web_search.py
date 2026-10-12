@@ -8,7 +8,7 @@ import requests
 from typing import Dict, Any, Optional, List, Tuple
 from ...debug import debug_log
 from ..base import Tool, ToolContext
-from ..types import ToolExecutionResult
+from ..types import StepNote, ToolExecutionResult
 from .url_guard import MAX_FETCH_BYTES, NonPublicUrlError, fetch_public, is_public_url, read_capped
 from .web_fence import FENCE_NOTE, defang, fence
 
@@ -475,6 +475,10 @@ def _wikipedia_summary(
         return None
 
 
+# A numbered result line of the link list ("1. **Title**"): counted for the tool step, never quoted.
+_RESULT_LINE = re.compile(r"^\s*\d+\.\s+\*\*", re.MULTILINE)
+
+
 class WebSearchTool(Tool):
     """Tool for performing web searches using DuckDuckGo."""
 
@@ -498,6 +502,12 @@ class WebSearchTool(Tool):
             },
             "required": ["search_query"]
         }
+
+    def step_note(self, args: Optional[Dict[str, Any]], result: ToolExecutionResult) -> Optional[StepNote]:
+        """The number of results found, never the query or what they say."""
+        found = len(_RESULT_LINE.findall(result.reply_text or ""))
+        summary = None if found == 0 else f"{found} result" + ("" if found == 1 else "s")
+        return StepNote("Searched the web", summary)
 
     def run(self, args: Optional[Dict[str, Any]], context: ToolContext) -> ToolExecutionResult:
         """Execute web search using DuckDuckGo."""
