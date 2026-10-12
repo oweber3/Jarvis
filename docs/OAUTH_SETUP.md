@@ -2,7 +2,7 @@
 
 **Sign in with Microsoft** and **Sign in with Google** (Settings → Calendar & Email) need an OAuth app registered once by whoever publishes a Jarvis build. The registration holds the app's name and permissions. Users never see it or touch it: they click the button, sign in in their browser and allow read access.
 
-This guide is for the project owner. It covers both registrations and where to paste the IDs. Until the IDs are in, the buttons appear greyed out with an explanation, and every other option still works (Gmail app password, IMAP, calendar links, classic Outlook).
+This guide is for the project owner. It covers both registrations and where to paste the IDs. Until the IDs are in, the buttons are hidden, and every other option still works (Gmail app password, IMAP, calendar links, classic Outlook).
 
 What Jarvis asks for, read only:
 

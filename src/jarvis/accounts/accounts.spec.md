@@ -22,7 +22,7 @@ How the user connects the calendars and mailboxes that the read-only `calendar` 
 
 ## OAuth clients
 
-`microsoft_oauth_client_id`, `google_oauth_client_id` and `google_oauth_client_secret` default to `BUILT_IN_OAUTH_CLIENTS` and can be overridden in `config.json` (a power user's own app registration). They have no Settings rows. An empty client ID turns that sign-in off: its button is disabled and says the sign-in is not set up in this build. These are public desktop clients; Google documents an installed app's client secret as not confidential, so it ships like the ID. Registering the apps is described in `docs/OAUTH_SETUP.md`.
+`microsoft_oauth_client_id`, `google_oauth_client_id` and `google_oauth_client_secret` default to `BUILT_IN_OAUTH_CLIENTS` and can be overridden in `config.json` (a power user's own app registration). They have no Settings rows. An empty client ID turns that sign-in off: the Settings page does not show its button at all. These are public desktop clients; Google documents an installed app's client secret as not confidential, so it ships like the ID. Registering the apps is described in `docs/OAUTH_SETUP.md`.
 
 ## Browser sign-in
 

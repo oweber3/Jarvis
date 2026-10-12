@@ -80,12 +80,11 @@ def page_with(qapp):
         page.close()
 
 
-def test_sign_in_buttons_without_an_app_id_are_off_and_say_why(page_with):
+def test_sign_in_is_offered_only_for_providers_with_an_app_id(page_with):
     page, _ = page_with(StubStore(microsoft=False, google=True))
-    assert not page.microsoft_button.isEnabled()
-    assert "not set up in this build" in page.microsoft_button.toolTip()
-    assert "not set up in this build" in page.microsoft_hint.text()
-    assert page.google_button.isEnabled()
+    assert page.microsoft_button.isHidden() and page.microsoft_hint.isHidden()
+    assert page.ms_calendar.isHidden() and page.ms_mail.isHidden()
+    assert not page.google_button.isHidden() and page.google_button.isEnabled()
 
 
 def test_outlook_is_offered_only_when_classic_outlook_is_installed(page_with):
