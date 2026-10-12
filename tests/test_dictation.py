@@ -26,6 +26,8 @@ def _make_engine(**overrides):
         on_dictation_start=None,
         on_dictation_end=None,
         transcribe_lock=threading.Lock(),
+        # These tests are about what happens to a transcript; silence has its own tests.
+        speech_check=lambda _audio, _rate: True,
     )
     defaults.update(overrides)
     return DictationEngine(**defaults)

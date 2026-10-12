@@ -103,6 +103,22 @@ cannot be opened.
   post-processing pipeline. Audio shorter than 0.3 s or empty gives an empty
   transcript without calling Whisper.
 
+## Silence and Whisper's invented phrases
+
+Whisper turns silence and room noise into stock phrases ("Thanks for watching!"). Every
+transcription, hold-to-dictate and a capture for a caller alike, applies two gates before any
+post-processing:
+
+1. **Speech gate.** Audio without speech gives an empty transcript without calling Whisper
+   (`audio_has_speech`). It uses the Silero detector that ships with faster-whisper, which runs
+   offline, hears quiet speech and ignores noise whatever its level. Where Silero is unavailable,
+   a 30 ms window must reach `voice_min_energy`, the level the voice listener counts as speech.
+2. **No-speech gate.** A segment whose `no_speech_prob` is at or above
+   `whisper_no_speech_threshold` is dropped, with the voice listener's own check
+   (`is_whisper_hallucination`), on faster-whisper and MLX. Segments without a score are kept.
+
+Dropped text is never logged; only the count is.
+
 ## Post-Processing Pipeline
 
 After transcription, text passes through these stages in order:
@@ -172,6 +188,7 @@ After transcription, text passes through these stages in order:
 | Whisper not yet loaded    | Play "not ready" beep (on the worker, never the hook thread), skip; no start notice, nothing recorded |
 | Max recording duration    | Hold-to-dictate: no cap — the user controls when to stop by releasing the hotkey. A cap would paste prematurely mid-dictation and restart recording. A capture for a caller is capped at the caller's `max_seconds` |
 | Empty transcription       | No paste occurs                                    |
+| Silence or noise only     | Empty transcript (see Silence and Whisper's invented phrases); no paste |
 | Concurrent with assistant | Dictation works independently; pauses listener     |
 | macOS permissions         | `pynput` requires Accessibility permissions        |
 | macOS 26+ (Tahoe)         | `pynput` disabled — TSM main-thread assertion crash |
