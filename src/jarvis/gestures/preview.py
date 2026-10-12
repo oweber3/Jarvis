@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable, Optional
 
-from .window_snap import index_curl, is_open_palm, pinch_ratio
+from .window_snap import describe_hand
 from .hand_tracking import HandFrame, Landmark
 
 _BONES = ((0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (5, 9), (9, 10), (10, 11), (11, 12),
@@ -20,13 +20,11 @@ _TIP = (0, 220, 255)
 
 
 def caption(hand_frame: Optional[HandFrame], state: str) -> str:
-    """One line about the strongest hand: side, pinch ratio, index curl, pose and the gesture snapping state."""
+    """One line about the strongest hand: side, each finger's curl, the gesture and the gesture snapping state."""
     if hand_frame is None or not hand_frame.hands:
         return f"no hand  ·  {state}"
     hand = max(hand_frame.hands, key=lambda h: h.score)
-    pose = "open palm" if is_open_palm(hand) else "pointing"
-    return (f"{hand.side} hand  ·  pinch {pinch_ratio(hand, hand_frame.width, hand_frame.height):.2f}  ·  "
-            f"curl {index_curl(hand):.2f}  ·  {pose}  ·  {state}")
+    return f"{hand.side} hand  ·  {describe_hand(hand)}  ·  {state}"
 
 
 def draw_overlay(image: Any, hand_frame: Optional[HandFrame]) -> Any:

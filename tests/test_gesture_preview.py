@@ -20,7 +20,7 @@ def test_the_image_is_mirrored_like_the_landmarks():
     assert drawn[:, -10:].all() and not drawn[:, :10].any()
 
 
-def test_the_caption_reports_pinch_pose_and_state():
-    text = caption(frame(0.0, hand(0.5, 0.5, pinch=0.1)), "pinched")
-    assert "right" in text and "0.10" in text and "pinched" in text
+def test_the_caption_reports_the_fingers_gesture_and_state():
+    text = caption(frame(0.0, hand(0.5, 0.5, gesture="two")), "scrolling")
+    assert "right" in text and "index 1.35" in text and "two fingers" in text and "scrolling" in text
     assert "no hand" in caption(frame(0.0), "paused")

@@ -1,9 +1,9 @@
-"""Gesture snapping: the index fingertip aims the pointer, a fist grabs the window under it, the window follows
-the hand and opening it snaps the window into a zone; a pinch scrolls the window under the pointer.
+"""Gesture snapping by raised fingers: one finger aims the pointer, a fist grabs the window under it and the window
+follows the hand, raising a finger snaps it into a zone, two fingers scroll, an open hand pauses.
 
 Pure gesture logic on ``HandFrame``s. The desktop is an output object (``desktop``, ``position``, ``move_to``,
-``grab``, ``move_window``, ``drop``, ``scroll``) supplied by the caller, so this module knows
-nothing of Windows or FancyZones. It never clicks. It is the only code that moves the pointer or windows this way, and
+``grab``, ``move_window``, ``drop``, ``scroll``) supplied by the caller, so this module knows nothing of
+Windows or FancyZones. It never clicks. It is the only code that moves the pointer or windows this way, and
 only from the user's own hand movements. See ``gestures.spec.md``, Gesture snapping.
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ import math
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from ..debug import debug_log
 from .hand_tracking import Hand, HandFrame, Landmark
@@ -21,17 +21,23 @@ Rectangle = Tuple[int, int, int, int]
 
 HAND_LOST_SEC = 0.25
 WATCHDOG_SEC = 0.05
-EXTENDED_FACTOR = 1.2
-_DERIVATIVE_CUTOFF_HZ = 1.0
 WHEEL_NOTCH = 120
 # Wheel units are sent once at least this many have built up, so slow movements do not flood the window.
 MIN_WHEEL_STEP = 30
-_FINGERS = ("INDEX", "MIDDLE", "RING", "PINKY")
+_DERIVATIVE_CUTOFF_HZ = 1.0
+FINGERS = ("INDEX", "MIDDLE", "RING", "PINKY")
 
-_IDLE, _AIMING, _CLOSING, _HOLDING, _HOLDING_NOTHING, _SCROLLING = (
-    "idle", "aiming", "closing", "holding", "holding nothing", "scrolling")
-_STATE_NAMES = {_IDLE: "paused", _AIMING: "aiming", _CLOSING: "hand closing", _HOLDING: "holding",
-                _HOLDING_NOTHING: "holding nothing", _SCROLLING: "scrolling"}
+ONE, TWO, FIST, OPEN, OTHER = "one finger", "two fingers", "fist", "open hand", "other"
+_SHAPES: Dict[FrozenSet[str], str] = {
+    frozenset({"INDEX"}): ONE,
+    frozenset({"INDEX", "MIDDLE"}): TWO,
+    frozenset(): FIST,
+    frozenset(FINGERS): OPEN,
+}
+
+_IDLE, _AIMING, _HOLDING, _HOLDING_NOTHING, _SCROLLING = "idle", "aiming", "holding", "holding nothing", "scrolling"
+_STATE_NAMES = {_IDLE: "paused", _AIMING: "aiming", _HOLDING: "holding", _HOLDING_NOTHING: "holding nothing",
+                _SCROLLING: "scrolling"}
 
 
 # --------------------------------------------------------------------------------------------------
@@ -44,11 +50,9 @@ class WindowSnapSettings:
 
     hand: str = "any"
     comfort_box: float = 0.5
-    pinch_start: float = 0.25
-    pinch_release: float = 0.35
-    fist_start: float = 0.82
-    fist_release: float = 0.92
-    debounce: float = 0.05
+    finger_up: float = 1.1
+    finger_down: float = 0.95
+    debounce: float = 0.1
     scroll_speed: float = 5.0
     min_cutoff: float = 1.0
     beta: float = 0.005
@@ -62,19 +66,15 @@ class WindowSnapSettings:
             return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else fallback
 
         hand = getattr(cfg, "gesture_snap_hand", default.hand)
-        start = number("gesture_snap_pinch_start", default.pinch_start)
-        release = number("gesture_snap_pinch_release", default.pinch_release)
-        if release <= start:
-            release = start + 0.1
-        fist_start = number("gesture_snap_fist_start", default.fist_start)
-        fist_release = number("gesture_snap_fist_release", default.fist_release)
-        if fist_release <= fist_start:
-            fist_release = fist_start + 0.15
+        up = number("gesture_snap_finger_up", default.finger_up)
+        down = number("gesture_snap_finger_down", default.finger_down)
+        if down >= up:
+            down = up - 0.1
         return cls(hand=hand if hand in ("any", "left", "right") else default.hand,
                    comfort_box=number("gesture_snap_comfort_box", default.comfort_box),
-                   pinch_start=start, pinch_release=release, fist_start=fist_start, fist_release=fist_release,
-                   scroll_speed=number("gesture_snap_scroll_speed", default.scroll_speed),
+                   finger_up=up, finger_down=down,
                    debounce=number("gesture_snap_debounce_ms", default.debounce * 1000) / 1000,
+                   scroll_speed=number("gesture_snap_scroll_speed", default.scroll_speed),
                    min_cutoff=number("gesture_snap_smoothing", default.min_cutoff),
                    beta=number("gesture_snap_speed_response", default.beta))
 
@@ -87,38 +87,29 @@ def _distance(a, b) -> float:
     return math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2)
 
 
-def pinch_ratio(hand: Hand, width: int, height: int) -> float:
-    """Thumb tip to index tip, as a fraction of the hand size (wrist to middle finger base), both measured
-    in the camera image in pixels. The tracker's depth estimate is not used: with the hand side-on to the
-    camera it keeps touching fingertips apart."""
-    def pixels(a, b) -> float:
-        return math.hypot((a.x - b.x) * width, (a.y - b.y) * height)
-
-    size = pixels(hand.point(Landmark.WRIST), hand.point(Landmark.MIDDLE_MCP))
-    if size <= 1e-6:
-        return math.inf
-    return pixels(hand.point(Landmark.THUMB_TIP), hand.point(Landmark.INDEX_TIP)) / size
-
-
-def index_curl(hand: Hand) -> float:
-    """Wrist to index tip over wrist to index middle joint, on the world landmarks: above 1 straight, below 1
-    curled (a fist)."""
+def finger_curl(hand: Hand, finger: str) -> float:
+    """Wrist to fingertip over wrist to the finger's middle joint, on the world landmarks: well above 1 when the
+    finger is raised, below 1 when it is folded."""
     wrist = hand.world_point(Landmark.WRIST)
-    pip = _distance(wrist, hand.world_point(Landmark.INDEX_PIP))
+    pip = _distance(wrist, hand.world_point(getattr(Landmark, f"{finger}_PIP")))
     if pip <= 1e-6:
-        return math.inf
-    return _distance(wrist, hand.world_point(Landmark.INDEX_TIP)) / pip
+        return 0.0
+    return _distance(wrist, hand.world_point(getattr(Landmark, f"{finger}_TIP"))) / pip
 
 
-def is_open_palm(hand: Hand) -> bool:
-    """All four fingers extended: each tip farther from the wrist than its middle joint, by a margin."""
-    wrist = hand.world_point(Landmark.WRIST)
-    for name in _FINGERS:
-        tip = _distance(wrist, hand.world_point(getattr(Landmark, f"{name}_TIP")))
-        pip = _distance(wrist, hand.world_point(getattr(Landmark, f"{name}_PIP")))
-        if tip <= pip * EXTENDED_FACTOR:
-            return False
-    return True
+def describe_hand(hand: Hand, settings: Optional["WindowSnapSettings"] = None) -> str:
+    """Each finger's curl and the gesture they make on their own (a finger between the thresholds counts as
+    down), for the diagnostic readout and preview."""
+    s = settings or WindowSnapSettings()
+    curls = {f: finger_curl(hand, f) for f in FINGERS}
+    raised = frozenset(f for f, c in curls.items() if c > s.finger_up)
+    names = {"INDEX": "index", "MIDDLE": "middle", "RING": "ring", "PINKY": "little"}
+    return " ".join(f"{names[f]} {curls[f]:.2f}" for f in FINGERS) + f" · {shape_of(raised)}"
+
+
+def shape_of(raised: FrozenSet[str]) -> str:
+    """The gesture a set of raised fingers makes: one finger, two fingers, fist, open hand or other."""
+    return _SHAPES.get(raised, OTHER)
 
 
 def clamp_to_desktop(x: float, y: float, monitors: Sequence[Rectangle]) -> Tuple[float, float]:
@@ -173,12 +164,14 @@ class OneEuroFilter:
 
 
 
+
+
 # --------------------------------------------------------------------------------------------------
 # The gesture model
 # --------------------------------------------------------------------------------------------------
 
 class WindowSnap:
-    """Turns ``HandFrame``s into pointer moves, window grabs, window moves and snaps on ``output``.
+    """Turns ``HandFrame``s into pointer moves, window grabs, window moves, snaps and scrolling on ``output``.
 
     ``on_frame`` runs on the detection thread, ``tick`` on a watchdog thread and ``close`` on whichever
     thread stops the mode; one lock serialises them."""
@@ -195,28 +188,35 @@ class WindowSnap:
         self._fx = OneEuroFilter(settings.min_cutoff, settings.beta)
         self._fy = OneEuroFilter(settings.min_cutoff, settings.beta)
         self._state = _IDLE
+        self._tracking = False
         self._side: Optional[str] = None
         self._tip: Optional[Tuple[float, float]] = None
         self._last_hand: Optional[float] = None
+        self._raised: Dict[str, bool] = {}
+        self._gesture: Optional[str] = None
+        self._candidate: Optional[str] = None
+        self._candidate_since = 0.0
         self._ref: Tuple[float, float] = (0.0, 0.0)
         self._cursor: Tuple[float, float] = (0.0, 0.0)
         self._shown: Optional[Tuple[int, int]] = None
-        self._anchor: Tuple[float, float] = (0.0, 0.0)
-        self._fist_since: Optional[float] = None
-        self._pinch_since: Optional[float] = None
-        self._above_since: Optional[float] = None
-        self._wheel = 0.0
         self._window: Any = None
         self._offset: Tuple[float, float] = (0.0, 0.0)
         self._placed: Optional[Tuple[int, int]] = None
+        self._wheel = 0.0
         self._closed = False
         self._failing: set = set()
 
     @property
     def state(self) -> str:
-        """What the hand is doing, for display: paused, aiming, hand closing, holding, holding nothing or
-        scrolling."""
+        """For display: paused, aiming, hand changing, holding, holding nothing or scrolling."""
+        if self._candidate is not None and self._state != _IDLE:
+            return "hand changing"
         return _STATE_NAMES[self._state]
+
+    @property
+    def gesture(self) -> Optional[str]:
+        """The gesture in force: one finger, two fingers, fist, open hand, other, or ``None`` without a hand."""
+        return self._gesture
 
     # -- entry points ----------------------------------------------------------------------------
 
@@ -234,8 +234,7 @@ class WindowSnap:
             gain = self._desktop_width / (self._s.comfort_box * max(frame.width, 1))
             position = (self._fx(tip.x * frame.width * gain, frame.time),
                         self._fy(tip.y * frame.height * gain, frame.time))
-            self._step(position, pinch_ratio(chosen, frame.width, frame.height), index_curl(chosen),
-                       is_open_palm(chosen), frame.time, frame.height * gain)
+            self._step(position, self._shape(chosen), frame.time, frame.height * gain)
 
     def tick(self) -> None:
         """Watchdog: let go once the hand has been missing too long, even when no frames arrive."""
@@ -275,17 +274,32 @@ class WindowSnap:
         self._tip = (tip.x, tip.y)
         return chosen
 
+    def _shape(self, hand: Hand) -> str:
+        """Each finger up or down with hysteresis (between the thresholds it keeps its state), then the shape."""
+        for finger in FINGERS:
+            curl = finger_curl(hand, finger)
+            if curl > self._s.finger_up:
+                self._raised[finger] = True
+            elif curl < self._s.finger_down:
+                self._raised[finger] = False
+            else:
+                self._raised.setdefault(finger, False)
+        return shape_of(frozenset(f for f in FINGERS if self._raised[f]))
+
     def _check_lost(self, now: float) -> None:
-        if self._state == _IDLE or self._last_hand is None or now - self._last_hand < HAND_LOST_SEC:
+        if self._last_hand is None or now - self._last_hand < HAND_LOST_SEC:
+            return
+        if self._state == _IDLE and self._gesture is None and self._candidate is None:
             return
         if self._window is not None:
             debug_log("gesture snapping: window left where it is (hand lost)", "gestures")
-        elif self._state == _CLOSING:
-            debug_log("gesture snapping: gesture cancelled, hand lost", "gestures")
-        elif self._state == _SCROLLING:
+        if self._state == _SCROLLING:
             self._end_scroll()
         self._window = None
         self._state = _IDLE
+        self._tracking = False
+        self._gesture = self._candidate = None
+        self._raised.clear()
         self._side = None
         self._tip = None
         self._fx.reset()
@@ -293,99 +307,58 @@ class WindowSnap:
 
     # -- the state machine -----------------------------------------------------------------------
 
-    def _step(self, p: Tuple[float, float], ratio: float, curl: float, palm: bool, t: float,
-              scale: float) -> None:
-        s = self._s
-        state = self._state
-        if state == _IDLE:
-            if not palm:
-                self._begin(p)
-            return
-        if state == _AIMING:
-            if palm:
-                debug_log("gesture snapping: clutch (open palm)", "gestures")
-                self._state = _IDLE
-            elif ratio < s.pinch_release or curl < s.fist_release:
-                self._state = _CLOSING
-                self._anchor = self._cursor
-                self._fist_since = self._pinch_since = None
-                self._ref = p
-                self._closing(ratio, curl, t)
-            else:
-                self._move_by(p)
-            return
-        if state == _CLOSING:
-            self._ref = p
-            if palm:
-                self._state = _IDLE
-            elif ratio >= s.pinch_release and curl >= s.fist_release:
-                self._state = _AIMING
-            else:
-                self._closing(ratio, curl, t)
-            return
-        if state == _SCROLLING:
-            if palm:
-                self._end_scroll()
-                self._state = _IDLE
-            elif curl < s.fist_start:  # becoming a fist: once it lasts, the scroll ends and the fist grabs
-                self._ref = p
-                if self._fist_since is None:
-                    self._fist_since = t
-                if t - self._fist_since >= s.debounce:
-                    self._end_scroll()
-                    self._grab()
-            elif ratio > s.pinch_release:
-                self._fist_since = None
-                self._ref = p
-                if self._release_confirmed(t):
-                    self._end_scroll()
-                    self._state = _AIMING
-            else:
-                self._fist_since = self._above_since = None
-                self._scroll_by(p, scale)
-            return
-        # Holding a window, or a fist over nothing. Opening the hand flat drops at once, like opening the fist.
-        if palm:
-            self._drop()
-            self._state = _IDLE
-            return
-        if curl > s.fist_release:
-            self._ref = p  # hold the drop point still while the release is confirmed
-            if self._release_confirmed(t):
-                self._drop()
-                self._state = _AIMING
-            return
-        self._above_since = None
-        if self._window is None:
-            self._ref = p  # nothing held: the aim stays at the anchor until the fist opens
-            return
-        self._move_by(p)
-        self._follow()
-
-    def _closing(self, ratio: float, curl: float, t: float) -> None:
-        """Debounce a fist (index curled) or a pinch (thumb on a straight index) while the aim is frozen."""
-        s = self._s
-        if curl < s.fist_start:
-            self._pinch_since = None
-            if self._fist_since is None:
-                self._fist_since = t
-            if t - self._fist_since >= s.debounce:
-                self._grab()
-        elif ratio < s.pinch_start:
-            self._fist_since = None
-            if self._pinch_since is None:
-                self._pinch_since = t
-            if t - self._pinch_since >= s.debounce:
-                self._start_scroll()
+    def _step(self, p: Tuple[float, float], shape: str, t: float, scale: float) -> None:
+        if shape == self._gesture:
+            self._candidate = None
         else:
-            self._fist_since = self._pinch_since = None
+            if shape != self._candidate:
+                self._candidate, self._candidate_since = shape, t
+            if t - self._candidate_since >= self._s.debounce:
+                self._candidate = None
+                self._confirm(shape, p)
+                self._ref = p
+                return
+            # The hand is changing: the aim (and a held window) stays still until the new gesture counts.
+            self._ref = p
+            return
+        state = self._state
+        if state == _AIMING:
+            self._move_by(p)
+        elif state == _HOLDING:
+            self._move_by(p)
+            self._follow()
+        elif state == _SCROLLING:
+            self._scroll_by(p, scale)
+        else:
+            self._ref = p
 
-    def _release_confirmed(self, t: float) -> bool:
-        if self._above_since is None:
-            self._above_since = t
-        return t - self._above_since >= self._s.debounce
+    def _confirm(self, shape: str, p: Tuple[float, float]) -> None:
+        """A new gesture has lasted the debounce time: act on it."""
+        previous, self._gesture = self._gesture, shape
+        if self._state in (_HOLDING, _HOLDING_NOTHING):
+            if not self._raised.get("INDEX"):
+                return  # still a fist, perhaps with another finger loosening: keep holding
+            self._drop()
+            self._state = _AIMING
+        if self._state == _SCROLLING and shape != TWO:
+            self._end_scroll()
+            self._state = _AIMING
+        if shape in (ONE, TWO, FIST) and not self._tracking:
+            self._begin(p)
+        if shape == ONE:
+            self._state = _AIMING
+        elif shape == FIST:
+            self._grab()
+        elif shape == TWO:
+            self._start_scroll()
+        else:
+            if previous in (ONE, TWO, FIST):
+                debug_log(f"gesture snapping: clutch ({shape})", "gestures")
+            self._state = _IDLE
+            self._tracking = False
 
     def _begin(self, p: Tuple[float, float]) -> None:
+        """Start driving the pointer from where it is, read from the system, so it never jumps."""
         try:
             x, y = self._out.position()
         except Exception as exc:  # noqa: BLE001 - keep the last known position
@@ -396,6 +369,7 @@ class WindowSnap:
         self._cursor = clamp_to_desktop(float(x), float(y), self._monitors)
         self._shown = (int(x), int(y))
         self._ref = p
+        self._tracking = True
         self._state = _AIMING
 
     def _move_by(self, p: Tuple[float, float]) -> None:
@@ -417,11 +391,9 @@ class WindowSnap:
         self._shown = target
         self._failing.discard("move the pointer")
 
-    # -- windows ---------------------------------------------------------------------------------
+    # -- scrolling -------------------------------------------------------------------------------
 
     def _start_scroll(self) -> None:
-        self._cursor = self._anchor
-        self._above_since = None
         self._wheel = 0.0
         self._state = _SCROLLING
         debug_log("gesture snapping: scroll started", "gestures")
@@ -448,13 +420,14 @@ class WindowSnap:
         self._wheel -= step
         self._failing.discard("scroll")
 
+    # -- windows ---------------------------------------------------------------------------------
+
     def _grab(self) -> None:
-        self._cursor = self._anchor
-        self._above_since = None
-        x, y = int(round(self._anchor[0])), int(round(self._anchor[1]))
+        """Grab the window under the pointer, which has not moved since the hand started to close."""
+        x, y = int(round(self._cursor[0])), int(round(self._cursor[1]))
         try:
             window = self._out.grab(x, y)
-        except Exception as exc:  # noqa: BLE001 - a pinch that grabs nothing
+        except Exception as exc:  # noqa: BLE001 - a fist that grabs nothing
             self._output_failed("grab the window", exc)
             window = None
         else:

@@ -419,16 +419,15 @@ class Settings:
     screen_awareness_enabled: bool = True
 
     # Gesture snapping (see src/jarvis/gestures/gestures.spec.md, Gesture snapping): offers gestureControl, which
-    # turns the webcam on only when asked. Thresholds are pinch ratios (thumb-to-index distance over hand size).
+    # turns the webcam on only when asked. Gestures are counted raised fingers; the finger thresholds are curl
+    # ratios (wrist-to-tip over wrist-to-middle-joint distance): up above finger_up, down below finger_down.
     gesture_snap_enabled: bool = False
     gesture_snap_camera: int = 0
     gesture_snap_hand: str = "any"
     gesture_snap_comfort_box: float = 0.5
-    gesture_snap_pinch_start: float = 0.25
-    gesture_snap_pinch_release: float = 0.35
-    gesture_snap_fist_start: float = 0.82
-    gesture_snap_fist_release: float = 0.92
-    gesture_snap_debounce_ms: int = 50
+    gesture_snap_finger_up: float = 1.1
+    gesture_snap_finger_down: float = 0.95
+    gesture_snap_debounce_ms: int = 100
     gesture_snap_scroll_speed: float = 5.0
     gesture_snap_smoothing: float = 1.0
     gesture_snap_speed_response: float = 0.005
@@ -549,24 +548,20 @@ def _within(value: Any, default: float, low: float, high: float, cast=float):
 
 
 def _gesture_snap_settings(merged: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, Any]:
-    """The gesture snapping keys, clamped to their ranges, with the pinch release always above the start."""
+    """The gesture snapping keys, clamped to their ranges, with the finger down threshold always below up."""
     def get(key, low, high, cast=float):
         return _within(merged.get(key), defaults[key], low, high, cast)
 
-    start = get("gesture_snap_pinch_start", 0.05, 1.0)
-    release = get("gesture_snap_pinch_release", 0.1, 1.5)
-    fist_start = get("gesture_snap_fist_start", 0.3, 1.2)
-    fist_release = get("gesture_snap_fist_release", 0.4, 1.5)
+    finger_up = get("gesture_snap_finger_up", 0.8, 2.0)
+    finger_down = get("gesture_snap_finger_down", 0.5, 1.5)
     hand = merged.get("gesture_snap_hand")
     return {
         "gesture_snap_enabled": merged.get("gesture_snap_enabled") is True,
         "gesture_snap_camera": get("gesture_snap_camera", 0, 16, int),
         "gesture_snap_hand": hand if hand in ("any", "left", "right") else defaults["gesture_snap_hand"],
         "gesture_snap_comfort_box": get("gesture_snap_comfort_box", 0.15, 1.0),
-        "gesture_snap_pinch_start": start,
-        "gesture_snap_pinch_release": release if release > start else round(start + 0.1, 3),
-        "gesture_snap_fist_start": fist_start,
-        "gesture_snap_fist_release": fist_release if fist_release > fist_start else round(fist_start + 0.15, 3),
+        "gesture_snap_finger_up": finger_up,
+        "gesture_snap_finger_down": finger_down if finger_down < finger_up else round(finger_up - 0.1, 3),
         "gesture_snap_debounce_ms": get("gesture_snap_debounce_ms", 0, 500, int),
         "gesture_snap_scroll_speed": get("gesture_snap_scroll_speed", 0.5, 30.0),
         "gesture_snap_smoothing": get("gesture_snap_smoothing", 0.05, 10.0),
@@ -958,11 +953,9 @@ def get_default_config() -> Dict[str, Any]:
         "gesture_snap_camera": 0,
         "gesture_snap_hand": "any",
         "gesture_snap_comfort_box": 0.5,
-        "gesture_snap_pinch_start": 0.25,
-        "gesture_snap_pinch_release": 0.35,
-        "gesture_snap_fist_start": 0.82,
-        "gesture_snap_fist_release": 0.92,
-        "gesture_snap_debounce_ms": 50,
+        "gesture_snap_finger_up": 1.1,
+        "gesture_snap_finger_down": 0.95,
+        "gesture_snap_debounce_ms": 100,
         "gesture_snap_scroll_speed": 5.0,
         "gesture_snap_smoothing": 1.0,
         "gesture_snap_speed_response": 0.005,

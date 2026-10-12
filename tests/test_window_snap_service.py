@@ -52,7 +52,7 @@ def grab_and_hold(tracker):
     t = time.perf_counter()
     tracker.deliver(frame(t, hand(0.5, 0.5)))
     for i in range(1, 6):
-        tracker.deliver(frame(t + i / 30, hand(0.5, 0.5, fist=True)))
+        tracker.deliver(frame(t + i / 30, hand(0.5, 0.5, gesture="fist")))
 
 
 def test_starting_turns_the_camera_on_and_hands_move_the_pointer(mock_config, desk):
@@ -85,7 +85,7 @@ def test_stopping_lets_go_of_a_held_window_and_releases_the_camera(mock_config, 
     assert svc.stop() is True
     assert not tracker.running and not svc.running and svc.state == "off"
     count = len(desk.events)
-    tracker.deliver(frame(time.perf_counter() + 2, hand(0.7, 0.5, fist=True)))  # a late frame changes nothing
+    tracker.deliver(frame(time.perf_counter() + 2, hand(0.7, 0.5, gesture="fist")))  # a late frame changes nothing
     assert len(desk.events) == count and desk.of("drop") == []
 
 

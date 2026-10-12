@@ -38,7 +38,8 @@ def run(cfg, **args):
 def test_start_turns_the_gesture_snap_on(fake_service, mock_config):
     result = run(mock_config, action="start")
     assert result.success and fake_service.running
-    assert "pinch" in result.reply_text.lower()
+    from jarvis.gestures.window_snap_service import GESTURE_GUIDE
+    assert GESTURE_GUIDE in result.reply_text  # the reply tells the user how to use it
 
 
 def test_start_when_on_says_so_and_keeps_one_camera(fake_service, mock_config):

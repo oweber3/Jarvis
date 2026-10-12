@@ -60,14 +60,14 @@ class TestLive:
 
 def _fist_tracker(camera_index):
     from tests.synthetic_hands import hand
-    tracker = HandTracker(camera_index, hands_factory=lambda: lambda frame, t: (hand(0.5, 0.5, fist=True),),
+    tracker = HandTracker(camera_index, hands_factory=lambda: lambda frame, t: (hand(0.5, 0.5, gesture="fist"),),
                           camera_factory=lambda index: _Camera(), max_fps=50)
     return tracker
 
 
 @pytest.mark.unit
 class TestGestureSnapping:
-    def test_gesture_snapping_runs_reports_the_pinch_and_lets_go_when_it_stops(self, capsys):
+    def test_gesture_snapping_runs_reports_the_fingers_and_lets_go_when_it_stops(self, capsys):
         from tests.synthetic_hands import FakeDesktop, FakeWindow
         desk = FakeDesktop(windows=[FakeWindow((0, 0, 1920, 1080))])
         made = []
@@ -80,7 +80,7 @@ class TestGestureSnapping:
                         make_output=lambda: desk) == 0
         out = capsys.readouterr().out
         assert made == [3]
-        assert "Gesture snapping on" in out and "curl 0.7" in out and "holding" in out and "Gesture snapping off" in out
+        assert "Gesture snapping on" in out and "index 0.75" in out and "holding" in out and "Gesture snapping off" in out
         assert desk.of("grab") and desk.of("drop") == []  # the held fist grabbed; stopping left it in place
 
     def test_gesture_snapping_that_cannot_start_exits_with_an_error(self, capsys):

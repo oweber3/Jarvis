@@ -103,8 +103,8 @@ def _live(args: argparse.Namespace, make_tracker: Callable[[int], HandTracker]) 
     return 0
 
 
-class _PinchReadout:
-    """The latest hand's pinch ratio, index curl and pose, for choosing the gesture snapping thresholds."""
+class _FingerReadout:
+    """The latest hand's finger curls and gesture, for choosing the gesture snapping thresholds."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -113,15 +113,13 @@ class _PinchReadout:
         self.hand_frame: Optional[HandFrame] = None
 
     def __call__(self, frame: HandFrame) -> None:
-        from .window_snap import index_curl, is_open_palm, pinch_ratio
+        from .window_snap import describe_hand
 
         text = None
         self.hand_frame = frame
         if frame.hands:
             hand = max(frame.hands, key=lambda h: h.score)
-            pose = "open palm" if is_open_palm(hand) else "pointing"
-            text = (f"{hand.side} · pinch {pinch_ratio(hand, frame.width, frame.height):.2f} · "
-                    f"curl {index_curl(hand):.2f} · {pose}")
+            text = f"{hand.side} · {describe_hand(hand)}"
         with self._lock:
             self.frames += 1
             self.latest = text
@@ -147,7 +145,7 @@ def _snap(args: argparse.Namespace, make_tracker: Callable[[int], HandTracker],
             return WindowsSnapOutput(use_fancyzones=getattr(cfg, "windows_fancyzones_enabled", True),
                                      languages=(*getattr(cfg, "fast_commands_locales", ["en"]), "en"))
     camera = args.camera if args.camera is not None else cfg.gesture_snap_camera
-    readout = _PinchReadout()
+    readout = _FingerReadout()
     recorder = HandRecorder(args.record) if args.record else None
     tap = _tap(camera) if args.preview else None
 
@@ -257,7 +255,7 @@ def main(argv: Optional[List[str]] = None, *,
     parser.add_argument("--preview", action="store_true",
                         help="show the camera image with the detected hand drawn on it")
     parser.add_argument("--snap", action="store_true",
-                        help="move and scroll windows with your hand, showing the pinch and curl to tune thresholds")
+                        help="move and scroll windows with your hand, showing each finger's curl to tune thresholds")
     args = parser.parse_args(argv)
     if args.image:
         return _photo(args.image)
