@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 from ..debug import debug_log
-from ..memory.chat_store import ANY_PROJECT, Chat, ChatStore
+from ..memory.chat_store import ANY_PROJECT, Chat, ChatStore, Message
+from ..tools.step_log import StepLog, get_step_log, humanise
 
 DEFAULT_CHAT_TITLE = "Voice and quick questions"
 RESTORE_TURNS = 20
@@ -52,12 +53,22 @@ def chat_dict(chat: Chat) -> Dict[str, Any]:
             "updated_at": chat.updated_at, "last_mode": chat.last_mode, "last_model": chat.last_model}
 
 
+def message_dict(message: Message) -> Dict[str, Any]:
+    """A stored message as the page gets it: never the private flag."""
+    return {"id": message.id, "role": message.role, "text": message.content, "ts": message.ts,
+            "source": message.source, "steps": [dict(step) for step in message.steps]}
+
+
 class ChatHub:
     """Thread-safe state behind the web chat. ``backend`` is a ``DaemonBackend`` or a test fake."""
 
     def __init__(self, backend, store: ChatStore, *, sync_interval_sec: float = SYNC_INTERVAL_SEC,
-                 restore_turns: int = RESTORE_TURNS, clock: Callable[[], float] = time.time) -> None:
+                 restore_turns: int = RESTORE_TURNS, clock: Callable[[], float] = time.time,
+                 steps: Optional[StepLog] = None) -> None:
         self._backend = backend
+        self._steps = steps if steps is not None else get_step_log()
+        # Steps up to here belong to nothing the open chat shows: they were taken before it was open.
+        self._step_cursor = self._steps.latest()
         self._store = store
         self._interval = sync_interval_sec
         self._restore_turns = restore_turns
@@ -189,10 +200,27 @@ class ChatHub:
             source = last[0].source
         else:
             source = "voice"
+        steps = self._take_steps(turn) if turn.role == "assistant" else []
         self._store.append_message(chat_id, turn.role, turn.content, ts=turn.ts, source=source,
-                                   private=bool(turn.private))
+                                   private=bool(turn.private), steps=steps)
         if turn.role == "assistant":
             self._remember_model()
+
+    def _take_steps(self, turn) -> List[Dict[str, Any]]:
+        """The tool steps taken since the last reply and no later than this one, as stored with it. A
+        reply that quotes the activity log keeps only the tool and its status, never what it did."""
+        found = self._steps.since(self._step_cursor, until_ts=turn.ts)
+        if not found:
+            return []
+        self._step_cursor = found[-1].seq
+        debug_log(f"webchat: {len(found)} tool steps stored with a reply", "webchat")
+        return [{"tool": s.tool, "status": s.status,
+                 "label": humanise(s.tool) if turn.private else s.label,
+                 "summary": None if turn.private else s.summary} for s in found]
+
+    def _drop_steps(self) -> None:
+        """Forget the steps taken so far: a request that gave no reply must not lend them to the next one."""
+        self._step_cursor = self._steps.latest()
 
     def _restore_payload(self, chat_id: str) -> List[dict]:
         return [{"role": m.role, "content": m.content, **({"diary": False} if m.private else {})}
@@ -285,6 +313,7 @@ class ChatHub:
         that lands right after the swap still reaches the new chat."""
         self._store.set_active_chat_id(chat_id)
         self._cursor = cursor
+        self._drop_steps()
         with self._cond:
             self._notices.clear()
             self._library_rev += 1
@@ -363,6 +392,8 @@ class ChatHub:
             self._bump_locked()
         if status == "done":
             self._remember_model()
+        elif status != "busy":
+            self._drop_steps()
         debug_log(f"webchat: query {query_id} {status}", "webchat")
 
     def _remember_model(self) -> None:
@@ -444,8 +475,7 @@ class ChatHub:
             "busy_query": self._typed_in_flight(),
             "active_chat_id": chat.id if chat else None,
             "chat": chat_dict(chat) if chat else None,
-            "messages": [{"id": m.id, "role": m.role, "text": m.content, "ts": m.ts, "source": m.source}
-                         for m in messages],
+            "messages": [message_dict(m) for m in messages],
             "notices": notices,
             "mode": self._backend.reply_mode_state(),
             "model": self._backend.local_model_state(),

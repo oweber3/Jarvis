@@ -37,6 +37,7 @@ const message = (id: number, role: "user" | "assistant", text = "t"): ChatMessag
   text,
   ts: 1_760_000_000 + id,
   source: "typed",
+  steps: [],
 })
 const library = (active: string | null = "A"): Library => ({ projects: [], chats: [chat("A"), chat("B")], active_chat_id: active })
 

@@ -13,12 +13,21 @@ export type Chat = {
   last_model: string
 }
 
+// One tool call made for a reply. The words are the tool's own and never hold a path, address or window title.
+export type ToolStep = {
+  tool: string
+  status: "done" | "failed" | "declined" | "waiting"
+  label: string
+  summary: string | null
+}
+
 export type ChatMessage = {
   id: number
   role: "user" | "assistant"
   text: string
   ts: number
   source: "typed" | "voice" | "confirmed"
+  steps: ToolStep[]
 }
 
 export type Notice = { id: number; kind: string; text: string; request: string | null; ts: number }

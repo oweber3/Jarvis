@@ -297,6 +297,7 @@ Off by default. Turn it on in **Settings → Extras → Web chat** and restart J
 
 - **Voice joins the open chat.** What you say to Jarvis is added to whichever chat is open, so speaking and typing stay one conversation. Opening another chat gives Jarvis that chat's history.
 - **Switching the model or effort changes it for voice too** and is saved in your settings. Each chat remembers the model it last used and offers one tap to switch back, but opening a chat never turns on a cloud mode by itself.
+- **Tool steps.** Under a reply, the things Jarvis did for it ("Opened Word", "Set the volume to 30%") show as small rows you can open to see how each ended. They never include file paths, addresses or window titles.
 - **Saved locally, redacted.** Chats are kept in Jarvis's own database as the redacted text Jarvis sees, never what you typed before redaction. Delete a chat from its menu.
 - **Nothing leaves your PC.** The page is served by Jarvis on `127.0.0.1` only, with no cloud service, CDN or analytics, and works without internet.
 - **Only Jarvis's own page is shown.** If another program already uses the chat's port, the window says so instead of showing that program; pick another port in Settings.
