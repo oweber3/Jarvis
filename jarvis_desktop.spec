@@ -127,6 +127,7 @@ hiddenimports = [
     'jarvis.listening.transcript_buffer',
     'jarvis.listening.intent_judge',
     'jarvis.listening.speaker_verification',
+    'jarvis.listening.wake_sound',
     'jarvis.listening.voiceprint',
     'jarvis.listening.enrolment',
     # Memory modules

@@ -90,3 +90,13 @@ def test_a_failing_disable_call_never_blocks_the_session(monkeypatch):
     monkeypatch.setitem(sys.modules, "onnxruntime", ort)
 
     disable_onnxruntime_telemetry()
+
+
+def test_wake_sound_detector_disables_telemetry_before_its_sessions(fake_ort):
+    from pathlib import Path
+
+    from src.jarvis.listening.wake_sound import _session
+
+    _session(Path("wake.onnx"))
+
+    assert fake_ort == ["telemetry_off", "session"]

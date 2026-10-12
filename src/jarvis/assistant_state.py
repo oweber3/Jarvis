@@ -57,6 +57,25 @@ def set_state(state: AssistantState) -> None:
             return
         _state = state
         subscribers = list(_subscribers)
+    _notify(state, subscribers)
+
+
+def replace_state(expected: AssistantState, state: AssistantState) -> bool:
+    """Change to ``state`` only while the state is still ``expected``, checked and changed in one step.
+
+    For changes that must not overwrite a change another thread has just made. Returns whether it changed."""
+    global _state
+    with _lock:
+        if _state is not expected or state is expected:
+            return False
+        _state = state
+        subscribers = list(_subscribers)
+    _show_on_face(state)
+    _notify(state, subscribers)
+    return True
+
+
+def _notify(state: AssistantState, subscribers: List[Subscriber]) -> None:
     debug_log(f"assistant state: {state.value}", "state")
     for callback in subscribers:
         try:

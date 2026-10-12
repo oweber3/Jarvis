@@ -272,6 +272,14 @@ def _build_field_metadata() -> List[FieldMeta]:
       "How closely what you say must match the wake word, from 0.5 (loose) to 1.0 (exact). Raise it if "
       "Jarvis wakes by mistake; lower it if it misses you.",
       "listening", "float", min_val=0.5, max_val=1.0, step=0.01)
+    f("wake_sound_enabled", "React to the Sound of the Wake Word",
+      "Light up as soon as the wake word is heard, before you finish speaking. What you said still "
+      "decides whether Jarvis answers. Runs locally on the CPU. Takes effect after Jarvis restarts.",
+      "listening", "bool")
+    f("wake_sound_threshold", "Wake Sound Sensitivity",
+      "Lower reacts more readily but also to sound-alike words, from 0.05 to 0.95. Takes effect after "
+      "Jarvis restarts.",
+      "listening", "float", min_val=0.05, max_val=0.95, step=0.05, shown_when=_on("wake_sound_enabled"))
     f("voice_wake_wait_seconds", "Wait After Wake Word",
       "How long Jarvis waits for your request when you say only the wake word and pause.",
       "listening", "float", min_val=1.0, max_val=30.0, step=0.5, suffix="s")
