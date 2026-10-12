@@ -86,7 +86,8 @@ class CalendarTool(Tool):
     @property
     def description(self) -> str:
         return ("Read the user's calendar: events today, tomorrow, this week or on given dates, and the next "
-                "meeting. Read only; it cannot add or change events. NOT for the current time or date (use getTime) "
+                "meeting. The user's events are unknown until this is called: call it, never guess an empty day. "
+                "Read only; it cannot add or change events. NOT for the current time or date (use getTime) "
                 "or email (use email).")
 
     @property

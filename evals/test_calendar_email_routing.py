@@ -14,7 +14,8 @@ import os
 import pytest
 
 # (utterance, tool, expected arguments, or None to check the tool only). An expected value of None means the
-# argument may be absent; a tuple lists accepted values.
+# argument may be absent; a tuple lists accepted values. A tool of None means a neighbour: neither calendar nor
+# email may be called (the model may answer the time itself or call getTime).
 CASES = [
     ("What's on my calendar today?", "calendar", {"action": ("agenda", None), "range": ("today", None)}),
     ("What have I got on tomorrow?", "calendar", {"range": "tomorrow"}),
@@ -25,8 +26,9 @@ CASES = [
     ("Did I get anything from Sam?", "email", {"from": "sam"}),
     ("Read me the latest email from Professor King", "email", {"action": "read"}),
     ("Check my inbox", "email", {"action": ("list", None)}),
-    ("What time is it?", "getTime", None),
-    ("What's the date today?", "getTime", None),
+    ("What time is it?", None, None),
+    ("What's the date today?", None, None),
+    ("Search the web for the World Cup schedule", None, None),
 ]
 
 
@@ -75,6 +77,10 @@ def _matches(value, expected):
 @pytest.mark.parametrize("query,tool,expected", CASES, ids=[c[0] for c in CASES])
 def test_calendar_and_email_requests_reach_the_right_tool(query, tool, expected):
     selected, calls = _ask(query)
+    if tool is None:
+        called = [c["function"]["name"] for c in calls]
+        assert not {"calendar", "email"} & set(called), f"{query}: called {called}"
+        return
     assert tool in selected, f"{query}: router selected {selected}"
     assert calls, f"{query}: no tool call"
     name = calls[0]["function"]["name"]
