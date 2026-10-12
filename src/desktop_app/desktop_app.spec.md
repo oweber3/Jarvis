@@ -224,6 +224,12 @@ completion signals use other names (`check_done`, `completed`, `done`).
 and the slot mutates Qt UI state (menu actions, tray icon, face state), so
 it must run on the main thread.
 
+### Starting, stopping and the status poll
+
+- **Settings read at each start**: `start_daemon` reads `web_chat_enabled` and `web_chat_port` again, so after Settings and the tray's "Restart Jarvis now" the `Chat` entry opens the web chat on the port the new daemon serves (or the classic chat when it is off). A web chat window on a port no longer served is closed.
+- **One stop at a time**: `stop_daemon` pumps Qt events while it waits for the daemon to save its diary, so Stop or Quit can be clicked again meanwhile; a second stop while one is in progress is ignored. The wait works on the process or thread it started stopping, even if a slot run by the event pump clears the tray's reference to it.
+- **A user stop is never a crash**: `check_daemon_status` polls every two seconds and can run inside that wait. While a stop the user asked for is in progress it does nothing, so the stop always ends with "Jarvis Stopped" and the `stopped` chat state, never "ended unexpectedly" or `crashed`. Outside a stop, a daemon that exits is reported as an unexpected exit in both modes.
+
 ### Daemon Callbacks
 
 The desktop app registers callbacks with the daemon for:
