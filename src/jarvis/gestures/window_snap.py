@@ -21,7 +21,7 @@ Rectangle = Tuple[int, int, int, int]
 
 HAND_LOST_SEC = 0.25
 # Leaving a scroll needs the new gesture to last at least this long: the raised fingers bend as the hand moves.
-SCROLL_EXIT_SEC = 0.25
+SCROLL_EXIT_SEC = 0.5
 # After a gesture change the pointer's distance from the palm's place fades with this time constant.
 CATCH_UP_SEC = 0.15
 _PALM = (Landmark.WRIST, Landmark.INDEX_MCP, Landmark.MIDDLE_MCP, Landmark.RING_MCP, Landmark.PINKY_MCP)
