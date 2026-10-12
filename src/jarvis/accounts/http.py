@@ -55,8 +55,9 @@ class ApiError(Exception):
 
 def bearer_get(session: Any, url: str, params: Dict[str, Any] = None, headers: Dict[str, str] = None,
                transport: Any = None) -> Dict[str, Any]:
-    """GET ``url`` with the sign-in's access token. A refused token is refreshed once before the read
-    counts as signed out (an access token can be revoked before it expires)."""
+    """GET ``url`` with the sign-in's access token. A refused token (401) is refreshed once before the read
+    counts as signed out (an access token can be revoked before it expires). A 403 or 429 (rate limits, no
+    mailbox licence) is a ``server_error`` and keeps the token."""
     from .logins import LoginError
     transport = transport or Transport()
     for attempt in (1, 2):
@@ -67,11 +68,11 @@ def bearer_get(session: Any, url: str, params: Dict[str, Any] = None, headers: D
         status, data = transport.get(url, dict(params or {}), {"Authorization": f"Bearer {token}", **(headers or {})})
         if status == 0:
             raise ApiError("unreachable")
-        if status in (401, 403):
+        if status == 401:
             session.invalidate()
-            if attempt == 1 and status == 401:
+            if attempt == 1:
                 continue
-            debug_log(f"account read refused (status {status})", "accounts")
+            debug_log("account read refused (status 401)", "accounts")
             raise ApiError("not_signed_in")
         if status != 200:
             debug_log(f"account read failed (status {status})", "accounts")

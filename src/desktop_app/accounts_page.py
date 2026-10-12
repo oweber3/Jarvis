@@ -14,7 +14,7 @@ from typing import Any, Callable, Optional
 from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
-    QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QPushButton, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from desktop_app.themes import apply_theme, set_role
@@ -49,12 +49,19 @@ class _Relay(QObject):
 
     @pyqtSlot(object, object)
     def deliver(self, callback, result) -> None:
+        _relays.discard(self)
         callback(result)
+
+
+# Relays waiting for their result. Holding them here keeps each one alive until its queued signal has been
+# delivered; the worker thread alone would not (it may be gone before the GUI thread runs the slot).
+_relays: set = set()
 
 
 def run_in_thread(job: Callable[[], Any], done: Callable[[Any], None]) -> None:
     """Run ``job`` on a worker thread and hand its result to ``done`` on the GUI thread."""
     relay = _Relay()
+    _relays.add(relay)
 
     def work() -> None:
         try:
@@ -65,9 +72,7 @@ def run_in_thread(job: Callable[[], Any], done: Callable[[Any], None]) -> None:
             result = Outcome(False, "Something went wrong. Try again.")
         relay.finished.emit(done, result)
 
-    thread = threading.Thread(target=work, daemon=True, name="settings-accounts")
-    thread._relay = relay  # type: ignore[attr-defined]  # keep the relay alive with the thread
-    thread.start()
+    threading.Thread(target=work, daemon=True, name="settings-accounts").start()
 
 
 def _open_url(url: str) -> bool:
@@ -104,6 +109,7 @@ class AccountsPage(QWidget):
         self._run = run_async
         self._open_url = open_url
         self._cancel: Optional[threading.Event] = None
+        self._closed = False
         self._busy_buttons: list = []
         self._build()
         self.refresh()
@@ -114,6 +120,8 @@ class AccountsPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
+        # Never taller than its contents, so a short page does not spread its rows apart.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
 
         title = QLabel("Connected accounts")
         title.setObjectName("section_title")
@@ -233,6 +241,7 @@ class AccountsPage(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, (row.kind, row.name))
             self.list.addItem(item)
         self.empty_label.setVisible(self.list.count() == 0)
+        self.list.setVisible(self.list.count() > 0)
         if self.list.count():
             self.list.setCurrentRow(0)
         self._update_buttons()
@@ -245,6 +254,8 @@ class AccountsPage(QWidget):
             self.test_button.setEnabled(selected)
             self.remove_button.setEnabled(selected)
             self.microsoft_button.setEnabled(self._store.client("microsoft").configured)
+            self.ms_calendar.setEnabled(self.microsoft_button.isEnabled())
+            self.ms_mail.setEnabled(self.microsoft_button.isEnabled())
             self.google_button.setEnabled(self._store.client("google").configured)
 
     def _show(self, outcome) -> None:
@@ -256,7 +267,16 @@ class AccountsPage(QWidget):
         set_role(self.status, "status-muted")
         self._update_buttons(busy=True)
 
+    def shutdown(self) -> None:
+        """The window is closing: stop a sign-in in progress, so its loopback receiver closes now, and ignore
+        results that arrive after the widgets are gone."""
+        self._closed = True
+        if self._cancel is not None:
+            self._cancel.set()
+
     def _finish(self, outcome, *, changed: bool) -> None:
+        if self._closed:
+            return
         self._cancel = None
         self.progress.setVisible(False)
         self._update_buttons()

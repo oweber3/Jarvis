@@ -253,8 +253,19 @@ class AccountStore:
         login_id = logins.new_login_id(provider_key)
         if not logins.save(login_id, logins.LoginRecord.from_tokens(provider_key, client, tokens, scopes)):
             return _no("Windows Credential Manager could not store the sign-in. Nothing was saved.")
+        logins.session_for(login_id).prime(tokens)
+        outcome = None
+        try:
+            outcome = self._connect_entries(provider_key, login_id, user, calendar, mail)
+            return outcome
+        finally:
+            if outcome is None or not outcome.ok:  # a failed test, a write error or anything unexpected
+                logins.delete(login_id)
+
+    def _connect_entries(self, provider_key: str, login_id: str, user: str, calendar: bool, mail: bool) -> Outcome:
+        """Test the new sign-in's calendar and mailbox and write them in place of the same account's old ones."""
+        calendar_type, mail_type = _OAUTH_TYPES[provider_key]
         session = logins.session_for(login_id)
-        session.prime(tokens)
 
         calendars, mailboxes = self.entries()
         same = (lambda e: user and e.get("user", "").casefold() == user.casefold())
@@ -274,7 +285,6 @@ class AccountStore:
         for kind, entry in new_entries.items():
             ok, detail = (self._check_calendar if kind == "calendar" else self._check_mail)(entry, session)
             if not ok:
-                logins.delete(login_id)
                 debug_log(f"{provider_key} sign-in kept nothing: {kind} test failed", "accounts")
                 return _no(f"Signed in, but the {kind} could not be read: {detail}. Nothing was saved.")
 
@@ -283,7 +293,6 @@ class AccountStore:
         if not self._save(kept_calendars, kept_mail,
                           calendar_on=True if calendar else (False if not kept_calendars else None),
                           email_on=True if mail else (False if not kept_mail else None)):
-            logins.delete(login_id)
             return _no("The settings file could not be written. Nothing was saved.")
         self._forget_unused_logins(kept_calendars, kept_mail, [e for e in (old_calendar, old_mail) if e])
         what = " and ".join(k for k in ("calendar", "email") if k in new_entries)

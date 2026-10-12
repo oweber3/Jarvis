@@ -239,3 +239,34 @@ def test_closing_settings_after_adding_an_account_offers_a_restart_even_when_can
     tray.start_daemon = lambda: restarts.append("start")
     tray.show_settings()
     assert asked and restarts == ["stop", "start"]
+
+
+def test_results_from_worker_threads_always_reach_the_page(qapp):
+    import gc
+    import time
+    from desktop_app.accounts_page import run_in_thread
+    delivered = []
+    on_gui_thread = []
+    for number in range(20):
+        run_in_thread(lambda n=number: (time.sleep(0.01), n)[1],
+                      lambda n: (delivered.append(n), on_gui_thread.append(threading.current_thread()
+                                                                           is threading.main_thread())))
+    deadline = time.monotonic() + 10
+    while len(delivered) < 20 and time.monotonic() < deadline:
+        gc.collect()
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert sorted(delivered) == list(range(20)) and all(on_gui_thread)
+
+
+def test_closing_settings_cancels_a_waiting_sign_in_and_ignores_its_late_result(page_with):
+    pending = []
+    store = StubStore(outcome=Outcome(False, "Sign-in cancelled."))
+    page, changed = page_with(store, run_async=lambda job, done: pending.append((job, done)))
+    page.microsoft_button.click()
+    page.shutdown()
+    job, done = pending[0]
+    outcome = job()
+    assert store.calls[0][4].is_set()
+    done(Outcome(True, "Connected."))  # arrives after the window closed
+    assert changed == [] and page.status.text() != "Connected."

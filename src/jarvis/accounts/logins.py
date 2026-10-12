@@ -123,9 +123,15 @@ class LoginSession:
             except oauth.OAuthError as exc:
                 raise LoginError(exc.code) from None
             if tokens.refresh_token and tokens.refresh_token != record.refresh_token:
-                record.refresh_token = tokens.refresh_token
-                if not save(self.login_id, record):
-                    debug_log("rotated refresh token could not be stored", "accounts")
+                # Only replace the record this refresh started from: a sign-in removed or replaced
+                # meanwhile (Settings runs in another process) must not come back.
+                current = load(self.login_id)
+                if current is None or current.refresh_token != record.refresh_token:
+                    debug_log("sign-in changed during a refresh; rotated token not stored", "accounts")
+                else:
+                    record.refresh_token = tokens.refresh_token
+                    if not save(self.login_id, record):
+                        debug_log("rotated refresh token could not be stored", "accounts")
             self._access = (tokens.access_token, tokens.expires_at)
             return tokens.access_token
 

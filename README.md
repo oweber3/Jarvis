@@ -93,7 +93,7 @@ Pick the highest row that fits in your GPU memory next to Whisper. When a web se
 - **Use your Claude or ChatGPT subscription (optional).** When you want a stronger model than your PC runs, Jarvis can hand requests to Claude Code or Codex, signed in with the subscription you already pay for, so there is no API key and no separate billing. Speech, safety checks and the desktop controls stay on your PC, and "go local" switches back at any time. See [Switching who answers](#switching-who-answers).
 - **Look back at your day (opt-in).** Turn on the activity log and ask “what was I working on yesterday afternoon?”. Jarvis answers from a local record of which app was in front and its window title; see [Activity log](#activity-log-optional).
 - **Ask about your own documents (opt-in).** Turn on document search and ask “what did my lease say about pets?” or “find my notes about the thermodynamics exam”. Jarvis searches a local index of the text, PDF and Word files in folders you choose and cites the file it answers from; see [Document search](#document-search-optional).
-- **Your calendar and inbox, read only (opt-in).** Ask “what's on today?”, “when is my next meeting?”, “any new emails?” or “read me the latest email from Sam”. Google and Outlook.com calendars, classic Outlook, Gmail and Outlook.com mail are supported; Jarvis never sends, deletes or changes anything. See [Calendar and email](#calendar-and-email-optional).
+- **Your calendar and inbox, read only (opt-in).** Ask “what's on today?”, “when is my next meeting?”, “any new emails?” or “read me the latest email from Sam”. Sign in with Microsoft or Google in Settings, or add Gmail, any IMAP mailbox, a calendar link or classic Outlook; Jarvis never sends, deletes or changes anything. See [Calendar and email](#calendar-and-email-optional).
 - **Fast local commands.** Confident English commands such as “What time is it?”, “Open Word”, “Set volume to 30%” and “Pause the music” execute through the usual tools and safety checks without a model round trip. Voice skips the collection wait too. Uncertain requests keep the conversational path; app commands require a ready local catalogue. See [configuration](docs/CONFIGURATION.md#fast-local-commands) to disable fast routing.
 - **Dictate into other apps.** Hold a hotkey, speak, then release to paste locally transcribed text. See the [platform limitations](#known-limitations) first.
 - **Only your voice, and talk over Jarvis.** Optionally enrol your voice (`python scripts/enrol_voice.py`, a few prompted phrases) so Jarvis ignores games, videos and other people, and lowers its voice the moment you talk over it. The voiceprint stays on your PC beside `config.json`, never leaves it and can be deleted from Settings. Uses a small local model and needs no cloud. See [configuration](docs/CONFIGURATION.md#voice-recognition-and-talking-over-jarvis).
@@ -192,7 +192,7 @@ This fork is developed and tested on Windows 11, and the desktop controls are Wi
 - **Document search reads text, not pictures.** Scanned PDFs without a text layer, images, `.doc`, `.odt` and spreadsheets are not searchable, and the first index of a large folder takes a while (it runs in the background while Jarvis is idle). OneDrive files kept online-only are skipped rather than downloaded.
 - **Apple Music playback follows the app's own layout.** Jarvis presses the app's Play controls through Windows accessibility, so an Apple Music update that changes them can stop it working until Jarvis is updated; it then says it could not find the Play control rather than pressing anything else. Songs you uploaded yourself and Apple's editorial playlists cannot be searched.
 - **The activity log is Windows only and records what is in front, not what you did there.** It sees the application and window title, so it can say you were in a spreadsheet called budget, not which cells you edited.
-- **Calendar and email have no Microsoft or Google sign-in of their own for calendars, and the new Outlook cannot be read.** Calendars are read from their secret iCal address (Google) or published ICS link (Outlook.com), which can lag a few minutes behind the live calendar. The new Outlook app has no interface Jarvis can use; classic Outlook works. Outlook.com mail needs a free Azure app registration you create once (the setup command walks you through it). Gmail needs an app password.
+- **Gmail needs an app password, and the new Outlook cannot be read.** Google's sign-in is used for Google Calendar only (reading Gmail through it would need a paid security audit), so Gmail is added with an app password. The new Outlook app has no interface Jarvis can use; classic Outlook works, and Microsoft accounts can sign in instead. The sign-in buttons need OAuth apps registered for the build ([docs/OAUTH_SETUP.md](docs/OAUTH_SETUP.md)); a build without them shows the buttons greyed out.
 - **With the Chatterbox voice, the orb does not follow Jarvis's own voice.** Only the default Piper voice reports how loud each moment of a reply is; with Chatterbox the orb and the wake screen effect follow what the microphone hears instead.
 - **Optional capabilities need their dependencies.** Location awareness needs a GeoLite2 database. Semantic memory search needs working embeddings; otherwise search falls back to keywords.
 
@@ -297,18 +297,18 @@ Off by default. When you turn it on in **Settings → Privacy → Document searc
 
 ### Calendar and email (optional)
 
-Off by default and read only: Jarvis can list and read, never send, reply, delete, accept or mark anything as read. Add accounts from a terminal in the Jarvis folder, then restart Jarvis:
+Off by default and read only: Jarvis can list and read, never send, reply, delete, accept or mark anything as read. Open **Settings → Calendar & Email** and pick one:
 
-```bash
-python -m jarvis.agenda setup   # Google Calendar, Outlook.com / Microsoft 365, any .ics address, or classic Outlook
-python -m jarvis.mail setup     # Gmail (app password), any IMAP mailbox, classic Outlook, or Outlook.com (Microsoft sign-in)
-```
+- **Sign in with Microsoft**: Outlook.com, Hotmail and Microsoft 365. One sign-in connects your calendar and inbox (untick either).
+- **Sign in with Google**: Google Calendar.
+- **Add Gmail...**: your address and an app password (the button opens Google's App passwords page; the steps are on screen).
+- **Other email (IMAP)...**, **Paste a calendar link...**, or **Use Outlook on this PC** when classic Outlook is installed.
 
-Each command explains where to find what it asks for, tests the connection and turns the feature on. `list`, `test` and `remove <name>` manage what you added.
+Each option tests the connection before saving and turns the feature on; **Test** and **Remove** manage what you added. Restart Jarvis when Settings offers. (The terminal alternative is `python -m jarvis.agenda setup` and `python -m jarvis.mail setup`.)
 
-- **Secrets stay in Windows Credential Manager.** Calendar addresses, app passwords and Microsoft sign-ins are never written to `config.json` or the logs.
-- **Works offline.** The last downloaded calendar answers when you are offline, and Jarvis says it is a saved copy.
-- **Not shared with Codex or Claude** unless you switch on **Share Calendar** or **Share Email** in **Settings → Privacy → Calendar and email**. Replies that quote your calendar or mail are kept out of your diary and the log.
+- **Secrets stay in Windows Credential Manager.** Sign-ins, app passwords and calendar links are never written to `config.json` or the logs. The sign-ins ask only to read.
+- **Works offline where it can.** Classic Outlook needs no network, and a calendar link's last download answers when you are offline (Jarvis says it is a saved copy).
+- **Not shared with Codex or Claude** unless you switch on **Share Calendar** or **Share Email** in **Settings → Calendar & Email**. Replies that quote your calendar or mail are kept out of your diary and the log.
 - **Email is treated as untrusted.** Jarvis lists sender, subject, time and a short preview, reads a whole message only when you ask, and treats anything written in an email as information, never as instructions.
 
 ### Phone access (optional)
@@ -434,7 +434,7 @@ Local AI is the default, not a paid upgrade. No cloud AI service is required.
 - **Lists and notes:** stored in the same local database. Never written to logs. Codex and Claude can read and change them (and your timers and reminders) while that mode's *Timers, Reminders, Lists and Notes* switch is on, which it is by default; what they read is sent to OpenAI or Anthropic.
 - **Activity log (opt-in, off by default):** foreground application names, redacted window titles and idle periods, in the same local database. Never sent anywhere unless you allow it for Codex or Claude, and never written to the diary or logs. Delete it any time from the tray.
 - **Document search (opt-in, off by default):** passages of the documents in the folders you choose, with their file paths and a local embedding of each, in the same local database. Never sent anywhere unless you allow it for Codex or Claude, and never written to the diary or logs. Delete the index any time from the tray.
-- **Calendar and email (opt-in, off by default):** read on request from the accounts you add; a copy of each calendar is kept next to the database for offline answers. Passwords, calendar addresses and sign-ins are in Windows Credential Manager. Never sent to Codex or Claude unless you allow it, and never written to the diary or logs.
+- **Calendar and email (opt-in, off by default):** read on request from the accounts you add, with read-only sign-ins; a copy of each calendar link is kept next to the database for offline answers (Microsoft and Google calendars are read live, never saved). Passwords, calendar links and sign-ins are in Windows Credential Manager. Never sent to Codex or Claude unless you allow it, and never written to the diary or logs.
 - **Phone access (opt-in, off by default):** your PC serves the conversation to phones you pair, over your own network or VPN only. Paired phones are stored as hashed keys next to the database; the phone's copy of the conversation is held in memory and gone when Jarvis stops.
 - **Web chat (opt-in, off by default):** your chats and projects are stored in the same local database as redacted text, served only on this PC's loopback address. Delete one chat from its menu.
 - **Network boundaries:** model downloads, web tools and enabled integrations can make network requests. An external model endpoint receives the requests you send to it.

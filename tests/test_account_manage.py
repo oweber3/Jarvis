@@ -276,3 +276,15 @@ def test_logs_never_carry_addresses_or_tokens(env, monkeypatch):
     text = "\n".join(lines)
     assert lines and server.user_mail not in text
     assert not any(token in text for token in list(server.refresh_tokens) + list(server.access_tokens))
+
+
+def test_an_unexpected_failure_after_sign_in_leaves_no_sign_in_behind(env, monkeypatch):
+    store, server, memory, path = env
+
+    def broken(*args, **kwargs):
+        raise AttributeError("malformed reply")
+
+    monkeypatch.setattr(store, "_check_mail", broken)
+    with pytest.raises(AttributeError):
+        store.connect_oauth("microsoft", calendar=True, mail=True)
+    assert memory.items == {} and "calendar_sources" not in _config(path)

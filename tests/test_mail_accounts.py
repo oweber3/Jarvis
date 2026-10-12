@@ -305,3 +305,12 @@ def test_a_sign_ins_calendar_and_inbox_share_one_session(mock_config):
     calendar = agenda_service.sources_from_config(mock_config)[0]
     assert mailbox._session is calendar._session is logins.session_for("microsoft-1a2b3c4d")
     logins.forget_sessions()
+
+
+def test_a_forbidden_or_rate_limited_read_is_a_server_error_and_keeps_the_sign_in():
+    class Forbidden:
+        def get(self, url, params, headers):
+            return 403, {"error": {"code": "ErrorAccessDenied"}}
+    session = FakeSession("access-1")
+    assert _graph(Forbidden(), session).list_messages().error == "server_error"
+    assert session.invalidated == 0

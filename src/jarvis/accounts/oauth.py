@@ -135,8 +135,12 @@ _NOT_SIGNED_IN = ("Not signed in", "The sign-in did not finish. Close this tab a
 _NOT_FOUND = ("Not found", "This address is only used to finish signing in to Jarvis.")
 
 
-class _Server(HTTPServer):
+class _Server(socketserver.ThreadingMixIn, HTTPServer):
     allow_reuse_address = False  # SO_REUSEADDR on Windows would let another program take over the port
+    # Each connection is served on its own daemon thread, so a slow or silent client never holds the wait,
+    # cancel or the time limit; closing does not wait for such connections.
+    daemon_threads = True
+    block_on_close = False
 
     def server_bind(self) -> None:
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
@@ -149,26 +153,15 @@ class _Server(HTTPServer):
 class _Handler(BaseHTTPRequestHandler):
     server_version = "Jarvis"
     sys_version = ""
-    timeout = 5  # a connection that never sends a request cannot hold the sign-in
+    timeout = 5  # a connection that stops sending is dropped
 
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         receiver: "LoopbackReceiver" = self.server.receiver  # type: ignore[attr-defined]
         parts = urlsplit(self.path)
-        if parts.path != "/" or receiver.result is not None:
+        if parts.path != "/":
             self._page(404, _NOT_FOUND)
             return
-        query = parse_qs(parts.query)
-        state = (query.get("state") or [""])[0]
-        if not hmac.compare_digest(state.encode("utf-8"), receiver.state.encode("utf-8")):
-            receiver.result = ("error", "state_mismatch")
-        elif query.get("error"):
-            receiver.result = ("error", "denied" if query["error"][0] == "access_denied" else "provider_error")
-        elif (query.get("code") or [""])[0]:
-            receiver.result = ("code", query["code"][0])
-        else:
-            receiver.result = ("error", "no_code")
-        self._page(200 if receiver.result[0] == "code" else 400,
-                   _SIGNED_IN if receiver.result[0] == "code" else _NOT_SIGNED_IN)
+        self._page(*receiver.offer(parse_qs(parts.query)))
 
     def _page(self, status: int, words: Tuple[str, str]) -> None:
         data = _PAGE.format(title=words[0], text=words[1]).encode("utf-8")
@@ -178,6 +171,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
         self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(data)
@@ -187,34 +181,63 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 class LoopbackReceiver:
-    """A one-shot HTTP receiver on 127.0.0.1 and a random free port, for the sign-in redirect."""
+    """A one-shot HTTP receiver on 127.0.0.1 and a random free port, for the sign-in redirect.
 
-    def __init__(self, redirect_host: str = "127.0.0.1"):
+    Only a redirect carrying the expected ``state`` ends the wait. Anything else on the callback path (a
+    forged or stray request from another program or a web page) is answered 400 and ignored, so it can
+    neither inject a code nor cut the sign-in short; if nothing valid arrives, the time limit reports it."""
+
+    def __init__(self, redirect_host: str = "127.0.0.1", state: str = ""):
         self._server = _Server(("127.0.0.1", 0), _Handler)
         self._server.receiver = self  # type: ignore[attr-defined]
         self.address: Tuple[str, int] = self._server.server_address[:2]
         self.redirect_uri = f"http://{redirect_host}:{self.address[1]}"
-        self.state = ""
+        self.state = state
         self.result: Optional[Tuple[str, str]] = None
+        self._mismatched = False
+        self._lock = threading.Lock()
+        self._done = threading.Event()
+        self._thread = threading.Thread(target=self._server.serve_forever, kwargs={"poll_interval": 0.1},
+                                        daemon=True, name="oauth-loopback")
+        self._thread.start()
+
+    def offer(self, query: Dict[str, Any]) -> Tuple[int, Tuple[str, str]]:
+        """Judge one request to the callback path; returns the page to answer with."""
+        state = (query.get("state") or [""])[0]
+        with self._lock:
+            if self.result is not None:
+                return 404, _NOT_FOUND
+            if not self.state or not hmac.compare_digest(state.encode("utf-8"), self.state.encode("utf-8")):
+                self._mismatched = True
+                return 400, _NOT_SIGNED_IN
+            if query.get("error"):
+                self.result = ("error", "denied" if query["error"][0] == "access_denied" else "provider_error")
+            elif (query.get("code") or [""])[0]:
+                self.result = ("code", query["code"][0])
+            else:
+                self.result = ("error", "no_code")
+            self._done.set()
+            return (200, _SIGNED_IN) if self.result[0] == "code" else (400, _NOT_SIGNED_IN)
 
     def wait(self, state: str, *, timeout: float, cancel: threading.Event) -> str:
-        """The authorisation code from the first redirect, or ``OAuthError``."""
-        self.state = state
+        """The authorisation code from the redirect with ``state``, or ``OAuthError``."""
+        with self._lock:
+            self.state = state
         deadline = time.monotonic() + timeout
-        while self.result is None:
+        while not self._done.is_set():
             remaining = deadline - time.monotonic()
             if cancel.is_set():
                 raise OAuthError("cancelled")
             if remaining <= 0:
-                raise OAuthError("timeout")
-            self._server.timeout = min(0.25, remaining)
-            self._server.handle_request()
-        kind, value = self.result
+                raise OAuthError("state_mismatch" if self._mismatched else "timeout")
+            self._done.wait(min(0.1, remaining))
+        kind, value = self.result  # type: ignore[misc]
         if kind != "code":
             raise OAuthError(value)
         return value
 
     def close(self) -> None:
+        self._server.shutdown()
         self._server.server_close()
 
 
@@ -257,7 +280,7 @@ def authorize(provider: Provider, client: Client, scopes: str, *,
     cancel = cancel or threading.Event()
     verifier, challenge = pkce_pair()
     state = secrets.token_urlsafe(32)
-    receiver = LoopbackReceiver(provider.redirect_host)
+    receiver = LoopbackReceiver(provider.redirect_host, state)
     try:
         params = {"client_id": client.client_id, "response_type": "code", "redirect_uri": receiver.redirect_uri,
                   "scope": scopes, "state": state, "code_challenge": challenge, "code_challenge_method": "S256",

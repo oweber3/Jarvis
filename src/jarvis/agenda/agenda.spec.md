@@ -5,9 +5,9 @@ Lets the user ask "what's on today?", "what have I got tomorrow?", "anything thi
 ## Boundaries
 
 - Nothing runs until `calendar_enabled` is true: the `calendar` tool is not in the catalogue and no calendar is fetched.
-- Read only. No source has a write path: an ICS address is fetched with GET, and classic Outlook is only read through COM (properties read, nothing set or saved).
-- Offline first. Nothing is required from a cloud service; with no network the last saved copy answers and the result says so. Classic Outlook on this PC needs no network at all.
-- Secret calendar addresses live in Windows Credential Manager (`credentials.account_key("calendar_url", name)`), never in `config.json`, logs, tool results or terminal output.
+- Read only. No source has a write path: an ICS address is fetched with GET, Microsoft and Google calendars are read with GET under read-only grants (`Calendars.Read`, `calendar.readonly`), and classic Outlook is only read through COM (properties read, nothing set or saved).
+- Offline first. Nothing is required from a cloud service; with no network an ICS calendar's last saved copy answers and the result says so. Classic Outlook on this PC needs no network at all. Microsoft and Google calendars are explicitly configured integrations the user signs in to; they keep no copy on disk and report `unreachable` when offline.
+- Secret calendar addresses (`credentials.account_key("calendar_url", name)`) and sign-ins (`oauth_login:<login id>`, `accounts/accounts.spec.md`) live in Windows Credential Manager, never in `config.json`, logs, tool results or terminal output.
 - No telemetry. Debug logs (tag `agenda`) carry counts, reason codes and exception type names, never titles, places, addresses or calendar names.
 - Event text is outside content (anyone can send an invitation that lands in a calendar), so it is fenced as untrusted data.
 
@@ -18,6 +18,7 @@ Lets the user ask "what's on today?", "what have I got tomorrow?", "anything thi
 | `agenda/ics.py` | Bounded RFC 5545 reader: content lines, VEVENT, VTIMEZONE, `occurrences(calendar, start, end)` |
 | `agenda/rrule.py` | Recurrence expansion (RRULE) as naive wall times |
 | `agenda/sources.py` | `IcsSource` (fetch, size cap, saved copy, offline fallback) and `OutlookCalendarSource` (COM) |
+| `agenda/online.py` | `MicrosoftCalendarSource` (Graph `calendarView`) and `GoogleCalendarSource` (Calendar API `events.list`), read through a sign-in |
 | `agenda/service.py` | Sources from config, named ranges, `read_agenda` (parallel, merged, a failing source never hides others) |
 | `agenda/cli.py`, `agenda/__main__.py` | `python -m jarvis.agenda setup | list | test [name] | remove <name>` |
 | `platform/windows/outlook.py` | Which Outlook is installed; a bounded call into classic Outlook's MAPI namespace on a COM worker thread |
@@ -25,11 +26,13 @@ Lets the user ask "what's on today?", "what have I got tomorrow?", "anything thi
 
 ## Sources
 
-`calendar_sources` is a list of `{"name": ..., "type": "ics" | "outlook"}`; names are unique (ignoring case). Unknown types, duplicate names and extra keys are dropped when settings load, so a pasted address never stays in the config.
+`calendar_sources` is a list of `{"name": ..., "type": "microsoft" | "google" | "ics" | "outlook"}`; names are unique (ignoring case). Microsoft and Google entries also carry `login` (the stored sign-in) and `user` (the signed-in address, for display). Unknown types, duplicate names and extra keys are dropped when settings load, so a pasted address never stays in the config. Sources are added in Settings > Calendar & Email (`accounts/accounts.spec.md`).
 
 | Type | What it reads | Setup |
 |------|---------------|-------|
-| `ics` | A calendar's secret ICS address: Google Calendar's "Secret address in iCal format", an Outlook.com or Microsoft 365 published calendar's ICS link, or any other `.ics` / `webcal://` subscription address | The address is typed hidden and stored in the credential store |
+| `microsoft` | The default calendar of a Microsoft account (Outlook.com, Hotmail, Microsoft 365) through Graph | Sign in with Microsoft |
+| `google` | Every calendar a Google account shows in Google Calendar | Sign in with Google |
+| `ics` | A calendar's secret ICS address: Google Calendar's "Secret address in iCal format", an Outlook.com or Microsoft 365 published calendar's ICS link, or any other `.ics` / `webcal://` subscription address | Pasted in Settings (or typed hidden in the setup command) and stored in the credential store |
 | `outlook` | The default calendar of classic Outlook on this PC (COM, `olFolderCalendar`) | Classic Outlook installed and set up |
 
 ### ICS addresses
@@ -46,6 +49,14 @@ Lets the user ask "what's on today?", "what have I got tomorrow?", "anything thi
 - Recurrence: `FREQ` DAILY, WEEKLY, MONTHLY and YEARLY with `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY` (with ordinals such as `2TU`, `-1FR`), `BYMONTHDAY` (negative counts from the month's end), `BYMONTH`, `BYSETPOS` and `WKST`. Instances keep the event's wall time across daylight-saving changes. `DTSTART` is always the first instance. `RDATE` adds instances, `EXDATE` removes them, a `RECURRENCE-ID` override replaces its instance (shown at its new time even when the original was outside the window) and a cancelled override removes it. `STATUS:CANCELLED` events are left out.
 - Unfolding is linear in the file size, and one malformed event (or override) is skipped without hiding the rest of the calendar; an unreadable override leaves its original instance in place. `BYMONTHDAY` in a yearly rule without `BYMONTH` repeats every month.
 - An unsupported rule (`HOURLY`, `BYWEEKNO`, `BYYEARDAY`, ...) keeps the first instance only. Expansion is bounded (60 000 periods, 2 000 instances per read, 20 000 events per file); rules without `COUNT` skip whole periods before the window.
+
+### Microsoft and Google
+
+- Microsoft: `GET /me/calendarView` over the window (UTC, `Prefer: outlook.timezone="UTC"`), selecting subject, location, start, end, `isAllDay` and `isCancelled`; recurring events arrive expanded. Graph's seven fractional digits are cut to six.
+- Google: `calendarList` (reader access or more), then for each calendar that is ticked in Google Calendar (or primary) and neither hidden nor deleted, at most 25, `events.list` with `singleEvents=true` and `orderBy=startTime` over the window, selecting summary, location, start, end and status.
+- Cancelled events are left out. All-day events (`isAllDay`, or Google's `date`) cover their local days. At most 10 pages per calendar and 500 events per source; paging links are followed only on the API's own host. Nothing is saved to disk.
+- Failures are `not_signed_in` (missing, revoked or expired sign-in: sign in again in Settings), `unreachable` or `server_error`; one Google calendar that fails with a server error is skipped and the others kept.
+- The access token comes from the sign-in's shared session, so a Microsoft calendar and inbox signed in together share one token (`accounts/accounts.spec.md`).
 
 ### Classic Outlook
 
@@ -64,7 +75,7 @@ Registered by `registry.configure_calendar_tool(cfg)` only when `calendar_enable
 
 - `next` searches the next 30 days for the first timed event that has not started, and lists timed events happening now. All-day events are not meetings and are skipped.
 - The result is a header line (JSON: `now`, `range` or `searched_days`, and per calendar `name`, `ok`, and when relevant `offline_copy` with `saved_at`, or a `note` explaining a failure and how to fix it) followed by a note and the events inside the calendar fence (`web_fence.fence(..., "calendar")`, markers `<<<BEGIN UNTRUSTED CALENDAR DATA>>>` / `<<<END UNTRUSTED CALENDAR DATA>>>`, contents defanged). Each event has `calendar`, `title`, `weekday`, either `start` and `end` (local, minute precision) or `all_day`, `date` and `until` for several days, and `location` when set. At most 60 events are listed, with a count of the rest.
-- When no calendar can be read the tool fails with each calendar's reason; when some can, the others' notes are in the header. No calendars configured fails with the setup command.
+- When no calendar can be read the tool fails with each calendar's reason; when some can, the others' notes are in the header. No calendars configured fails with where to add one (Settings > Calendar & Email). Notes that need the user to act point there too.
 - The turn is private (`memory/activity_log.spec.md` per-turn mark): it stays out of the diary and the console log, and its dialogue is not shared with a cloud model unless allowed (Cloud boundary).
 
 ## Cloud boundary
@@ -73,18 +84,18 @@ Registered by `registry.configure_calendar_tool(cfg)` only when `calendar_enable
 
 ## Setup command
 
-`python -m jarvis.agenda setup` asks which kind of calendar to add (Google, Outlook.com or Microsoft 365, another ICS address, classic Outlook), a name, and for ICS the address (hidden input, with where to find it). It tests the source (events in the next seven days), stores the address only when the test passes, writes the entry and turns `calendar_enabled` on. Names cannot contain `#`. `list` shows each source and whether its address is stored (never the address). `test [name]` fetches fresh and fails when only the saved copy answers. `remove <name>` deletes the entry, address and saved copy, and turns the calendar off when none is left. Output lines start with an emoji and are indented by level. Jarvis needs a restart to pick up changes.
+Settings > Calendar & Email is the main way to add calendars (`accounts/accounts.spec.md`). `python -m jarvis.agenda setup` is the terminal alternative: it asks which kind of calendar to add (a Microsoft or Google account signed in in the browser, Google by its secret iCal address, Outlook.com or Microsoft 365 by a published ICS link, another ICS address, classic Outlook). A sign-in is tested and saved by the account store. For the others it asks a name, and for ICS the address (hidden input, with where to find it). It tests the source (events in the next seven days), stores the address only when the test passes, writes the entry and turns `calendar_enabled` on. Names cannot contain `#`. `list` shows each source and whether its address or sign-in is stored (never the address). `test [name]` fetches fresh and fails when only the saved copy answers. `remove <name>` deletes the entry with its address and saved copy, or its sign-in once nothing else uses it, and turns the calendar off when none is left. Output lines start with an emoji and are indented by level. Jarvis needs a restart to pick up changes.
 
 ## Configuration
 
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `calendar_enabled` | `false` | Offer the `calendar` tool |
-| `calendar_sources` | `[]` | `{"name", "type"}` entries, added by the setup command |
-| `calendar_cache_minutes` | 15 | Minutes a fetched calendar is reused (0 fetches every time) |
+| `calendar_sources` | `[]` | Source entries, added in Settings > Calendar & Email or by the setup command |
+| `calendar_cache_minutes` | 15 | Minutes a fetched ICS calendar is reused (0 fetches every time) |
 | `calendar_share_with_cloud` | `false` | Whether Codex and Claude may read the calendar |
 
-Settings rows sit under Privacy > Calendar and email.
+Settings rows sit on the Calendar & Email page, under the account list. The OAuth client IDs (`accounts/accounts.spec.md`) have no rows.
 
 ## Language
 
@@ -96,6 +107,7 @@ Automated tests (no network beyond loopback, no real calendar or Outlook profile
 
 - ICS reading: timed and all-day events, windows and overlaps, folding and escapes, IANA, VTIMEZONE and Windows zone names across daylight saving, weekly, monthly (ordinal weekday, last working day via BYSETPOS), yearly and missing-day rules, COUNT and UNTIL, EXDATE, moved and cancelled overrides, cancelled events, unsupported rules, long series bounded, non-calendar text refused.
 - ICS source against a loopback server: fetch, reuse within the TTL, offline copy with its time after a restart, failure without a copy, non-calendar pages not saved, HTTP errors, missing address, webcal and refused schemes.
+- Microsoft and Google sources against the loopback fake (`tests/fake_accounts_server.py`): paging, cancelled and all-day events, only the calendars shown in Google Calendar, expanded recurrences, a revoked sign-in reported as sign in again.
 - Outlook source with a fake MAPI namespace: local times, recurrences included, new-Outlook-only and not-installed reasons, failures reported not raised.
 - Tool: registration only when on, SAFE, no required argument, today's agenda, fencing against a hostile title, next meeting, explicit dates, offline copy in the header, setup hint, private turn, logs without titles, addresses or names, the cloud gate and the private-dialogue rule.
 - Setup command: secret storage, nothing saved on a failed test, list, test and remove.

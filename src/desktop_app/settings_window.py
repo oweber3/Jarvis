@@ -1651,6 +1651,13 @@ class SettingsWindow(QDialog):
         self.accounts_page = AccountsPage(AccountStore(self._config_path), on_changed=self._on_accounts_changed)
         return self.accounts_page
 
+    def done(self, result: int) -> None:
+        """Closing (Save, Cancel or the title bar) stops a sign-in still waiting in the browser."""
+        page = getattr(self, "accounts_page", None)
+        if page is not None:
+            page.shutdown()
+        super().done(result)
+
     def _on_accounts_changed(self) -> None:
         """An account was added or removed: show the calendar and email switches as the file now has them."""
         self.accounts_changed = True

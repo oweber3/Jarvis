@@ -115,18 +115,49 @@ def test_google_sign_in_asks_for_the_read_only_calendar_only_with_offline_access
     assert server.token_requests[0]["client_secret"] == server.google_secret
 
 
-def test_a_redirect_with_a_forged_state_is_refused_and_never_exchanged(server):
+def test_a_forged_redirect_is_refused_and_the_real_one_still_signs_in(server):
+    provider = _providers(server)["microsoft"]
+    seen = {}
+
+    def browser(url):
+        server.browser(url, state="<script>alert(1)</script>", wait=True)
+        seen["forged"] = dict(server.redirect_result)
+        return server.browser(url)
+
+    tokens = oauth.authorize(provider, MS_CLIENT, "offline_access User.Read", open_browser=browser, timeout=10)
+    assert tokens.refresh_token
+    assert seen["forged"]["status"] == 400 and "<script>" not in seen["forged"]["body"]
+    assert len(server.token_requests) == 1  # only the real code was exchanged
+
+
+def test_only_forged_redirects_end_as_a_state_mismatch_at_the_time_limit(server):
     provider = _providers(server)["microsoft"]
     with pytest.raises(oauth.OAuthError) as failure:
         oauth.authorize(provider, MS_CLIENT, "offline_access User.Read",
-                        open_browser=lambda url: server.browser(url, state="<script>alert(1)</script>"), timeout=10)
+                        open_browser=lambda url: server.browser(url, state="forged", wait=True), timeout=1.5)
     assert failure.value.code == "state_mismatch"
     assert server.token_requests == []
-    deadline = time.monotonic() + 5
-    while not server.redirect_result and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert server.redirect_result["status"] == 400
-    assert "<script>" not in server.redirect_result["body"]
+
+
+def test_a_silent_connection_cannot_hold_up_cancel(server):
+    cancel = threading.Event()
+    held = []
+
+    def browser(url):
+        port = urlsplit(parse_qs(urlsplit(url).query)["redirect_uri"][0]).port
+        held.append(socket.create_connection(("127.0.0.1", port)))  # connects and never sends a request
+        threading.Timer(0.3, cancel.set).start()
+        return True
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(oauth.OAuthError) as failure:
+            oauth.authorize(_providers(server)["microsoft"], MS_CLIENT, "offline_access", open_browser=browser,
+                            cancel=cancel, timeout=60)
+    finally:
+        for connection in held:
+            connection.close()
+    assert failure.value.code == "cancelled" and time.monotonic() - started < 3
 
 
 def test_pressing_cancel_on_the_consent_page_is_reported_as_declined(server):
@@ -172,7 +203,7 @@ def test_nobody_signing_in_times_out(server):
 
 
 def test_the_loopback_receiver_listens_on_127_0_0_1_only_and_ignores_other_paths(server):
-    receiver = oauth.LoopbackReceiver("127.0.0.1")
+    receiver = oauth.LoopbackReceiver("127.0.0.1", "the-state")
     try:
         assert receiver.address[0] == "127.0.0.1"
         assert receiver.redirect_uri == f"http://127.0.0.1:{receiver.address[1]}"
@@ -276,3 +307,17 @@ def test_google_refreshes_with_its_client_secret_and_keeps_an_unrotated_token(se
     assert logins.session_for(login_id).access_token()
     assert server.token_requests[-1]["client_secret"] == server.google_secret
     assert logins.load(login_id).refresh_token == tokens.refresh_token
+
+
+def test_a_sign_in_removed_during_a_refresh_does_not_come_back(server, store, monkeypatch):
+    login_id, _ = _signed_in(server, store, monkeypatch)
+    real_refresh = oauth.refresh
+
+    def refresh_while_removed(*args, **kwargs):
+        tokens = real_refresh(*args, **kwargs)
+        credentials.delete_secret(credentials.account_key("oauth_login", login_id))  # Settings removed it meanwhile
+        return tokens
+
+    monkeypatch.setattr(oauth, "refresh", refresh_while_removed)
+    assert logins.session_for(login_id).access_token()
+    assert logins.load(login_id) is None
