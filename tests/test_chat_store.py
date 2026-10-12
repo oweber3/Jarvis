@@ -206,3 +206,55 @@ class TestSharedDatabaseFile:
         finally:
             store.close()
             db.close()
+
+
+class TestAttachmentMarkers:
+    """A message records that something was attached (kind and size), never what it was."""
+
+    def test_a_message_remembers_the_kind_and_size_of_what_was_attached(self, store):
+        chat = store.create_chat()
+        store.append_message(chat.id, "user", "look", ts=1.0,
+                             attachments=[{"kind": "image", "size": 2048}, {"kind": "text", "size": 12}])
+        store.append_message(chat.id, "assistant", "ok", ts=2.0)
+        first, second = store.messages(chat.id)
+        assert first.attachments == ({"kind": "image", "size": 2048}, {"kind": "text", "size": 12})
+        assert second.attachments == ()
+
+    def test_only_kind_and_size_are_stored_whatever_else_is_passed(self, store, tmp_path):
+        chat = store.create_chat()
+        store.append_message(chat.id, "user", "look", ts=1.0,
+                             attachments=[{"kind": "text", "size": 5, "text": "SECRETWORDS", "name": "C:/x.txt"}])
+        store.close()
+        assert b"SECRETWORDS" not in (tmp_path / "jarvis.db").read_bytes()
+        assert b"x.txt" not in (tmp_path / "jarvis.db").read_bytes()
+
+    def test_unknown_kinds_and_bad_sizes_are_refused(self, store):
+        chat = store.create_chat()
+        with pytest.raises(ValueError):
+            store.append_message(chat.id, "user", "x", ts=1.0, attachments=[{"kind": "video", "size": 1}])
+        with pytest.raises(ValueError):
+            store.append_message(chat.id, "user", "x", ts=1.0, attachments=[{"kind": "image", "size": -1}])
+
+    def test_a_database_from_before_attachments_gains_the_column_and_keeps_its_messages(self, tmp_path):
+        path = str(tmp_path / "old.db")
+        old = sqlite3.connect(path)
+        old.executescript("""
+            CREATE TABLE chats (id TEXT PRIMARY KEY, project_id TEXT, title TEXT NOT NULL DEFAULT '',
+              created_at REAL NOT NULL, updated_at REAL NOT NULL, last_mode TEXT NOT NULL DEFAULT '',
+              last_model TEXT NOT NULL DEFAULT '');
+            CREATE TABLE chat_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id TEXT NOT NULL,
+              role TEXT NOT NULL, content TEXT NOT NULL, ts REAL NOT NULL, source TEXT NOT NULL DEFAULT 'typed',
+              private INTEGER NOT NULL DEFAULT 0);
+            INSERT INTO chats(id, title, created_at, updated_at) VALUES ('abc', 't', 1, 1);
+            INSERT INTO chat_messages(chat_id, role, content, ts) VALUES ('abc', 'user', 'old message', 1);
+        """)
+        old.commit()
+        old.close()
+        reopened = ChatStore(path)
+        try:
+            [message] = reopened.messages("abc")
+            assert message.content == "old message" and message.attachments == ()
+            reopened.append_message("abc", "user", "new", ts=2.0, attachments=[{"kind": "image", "size": 3}])
+            assert reopened.messages("abc")[-1].attachments == ({"kind": "image", "size": 3},)
+        finally:
+            reopened.close()

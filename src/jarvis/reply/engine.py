@@ -10,6 +10,8 @@ from typing import Optional, TYPE_CHECKING
 from ..utils.redact import redact
 from ..memory.activity_log import consume_turn_private, is_turn_private, mark_turn_private
 from ..system_prompt import build_system_prompt
+from .attachments import request_images, request_note
+from ..tools.request_scope import note_outside_content
 from ..tools.registry import run_tool_with_retries, generate_tools_description, generate_tools_json_schema, BUILTIN_TOOLS
 from ..tools.builtin.stop import STOP_SIGNAL
 from ..tools.schema_validation import validate_arguments
@@ -982,7 +984,8 @@ def run_reply_engine(db: "Database", cfg, tts: Optional[Any],
                     language: Optional[str] = None,
                     quiet: bool = False,
                     addressed: bool = True,
-                    origin: Optional[str] = None) -> Optional[str]:
+                    origin: Optional[str] = None,
+                    attachments: tuple = ()) -> Optional[str]:
     """
     Main entry point for reply generation.
 
@@ -1011,6 +1014,10 @@ def run_reply_engine(db: "Database", cfg, tts: Optional[Any],
         origin: ``voice``, ``chat`` or ``phone``. Defaults to ``chat`` when
             ``quiet`` and ``voice`` otherwise. A phone request never reads the
             window in front of the PC.
+        attachments: What the owner attached to this one message
+            (``reply.attachments.RequestAttachment``). The model reads the file text, as fenced data, and
+            sees the images beside the request; none of it is recorded in the dialogue memory. A request
+            that carries attachments is never taken by a deterministic fast command.
 
     Returns:
         Generated reply text or None
@@ -1018,14 +1025,16 @@ def run_reply_engine(db: "Database", cfg, tts: Optional[Any],
     from ..tools.request_scope import request_scope
     try:
         with request_scope(origin):
-            return _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addressed, origin)
+            return _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addressed, origin,
+                                     attachments)
     except RequestCancelled:
         # Stop was pressed: nothing is delivered and nothing is added to the conversation.
         debug_log("reply stopped by the user", "planning")
         return None
 
 
-def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addressed, origin) -> Optional[str]:
+def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addressed, origin,
+                      attachments=()) -> Optional[str]:
     origin = origin or ("chat" if quiet else "voice")
     # Step 1: Redact sensitive information
     redacted = redact(text)
@@ -1053,7 +1062,13 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
             _conf_store.clear_pending()
 
     from ..fastpath.dispatcher import match_command, dispatch
-    fast_match = match_command(redacted, cfg, language, addressed=addressed)
+    if attachments:
+        # The words are about what is attached, not a whole-utterance command.
+        fast_match = None
+        debug_log(f"request carries {len(attachments)} attachment(s); fast commands skipped", "routing")
+        note_outside_content()  # file text, screen text and images are outside content, as a tool result is
+    else:
+        fast_match = match_command(redacted, cfg, language, addressed=addressed)
     if fast_match is not None:
         fast_reply = dispatch(fast_match, db, cfg, redacted, language,
                               executor=run_tool_with_retries, quiet=quiet)
@@ -1071,7 +1086,8 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
 
         return run_bridge_reply(reply_mode, db, cfg, tts, redacted, dialogue_memory, language, quiet,
                                 deliver=_deliver_unless_stopped, origin=origin,
-                                read_foreground=lambda: _foreground_window(cfg, origin))
+                                read_foreground=lambda: _foreground_window(cfg, origin),
+                                attachments=attachments)
     debug_log('LLM_ROUTE', 'routing')
 
     # Step 2: Check for recent dialogue context
@@ -1803,7 +1819,14 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
         messages.extend(recent_messages)
     # Current user message
     user_msg_index = len(messages)
-    messages.append({"role": "user", "content": redacted})
+    user_message = {"role": "user", "content": redacted}
+    if attachments:
+        # The request's own words stay what is recorded; the note and the images exist for this reply only.
+        user_message["content"] = f"{redacted}\n\n{request_note(attachments)}"
+        attached_images = [image.data for image in request_images(attachments)]
+        if attached_images:
+            user_message["_images"] = attached_images  # sent per call, only to a model that can see them
+    messages.append(user_message)
 
     # Idempotent flag — once carryover capture runs (success, error, or stop),
     # don't run it again. Lets us call _maybe_record_tool_carryover from any

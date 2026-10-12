@@ -29,6 +29,7 @@ class Model:
     def __init__(self, server: "FakeAppServer", thread_id: str, turn_id: str, params: Dict[str, Any]):
         self.server, self.thread_id, self.turn_id = server, thread_id, turn_id
         self.text = params["input"][0]["text"]
+        self.input_items: List[Dict[str, Any]] = list(params["input"])
         match = re.search(r"\{.*\}", self.text, re.DOTALL)
         self.request: Dict[str, Any] = json.loads(match.group()) if match else {}
         self.request_id = self.request.get("request_id", "")

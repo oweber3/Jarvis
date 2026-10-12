@@ -696,6 +696,7 @@ def submit_text_query(
     on_busy=None,
     use_ipc: bool = False,
     origin: str = "chat",
+    attachments: tuple = (),
 ) -> None:
     """Submit a text query to the reply engine (fire-and-forget).
 
@@ -712,6 +713,10 @@ def submit_text_query(
     ``origin`` is ``chat`` for the desktop chat window and ``phone`` for a
     paired phone, which never takes the window in front of the PC as what the
     request is about (``memory/desktop_referents.spec.md``).
+
+    ``attachments`` (``reply.attachments.RequestAttachment``) are what the owner attached to this one
+    message in the web chat: they reach the model with the request and are never recorded in the dialogue
+    memory (``webchat/webchat.spec.md``, Attachments).
     """
     if not text or not text.strip():
         return
@@ -745,7 +750,8 @@ def submit_text_query(
         debug_log("chat query rejected: another query is running", "chat")
         return
 
-    _start_text_query_worker(text, dm, cfg, db, callbacks=callbacks, use_ipc=use_ipc, origin=origin)
+    _start_text_query_worker(text, dm, cfg, db, callbacks=callbacks, use_ipc=use_ipc, origin=origin,
+                             attachments=tuple(attachments or ()))
 
 
 def regenerate_chat_reply(
@@ -810,7 +816,8 @@ def regenerate_chat_reply(
     _start_text_query_worker(text, dm, cfg, db, callbacks=callbacks, use_ipc=use_ipc, origin="chat")
 
 
-def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc: bool, origin: str) -> None:
+def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc: bool, origin: str,
+                             attachments: tuple = ()) -> None:
     """Run one text query on a worker thread. The caller holds ``_chat_query_lock``; the worker releases it
     before ``complete`` is delivered, so a caller can send its next query from that callback."""
     # Per-query cancellation flag. The Stop button sets this; the reply engine ends the request at its
@@ -844,6 +851,7 @@ def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc
                         language=None,
                         quiet=True,
                         origin=origin,
+                        attachments=attachments,
                     )
             except RequestCancelled:
                 reply = None

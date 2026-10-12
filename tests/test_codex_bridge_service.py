@@ -18,6 +18,7 @@ from codex_bridge_fakes import (
     scripted,
 )
 from jarvis.codex_bridge.service import BRIDGE_TOOLS, BridgeService
+from jarvis.reply.attachments import RequestAttachment
 from jarvis.tools.schema_validation import validate_arguments
 from jarvis.tools.types import ToolExecutionResult, ToolImage
 
@@ -797,3 +798,48 @@ class TestClosed:
         service.close()
         service.prepare()
         assert server.starts == 0
+
+
+@pytest.mark.unit
+class TestAttachments:
+    FILE = RequestAttachment("text", 5, text="[file note]\n<<<BEGIN UNTRUSTED FILE TEXT>>>\nbudget 7731\n"
+                                              "<<<END UNTRUSTED FILE TEXT>>>")
+    IMAGE = RequestAttachment("image", 9, image=ToolImage("image/jpeg", "QUJD"))
+
+    def _run(self, service, attachments):
+        return service.run_request("what is this", context=[], origin="chat", language="en", db=None, quiet=True,
+                                   attachments=attachments)
+
+    def test_file_text_travels_in_the_request_as_data_and_images_as_input_images(self):
+        service, server, _, _ = build(scripted(("answer", "completed", "ok")))
+        try:
+            assert self._run(service, (self.FILE, self.IMAGE)).kind == "reply"
+            model = server.turns[0]
+            assert "budget 7731" in model.request["attachments"] and model.request["utterance"] == "what is this"
+            assert model.input_items[1:] == [{"type": "image", "url": "data:image/jpeg;base64,QUJD"}]
+        finally:
+            service.close()
+
+    def test_attachment_text_is_redacted_like_everything_else_that_leaves(self):
+        leaky = RequestAttachment("text", 5, text="write to owen@example.com")
+        service, server, _, _ = build(scripted(("answer", "completed", "ok")))
+        try:
+            self._run(service, (leaky,))
+            assert "owen@example.com" not in server.turns[0].text and "REDACTED_EMAIL" in server.turns[0].text
+        finally:
+            service.close()
+
+    def test_a_request_without_attachments_carries_none(self):
+        service, server, _, _ = build(scripted(("answer", "completed", "ok")))
+        try:
+            run(service)
+            assert "attachments" not in server.turns[0].request and len(server.turns[0].input_items) == 1
+        finally:
+            service.close()
+
+    def test_the_bridge_says_it_takes_images(self):
+        service, _, _, _ = build(scripted(("answer", "completed", "ok")))
+        try:
+            assert service.accepts_images is True
+        finally:
+            service.close()

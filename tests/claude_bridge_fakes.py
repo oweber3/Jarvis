@@ -89,6 +89,7 @@ class FakeSession:
         self.closes = 0
         self.controls: List[str] = []
         self.user_texts: List[str] = []
+        self.user_images: List[List[Any]] = []
         self.turns: List[Model] = []
         self.tools: Optional[List[Dict[str, Any]]] = None
         self.ids = itertools.count(2)
@@ -126,10 +127,11 @@ class FakeSession:
                              "response": {"subtype": "success", "request_id": request_id, "response": {}}})
         return request_id
 
-    def send_user_text(self, text: str) -> None:
+    def send_user_text(self, text: str, images: Any = ()) -> None:
         if not self.alive:
             raise ClaudeCliError("closed")
         self.user_texts.append(text)
+        self.user_images.append([(image.mime_type, image.data) for image in images])
         model = Model(self, text)
         self.turns.append(model)
         if self.factory.script is not None:
