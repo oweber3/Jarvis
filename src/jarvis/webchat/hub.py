@@ -49,7 +49,8 @@ class ModelResult:
 
 def chat_dict(chat: Chat) -> Dict[str, Any]:
     return {"id": chat.id, "project_id": chat.project_id, "title": chat.title, "created_at": chat.created_at,
-            "updated_at": chat.updated_at, "last_mode": chat.last_mode, "last_model": chat.last_model}
+            "updated_at": chat.updated_at, "last_mode": chat.last_mode, "last_model": chat.last_model,
+            "pinned": chat.pinned}
 
 
 class ChatHub:
