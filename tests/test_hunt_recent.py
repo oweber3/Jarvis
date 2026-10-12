@@ -49,6 +49,46 @@ def test_claude_effort_model_default_survives_save_and_load(settings_window, mon
         f"config.json holds {json.loads(cfg.read_text()).get('claude_effort')!r}")
 
 
+@pytest.mark.unit
+def test_an_emptied_wake_word_does_not_make_every_utterance_wake_jarvis(settings_window):
+    """Clearing the Wake Word box and saving writes an empty wake word, which matches any speech, so every
+    conversation in the room becomes a request. An empty wake word must keep the default (or be refused)."""
+    win, _cfg = settings_window({})
+    win._widgets["wake_word"].setText("")
+    win._on_save()
+
+    from jarvis.config import load_settings
+    from jarvis.listening.wake_detection import is_wake_word_detected
+    settings = load_settings()
+    assert not is_wake_word_detected("what should we have for dinner tonight", settings.wake_word,
+                                     settings.wake_aliases, settings.wake_fuzzy_ratio), (
+        f"wake word saved as {settings.wake_word!r}: any speech wakes Jarvis")
+
+
+@pytest.mark.unit
+def test_a_slow_camera_with_the_hand_always_in_view_still_aims_the_pointer():
+    """Spec: the mode pauses only when the hand stays out of view for 0.25 s. A webcam in dim light can drop to
+    under 4 frames a second; with the hand in every frame, one finger must still move the pointer. Instead the
+    watchdog declares the hand lost between frames, so no gesture ever lasts the debounce time."""
+    from jarvis.gestures.window_snap import WindowSnap, WindowSnapSettings
+    from tests.synthetic_hands import FakeDesktop, frame, hand
+
+    now = [0.0]
+    desk = FakeDesktop()
+    snap = WindowSnap(desk, WindowSnapSettings(), clock=lambda: now[0])
+    period = 0.3  # about 3.3 frames a second
+    tick = 0.025  # the watchdog runs every 50 ms on its own clock, as WindowSnapService does
+    for index in range(12):
+        t = index * period
+        while tick < t:
+            now[0] = tick
+            snap.tick()
+            tick += 0.05
+        now[0] = t
+        snap.on_frame(frame(t, hand(0.4 + index * 0.02, 0.5, gesture="one")))
+    assert desk.of("pointer"), f"the pointer never moved; gesture snapping state is {snap.state!r}"
+
+
 class _FakeTracker:
     """A hand tracker that never opens a camera; it records which camera it was built for."""
 
