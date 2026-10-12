@@ -666,6 +666,8 @@ class ChatWindow(QMainWindow):
             self.signals.busy.emit()
         elif kind == "rewind":
             self.signals.rewound.emit(data is True)
+        elif kind == "confirmed" and isinstance(data, str):
+            self.signals.confirmed_result.emit(data)
         return True
 
     # --- Rendering helpers ----------------------------------------------

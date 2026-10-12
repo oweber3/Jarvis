@@ -132,7 +132,7 @@ The page follows the server. An assistant-ui `ExternalStoreRuntime` holds the op
 
 **No outside calls.** The page calls only its own origin. `tests/test_webchat_bundle.py` fails if the build or the copied source names an outside address, a hosted service (assistant-ui Cloud included) or any analytics, beacon, socket or event-stream use.
 
-Desktop confirmations still appear as the desktop dialog, as in the Qt chat, and exist only when the daemon is bundled in the desktop app. The reply reads "Please confirm on your desktop" and the outcome arrives as a normal assistant message.
+Desktop confirmations still appear as the desktop dialog, as in the Qt chat, whether the daemon is bundled in the desktop app or runs as its subprocess (`desktop_app.spec.md`, Action Confirmation Dialog). A daemon the desktop app did not start has no dialog and refuses those actions. The reply reads "Please confirm on your desktop" and the outcome arrives as a normal assistant message.
 
 ## Desktop window
 

@@ -133,19 +133,28 @@ class ReplyModeSignals(QObject):
     state = pyqtSignal(str, list)
 
 
+class ConfirmIpcSignals(QObject):
+    """Carries the daemon subprocess's ``__CONFIRM__:`` lines from the log reader to the GUI thread."""
+
+    line_received = pyqtSignal(str)
+
+
 def _should_emit_as_log(line: str) -> bool:
     """Whether a daemon output line belongs in the general log viewer.
 
     Chat IPC is carved out. Its ``complete`` event carries the whole
     assistant reply, which can echo back whatever the user typed, and the
     log window is not covered by the redaction invariant the chat path
-    maintains. Diary IPC stays: it carries progress and token deltas the
-    log window exists to show. Reply-mode state events are machine data;
-    the daemon prints its own readable line for every switch.
+    maintains. Confirmation requests are carved out for the same reason: they
+    name the action's target (a file, a process, an app). Diary IPC stays: it
+    carries progress and token deltas the log window exists to show.
+    Reply-mode state events are machine data; the daemon prints its own
+    readable line for every switch.
     """
     from jarvis.daemon import CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX
+    from jarvis.tools.confirmation_pipe import CONFIRM_IPC_PREFIX
 
-    return not line.startswith((CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX))
+    return not line.startswith((CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX, CONFIRM_IPC_PREFIX))
 
 
 def _collect_runtime_status_snapshot(
@@ -2035,6 +2044,12 @@ class JarvisSystemTray:
         self._chat_ipc_signals = ChatIpcSignals()
         self._chat_ipc_signals.line_received.connect(self._on_chat_ipc_line)
 
+        # Same bridge for confirmation dialogs a daemon subprocess asks for: the
+        # dialog is created on the GUI thread and the answer goes to its stdin.
+        self._confirm_ipc_signals = ConfirmIpcSignals()
+        self._confirm_ipc_signals.line_received.connect(self._on_confirm_ipc_line)
+        self._confirm_relay = None
+
         # Same bridge for the runtime-status dialog: the snapshot is
         # gathered on a worker thread because it makes a blocking network
         # call, and only the rendering belongs on the GUI thread.
@@ -2645,6 +2660,10 @@ class JarvisSystemTray:
 
     def _set_chat_daemon_status(self, status: str) -> None:
         """Update an existing chat window with daemon lifecycle state."""
+        relay = getattr(self, "_confirm_relay", None)
+        if relay is not None and status != "running":
+            # Nobody will hear an answer any more: close the dialogs unanswered (refused).
+            relay.close_all()
         web_chat = getattr(self, "web_chat_window", None)
         if web_chat is not None:
             web_chat.set_daemon_status(status)
@@ -2939,6 +2958,14 @@ class JarvisSystemTray:
                 self._chat_submit_fn = _submit_chat_subprocess
                 self._chat_cancel_fn = _cancel_chat_subprocess
                 self._chat_control_fn = _control_chat_subprocess
+
+                def _write_daemon_line(line: str) -> None:
+                    _proc.stdin.write(line + "\n")
+                    _proc.stdin.flush()
+
+                # Confirmation dialogs this daemon asks for; the answers go to its own stdin.
+                from desktop_app.confirmation_dialog import SubprocessConfirmationRelay
+                self._confirm_relay = SubprocessConfirmationRelay(_write_daemon_line)
                 # If the chat window already exists (daemon restarted while
                 # the window was open), refresh its pipe writers so it doesn't
                 # keep writing to the old (dead) subprocess stdin.
@@ -3017,6 +3044,7 @@ class JarvisSystemTray:
             return
 
         from jarvis.daemon import CHAT_IPC_PREFIX
+        from jarvis.tools.confirmation_pipe import CONFIRM_IPC_PREFIX
 
         try:
             while True:
@@ -3034,6 +3062,8 @@ class JarvisSystemTray:
                 # (Qt widgets must be created on the GUI thread).
                 if line.startswith(CHAT_IPC_PREFIX):
                     self._chat_ipc_signals.line_received.emit(line)
+                elif line.startswith(CONFIRM_IPC_PREFIX):
+                    self._confirm_ipc_signals.line_received.emit(line)
                 self._on_reply_mode_ipc_line(line)
                 if _should_emit_as_log(line):
                     self.log_signals.new_log.emit(line)
@@ -3056,6 +3086,14 @@ class JarvisSystemTray:
                 control_fn=getattr(self, "_chat_control_fn", None),
             )
         self.chat_window.process_ipc_line(line)
+
+    def _on_confirm_ipc_line(self, line: str) -> None:
+        """Show the confirmation dialog a daemon subprocess asked for (Qt main thread)."""
+        relay = getattr(self, "_confirm_relay", None)
+        if relay is None:
+            debug_log("confirmation request ignored: no daemon subprocess", "desktop")
+            return
+        relay.handle_line(line.rstrip("\r\n"))
 
     def stop_daemon(
         self,
