@@ -34,6 +34,8 @@ from .cli import ClaudeCliError, session_args, sign_in_failure
 from .prompts import INSTRUCTIONS_VERSION, assistant_instructions
 
 _POLL_SEC = 0.2
+# A request waiting for its turn checks this often whether it was stopped meanwhile.
+_TURN_SLICE_SEC = 0.1
 _START_TIMEOUT_SEC = 20.0
 _CLOSE_TIMEOUT_SEC = 2.0
 # Tool rounds plus the turns that produce the structured answer.
@@ -222,9 +224,12 @@ class ClaudeBridgeService:
                 return _error("payload_too_large")
             rid = req.id
             self._waiting.add(rid)
-        if not self._turn_lock.acquire(timeout=self._deadline_sec):
+        if not self._wait_for_turn(rid):
             with self._lock:
                 self._waiting.discard(rid)
+            if self.broker.state_of(rid) is State.CANCELLED:
+                debug_log(f"request {rid[:8]} stopped while waiting for its turn", "claude")
+                return BridgeOutcome("cancelled", "Cancelled.", "cancelled")
             self.broker.cancel(rid, "queue_timeout")
             return _error("timeout")
         try:
@@ -248,6 +253,25 @@ class ClaudeBridgeService:
                 self._active_rid, self._live = None, None
             self._turn_lock.release()
             self._prestart()
+
+    def _wait_for_turn(self, rid: str) -> bool:
+        """Take the turn lock for ``rid``. Waits in short slices and gives up as soon as the request has
+        ended (stopped, switched away or past its deadline), so a stop never waits for a readiness check."""
+        deadline = time.monotonic() + self._deadline_sec
+        while True:
+            if self._turn_lock.acquire(timeout=_TURN_SLICE_SEC):
+                return True
+            state = self.broker.state_of(rid)
+            if state is None or state in TERMINAL or time.monotonic() >= deadline:
+                return False
+
+    def _discard_confirmation(self, rid: str) -> None:
+        """Drop a confirmation the request raised: nobody will hear its question, so a later "yes" must not
+        approve it."""
+        pending = self._store.pending_for_ref(rid)
+        if pending is not None:
+            self._store.discard_pending(pending.request.id, "cancelled")
+            debug_log("confirmation for a cancelled request discarded", "claude")
 
     def prepare(self) -> Optional[str]:
         """Check sign-in, model and effort ahead of the first request. Returns a failure reason or None."""
@@ -309,6 +333,7 @@ class ClaudeBridgeService:
         if state is None or state in TERMINAL:
             return cancelled > 0
         self.broker.cancel(rid, reason)
+        self._discard_confirmation(rid)
         if live is not None:
             threading.Thread(target=self._stop, args=(live,), daemon=True, name="claude-cancel").start()
         return True
@@ -480,7 +505,9 @@ class ClaudeBridgeService:
         state = self.broker.state_of(rid)
         if state is State.AWAITING_CONFIRMATION:
             question = live.question if live else None
-            return BridgeOutcome("awaiting_confirmation", question or "Please confirm the action.")
+            req = self.broker.request_of(rid)
+            return BridgeOutcome("awaiting_confirmation", question or "Please confirm the action.",
+                                 confirmation_id=req.confirmation_id if req else None)
         if state is State.CANCELLED:
             return BridgeOutcome("cancelled", "Cancelled.", "cancelled")
         if state is State.EXPIRED:

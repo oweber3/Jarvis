@@ -83,6 +83,9 @@ class TestStopWhileQueuedBehindTheReadinessCheck:
             assert wait_for(lambda: queued(service))
             assert service.is_busy(), "a queued request counts as in flight, so a spoken stop reaches it"
             assert service.cancel_active("stop") is True
+            # The stopped request ends at once; it does not wait for the readiness check.
+            worker.join(1.0)
+            assert not worker.is_alive() and not service.is_busy()
         finally:
             gate.set()
             worker.join(10.0)
@@ -112,6 +115,8 @@ class TestStopWhileQueuedBehindTheReadinessCheck:
             assert wait_for(lambda: queued(service))
             assert service.is_busy()
             assert service.cancel_active("stop") is True
+            worker.join(1.0)
+            assert not worker.is_alive() and not service.is_busy()
         finally:
             gate.set()
             worker.join(10.0)
@@ -121,6 +126,27 @@ class TestStopWhileQueuedBehindTheReadinessCheck:
         assert holder["out"].kind == "cancelled"
         assert server.turns == []
         assert not service.is_busy()
+
+    def test_a_request_that_waits_past_its_deadline_unstopped_still_times_out(self):
+        gate = threading.Event()
+
+        def slow_auth():
+            gate.wait(5.0)
+            return dict(SIGNED_IN)
+
+        service, claude = build_claude(scripted(("answer", "completed", "Done.")),
+                                       cfg=make_cfg(claude_timeout_sec=0.3), auth_reader=slow_auth)
+        warm = threading.Thread(target=service.prepare, daemon=True)
+        warm.start()
+        assert wait_for(lambda: service._turn_lock.locked())
+        try:
+            out = run(service)
+        finally:
+            gate.set()
+            warm.join(10.0)
+            service.close()
+        assert out.kind == "error" and out.reason == "timeout"
+        assert claude.used() == []
 
     def test_with_nothing_running_or_waiting_stop_reports_nothing_cancelled(self):
         service, _ = build_claude(scripted(("answer", "completed", "Done.")))
@@ -264,3 +290,88 @@ class TestNoProcessAfterClose:
         recheck.join(5.0)
 
         assert claude.sessions == []
+
+
+def _confirming_executor(store):
+    """A tool call that needs the user's spoken confirmation (deleting a file), as the central path raises it."""
+    from jarvis.tools.confirmation import ConfirmationRequest, SafetyTier
+    from jarvis.tools.types import ToolExecutionResult
+
+    def execute(db, cfg, tool, args, *rest, request_ref=None, **kwargs):
+        store.set_pending(ConfirmationRequest(tool_name="localFiles", tier=SafetyTier.CONFIRM_VOICE,
+                                              action="delete", target="a.pdf", parameters={}),
+                          execution_context={"request_ref": request_ref, "tool_name": "localFiles"})
+        return ToolExecutionResult(False, "Delete a.pdf? Say yes or no.")
+
+    return execute
+
+
+def _assert_nothing_armed(store):
+    from jarvis.tools.confirmation import VoiceResponseStatus
+
+    assert store.has_pending_voice() is False
+    assert store.handle_voice_response("yes", language="en") is not VoiceResponseStatus.AFFIRMATIVE
+    assert store.claim_approved() is None
+
+
+@pytest.mark.unit
+class TestStopAfterAConfirmationQuestion:
+    """A stop that lands once a call has raised a confirmation, before its question reaches the user,
+    discards that confirmation: a later "yes" approves nothing."""
+
+    def test_claude(self):
+        from jarvis.tools.confirmation import ConfirmationStore
+
+        store = ConfirmationStore()
+        claude = FakeClaude(scripted(("exec", "getTime", {}), ("answer", "completed", "Deleted.")))
+        service = ClaudeBridgeService(make_cfg(), claude, executor=_confirming_executor(store),
+                                      confirmation_store=store, tools_provider=lambda c: dict(TOOLS),
+                                      auth_reader=lambda: dict(SIGNED_IN), instructions_provider=lambda: "CONTRACT")
+        stopping, release = threading.Event(), threading.Event()
+        original_stop = service._stop
+
+        def paused_stop(live):
+            if live.turn_id and not stopping.is_set():
+                stopping.set()  # the session is being stopped after the question was raised
+                release.wait(5.0)
+            original_stop(live)
+
+        service._stop = paused_stop
+        worker, holder = run_in_background(service)
+        try:
+            assert stopping.wait(5.0)
+            assert store.has_pending_voice()
+            assert service.cancel_active("stop") is True
+        finally:
+            release.set()
+            worker.join(5.0)
+            service.close()
+        _assert_nothing_armed(store)
+
+    def test_codex(self):
+        from jarvis.tools.confirmation import ConfirmationStore
+
+        store = ConfirmationStore()
+        server = FakeAppServer(codex_scripted(("exec", "getTime", {}), ("answer", "completed", "Deleted.")))
+        service = BridgeService(codex_cfg(), server, executor=_confirming_executor(store), confirmation_store=store,
+                                tools_provider=lambda c: dict(TOOLS), runtime_dir=Path("."))
+        stopping, release = threading.Event(), threading.Event()
+        original_close = service._close_session
+
+        def paused_close(session):
+            if not stopping.is_set():
+                stopping.set()  # the thread is being closed after the question was raised
+                release.wait(5.0)
+            original_close(session)
+
+        service._close_session = paused_close
+        worker, holder = run_in_background(service)
+        try:
+            assert stopping.wait(5.0)
+            assert store.has_pending_voice()
+            assert service.cancel_active("stop") is True
+        finally:
+            release.set()
+            worker.join(5.0)
+            service.close()
+        _assert_nothing_armed(store)
