@@ -34,6 +34,8 @@ datas = [
     (str(src_path / 'jarvis' / 'tools' / 'builtin' / 'windows' / 'control_words' / '*.json'), 'jarvis/tools/builtin/windows/control_words'),
     (str(src_path / 'jarvis' / 'platform' / 'windows' / '*.json'), 'jarvis/platform/windows'),
     (str(src_path / 'jarvis' / 'memory' / 'activity_exclusions.json'), 'jarvis/memory'),
+    # The pinned Piper voice catalogue: names, sizes and digests for verified downloads
+    (str(src_path / 'jarvis' / 'output' / 'piper_voices.json'), 'jarvis/output'),
     # The built web chat page, served by the daemon (webchat/webchat.spec.md)
     (str(src_path / 'jarvis' / 'webchat' / 'static'), 'jarvis/webchat/static'),
 ]
@@ -139,6 +141,10 @@ hiddenimports = [
     # Output modules
     'jarvis.output',
     'jarvis.output.tts',
+    'jarvis.output.kokoro',
+    'jarvis.output.model_download',
+    'jarvis.output.piper_voices',
+    'jarvis.output.voice_preview',
     'jarvis.output.tune_player',
     # Piper TTS (local neural TTS)
     'piper',

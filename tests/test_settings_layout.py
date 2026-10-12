@@ -123,6 +123,7 @@ def test_voice_engine_choice_shows_that_engines_options(window_with):
 @pytest.mark.parametrize("values", [
     {"llm_provider": "ollama", "tts_engine": "piper"},
     {"llm_provider": "openai_compatible", "embedding_provider": "ollama", "tts_engine": "chatterbox"},
+    {"llm_provider": "ollama", "tts_engine": "kokoro"},
 ])
 def test_no_page_shows_two_rows_with_the_same_label(window_with, values):
     win, _cfg = window_with(values)

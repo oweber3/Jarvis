@@ -20,25 +20,22 @@ from ..assistant_state import AssistantState, set_state
 from .. import voice_levels
 from ..debug import debug_log
 from ..utils.audio_lock import portaudio_lock, stream_closed, stream_opened
+from . import kokoro
+from .model_download import download_verified
+from .piper_voices import PIPER_DEFAULT_VOICE, piper_models_dir, piper_voice_path
 
 if TYPE_CHECKING:
     from ..extensions.api import VoiceOutput, VoiceSink
 
 
 # ============================================================================
-# Piper TTS Model Configuration
+# Piper voice files (output/tts.spec.md, Voice files)
 # ============================================================================
-# Default voice model for automatic download
-# en_GB-alan-medium: Good quality, ~60MB, British English male
-PIPER_DEFAULT_VOICE = "en_GB-alan-medium"
-PIPER_VOICE_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
 
 
 def _get_piper_models_dir() -> Path:
     """Get the directory for storing Piper voice models."""
-    base = Path.home() / ".local" / "share" / "jarvis" / "models" / "piper"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+    return piper_models_dir()
 
 
 def _get_default_piper_model_path() -> str:
@@ -47,126 +44,32 @@ def _get_default_piper_model_path() -> str:
 
 
 def _download_piper_voice(voice_name: str, progress_callback: Optional[Callable[[str], None]] = None) -> Optional[str]:
-    """
-    Download a Piper voice model from HuggingFace.
+    """Download a catalogued Piper voice, verified against the pinned catalogue.
 
     Args:
         voice_name: Voice name like "en_US-lessac-medium"
         progress_callback: Optional callback for progress messages
 
     Returns:
-        Path to the downloaded model, or None if download failed
+        Path to the downloaded model, or None if the voice is not catalogued or the download failed
     """
-    import requests
+    from . import piper_voices
 
-    def log(msg: str):
+    voice = piper_voices.piper_voice(voice_name)
+    if voice is None:
         if progress_callback:
-            progress_callback(msg)
-        debug_log(msg, "tts")
-
-    # Parse voice name to construct URL
-    # Format: {lang}_{region}-{name}-{quality}
-    # Example: en_US-lessac-medium -> en/en_US/lessac/medium/en_US-lessac-medium.onnx
-    parts = voice_name.split("-")
-    if len(parts) < 3:
-        log(f"Invalid voice name format: {voice_name}")
+            progress_callback(f"  ❌ {voice_name} is not in Jarvis's Piper voice catalogue, so it is not downloaded")
+            progress_callback("     Place the .onnx and .onnx.json files yourself and choose them as a custom voice file")
+        debug_log("Piper voice not in the catalogue; nothing downloaded", "tts")
         return None
 
-    lang_region = parts[0]  # e.g., "en_US"
-    name = parts[1]         # e.g., "lessac"
-    quality = parts[2]      # e.g., "medium"
-
-    lang = lang_region.split("_")[0]  # e.g., "en"
-
-    # Construct URLs
-    base_path = f"{lang}/{lang_region}/{name}/{quality}/{voice_name}"
-    onnx_url = f"{PIPER_VOICE_BASE_URL}/{base_path}.onnx"
-    json_url = f"{PIPER_VOICE_BASE_URL}/{base_path}.onnx.json"
-
-    # Target paths
     models_dir = _get_piper_models_dir()
-    onnx_path = models_dir / f"{voice_name}.onnx"
-    json_path = models_dir / f"{voice_name}.onnx.json"
-
-    # Download with progress
-    try:
-        for url, target_path, desc in [
-            (onnx_url, onnx_path, "model"),
-            (json_url, json_path, "config"),
-        ]:
-            if target_path.exists():
-                log(f"  {desc} already exists: {target_path.name}")
-                continue
-
-            # Stream download with retry on rate limiting (HTTP 429)
-            max_retries = 4
-            response = None
-            for attempt in range(max_retries + 1):
-                response = requests.get(url, stream=True, timeout=60)
-                try:
-                    response.raise_for_status()
-                    break  # Success
-                except requests.exceptions.HTTPError as http_err:
-                    response.close()
-                    status = getattr(http_err.response, "status_code", None)
-                    if status == 429 and attempt < max_retries:
-                        wait = 2 ** (attempt + 1)
-                        log(f"  ⏳ Rate limited by HuggingFace, retrying in {wait}s ({attempt + 1}/{max_retries})...")
-                        time.sleep(wait)
-                        continue
-                    raise  # Non-429 or retries exhausted
-
-            total_size = int(response.headers.get("content-length", 0))
-            downloaded = 0
-            started_at = time.monotonic()
-            last_update = started_at
-
-            def report_progress(complete=False):
-                elapsed = max(time.monotonic() - started_at, 0.001)
-                size = downloaded / 1_000_000
-                rate = size / elapsed
-                if total_size:
-                    pct = 100 if complete else min(99, int(downloaded * 100 / total_size))
-                    message = f"📥 Piper {desc}: {pct}%|| {size:.1f}/{total_size / 1_000_000:.1f} MB · {rate:.1f} MB/s"
-                else:
-                    if complete:
-                        message = f"📥 Piper {desc}: 100%|| {size:.1f} MB received · total size unknown"
-                    else:
-                        message = f"📥 Piper {desc}: {size:.1f} MB [total size unknown · {rate:.1f} MB/s]"
-                if progress_callback:
-                    progress_callback(message)
-
-            report_progress()
-
-            # Write to temp file first, then rename (atomic)
-            temp_path = target_path.with_suffix(".tmp")
-            with open(temp_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if time.monotonic() - last_update >= 1:
-                        report_progress()
-                        last_update = time.monotonic()
-
-            # Rename temp to final
-            temp_path.rename(target_path)
-            response.close()
-            report_progress(complete=True)
-            debug_log(f"Piper {desc} available: {target_path.name}", "tts")
-
-        return str(onnx_path)
-
-    except requests.RequestException as e:
-        log(f"  Download failed: {e}")
-        # Clean up partial downloads
-        for p in [onnx_path, json_path]:
-            tmp = p.with_suffix(".tmp")
-            if tmp.exists():
-                tmp.unlink()
-        return None
-    except Exception as e:
-        log(f"  Download error: {e}")
-        return None
+    for f in voice.files:
+        desc = "model" if f.name.endswith(".onnx") else "config"
+        if not download_verified(f.url, models_dir / f.name, size=f.size, digest=f.md5, algorithm="md5",
+                                 label=f"Piper {desc}", progress=progress_callback):
+            return None
+    return str(models_dir / f"{voice_name}.onnx")
 
 
 # Default speaking rates for TTS estimation
@@ -854,10 +757,7 @@ class PiperTTS:
         self._audio_lock = threading.Lock()
 
     def _ensure_initialized(self) -> bool:
-        """Initialize Piper voice model. Returns True if successful.
-
-        If no model is configured, automatically downloads the default voice.
-        """
+        """Load the voice once. Returns True when one is ready to speak."""
         if self._initialized:
             return self._voice is not None
         if not self.enabled:
@@ -866,75 +766,101 @@ class PiperTTS:
         with self._init_lock:
             if self._initialized:
                 return self._voice is not None
-
-            try:
-                # Use configured path or default
-                model_path = self.model_path
-                if not model_path:
-                    model_path = _get_default_piper_model_path()
-                    debug_log(f"No model configured, using default: {model_path}", "tts")
-
-                # Expand user path (e.g., ~/models/voice.onnx)
-                model_path = os.path.expanduser(model_path)
-                config_path = model_path + ".json"
-
-                # Auto-download if model doesn't exist
-                if not os.path.exists(model_path) or not os.path.exists(config_path):
-                    # Extract voice name from path for download
-                    voice_name = os.path.basename(model_path).replace(".onnx", "")
-
-                    print(f"🔊 Downloading Piper voice: {voice_name}", file=sys.stderr, flush=True)
-                    print("   This is a one-time download (~60MB)...", file=sys.stderr, flush=True)
-
-                    def progress(msg):
-                        print(msg, file=sys.stderr, flush=True)
-
-                    downloaded_path = _download_piper_voice(voice_name, progress_callback=progress)
-
-                    if not downloaded_path:
-                        self._init_error = f"Failed to download voice: {voice_name}"
-                        debug_log(f"Piper TTS init failed: {self._init_error}", "tts")
-                        self._initialized = True
-                        return False
-
-                    model_path = downloaded_path
-                    config_path = model_path + ".json"
-                    print("✓ Voice downloaded successfully!", file=sys.stderr, flush=True)
-
-                # Final check that files exist
-                if not os.path.exists(model_path):
-                    self._init_error = f"Model file not found: {model_path}"
-                    debug_log(f"Piper TTS init failed: {self._init_error}", "tts")
-                    self._initialized = True
-                    return False
-
-                if not os.path.exists(config_path):
-                    self._init_error = f"Model config not found: {config_path}"
-                    debug_log(f"Piper TTS init failed: {self._init_error}", "tts")
-                    self._initialized = True
-                    return False
-
-                debug_log(f"Piper TTS loading model: {model_path}", "tts")
-
-                # Import piper and load model
-                from ..utils.onnx_privacy import disable_onnxruntime_telemetry
-                disable_onnxruntime_telemetry()
-                from piper.voice import PiperVoice
-
-                self._voice = PiperVoice.load(model_path, config_path)
-                self._sample_rate = self._voice.config.sample_rate
-
-                debug_log(f"Piper TTS initialized: sample_rate={self._sample_rate}", "tts")
-
-            except ImportError as e:
-                self._init_error = f"piper-tts not installed: {e}"
-                debug_log(f"Piper TTS init failed: {self._init_error}", "tts")
-            except Exception as e:
-                self._init_error = f"Failed to load Piper model: {e}"
-                debug_log(f"Piper TTS init failed: {self._init_error}", "tts")
-
+            self._load_voice()
             self._initialized = True
             return self._voice is not None
+
+    def _load_voice(self) -> None:
+        """Load the Piper voice into ``_voice``, or set ``_init_error``.
+
+        If no model is configured, the default voice is used; a missing catalogued voice is downloaded.
+        """
+        try:
+            # Use configured path or default
+            model_path = self.model_path
+            if not model_path:
+                model_path = _get_default_piper_model_path()
+                debug_log(f"No model configured, using default: {model_path}", "tts")
+
+            # Expand user path (e.g., ~/models/voice.onnx)
+            model_path = os.path.expanduser(model_path)
+            config_path = model_path + ".json"
+
+            # Auto-download if model doesn't exist
+            if not os.path.exists(model_path) or not os.path.exists(config_path):
+                # Extract voice name from path for download
+                voice_name = os.path.basename(model_path).replace(".onnx", "")
+
+                print(f"🔊 Downloading Piper voice: {voice_name}", file=sys.stderr, flush=True)
+                print("   This is a one-time download (~60MB)...", file=sys.stderr, flush=True)
+
+                def progress(msg):
+                    print(msg, file=sys.stderr, flush=True)
+
+                downloaded_path = _download_piper_voice(voice_name, progress_callback=progress)
+
+                if not downloaded_path:
+                    self._init_error = f"Failed to download voice: {voice_name}"
+                    debug_log(f"Piper TTS init failed: {self._init_error}", "tts")
+                    return
+
+                model_path = downloaded_path
+                config_path = model_path + ".json"
+                print("✓ Voice downloaded successfully!", file=sys.stderr, flush=True)
+
+            # Final check that files exist
+            if not os.path.exists(model_path):
+                self._init_error = f"Model file not found: {model_path}"
+                debug_log(f"Piper TTS init failed: {self._init_error}", "tts")
+                return
+
+            if not os.path.exists(config_path):
+                self._init_error = f"Model config not found: {config_path}"
+                debug_log(f"Piper TTS init failed: {self._init_error}", "tts")
+                return
+
+            debug_log(f"Piper TTS loading model: {model_path}", "tts")
+
+            # Import piper and load model
+            from ..utils.onnx_privacy import disable_onnxruntime_telemetry
+            disable_onnxruntime_telemetry()
+            from piper.voice import PiperVoice
+
+            self._voice = PiperVoice.load(model_path, config_path)
+            self._sample_rate = self._voice.config.sample_rate
+
+            debug_log(f"Piper TTS initialized: sample_rate={self._sample_rate}", "tts")
+
+        except ImportError as e:
+            self._init_error = f"piper-tts not installed: {e}"
+            debug_log(f"Piper TTS init failed: {self._init_error}", "tts")
+        except Exception as e:
+            self._init_error = f"Failed to load Piper model: {e}"
+            debug_log(f"Piper TTS init failed: {self._init_error}", "tts")
+
+    def render(self, text: str):
+        """The whole of ``text`` as int16 samples and their rate, without playing it (used by the preview).
+
+        Returns ``(None, rate)`` when no voice could load; ``_init_error`` then says why.
+        """
+        import numpy as np
+
+        if not self._ensure_initialized():
+            return None, self._sample_rate
+        chunks = [chunk.audio_int16_array for chunk in self._voice.synthesize(_preprocess_for_speech(text),
+                                                                              self._synthesis_config())]
+        samples = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.int16)
+        return samples, self._sample_rate
+
+    def _synthesis_config(self):
+        """Piper's settings for one reply (a Kokoro voice ignores them)."""
+        from piper.config import SynthesisConfig
+        return SynthesisConfig(
+            speaker_id=self.speaker,
+            length_scale=self.length_scale,
+            noise_scale=self.noise_scale,
+            noise_w_scale=self.noise_w,
+        )
 
     def start(self) -> None:
         if not self.enabled or self._thread is not None:
@@ -1097,13 +1023,7 @@ class PiperTTS:
 
             # Synthesis yields one chunk per sentence. Playback starts with the
             # first chunk while the rest are synthesised.
-            from piper.config import SynthesisConfig
-            syn_config = SynthesisConfig(
-                speaker_id=self.speaker,
-                length_scale=self.length_scale,
-                noise_scale=self.noise_scale,
-                noise_w_scale=self.noise_w,
-            )
+            syn_config = self._synthesis_config()
             # The switches are honoured as set: an unavailable output never turns the PC voice on.
             pc_audible = bool(self.pc_speakers_enabled)
             output, sink = self._open_voice_output()
@@ -1243,6 +1163,84 @@ class PiperTTS:
         return self._last_spoken_text
 
 
+class KokoroTTS(PiperTTS):
+    """Kokoro voices through the same streaming player as Piper (``output/tts.spec.md``, Kokoro).
+
+    Kokoro is optional: whenever it cannot speak (its files are not downloaded yet, ONNX Runtime or the model
+    fails to load) the reply is spoken with Piper and the reason is printed, so Jarvis is never mute. Missing
+    files are fetched on a background thread when the engine starts; the first reply after they arrive loads
+    Kokoro on the speaking thread and switches to it.
+    """
+
+    def __init__(self, *, kokoro_voice: str = kokoro.KOKORO_DEFAULT_VOICE, kokoro_speed: float = 1.0,
+                 kokoro_model_dir: Optional[Path] = None, **piper_kwargs) -> None:
+        super().__init__(**piper_kwargs)
+        self.kokoro_voice = kokoro_voice
+        self.kokoro_speed = kokoro_speed
+        self.kokoro_model_dir = kokoro_model_dir
+        self.engine_in_use: Optional[str] = None  # "kokoro" or "piper" once a voice is loaded
+        self.fallback_reason: Optional[str] = None
+        self.kokoro_downloaded = threading.Event()  # set by the background download once every file is verified
+        self._download_thread: Optional[threading.Thread] = None
+
+    def _load_voice(self) -> None:
+        try:
+            self._use_kokoro(kokoro.load_kokoro_voice(self.kokoro_model_dir, self.kokoro_voice, self.kokoro_speed))
+            return
+        except kokoro.KokoroUnavailable as e:
+            self.fallback_reason = str(e)
+        print(f"⚠️ Kokoro voice unavailable: {self.fallback_reason}", flush=True)
+        print("   🔁 Speaking with Piper instead", flush=True)
+        debug_log("Kokoro unavailable; Piper speaks instead", "tts")
+        super()._load_voice()
+        if self._voice is not None:
+            self.engine_in_use = "piper"
+
+    def _use_kokoro(self, voice) -> None:
+        self._voice = voice
+        self._sample_rate = kokoro.SAMPLE_RATE
+        self.engine_in_use = "kokoro"
+        self.fallback_reason = None
+        print(f"🔊 Kokoro voice ready: {kokoro.KOKORO_VOICES.get(self.kokoro_voice, self.kokoro_voice)} "
+              f"on the {getattr(voice, 'device', 'processor')}", flush=True)
+
+    def start(self) -> None:
+        if not self.enabled or self._thread is not None:
+            return
+        super().start()
+        if self.engine_in_use != "kokoro" and not kokoro.kokoro_files_present(self.kokoro_model_dir):
+            self._download_thread = threading.Thread(target=self._download, daemon=True, name="kokoro-download")
+            self._download_thread.start()
+
+    def _download(self) -> None:
+        print(f"📥 Downloading the Kokoro voice files ({kokoro.KOKORO_DOWNLOAD_MB} MB, one time)", flush=True)
+        print("   🔁 Piper speaks until they are ready", flush=True)
+
+        def progress(message: str) -> None:
+            print(message, file=sys.stderr, flush=True)
+
+        if kokoro.download_kokoro(self.kokoro_model_dir, progress):
+            print("✅ Kokoro voice files downloaded; Kokoro speaks from the next reply", flush=True)
+            self.kokoro_downloaded.set()
+        else:
+            print("⚠️ Kokoro voice files could not be downloaded; Piper keeps speaking", flush=True)
+            print("   Choose Kokoro again in Settings to retry", flush=True)
+
+    def _speak_once(self, text: str) -> None:
+        # Switch on the speaking thread, between replies, so a reply never changes voice half-way.
+        if self.kokoro_downloaded.is_set() and self.engine_in_use != "kokoro":
+            self.kokoro_downloaded.clear()
+            try:
+                self._use_kokoro(kokoro.load_kokoro_voice(self.kokoro_model_dir, self.kokoro_voice,
+                                                         self.kokoro_speed))
+                self._initialized = True
+            except kokoro.KokoroUnavailable as e:
+                self.fallback_reason = str(e)
+                print(f"⚠️ Kokoro voice unavailable: {e}", flush=True)
+                print("   🔁 Piper keeps speaking", flush=True)
+        super()._speak_once(text)
+
+
 # The longest the PC voice waits for an extra voice output (extensions/extensions.spec.md, Voice outputs).
 VOICE_OUTPUT_LEAD_MS_MAX = 500
 
@@ -1279,6 +1277,10 @@ def create_tts_engine(
     piper_noise_scale: float = 0.667,
     piper_noise_w: float = 0.8,
     piper_sentence_silence: float = 0.2,
+    piper_voice: str = PIPER_DEFAULT_VOICE,
+    # Kokoro parameters
+    kokoro_voice: str = kokoro.KOKORO_DEFAULT_VOICE,
+    kokoro_speed: float = 1.0,
     # Voice outputs (extensions/extensions.spec.md, Voice outputs)
     pc_speakers_enabled: bool = True,
     voice_outputs: Sequence["VoiceOutput"] = (),
@@ -1287,16 +1289,18 @@ def create_tts_engine(
 
     Supported engines:
     - "piper" (default): Neural TTS with auto-download, exact duration tracking
+    - "kokoro": more natural voices on ONNX Runtime, with Piper standing in until it can speak
     - "chatterbox": AI voice with emotion control (requires PyTorch)
 
-    Only Piper feeds the extra ``voice_outputs``.
+    Piper and Kokoro feed the extra ``voice_outputs``; Chatterbox does not. ``piper_model_path`` (a custom
+    voice file) wins over ``piper_voice`` (a catalogued voice).
     """
     if engine.lower() == "chatterbox":
         wanted = [o for o in voice_outputs if _output_enabled(o)] if enabled else []
         for output in wanted:
-            print(f"🔈 The {output.name} voice needs the Piper voice engine", flush=True)
-            print(f"   Chatterbox is selected, so the {output.name} stays silent; choose Piper in Settings to "
-                  "hear it", flush=True)
+            print(f"🔈 The {output.name} voice needs the Piper or Kokoro voice engine", flush=True)
+            print(f"   Chatterbox is selected, so the {output.name} stays silent; choose Piper or Kokoro in "
+                  "Settings to hear it", flush=True)
             debug_log("Voice output unavailable with Chatterbox", "tts")
         return ChatterboxTTS(
             enabled=enabled,
@@ -1308,21 +1312,23 @@ def create_tts_engine(
             cfg_weight=cfg_weight,
             pc_speakers_enabled=pc_speakers_enabled,
         )
-    else:
-        # Default to Piper TTS
-        return PiperTTS(
-            enabled=enabled,
-            voice=voice,
-            rate=rate,
-            model_path=piper_model_path,
-            speaker=piper_speaker,
-            length_scale=piper_length_scale,
-            noise_scale=piper_noise_scale,
-            noise_w=piper_noise_w,
-            sentence_silence=piper_sentence_silence,
-            pc_speakers_enabled=pc_speakers_enabled,
-            voice_outputs=voice_outputs,
-        )
+    piper_kwargs = dict(
+        enabled=enabled,
+        voice=voice,
+        rate=rate,
+        model_path=piper_model_path or str(piper_voice_path(piper_voice or PIPER_DEFAULT_VOICE)),
+        speaker=piper_speaker,
+        length_scale=piper_length_scale,
+        noise_scale=piper_noise_scale,
+        noise_w=piper_noise_w,
+        sentence_silence=piper_sentence_silence,
+        pc_speakers_enabled=pc_speakers_enabled,
+        voice_outputs=voice_outputs,
+    )
+    if engine.lower() == "kokoro":
+        return KokoroTTS(kokoro_voice=kokoro_voice, kokoro_speed=kokoro_speed, **piper_kwargs)
+    # Default to Piper TTS
+    return PiperTTS(**piper_kwargs)
 
 
 def json_escape_ps(s: str) -> str:

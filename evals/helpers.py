@@ -311,7 +311,7 @@ class MockConfig:
     sqlite_vss_path: Optional[str] = None
     voice_debug: bool = True
     tts_enabled: bool = False
-    tts_engine: str = "piper"  # "piper" (default) or "chatterbox"
+    tts_engine: str = "piper"  # "piper" (default), "kokoro" or "chatterbox"
     tts_voice: Optional[str] = None
     tts_rate: int = 200
     # Piper TTS settings
@@ -321,6 +321,10 @@ class MockConfig:
     tts_piper_noise_scale: float = 0.667
     tts_piper_noise_w: float = 0.8
     tts_piper_sentence_silence: float = 0.2
+    tts_piper_voice: str = "en_GB-alan-medium"
+    # Kokoro TTS settings
+    tts_kokoro_voice: str = "bm_george"
+    tts_kokoro_speed: float = 1.0
     # Chatterbox TTS settings
     tts_chatterbox_device: str = "cpu"
     tts_chatterbox_audio_prompt: Optional[str] = None
