@@ -365,7 +365,7 @@ def test_further_from_neutral_scrolls_faster():
         rig.two_at(0.5, 0.5)
         hold(rig, 0.505 - offset, 1.0)
         return rig.desk.scrolled()
-    assert amount(0.25) > 1.8 * amount(0.13)
+    assert amount(0.22) > 1.8 * amount(0.12)
 
 
 def test_the_scroll_speed_setting_scales_the_scroll():
@@ -660,3 +660,15 @@ def test_raising_the_hand_after_using_the_real_mouse_moves_the_pointer():
     rig.desk.at = (100, 100)  # the real mouse moved
     rig.start()
     assert rig.desk.at == (960, 540)
+
+
+def test_a_flickering_side_label_does_not_lose_the_hand():
+    """Measured on a real webcam: one hand's side label flipped between left and right for a frame or two."""
+    rig = Rig(FakeDesktop())
+    rig.show(hand(0.5, 0.5, side="left"), frames=SETTLE)
+    rig.show(hand(0.51, 0.51, gesture="two", side="left"), frames=SETTLE)
+    rig.show(hand(0.51, 0.36, gesture="two", side="left"), frames=5)
+    rig.show(hand(0.51, 0.36, gesture="two", side="right"), frames=12)  # labelled right for 0.4 s
+    before = rig.desk.scrolled()
+    rig.show(hand(0.51, 0.36, gesture="two", side="left"), frames=5)
+    assert rig.snap.state == "scrolling" and rig.desk.scrolled() > before

@@ -124,7 +124,7 @@ The palm faces the camera. Only the index, middle, ring and little fingers are c
 | Open hand | All four | Pause: the pointer stays where it is until one finger is raised again |
 | Hand out of view | | Pause, as for an open hand |
 
-Any other combination (for example index and little finger) changes nothing and holds the pointer still. Only one hand drives. `gesture_snap_hand` chooses it: `right`, `left` or `any` (default). Once a hand drives, only it is followed: a frame where it is missing counts as a frame without a hand, even when another hand is in view, and when two hands carry the same side label the one nearest the driving palm's last position is followed. Another hand can take over only after the hand is lost.
+Any other combination (for example index and little finger) changes nothing and holds the pointer still. Only one hand drives. `gesture_snap_hand` chooses which hand may start driving: `right`, `left` or `any` (default). Once a hand drives, the hand nearest the driving palm's last position is followed whatever side it is labelled, because the tracker's left and right labels flicker for a single hand (measured on a real webcam: one hand read as the other side for several frames at a time). A palm more than a quarter of the camera's width from the last position counts as no hand, so another hand cannot take over until the driving hand is lost.
 
 ### Recognising fingers
 

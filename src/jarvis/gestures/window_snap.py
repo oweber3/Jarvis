@@ -20,6 +20,8 @@ from .hand_tracking import Hand, HandFrame, Landmark
 Rectangle = Tuple[int, int, int, int]
 
 HAND_LOST_SEC = 0.25
+# The driving hand is followed only while its palm moves less than this share of the camera's width a frame.
+MAX_HAND_JUMP = 0.25
 # Leaving a scroll needs the new gesture to last at least this long: the raised fingers bend as the hand moves.
 SCROLL_EXIT_SEC = 0.5
 # After a gesture change the pointer's distance from the palm's place fades with this time constant.
@@ -203,7 +205,6 @@ class WindowSnap:
         self._drift: Tuple[float, float] = (0.0, 0.0)
         self._box: Optional[Tuple[float, float]] = None  # the camera position the comfort box is centred on
         self._last_t: Optional[float] = None
-        self._side: Optional[str] = None
         self._last_palm: Optional[Tuple[float, float]] = None
         self._last_hand: Optional[float] = None
         self._raised: Dict[str, bool] = {}
@@ -274,22 +275,22 @@ class WindowSnap:
     # -- hands -----------------------------------------------------------------------------------
 
     def _choose(self, hands: Sequence[Hand]) -> Optional[Hand]:
-        """The driving hand. Once a hand drives, only it is followed (the hand nearest its last palm position,
-        so two hands with the same label never swap); another hand can take over only after it is lost."""
+        """The driving hand. Once a hand drives, the hand nearest its last palm position is followed, whatever
+        side it is labelled (labels flicker), as long as it is within ``MAX_HAND_JUMP`` of it; another hand can
+        take over only after the driving hand is lost."""
         wanted = self._s.hand
         candidates = [h for h in hands if wanted == "any" or h.side == wanted]
-        if self._side is not None and self._last_palm is not None:
-            candidates = [h for h in candidates if h.side == self._side]
-            if not candidates:
-                return None
+        if self._last_palm is not None:
             last_x, last_y = self._last_palm
-            chosen = min(candidates, key=lambda h: (palm_centre(h)[0] - last_x) ** 2
-                         + (palm_centre(h)[1] - last_y) ** 2)
+            near = [(math.hypot(palm_centre(h)[0] - last_x, palm_centre(h)[1] - last_y), h) for h in hands]
+            near = [(d, h) for d, h in near if d <= MAX_HAND_JUMP]
+            if not near:
+                return None
+            chosen = min(near, key=lambda item: item[0])[1]
         elif candidates:
             chosen = max(candidates, key=lambda h: h.score)
         else:
             return None
-        self._side = chosen.side
         self._last_palm = palm_centre(chosen)
         return chosen
 
@@ -320,7 +321,6 @@ class WindowSnap:
         self._box = None
         self._shown = None
         self._raised.clear()
-        self._side = None
         self._last_palm = None
         self._fx.reset()
         self._fy.reset()
