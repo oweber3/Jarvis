@@ -122,7 +122,7 @@ The central controller that manages:
 | **SetupWizard** | First-run configuration (Ollama, models, profile) |
 | **DictationHistoryWindow** | Scrollable list of past dictations with copy/delete/clear actions |
 | **ChatWindow** | Text chat interface alongside voice; shares one conversation with the voice path and is enabled only while the daemon is running (see `chat_window.spec.md`) |
-| **WebChatWindow** | The web chat (projects, model picker) in an embedded browser on the page the daemon serves on the loopback interface; opened by the tray's `Chat` entry while `web_chat_enabled` is on, in place of `ChatWindow`. Shows a status page while the daemon is not running (see `jarvis/webchat/webchat.spec.md`) |
+| **WebChatWindow** | The web chat (projects, model picker) in an embedded browser on the page the daemon serves on the loopback interface; opened by the tray's `Chat` entry while `web_chat_enabled` is on, in place of `ChatWindow`. Shows a status page while the daemon is not running, and loads the page only after the server proves it is this run's Jarvis server (see `jarvis/webchat/webchat.spec.md`) |
 | **PhoneAccessDialog** | `Phone Access` in the tray: turn phone access on, pair a phone with a one-time code, list and remove paired phones. Works on the shared device files, so it needs no daemon IPC (see `jarvis/remote/remote.spec.md`) |
 
 ### Activity log and downloads
@@ -256,6 +256,7 @@ In bundled mode, the daemon runs in the same process, so callbacks can be set di
 In subprocess mode, the daemon runs as a separate process. IPC is achieved via stdout:
 - **Diary updates**: Daemon emits JSON events prefixed with `__DIARY__:` (e.g., `__DIARY__:{"type":"token","data":"Hello"}`)
 - **Reply mode**: the daemon emits `__REPLY_MODE_STATE__:{"type": "state", "data": {"mode", "enabled"}}` after start-up and every switch; the tray writes `__REPLY_MODE__:{"mode": ...}` to switch
+- **Web chat identity**: once the web chat server is up the daemon emits `__WEB_CHAT__:{"type": "ready", "data": {"port", "token"}}`; the tray keeps the token for `WebChatWindow`'s identity check and forgets it when the daemon stops (see `jarvis/webchat/webchat.spec.md`, Desktop window). The line never reaches the log viewer
 - **Confirmation dialogs**: Daemon emits `__CONFIRM__:` open and close events; the desktop app answers with `__CONFIRM_ANSWER__:` lines on the daemon's stdin (see **Action Confirmation Dialog**). The lines are marshalled onto the Qt main thread via `ConfirmIpcSignals`
 - **Chat events**: Daemon emits `__CHAT__:` events (start/complete/busy/rewind/confirmed); the desktop app sends queries in via `__CHAT_QUERY__:` lines on the daemon's stdin, cancellation via a bare `__CHAT_CANCEL__` line, and rewind via `__CHAT_REWIND__:` lines (see `chat_window.spec.md`). A chat window first created by a chat event gets the same pipe writers as one opened from the tray, and a daemon restart refreshes all three (submit, cancel, rewind)
 - Desktop app intercepts these lines from the log stream

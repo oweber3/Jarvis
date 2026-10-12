@@ -11,13 +11,18 @@ import desktop_app.app as app_mod
 class FakeWebChatWindow:
     created = []
 
-    def __init__(self, port, daemon_status="stopped", **_kwargs):
+    def __init__(self, port, daemon_status="stopped", **kwargs):
         self.port = port
         self.statuses = [daemon_status]
         self.shown = 0
         self.has_embedded_view = True
         self.url = f"http://127.0.0.1:{port}/"
+        self.identity = kwargs.get("identity")
+        self.verified = True
         FakeWebChatWindow.created.append(self)
+
+    def verified_browser_url(self):
+        return self.url if self.verified else None
 
     def set_daemon_status(self, status):
         self.statuses.append(status)
@@ -87,14 +92,29 @@ class TestChatEntry:
         opened = []
         monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
         tray = make_tray(8766)
-        tray.web_chat_window = None
-        monkeypatch.setattr(FakeWebChatWindow, "__init__",
-                            lambda self, port, status="stopped", **kw: (
-                                setattr(self, "has_embedded_view", False), setattr(self, "shown", 0),
-                                setattr(self, "url", f"http://127.0.0.1:{port}/"),
-                                setattr(self, "statuses", [status]), None)[-1])
+        tray.web_chat_window = FakeWebChatWindow(8766, "running")
+        tray.web_chat_window.has_embedded_view = False
         tray.show_chat()
         assert opened == ["http://127.0.0.1:8766/"]
+        assert tray.web_chat_window.shown == 0
+
+    def test_the_default_browser_is_not_sent_to_a_server_that_is_not_jarvis(self, qapp, monkeypatch):
+        opened = []
+        monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+        tray = make_tray(8766)
+        tray.web_chat_window = FakeWebChatWindow(8766, "running")
+        tray.web_chat_window.has_embedded_view = False
+        tray.web_chat_window.verified = False
+        tray.show_chat()
+        assert opened == []
+        assert tray.web_chat_window.shown == 1  # the window says why instead
+
+    def test_the_window_checks_against_the_tray_identity(self, qapp):
+        tray = make_tray(8766)
+        tray.is_bundled = False
+        tray._web_chat_token = "c" * 64
+        tray.show_chat()
+        assert FakeWebChatWindow.created[0].identity() == "c" * 64
 
 
 @pytest.mark.unit

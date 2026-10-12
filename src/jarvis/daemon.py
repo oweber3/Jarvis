@@ -116,6 +116,9 @@ REPLY_MODE_EVENT_PREFIX = "__REPLY_MODE_STATE__:"
 # Activity log (subprocess mode): the tray asks to pause, resume or delete the history with
 # ``{"action": "pause" | "resume" | "delete"}``.
 ACTIVITY_IPC_PREFIX = "__ACTIVITY__:"
+# Web chat (subprocess mode): once the server is up the daemon tells the desktop app its port and the
+# identity token the server proves it holds, so the chat window never shows another program on the port.
+WEB_CHAT_EVENT_PREFIX = "__WEB_CHAT__:"
 
 # The running voice listener, so a wake request can reach it.
 _global_voice_listener = None
@@ -535,6 +538,18 @@ def uninstall_desktop_confirmations() -> None:
         set_dialog_callback(None)
     remove_chat_result_listener(_emit_confirmed_chat_event)
     _pipe_dialog_presenter = None
+
+
+def announce_web_chat(server) -> None:
+    """Tell the desktop app which port the web chat serves and the server's identity token.
+
+    Only when the desktop app started this daemon: its stdout goes nowhere else. A console run prints
+    no token.
+    """
+    if server is None or not _desktop_owns_stdio():
+        return
+    _emit_ipc_event(WEB_CHAT_EVENT_PREFIX, "ready",
+                    {"port": server.port, "token": server.identity_token}, "webchat")
 
 
 def handle_confirm_answer_stdin_line(line: str) -> bool:
@@ -1616,7 +1631,7 @@ def main(smoke_test: bool = False) -> None:
 
     # Opt-in web chat: serves nothing unless the user turned it on in Settings.
     from .webchat import runtime as web_chat_runtime
-    web_chat_runtime.start(cfg)
+    announce_web_chat(web_chat_runtime.start(cfg))
 
     # Periodic diary update checking
     last_diary_check = time.time()

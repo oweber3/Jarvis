@@ -149,12 +149,26 @@ def _should_emit_as_log(line: str) -> bool:
     name the action's target (a file, a process, an app). Diary IPC stays: it
     carries progress and token deltas the log window exists to show.
     Reply-mode state events are machine data; the daemon prints its own
-    readable line for every switch.
+    readable line for every switch. The web chat announcement carries the
+    server's identity token, which stays between the daemon and the app.
     """
-    from jarvis.daemon import CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX
+    from jarvis.daemon import CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX, WEB_CHAT_EVENT_PREFIX
     from jarvis.tools.confirmation_pipe import CONFIRM_IPC_PREFIX
 
-    return not line.startswith((CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX, CONFIRM_IPC_PREFIX))
+    return not line.startswith((CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX, CONFIRM_IPC_PREFIX,
+                                WEB_CHAT_EVENT_PREFIX))
+
+
+def _web_chat_token_from_line(line: str) -> Optional[str]:
+    """The identity token in a daemon's ``__WEB_CHAT__:`` ready event, or ``None``."""
+    import json
+    from jarvis.daemon import WEB_CHAT_EVENT_PREFIX
+    try:
+        event = json.loads(line[len(WEB_CHAT_EVENT_PREFIX):])
+        token = event["data"]["token"] if event.get("type") == "ready" else None
+    except (ValueError, KeyError, TypeError, AttributeError):
+        token = None
+    return token if isinstance(token, str) and token else None
 
 
 def _collect_runtime_status_snapshot(
@@ -2049,6 +2063,8 @@ class JarvisSystemTray:
         self._confirm_ipc_signals = ConfirmIpcSignals()
         self._confirm_ipc_signals.line_received.connect(self._on_confirm_ipc_line)
         self._confirm_relay = None
+        # The web chat server's identity token, as announced by a daemon subprocess.
+        self._web_chat_token: Optional[str] = None
 
         # Same bridge for the runtime-status dialog: the snapshot is
         # gathered on a worker thread because it makes a blocking network
@@ -2618,16 +2634,27 @@ class JarvisSystemTray:
         """Show the web chat window (created lazily on first open) on the page the daemon serves."""
         from desktop_app.web_chat_window import WebChatWindow
         if self.web_chat_window is None:
-            self.web_chat_window = WebChatWindow(port, "running" if self.is_listening else "stopped")
+            self.web_chat_window = WebChatWindow(port, "running" if self.is_listening else "stopped",
+                                                 identity=self._web_chat_identity)
         else:
             self.web_chat_window.set_daemon_status("running" if self.is_listening else "stopped")
         if not self.web_chat_window.has_embedded_view and self.is_listening:
-            import webbrowser
-            webbrowser.open(self.web_chat_window.url)
-            return
+            url = self.web_chat_window.verified_browser_url()
+            if url is not None:
+                import webbrowser
+                webbrowser.open(url)
+                return
         self.web_chat_window.show()
         self.web_chat_window.raise_()
         self.web_chat_window.activateWindow()
+
+    def _web_chat_identity(self) -> Optional[str]:
+        """The running web chat server's identity token, or ``None`` while it is not known."""
+        if getattr(self, "is_bundled", False):
+            from jarvis.webchat import runtime
+            server = runtime.current()
+            return server.identity_token if server is not None else None
+        return getattr(self, "_web_chat_token", None)
 
     def show_chat(self) -> None:
         """Show the chat: the web chat when Settings turned it on, otherwise the text chat window."""
@@ -2664,6 +2691,9 @@ class JarvisSystemTray:
         if relay is not None and status != "running":
             # Nobody will hear an answer any more: close the dialogs unanswered (refused).
             relay.close_all()
+        if status != "running":
+            # The next daemon serves the web chat with a new token.
+            self._web_chat_token = None
         web_chat = getattr(self, "web_chat_window", None)
         if web_chat is not None:
             web_chat.set_daemon_status(status)
@@ -3043,7 +3073,7 @@ class JarvisSystemTray:
         if not self.daemon_process or not self.daemon_process.stdout:
             return
 
-        from jarvis.daemon import CHAT_IPC_PREFIX
+        from jarvis.daemon import CHAT_IPC_PREFIX, WEB_CHAT_EVENT_PREFIX
         from jarvis.tools.confirmation_pipe import CONFIRM_IPC_PREFIX
 
         try:
@@ -3064,6 +3094,9 @@ class JarvisSystemTray:
                     self._chat_ipc_signals.line_received.emit(line)
                 elif line.startswith(CONFIRM_IPC_PREFIX):
                     self._confirm_ipc_signals.line_received.emit(line)
+                elif line.startswith(WEB_CHAT_EVENT_PREFIX):
+                    self._web_chat_token = _web_chat_token_from_line(line)
+                    debug_log(f"web chat identity {'received' if self._web_chat_token else 'malformed'}", "desktop")
                 self._on_reply_mode_ipc_line(line)
                 if _should_emit_as_log(line):
                     self.log_signals.new_log.emit(line)

@@ -22,6 +22,7 @@ The server runs in the daemon process, like Phone Access (`remote/remote.spec.md
 | `jarvis/webchat/backend.py` | `DaemonBackend`: the only module that touches `jarvis.daemon`, `bridge.modes` and the LLM backend. Tests replace it with a fake |
 | `jarvis/webchat/hub.py` | `ChatHub`: the open chat, mirroring of the dialogue memory into it, query tracking, notices, change notification for long polls |
 | `jarvis/webchat/server.py` | Threaded HTTP server (standard library), routing, guards, static files |
+| `jarvis/webchat/identity.py` | The server's per-run identity token and the HMAC proof the desktop window checks |
 | `jarvis/webchat/runtime.py` | `start(cfg)` / `stop()`: called by the daemon; starts nothing when disabled |
 | `jarvis/webchat/static/` | The built React app. Committed, so a source checkout needs no Node |
 | `webchat-ui/` (repository root) | The JavaScript project: sources, `package.json`, `package-lock.json`, `README.md` with the build steps. Python never imports it and Python tests never need Node |
@@ -46,6 +47,8 @@ Applied to every request before routing:
 1. `Host` must be a loopback name (`localhost`, `127.0.0.1`, `::1`), or the request gets `403` (stops DNS rebinding).
 2. A request carrying `Origin` is served only when that origin is the server itself, and a request marked `Sec-Fetch-Site: cross-site` is refused (stops cross-site requests).
 3. A request with a body must be `application/json` (`415` otherwise) and at most 64 KiB (`413`).
+
+On Windows the socket is bound with `SO_EXCLUSIVEADDRUSE`, so no other program can bind the same port while Jarvis serves it.
 
 Responses carry `Content-Security-Policy: default-src 'self'` (images may also be `data:` and styles inline), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, and `Cache-Control: no-store` for the API. Static files are served only from the built `index.html` and the `assets/` folder; nothing else on disk is reachable.
 
@@ -115,6 +118,7 @@ All JSON. Errors are `{"error": "<code>"}`.
 | `POST /api/model` | `{"kind": "mode"\|"local"\|"cloud", "value", "effort"?}` | Switch a reply mode, a local model, or the active cloud mode's model (and optionally its effort); `409` with the reason (`not_enabled`, `busy`, `not_installed`, `not_ready`, `not_offered`, `effort_unsupported`, ...), `400` malformed |
 | `POST /api/clear` | `{"confirm": true}` | Delete every project, chat and message and empty the conversation |
 | `GET /api/poll?rev=<rev>&after=<id>` | | Long poll (25 s): the changed snapshot |
+| `GET /api/identity?nonce=<hex>` | | `{"proof"}`: HMAC-SHA256 of the nonce (32 to 128 lowercase hex characters, `400` otherwise) keyed with the server's identity token |
 
 The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`; never the private flag), `notices`, `mode`, `model` and `cloud`.
 
@@ -136,7 +140,9 @@ Desktop confirmations still appear as the desktop dialog, as in the Qt chat, whe
 
 ## Desktop window
 
-`WebChatWindow` is a themed `QMainWindow` (`desktop_app.spec.md`, Theme System) with a `QWebEngineView` on `http://127.0.0.1:<web_chat_port>/`. While the daemon is starting, stopping, stopped or crashed it shows a status page instead of the chat, and when the daemon is up but the page is not served yet it says so and retries every two seconds until it loads. It never leaves the chat: any other address, and any link that asks for a new window, opens in the default browser. When Qt WebEngine is unavailable the tray opens the page in the default browser. The tray entry reads the setting once at start-up, so a change needs a restart, as the server does.
+`WebChatWindow` is a themed `QMainWindow` (`desktop_app.spec.md`, Theme System) with a `QWebEngineView` on `http://127.0.0.1:<web_chat_port>/`. While the daemon is starting, stopping, stopped or crashed it shows a status page instead of the chat, and when the daemon is up but the page is not served yet it says so and retries every two seconds until it loads.
+
+**Only Jarvis's own server is shown.** Each server run makes a random identity token (`secrets.token_hex(32)`) that only the daemon and the desktop app know: the bundled app reads it from the running server (`runtime.current()`), and a daemon subprocess started by the desktop app announces it once the server is up with `__WEB_CHAT__:{"type": "ready", "data": {"port", "token"}}` on its stdout, which never reaches the log viewer. A daemon started from a console prints no token. Before every load, off the GUI thread and with a two-second limit, the window sends a fresh nonce to `/api/identity` directly (never through a proxy) and loads the page only when the answer is the right proof; the token itself never travels over HTTP. While no token is known, or nothing answers, it shows the waiting page and retries; when something else answers it shows "Another program is using the chat's port" and retries, and never shows that program's page. When the embedded browser is missing, the default browser is opened only after the same check. The token is forgotten whenever the daemon stops, so the next run's server must prove itself again. It never leaves the chat: any other address, and any link that asks for a new window, opens in the default browser. When Qt WebEngine is unavailable the tray opens the page in the default browser. The tray entry reads the setting once at start-up, so a change needs a restart, as the server does.
 
 ## Privacy and logging
 
@@ -152,6 +158,6 @@ Desktop confirmations still appear as the desktop dialog, as in the Qt chat, whe
 
 ## Known limits
 
-- The server has no sign-in. Anything else running as the same user on this PC can read and send chats, as with the Memory Viewer; the Host, Origin and fetch-site checks stop web pages, not local programs.
+- The server has no sign-in. Anything else running as the same user on this PC can read and send chats, as with the Memory Viewer; the Host, Origin and fetch-site checks stop web pages, not local programs. The identity check protects the window from showing another program's page; it does not authenticate requests to the server.
 - A chat switch during the periodic diary pass can summarise the turns of that pass a second time, because the pass saves its progress only when its summary is done.
 - A confirmed action's outcome that lands in the instant a chat is switched can miss the new chat's history.
