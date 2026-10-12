@@ -69,7 +69,7 @@ The settings window uses a sidebar navigation pattern: a fixed-width `QListWidge
 17. Activity Log (optional): the off-by-default switch that states what is recorded (foreground application, redacted window title, idle time) and where it stays, pause, retention, the idle threshold, the two exclusion lists (editable lists whose defaults come from the activity log's data file) and the separate switch that offers the log to the Codex and Claude reply modes (see `memory/activity_log.spec.md`)
 18. Phone Access (optional)
 19. Web Chat (optional)
-20. Gesture Snapping (optional): the switch that offers gesture snapping (the camera starts only when asked), the camera, the hand, the comfort box, the pinch thresholds and debounce, and the smoothing (see `gestures/gestures.spec.md`, Gesture snapping)
+20. Gesture Snapping (optional): the switch that offers gesture snapping (the camera starts only when asked), the camera, the hand, the comfort box, the fist and pinch thresholds, the debounce, the scroll speed and the smoothing (see `gestures/gestures.spec.md`, Gesture snapping)
 21. Features (includes web search, Wikipedia fallback, low-power mode and dictation toggles)
 22. MCP Servers
 23. Advanced

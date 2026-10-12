@@ -292,23 +292,26 @@ Spec: `src/jarvis/devices/roku.spec.md`.
 
 ### Gesture snapping
 
-Gesture snapping moves windows into your FancyZones zones with your hand through the webcam. It is off by default: turn on **Allow Gesture Snapping** in Settings → Gesture Snapping (`gesture_snap_enabled`) and restart Jarvis. That only makes it available; the camera turns on when you say "start gesture control" (or "turn on gesture snapping") and off when you say "stop gesture control".
+Gesture snapping moves and scrolls windows with your hand through the webcam. It is off by default: turn on **Allow Gesture Snapping** in Settings → Gesture Snapping (`gesture_snap_enabled`) and restart Jarvis. That only makes it available; the camera turns on when you say "start gesture control" (or "turn on gesture snapping") and off when you say "stop gesture control".
 
-- **Point** with your index finger to aim the pointer. Moving your fingertip across the comfort box (half the camera's width by default) crosses the whole desktop, every monitor included. Holding your hand side-on (thumb and index pointing up) works well. Nothing is ever clicked.
-- **Pinch** your thumb and index fingertips together to grab the window under the pointer. It comes to the front and follows your hand.
-- **Let go** of the pinch to snap the window into the zone under the pointer. The zones are the FancyZones layouts you set up in Microsoft PowerToys; on a monitor without zones the window stays where you drop it.
-- **Open your hand** to pause the pointer and move your hand back to a comfortable spot. Opening it while holding a window cancels the move and puts the window back.
+- **Point** with your index finger to aim the pointer. Moving your fingertip across the comfort box (half the camera's width by default) crosses the whole desktop, every monitor included. Nothing is ever clicked.
+- **Make a fist** to grab the window under the pointer. It comes to the front and follows your hand.
+- **Open the fist** to snap the window into the zone under the pointer. The zones are the FancyZones layouts you set up in Microsoft PowerToys (only while **FancyZones Zones** is on in Settings → Windows Control); on a monitor without zones the window stays where you drop it.
+- **Pinch** your thumb and index fingertips together, index finger straight, and move your hand up or down to scroll the window under the pointer. Moving up moves the content up, like dragging a page on a touch screen.
+- **Open your hand flat** to pause the pointer and move your hand back to a comfortable spot. Opening it flat while holding a window cancels the move and puts the window back.
 
 | Setting | Default | What it does |
 |---|---|---|
 | `gesture_snap_camera` | `0` | Webcam index |
 | `gesture_snap_hand` | `any` | `any`, `right` or `left` |
 | `gesture_snap_comfort_box` | `0.5` | Share of the camera's width that spans the whole desktop; smaller is more sensitive |
+| `gesture_snap_fist_start` / `gesture_snap_fist_release` | `0.85` / `1.0` | Index curl (below 1 is curled) that starts and ends a fist |
 | `gesture_snap_pinch_start` / `gesture_snap_pinch_release` | `0.25` / `0.35` | Thumb-to-index distance, as a share of hand size (as the camera sees it), that starts and ends a pinch |
-| `gesture_snap_debounce_ms` | `50` | How long a pinch or release must last to count |
+| `gesture_snap_debounce_ms` | `50` | How long a gesture or its release must last to count |
+| `gesture_snap_scroll_speed` | `5` | Wheel notches per tenth of the camera's height |
 | `gesture_snap_smoothing` / `gesture_snap_speed_response` | `1.0` / `0.005` | Steadiness when still, and how fast smoothing gives way when you move quickly |
 
-To check the camera and tune the pinch, `python -m jarvis.gestures --snap --preview` runs gesture snapping with a window showing what the camera sees, your hand's landmarks and the live pinch value. Hand tracking runs on this PC with MediaPipe; frames are never stored and nothing is sent anywhere. Codex and Claude modes cannot turn the camera on. Spec: `src/jarvis/gestures/gestures.spec.md`.
+To check the camera and tune the thresholds, `python -m jarvis.gestures --snap --preview` runs gesture snapping with a window showing what the camera sees, your hand's landmarks and the live pinch and curl values. Hand tracking runs on this PC with MediaPipe; frames are never stored and nothing is sent anywhere. Codex and Claude modes cannot turn the camera on. Spec: `src/jarvis/gestures/gestures.spec.md`.
 
 ### Safety and Confirmation Policy
 

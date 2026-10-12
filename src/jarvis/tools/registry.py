@@ -119,7 +119,11 @@ def configure_gesture_tool(cfg, *, platform=None):
     from ..platform.windows.window_snap import WindowsSnapOutput
     from .builtin.gesture_control import GestureControlTool
     if window_snap_service.get_service() is None:
-        window_snap_service.set_service(window_snap_service.WindowSnapService(cfg, output_factory=WindowsSnapOutput))
+        def make_output():
+            return WindowsSnapOutput(
+                use_fancyzones=getattr(cfg, 'windows_fancyzones_enabled', True),
+                languages=(*getattr(cfg, 'fast_commands_locales', ['en']), 'en'))
+        window_snap_service.set_service(window_snap_service.WindowSnapService(cfg, output_factory=make_output))
     BUILTIN_TOOLS['gestureControl'] = GestureControlTool()
 
 

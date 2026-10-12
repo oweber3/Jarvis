@@ -58,9 +58,9 @@ class TestLive:
         assert "mediapipe" in capsys.readouterr().out.lower()
 
 
-def _pinching_tracker(camera_index):
+def _fist_tracker(camera_index):
     from tests.synthetic_hands import hand
-    tracker = HandTracker(camera_index, hands_factory=lambda: lambda frame, t: (hand(0.5, 0.5, pinch=0.1),),
+    tracker = HandTracker(camera_index, hands_factory=lambda: lambda frame, t: (hand(0.5, 0.5, fist=True),),
                           camera_factory=lambda index: _Camera(), max_fps=50)
     return tracker
 
@@ -74,14 +74,14 @@ class TestGestureSnapping:
 
         def tracker(camera_index):
             made.append(camera_index)
-            return _pinching_tracker(camera_index)
+            return _fist_tracker(camera_index)
 
         assert cli.main(["--snap", "--camera", "3", "--seconds", "1.3"], make_tracker=tracker,
                         make_output=lambda: desk) == 0
         out = capsys.readouterr().out
         assert made == [3]
-        assert "Gesture snapping on" in out and "pinch 0.1" in out and "holding" in out and "Gesture snapping off" in out
-        assert desk.of("grab") and desk.of("drop") == []  # the held pinch grabbed; stopping left it in place
+        assert "Gesture snapping on" in out and "curl 0.7" in out and "holding" in out and "Gesture snapping off" in out
+        assert desk.of("grab") and desk.of("drop") == []  # the held fist grabbed; stopping left it in place
 
     def test_gesture_snapping_that_cannot_start_exits_with_an_error(self, capsys):
         from tests.synthetic_hands import FakeDesktop

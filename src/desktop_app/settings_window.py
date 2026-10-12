@@ -456,11 +456,12 @@ def _build_field_metadata() -> List[FieldMeta]:
 
     # --- Gesture snapping (gestures/gestures.spec.md, Gesture snapping) ---
     f("gesture_snap_enabled", "Allow Gesture Snapping",
-      "Move windows into your FancyZones zones with your hand through the webcam: point with your index finger "
-      "to aim the pointer, pinch to grab the window under it, move your hand and let go to snap it into the zone "
-      "under the pointer. Open your hand to pause, or to cancel a move. It never clicks. This only makes it "
-      "available: say \"start gesture control\" to turn the camera on and \"stop gesture control\" to turn it "
-      "off. Everything stays on this PC. Takes effect after Jarvis restarts.",
+      "Move and scroll windows with your hand through the webcam: point with your index finger to aim the "
+      "pointer, make a fist to grab the window under it, move your hand and open it to snap the window into the "
+      "FancyZones zone under the pointer. Pinch and move up or down to scroll. Open your hand to pause, or to "
+      "cancel a move. It never clicks. This only makes it available: say \"start gesture control\" to turn the "
+      "camera on and \"stop gesture control\" to turn it off. Everything stays on this PC. Takes effect after "
+      "Jarvis restarts.",
       "gesture_snap", "bool")
     f("gesture_snap_camera", "Camera",
       "Which webcam to use: 0 is the first one. Run python -m jarvis.gestures --camera N --preview to try one.",
@@ -472,6 +473,14 @@ def _build_field_metadata() -> List[FieldMeta]:
       "How far your fingertip moves to cross the whole desktop (all monitors), as a share of the camera's width. "
       "Smaller means less arm movement but a faster, more sensitive pointer.",
       "gesture_snap", "float", min_val=0.15, max_val=1.0, step=0.05)
+    f("gesture_snap_fist_start", "Fist Start",
+      "How far your index finger must curl to make a fist (index curl, below 1 is curled). Lower needs a "
+      "tighter fist.",
+      "gesture_snap", "float", min_val=0.3, max_val=1.2, step=0.01)
+    f("gesture_snap_fist_release", "Fist Release",
+      "How straight your index finger must be to open the fist. Must be above Fist Start. A pinch only counts "
+      "with the index finger at least this straight.",
+      "gesture_snap", "float", min_val=0.4, max_val=1.5, step=0.01)
     f("gesture_snap_pinch_start", "Pinch Start",
       "How close your thumb and index fingertips must come for a pinch, as a share of your hand's size as the "
       "camera sees it. Lower needs a firmer pinch.",
@@ -480,9 +489,13 @@ def _build_field_metadata() -> List[FieldMeta]:
       "How far apart the fingertips must open to let go. Must be above Pinch Start; the gap between them "
       "stops a pinch from flickering.",
       "gesture_snap", "float", min_val=0.1, max_val=1.5, step=0.01)
-    f("gesture_snap_debounce_ms", "Pinch Debounce",
-      "How long a pinch or its release must last to count, so brief tracking glitches never grab or drop.",
+    f("gesture_snap_debounce_ms", "Gesture Debounce",
+      "How long a fist, a pinch or their release must last to count, so brief tracking glitches never grab, "
+      "drop or scroll.",
       "gesture_snap", "int", min_val=0, max_val=500, step=10, suffix="ms")
+    f("gesture_snap_scroll_speed", "Scroll Speed",
+      "Wheel notches scrolled when a pinched hand moves a tenth of the camera's height.",
+      "gesture_snap", "float", min_val=0.5, max_val=30.0, step=0.5)
     f("gesture_snap_smoothing", "Steadiness",
       "Smoothing of the pointer when your hand is still (the filter's minimum cutoff in hertz). Lower is "
       "steadier but feels slower.",

@@ -22,17 +22,18 @@ def _finger(base, extended: bool):
 
 
 def hand(x: float = 0.5, y: float = 0.5, *, pinch: float = 1.0, palm: bool = False, side: str = "right",
-         score: float = 0.9, depth_error: float = 0.0) -> Hand:
+         score: float = 0.9, depth_error: float = 0.0, fist: bool = False) -> Hand:
     """A hand with its index fingertip at image position ``(x, y)``.
 
     ``pinch`` is the thumb-to-index distance as a fraction of the hand size, as the camera sees it.
-    ``palm`` extends all four fingers (an open palm); otherwise only the index finger is out (pointing).
+    ``palm`` extends all four fingers (an open palm); ``fist`` curls the index finger too; otherwise only the
+    index finger is out (pointing).
     ``depth_error`` (metres) puts the thumb tip that far off in the tracker's depth estimate only, as
     happens when the hand is side-on to the camera."""
     world: List[Optional[Point]] = [None] * 21
     world[Landmark.WRIST] = Point(0.0, 0.0, 0.0)
     for name, base in _BASES.items():
-        extended = palm or name == "INDEX"
+        extended = palm or (name == "INDEX" and not fist)
         for offset, point in enumerate(_finger(base, extended)):
             world[getattr(Landmark, f"{name}_MCP") + offset] = point
     tip = world[Landmark.INDEX_TIP]
@@ -109,6 +110,14 @@ class FakeDesktop:
         width, height = window.rect[2] - window.rect[0], window.rect[3] - window.rect[1]
         window.rect = (left, top, left + width, top + height)
         self.events.append(("window", window, left, top))
+
+    def scroll(self, delta: int) -> None:
+        if self.fail:
+            raise OSError("refused")
+        self.events.append(("scroll", delta))
+
+    def scrolled(self) -> int:
+        return sum(e[1] for e in self.events if e[0] == "scroll")
 
     def drop(self, window, x: int, y: int) -> None:
         self.events.append(("drop", window, x, y))

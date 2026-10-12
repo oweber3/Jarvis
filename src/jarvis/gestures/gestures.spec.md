@@ -1,6 +1,6 @@
 # Gestures: hand tracking and gesture snapping
 
-Webcam hand tracking that turns camera frames into hand landmarks for gesture control. This spec covers the hand-tracking pipeline, landmark recordings, the diagnostic command and gesture snapping, which moves windows into FancyZones zones with the user's hand. Gestures are built on the `HandFrame` stream the pipeline produces.
+Webcam hand tracking that turns camera frames into hand landmarks for gesture control. This spec covers the hand-tracking pipeline, landmark recordings, the diagnostic command and gesture snapping, which moves windows into FancyZones zones and scrolls them with the user's hand. Gestures are built on the `HandFrame` stream the pipeline produces.
 
 ## Principles
 
@@ -90,18 +90,18 @@ Recordings capture landmark streams for building and testing gesture logic witho
 `python -m jarvis.gestures` shows the pipeline's output so tracking can be checked on the real webcam.
 
 - **Live (default):** `--camera N` (default 0) starts a `HandTracker` and prints a status line about once a second: frames per second, and for each hand its side, confidence and index fingertip position (or that it is waiting while no frame has arrived yet). It also prints when hands appear and disappear. `--seconds S` stops after `S` seconds; otherwise Ctrl+C stops it. `--record PATH` also writes a recording.
-- **Gesture snapping:** `--snap` runs gesture snapping on the real desktop (Windows only) with the thresholds from the user's config file, whether or not `gesture_snap_enabled` is on, so it can be tried and tuned without restarting Jarvis. The camera is `--camera N` when given, otherwise `gesture_snap_camera`. It prints the same on and off lines as the tool and, about once a second, the side of the hand in view, its pinch ratio, whether it reads as an open palm and the state, to help choose the thresholds. `--seconds` or Ctrl+C stop it, and stopping lets go of a held window and releases the camera. `--record PATH` also writes a recording.
-- **Preview:** `--preview` (with the live readout or `--snap`) opens a window showing the camera's mirrored image as the detector sees it, with each hand's 21 landmarks and bones drawn on it, the thumb and index tips marked, and a caption with the hand's side, pinch ratio, pose and, with `--snap`, the gesture snapping state. It uses PyQt6 and stays above other windows; the console readout continues once a second. The frame is taken from the camera before detection and only the newest one is kept for drawing; closing the window stops the command like `--seconds` does.
+- **Gesture snapping:** `--snap` runs gesture snapping on the real desktop (Windows only) with the thresholds from the user's config file, whether or not `gesture_snap_enabled` is on, so it can be tried and tuned without restarting Jarvis. The camera is `--camera N` when given, otherwise `gesture_snap_camera`. It prints the same on and off lines as the tool and, about once a second, the side of the hand in view, its pinch ratio, its index curl, whether it reads as an open palm and the state, to help choose the thresholds. `--seconds` or Ctrl+C stop it, and stopping lets go of a held window and releases the camera. `--record PATH` also writes a recording.
+- **Preview:** `--preview` (with the live readout or `--snap`) opens a window showing the camera's mirrored image as the detector sees it, with each hand's 21 landmarks and bones drawn on it, the thumb and index tips marked, and a caption with the hand's side, pinch ratio, index curl, pose and, with `--snap`, the gesture snapping state. It uses PyQt6 and stays above other windows; the console readout continues once a second. The frame is taken from the camera before detection and only the newest one is kept for drawing; closing the window stops the command like `--seconds` does.
 - **Photo:** `--image PATH` runs detection once on a photo, treated as a camera frame (so it is mirrored), prints what was found and exits.
 - Failures to start print the same one-time reason as `start()` and exit with status 1.
 
 ## Gesture snapping
 
-Gesture snapping moves windows into FancyZones zones with the hand: the pointer follows the index fingertip as an aim, a pinch grabs the window under it, the window follows the hand, and letting go snaps it into the zone under the pointer. It never clicks.
+Gesture snapping moves and scrolls windows with the hand: the pointer follows the index fingertip as an aim, a fist grabs the window under it, the window follows the hand, and opening the hand snaps it into the zone under the pointer. A pinch scrolls the window under the pointer. It never clicks.
 
 ### Input from the user's own hand: an exception to "Jarvis never moves the pointer"
 
-Jarvis's automation never moves the pointer or sends mouse input on its own (`platform/windows/ui_automation.spec.md`): it acts through UI Automation patterns, never through coordinates. Gesture snapping is a deliberate, narrow exception. It is not Jarvis acting: it relays the user's own hand in real time, like a pointing device. Every pointer move and window move comes from a hand movement the camera saw a fraction of a second earlier; no model, tool result, routine or other code chooses a position or a window. It never presses a mouse button, never clicks and never types. Nothing outside `WindowSnap` sends this input, and `WindowSnap` sends it only from `HandFrame`s while the user has the mode on. The Windows code that moves the pointer and windows for it (`platform/windows/window_snap.py`) is used by gesture snapping only and offers no tool action that moves anything to a given place.
+Jarvis's automation never moves the pointer or sends mouse input on its own (`platform/windows/ui_automation.spec.md`): it acts through UI Automation patterns, never through coordinates. Gesture snapping is a deliberate, narrow exception. It is not Jarvis acting: it relays the user's own hand in real time, like a pointing device. Every pointer move, window move and scroll comes from a hand movement the camera saw a fraction of a second earlier; no model, tool result, routine or other code chooses a position, a window or an amount. It sends mouse-wheel scrolling, but never presses a mouse button, never clicks and never types. Nothing outside `WindowSnap` sends this input, and `WindowSnap` sends it only from `HandFrame`s while the user has the mode on. The Windows code that moves the pointer and windows and scrolls for it (`platform/windows/window_snap.py`) is used by gesture snapping only and offers no tool action that moves or scrolls anything.
 
 ### Turning it on and off
 
@@ -109,60 +109,72 @@ Jarvis's automation never moves the pointer or sends mouse input on its own (`pl
 - **Started only when asked.** The setting does not start the camera. The user starts the mode by voice or text ("start gesture control") and stops it the same way ("stop gesture control"). Both go through `gestureControl`, the normal tool path and central safety. Both actions are routine (`SAFE`), so the phrases are fast-routed. The camera runs only while the mode is on.
 - **Windows only.** The tool is registered only on Windows, where the output exists.
 - **Not offered to cloud models.** `gestureControl` is never in a Codex or Claude tool snapshot (`bridge/bridge.spec.md`): a cloud model cannot turn the camera on. The fast-path phrases work in every reply mode because the fast path runs before any bridge.
-- **Stopping lets go.** `stop()` leaves a held window where it is (no snap), then stops the hand tracker, which releases the camera. It is safe to call at any time and returns once both are done. The daemon calls it on shutdown, and the service also registers it to run when the process exits normally.
+- **Stopping lets go.** `stop()` leaves a held window where it is (no snap) and ends a scroll, then stops the hand tracker, which releases the camera. It is safe to call at any time and returns once both are done. The daemon calls it on shutdown, and the service also registers it to run when the process exits normally.
 
 ### Gestures
 
 | Gesture | Effect |
 |---|---|
-| Point (index finger out, the hand upright or side-on) and move | The pointer follows the index fingertip (landmark 8) as an aim. Nothing is clicked |
+| Point (index finger straight, the other fingers curled) and move | The pointer follows the index fingertip (landmark 8) as an aim. Nothing is clicked |
 | Open palm (index, middle, ring and little fingers all extended) | Clutch: the pointer stays where it is, so the hand can be moved back to a comfortable spot |
 | Hand out of view | Clutch, as for an open palm |
-| Pinch (thumb tip to index tip) | Grabs the window under the pointer and brings it to the front. While the pinch is held, the window follows the hand with the pointer |
-| Let go of the pinch | Snaps the held window into the zone under the pointer |
+| Fist (index finger curled too) | Grabs the window under the pointer and brings it to the front. While the fist is held, the window follows the hand with the pointer |
+| Open the fist | Snaps the held window into the zone under the pointer |
 | Open palm while holding a window | Cancels: the window goes back to where it was, maximised again if it was |
+| Pinch (thumb tip to index tip, index straight) and move up or down | Scrolls the window under the pointer, which stays still. Moving the hand up moves the content up, as when dragging a page on a touch screen |
+| Let go of the pinch | Ends the scroll; the pointer follows the hand again |
 
 Only one hand drives. `gesture_snap_hand` chooses it: `right`, `left` or `any` (default). Once a hand drives, only it is followed: a frame where it is missing counts as a frame without a hand, even when another hand is in view, and when two hands carry the same side label the one nearest the driving fingertip's last position is followed. Another hand can take over only after the clutch state is reached.
 
 ### Measures
 
-Both measures are ratios of two lengths on the same hand, so they do not change with the hand's distance from the camera.
+Every measure is a ratio of two lengths on the same hand, so none changes with the hand's distance from the camera.
 
 - **Hand size** is the distance from the wrist (0) to the middle finger's base (`MIDDLE_MCP`, 9).
 - **Pinch ratio** is the distance from the thumb tip (4) to the index tip (8) divided by the hand size, both measured in the camera image in pixels (image `x` times the frame width, `y` times its height). The tracker's depth estimate is deliberately left out: measured on a real webcam with the hand side-on to the camera (thumb and index pointing up), the 3D distance between touching fingertips stayed between 0.30 and 0.41 of the hand size, overlapping an open hand, while in the image a pinch read 0.14 to 0.18 and an open hand 0.42 to 0.76.
-- **A finger is extended** (measured on the `world` landmarks, in metres) when its tip is farther from the wrist than its middle joint (PIP) by a factor of more than 1.2. An **open palm** has all four fingers extended.
+- **Index curl** is the distance from the wrist to the index tip divided by the distance from the wrist to the index middle joint (PIP), on the `world` landmarks (metres). A straight index reads above 1 and a curled one below. Measured on a real webcam with the hand front-on: pointing read 1.08 to 1.24 (median 1.12), a pinch 1.10 to 1.17 and a fist 0.69 to 0.73 once closed.
+- **A finger is extended** (on the `world` landmarks) when its tip is farther from the wrist than its middle joint by a factor of more than 1.2. An **open palm** has all four fingers extended.
 
-### Pinch: hysteresis and debounce
+A fist's thumb lies close to the index finger (its pinch ratio read 0.04 to 0.47 in the same measurement), so a pinch counts only while the index finger is straight.
 
-- A pinch starts when the pinch ratio stays below `gesture_snap_pinch_start` (default 0.25) for `gesture_snap_debounce_ms` (default 50 ms), and ends when it stays above `gesture_snap_pinch_release` (default 0.35) for the same time. Between the two thresholds the pinch keeps its state, so a ratio that hovers near one threshold cannot flicker.
-- `gesture_snap_pinch_release` must be greater than `gesture_snap_pinch_start`; a configuration where it is not is corrected on load to `gesture_snap_pinch_start + 0.1`.
-- **The aim is frozen while the fingers close.** As soon as the pinch ratio falls below `gesture_snap_pinch_release`, the pointer stops at its current position, the anchor, until the fingers open again without a pinch or the pinch grabs the window under the anchor. The fingers' own movement while pinching therefore never moves the aim. While a release is being confirmed the held window and the pointer also stay still, so letting go does not shift the drop point.
+### Thresholds, hysteresis and debounce
+
+- **Fist.** A fist starts when the index curl stays below `gesture_snap_fist_start` (default 0.85) for `gesture_snap_debounce_ms` (default 50 ms), and ends when it stays above `gesture_snap_fist_release` (default 1.0) for the same time.
+- **Pinch.** A pinch starts when the pinch ratio stays below `gesture_snap_pinch_start` (default 0.25), with the index curl above `gesture_snap_fist_release`, for the debounce time. It ends when the pinch ratio stays above `gesture_snap_pinch_release` (default 0.35) for the debounce time, or at once when the hand starts to make a fist (index curl below `gesture_snap_fist_start`).
+- Between a start and its release threshold a gesture keeps its state, so a value that hovers near one threshold cannot flicker. Each release must be greater than its start; a configuration where it is not is corrected on load to the start plus 0.1 for the pinch and plus 0.15 for the fist.
+- **The aim is frozen while the hand closes.** As soon as the pinch ratio falls below `gesture_snap_pinch_release` or the index curl below `gesture_snap_fist_release`, the pointer stops at its current position, the anchor, until the hand opens again without a gesture, or a fist grabs or a pinch scrolls at the anchor. The fingers' own movement while closing therefore never moves the aim. While a release is being confirmed the held window and the pointer also stay still, so letting go does not shift the drop point.
 
 ### Grabbing, moving and snapping
 
-- **Grab.** The window grabbed is the top-level window under the anchor. The desktop, the taskbar and a point over no window grab nothing; the pinch then does nothing until it is let go. A maximised window is restored first, keeping the pointer at the same share of its width. The grabbed window is brought to the front without taking the keyboard focus.
-- **Move.** While the pinch is held the pointer follows the hand as when aiming, and the window moves with it, keeping the pointer at the same place on the window. Moves are posted to the window without waiting for it, so a slow application never holds up tracking.
-- **Snap.** Letting go places the window into the zone under the pointer. The zones are the FancyZones layouts the user set up in Microsoft PowerToys, read the same way window placement reads them (`displays.fancyzone_sets`, see `platform/windows/apps_paths.spec.md`), for the monitor under the pointer on the current virtual desktop. A pointer in the spacing between zones snaps to the nearest zone on that monitor. A monitor without zones, or PowerToys not being installed, leaves the window where it was dropped. Placement uses the shared `windows_mgmt.place_window` (visible frame, DPI-aware, verified) on a worker thread, so tracking continues while the window settles.
-- **Cancel.** An open palm while a window is held puts it back where it was grabbed (maximised again if it was maximised).
+- **Grab.** The window grabbed is the top-level window under the anchor. The desktop, the taskbar, a point over no window and a window still settling from the previous snap grab nothing; the pointer then stays at the anchor until the fist opens. A maximised window is restored first, keeping the pointer at the same share of its width. The grabbed window is brought to the front without taking the keyboard focus. Nothing in a grab waits for the application.
+- **Move.** While the fist is held the pointer follows the hand as when aiming, and the window moves with it, keeping the pointer at the same place on the window. Moves are posted to the window without waiting for it, so a slow application never holds up tracking.
+- **Snap.** Opening the fist places the window into the zone under the pointer. The zones are the FancyZones layouts the user set up in Microsoft PowerToys, read the same way voice placement reads them (only while `windows_fancyzones_enabled` is on, `platform/windows/apps_paths.spec.md`), for the monitor under the pointer on the current virtual desktop. A pointer in the spacing between zones snaps to the nearest zone on that monitor. A monitor without zones, PowerToys not being installed or FancyZones zones switched off leave the window where it was dropped. Placement uses the shared `windows_mgmt.place_window` (visible frame, DPI-aware, verified) on a worker thread, so tracking continues while the window settles.
+- **Cancel.** An open palm while a window is held puts it back where it was grabbed, maximised again if it was, with its own restored size intact, on a worker thread.
 - **Lost hand.** If the hand stays out of view for 0.25 s while a window is held, the window is left where it is, not snapped.
 - **Failures.** A window that refuses to move (a higher-privilege application, or one that closed) is let go and reported once on the console; tracking continues.
+
+### Scrolling
+
+- A pinch freezes the pointer at the anchor, so the wheel events reach the window under it, and turns vertical movement of the fingertip into mouse-wheel scrolling. `gesture_snap_scroll_speed` (default 5) is the number of wheel notches (120 units each) for a movement of a tenth of the camera's height. Movement is accumulated and sent in steps of at least 30 units, so slow movements scroll smoothly without a flood of events. Horizontal movement is ignored.
+- Moving the hand up scrolls the content up (towards the end of a page), as when dragging a page on a touch screen.
+- A scroll the window refuses (a higher-privilege application) is reported once; tracking continues.
 
 ### Moving the pointer
 
 - **Comfort box.** The pointer moves like a mouse or trackpad: each fingertip movement moves the pointer by the same movement scaled up. The scale is set so that moving the fingertip across `gesture_snap_comfort_box` of the camera's width (default 0.5, half of it) carries the pointer across the whole virtual desktop, from the left edge of the leftmost monitor to the right edge of the rightmost. Up and down use the same scale. Small arm movements therefore cover every monitor.
 - **Starting point.** When the hand starts driving (on starting the mode, after a clutch or after the hand returns) the pointer continues from where it is, read from the system, so it never jumps, and moving the real mouse in between is respected.
-- **Smoothing.** The fingertip position (scaled to desktop pixels) is smoothed with a One Euro filter: strong smoothing when the hand is still, little lag when it moves fast. `gesture_snap_smoothing` (default 1.0) is the filter's minimum cutoff in hertz (lower is steadier but slower) and `gesture_snap_speed_response` (default 0.005) its speed coefficient (higher reacts faster during quick movements). The filter restarts when the hand is lost.
+- **Smoothing.** The fingertip position (scaled to desktop pixels) is smoothed with a One Euro filter: strong smoothing when the hand is still, little lag when it moves fast. `gesture_snap_smoothing` (default 1.0) is the filter's minimum cutoff in hertz (lower is steadier but slower) and `gesture_snap_speed_response` (default 0.005) its speed coefficient (higher reacts faster during quick movements). The filter restarts when the hand is lost. Scrolling uses the same smoothed fingertip.
 - **Bounds.** The pointer is kept inside the desktop: a position outside every monitor is moved to the nearest point of the nearest monitor, so on desktops whose monitors do not form a rectangle the pointer never lands in a gap. Pushing against an edge works like a mouse: moving back starts moving the pointer straight away. The monitor layout is read when the mode starts.
 
 ### Losing the hand
 
-- A frame without the driving hand stops the pointer. If the hand stays out of view for 0.25 s (timed by when frames arrive, not when they were captured, so slow detection never drops a held window) the mode returns to the clutch state: a pinch in progress is cancelled and a held window is left where it is.
+- A frame without the driving hand stops the pointer. If the hand stays out of view for 0.25 s (timed by when frames arrive, not when they were captured, so slow detection never drops a held window) the mode returns to the clutch state: a gesture in progress is cancelled, a scroll ends and a held window is left where it is.
 - A watchdog thread checks every 50 ms, so this also happens when frames stop arriving altogether (a camera that stops, unplugs or freezes).
 
 ### `WindowSnap` and `WindowSnapService`
 
-- **`WindowSnap(output, settings, clock)`** is the gesture model. `output` is the platform output: `desktop()` returning monitor rectangles `(left, top, right, bottom)` with exclusive right and bottom edges, `position()` and `move_to(x, y)` for the pointer, `grab(x, y)` returning a grabbed window (an object with the window's frame as `rect`) or `None`, `move_window(window, left, top)`, `drop(window, x, y)` to snap it, and `put_back(window)` to cancel. Tests use a fake. `on_frame(frame)` handles one `HandFrame`, `tick()` runs the watchdog check, and `close()` lets go of a held window. It is thread safe: frames arrive on the detection thread, ticks on the watchdog thread and `close` on whichever thread stops the mode.
-- **`WindowSnap.state`** names the current state for display: `paused`, `aiming`, `pinch closing`, `holding` or `holding nothing` (a pinch over the desktop). `WindowSnapService.state` is that, or `off`.
+- **`WindowSnap(output, settings, clock)`** is the gesture model. `output` is the platform output: `desktop()` returning monitor rectangles `(left, top, right, bottom)` with exclusive right and bottom edges, `position()` and `move_to(x, y)` for the pointer, `grab(x, y)` returning a grabbed window (an object with the window's outer frame as `rect`) or `None`, `move_window(window, left, top)`, `drop(window, x, y)` to snap it, `put_back(window)` to cancel, and `scroll(delta)` for wheel units. Tests use a fake. `on_frame(frame)` handles one `HandFrame`, `tick()` runs the watchdog check, and `close()` lets go of a held window. It is thread safe: frames arrive on the detection thread, ticks on the watchdog thread and `close` on whichever thread stops the mode.
+- **`WindowSnap.state`** names the current state for display: `paused`, `aiming`, `hand closing`, `holding`, `holding nothing` (a fist over the desktop) or `scrolling`. `WindowSnapService.state` is that, or `off`.
 - **`WindowSnapService(cfg, output_factory, tracker_factory=HandTracker)`** owns one tracker, one `WindowSnap` and the watchdog thread. `start()` reads the monitors, starts the tracker on `gesture_snap_camera` (default 0) and subscribes the model; it returns `"started"`, or `"already"` when it was on, and raises `WindowSnapUnavailable` with a plain reason (the displays could not be read, or hand tracking could not load) when it cannot start, in which case nothing is left running. A camera that is busy or unplugged does not stop it from starting: the tracker retries it in the background and says so on the console. `stop()` is described above. `running` says whether the mode is on. A failure from the output is reported once on the console and logged once until that kind of call works again.
 - One service exists per daemon (`window_snap_service.get_service`).
 
@@ -182,7 +194,7 @@ The `gesture_control` family in `fastpath/phrases/<language>.json` maps whole ut
 
 ### Privacy and logs
 
-Gesture snapping adds nothing that leaves the machine and nothing written to disk. Debug logs (category `gestures`) mark starting and stopping, clutch, a grab (or a pinch that grabbed nothing), a snap (whether a zone was found), a cancel and a window left where it is because the hand was lost or the mode stopped. They never contain coordinates, pinch values, window titles or process names.
+Gesture snapping adds nothing that leaves the machine and nothing written to disk. Debug logs (category `gestures`) mark starting and stopping, clutch, a grab (or a fist that grabbed nothing), a snap (whether a zone was found), a cancel, the start and end of a scroll, and a window left where it is because the hand was lost or the mode stopped. They never contain coordinates, measures, scroll amounts, window titles or process names.
 
 ### Settings
 
@@ -192,9 +204,12 @@ Gesture snapping adds nothing that leaves the machine and nothing written to dis
 | `gesture_snap_camera` | `0` | Webcam index |
 | `gesture_snap_hand` | `any` | `any`, `right` or `left` |
 | `gesture_snap_comfort_box` | `0.5` | Fraction of the camera's width that spans the whole desktop (0.15 to 1.0) |
+| `gesture_snap_fist_start` | `0.85` | Index curl below which a fist starts (0.3 to 1.2) |
+| `gesture_snap_fist_release` | `1.0` | Index curl above which a fist ends and a pinch may start (0.4 to 1.5, greater than the fist start) |
 | `gesture_snap_pinch_start` | `0.25` | Pinch ratio below which a pinch starts (0.05 to 1.0) |
-| `gesture_snap_pinch_release` | `0.35` | Pinch ratio above which a pinch ends (0.1 to 1.5, greater than the start) |
-| `gesture_snap_debounce_ms` | `50` | How long a pinch or release must last to count (0 to 500 ms) |
+| `gesture_snap_pinch_release` | `0.35` | Pinch ratio above which a pinch ends (0.1 to 1.5, greater than the pinch start) |
+| `gesture_snap_debounce_ms` | `50` | How long a gesture or its release must last to count (0 to 500 ms) |
+| `gesture_snap_scroll_speed` | `5` | Wheel notches per tenth of the camera's height (0.5 to 30) |
 | `gesture_snap_smoothing` | `1.0` | One Euro minimum cutoff in hertz (0.05 to 10) |
 | `gesture_snap_speed_response` | `0.005` | One Euro speed coefficient (0 to 0.1) |
 
@@ -207,5 +222,5 @@ Values outside the range are clamped on load; values of the wrong type use the d
 ## Tests
 
 - **Unit** (`tests/test_hand_tracking.py`, `tests/test_hand_recording.py`, `tests/test_model_files.py`): the pipeline against a fake camera and a fake detector (delivery order, newest-frame-only, failing subscribers, camera failure and recovery, start-up failures, stop releasing the camera), recordings round-tripping, and the model file helper.
-- **Gesture snapping** (`tests/test_window_snap.py`, `tests/test_window_snap_service.py`, `tests/test_gesture_control_tool.py`, `tests/test_windows_window_snap.py`, `tests/test_gesture_preview.py`): the gesture model on synthetic `HandFrame`s against a fake output (pinch hysteresis and debounce, the frozen aim, grab, move, snap, cancel, clutch, a held window let go on hand loss and by the watchdog, the comfort-box scale and bounds across several monitors), zone choice, the service and tool against a fake tracker, and the preview drawing. The pinch thresholds come from a calibration on a real webcam (see Measures); the synthetic hands reproduce its side-on case, where the tracker's depth is off.
+- **Gesture snapping** (`tests/test_window_snap.py`, `tests/test_window_snap_service.py`, `tests/test_gesture_control_tool.py`, `tests/test_windows_window_snap.py`, `tests/test_gesture_preview.py`): the gesture model on synthetic `HandFrame`s against a fake output (fist and pinch thresholds, hysteresis and debounce, the frozen aim, grab, move, snap, cancel, scrolling, clutch, a held window let go on hand loss and by the watchdog, the comfort-box scale and bounds across several monitors), zone choice, the service and tool against a fake tracker, and the preview drawing. The pinch thresholds come from a calibration on a real webcam (see Measures); the synthetic hands reproduce its side-on case, where the tracker's depth is off.
 - **Integration** (`tests/test_hand_tracking_mediapipe.py`): the real model on photos of hands from MediaPipe's test assets in `tests/fixtures/hands/`. Skipped when MediaPipe or the cached model is missing; tests never download.

@@ -1,5 +1,5 @@
-"""Turn gesture snapping on and off: the webcam follows the user's hand, a pinch grabs a window and letting go
-snaps it into a FancyZones zone.
+"""Turn gesture snapping on and off: the webcam follows the user's hand, a fist grabs a window and opening it
+snaps the window into a FancyZones zone; a pinch scrolls.
 
 Registered only on Windows when ``gesture_snap_enabled`` is on (``registry.configure_gesture_tool``), and never
 offered to a cloud model. The mode itself lives in ``jarvis.gestures.window_snap_service``; this tool only
@@ -27,7 +27,7 @@ class GestureControlTool(Tool):
     def description(self) -> str:
         # The router reads only the first 120 characters.
         return ("Gesture control (gesture snapping): start or stop moving windows into zones with your hand through "
-                "the webcam, or say if it is on. Pinch to grab the window under the pointer, let go to snap it. NOT "
+                "the webcam, or say if it is on. A fist grabs the window under the pointer, a pinch scrolls. NOT "
                 "for placing a named window by voice; use windowControl.")
 
     @property

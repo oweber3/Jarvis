@@ -59,3 +59,14 @@ class TestWindowSnapSettings:
         from desktop_app.settings_window import FIELD_METADATA
         shown = {meta.key for meta in FIELD_METADATA}
         assert {key for key in get_default_config() if key.startswith("gesture_snap_")} <= shown
+
+    def test_fist_and_scroll_settings_are_loaded_and_clamped(self, tmp_path, monkeypatch):
+        cfg = load(tmp_path, monkeypatch, {"gesture_snap_fist_start": 0.8, "gesture_snap_fist_release": 0.95,
+                                           "gesture_snap_scroll_speed": 99})
+        loaded = WindowSnapSettings.from_config(cfg)
+        assert (loaded.fist_start, loaded.fist_release) == (0.8, 0.95)
+        assert cfg.gesture_snap_scroll_speed == 30.0
+
+    def test_the_fist_release_is_always_above_the_start(self, tmp_path, monkeypatch):
+        cfg = load(tmp_path, monkeypatch, {"gesture_snap_fist_start": 1.0, "gesture_snap_fist_release": 0.9})
+        assert cfg.gesture_snap_fist_release > cfg.gesture_snap_fist_start

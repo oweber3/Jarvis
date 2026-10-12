@@ -426,7 +426,10 @@ class Settings:
     gesture_snap_comfort_box: float = 0.5
     gesture_snap_pinch_start: float = 0.25
     gesture_snap_pinch_release: float = 0.35
+    gesture_snap_fist_start: float = 0.85
+    gesture_snap_fist_release: float = 1.0
     gesture_snap_debounce_ms: int = 50
+    gesture_snap_scroll_speed: float = 5.0
     gesture_snap_smoothing: float = 1.0
     gesture_snap_speed_response: float = 0.005
 
@@ -552,6 +555,8 @@ def _gesture_snap_settings(merged: Dict[str, Any], defaults: Dict[str, Any]) -> 
 
     start = get("gesture_snap_pinch_start", 0.05, 1.0)
     release = get("gesture_snap_pinch_release", 0.1, 1.5)
+    fist_start = get("gesture_snap_fist_start", 0.3, 1.2)
+    fist_release = get("gesture_snap_fist_release", 0.4, 1.5)
     hand = merged.get("gesture_snap_hand")
     return {
         "gesture_snap_enabled": merged.get("gesture_snap_enabled") is True,
@@ -560,7 +565,10 @@ def _gesture_snap_settings(merged: Dict[str, Any], defaults: Dict[str, Any]) -> 
         "gesture_snap_comfort_box": get("gesture_snap_comfort_box", 0.15, 1.0),
         "gesture_snap_pinch_start": start,
         "gesture_snap_pinch_release": release if release > start else round(start + 0.1, 3),
+        "gesture_snap_fist_start": fist_start,
+        "gesture_snap_fist_release": fist_release if fist_release > fist_start else round(fist_start + 0.15, 3),
         "gesture_snap_debounce_ms": get("gesture_snap_debounce_ms", 0, 500, int),
+        "gesture_snap_scroll_speed": get("gesture_snap_scroll_speed", 0.5, 30.0),
         "gesture_snap_smoothing": get("gesture_snap_smoothing", 0.05, 10.0),
         "gesture_snap_speed_response": get("gesture_snap_speed_response", 0.0, 0.1),
     }
@@ -952,7 +960,10 @@ def get_default_config() -> Dict[str, Any]:
         "gesture_snap_comfort_box": 0.5,
         "gesture_snap_pinch_start": 0.25,
         "gesture_snap_pinch_release": 0.35,
+        "gesture_snap_fist_start": 0.85,
+        "gesture_snap_fist_release": 1.0,
         "gesture_snap_debounce_ms": 50,
+        "gesture_snap_scroll_speed": 5.0,
         "gesture_snap_smoothing": 1.0,
         "gesture_snap_speed_response": 0.005,
         "remote_access_enabled": False,

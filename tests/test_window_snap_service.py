@@ -48,11 +48,11 @@ def service(mock_config, desk, *, works=True):
                              tracker_factory=lambda camera: FakeTracker(camera, works=works))
 
 
-def pinch_and_hold(tracker):
+def grab_and_hold(tracker):
     t = time.perf_counter()
     tracker.deliver(frame(t, hand(0.5, 0.5)))
     for i in range(1, 6):
-        tracker.deliver(frame(t + i / 30, hand(0.5, 0.5, pinch=0.1)))
+        tracker.deliver(frame(t + i / 30, hand(0.5, 0.5, fist=True)))
 
 
 def test_starting_turns_the_camera_on_and_hands_move_the_pointer(mock_config, desk):
@@ -80,12 +80,12 @@ def test_stopping_lets_go_of_a_held_window_and_releases_the_camera(mock_config, 
     svc = service(mock_config, desk)
     svc.start()
     tracker = FakeTracker.instances[-1]
-    pinch_and_hold(tracker)
+    grab_and_hold(tracker)
     assert svc.state == "holding"
     assert svc.stop() is True
     assert not tracker.running and not svc.running and svc.state == "off"
     count = len(desk.events)
-    tracker.deliver(frame(time.perf_counter() + 2, hand(0.7, 0.5, pinch=0.1)))  # a late frame changes nothing
+    tracker.deliver(frame(time.perf_counter() + 2, hand(0.7, 0.5, fist=True)))  # a late frame changes nothing
     assert len(desk.events) == count and desk.of("drop") == []
 
 
@@ -126,7 +126,7 @@ def test_displays_that_cannot_be_read_never_start_the_camera(mock_config):
 def test_the_watchdog_lets_go_when_frames_stop_arriving(mock_config, desk):
     svc = service(mock_config, desk)
     svc.start()
-    pinch_and_hold(FakeTracker.instances[-1])
+    grab_and_hold(FakeTracker.instances[-1])
     assert svc.state == "holding"
     deadline = time.monotonic() + 3
     while svc.state == "holding" and time.monotonic() < deadline:

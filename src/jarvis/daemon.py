@@ -1604,7 +1604,7 @@ def main(smoke_test: bool = False) -> None:
         # No new phone requests once shutdown has begun.
         remote_runtime.stop()
         web_chat_runtime.stop()
-        # Let go of a held mouse button and the camera first.
+        # Let go of a held window and the camera first.
         window_snap_service.stop_service()
 
         # Clean shutdown - stop dictation first
