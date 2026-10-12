@@ -171,6 +171,7 @@ describe("the sent message", () => {
     text: "what is this?",
     ts: 1_760_000_000,
     source: "typed",
+    steps: [],
     attachments,
   })
 

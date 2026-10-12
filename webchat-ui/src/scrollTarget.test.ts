@@ -4,7 +4,7 @@ import { toThreadMessage } from "@/conversion"
 
 describe("messageSelector", () => {
   it("matches the id the thread gives a stored message", () => {
-    const id = toThreadMessage({ id: 42, role: "user", text: "hi", ts: 1, source: "typed" }).id
+    const id = toThreadMessage({ id: 42, role: "user", text: "hi", ts: 1, source: "typed", steps: [] }).id
     expect(messageSelector(42)).toBe(`[data-message-id="${id}"]`)
   })
 })
