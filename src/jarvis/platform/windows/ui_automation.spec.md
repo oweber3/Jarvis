@@ -10,6 +10,7 @@
 - Actions use UIA control patterns only: Invoke, Value, RangeValue, Toggle, SelectionItem, ExpandCollapse, Scroll and Text. Jarvis never synthesises mouse or keyboard input, never moves the pointer and never focuses or activates a window for this tool. An action that would need focus or typed keys returns an honest failure that says so. The one place the pointer is moved is gesture snapping, which is not automation: it relays the user's own hand in real time while the user has it on, clicks only at the pointer when the user asks for a click in words, and no tool, model or routine chooses where it points or which window it moves (`gestures/gestures.spec.md`, Gesture snapping).
 - Both tools are registered with the other Windows tools: Windows only, `windows_tools_enabled` (default `true`). A disabled tool returns a failure naming the key and touches nothing.
 - Results pass through the shared redaction function before model consumption. Debug logs carry actions, counts, control types and exception types, never names, values, titles, paths or page text.
+- `with_session(fn)` gives another OS module that drives one application (`apple_music.py`, `apple_music/apple_music.spec.md`) an `AppSession` on the calling worker: a bounded walk of a window's controls (refused for elevated or blocked windows, as for snapshots) and the Invoke, SelectionItem, ExpandCollapse and Scroll patterns on the controls it returned. The same pattern-only rules apply.
 
 ## Which window
 

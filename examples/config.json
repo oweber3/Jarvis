@@ -9,6 +9,8 @@
   "routines": {},
   "windows_fancyzones_enabled": true,
   "roku_host": "",
+  "apple_music_enabled": false,
+  "apple_music_country": "",
   "tts_pc_speakers_enabled": true,
   "fast_commands_enabled": true,
   "fast_commands_locales": [

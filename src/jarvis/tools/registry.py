@@ -163,6 +163,17 @@ def configure_tv_tool(cfg, *, warm=True):
         threading.Thread(target=device.warm_up, name='roku-warm-up', daemon=True).start()
 
 
+def configure_apple_music_tool(cfg, *, platform=None):
+    """Offer ``playMusic`` only on Windows, with the Windows tools on, when ``apple_music_enabled`` is true."""
+    BUILTIN_TOOLS.pop('playMusic', None)
+    if (platform or sys.platform) != 'win32' or not getattr(cfg, 'windows_tools_enabled', False):
+        return
+    if getattr(cfg, 'apple_music_enabled', False) is not True:
+        return
+    from .builtin.apple_music import AppleMusicTool
+    BUILTIN_TOOLS['playMusic'] = AppleMusicTool()
+
+
 if sys.platform == 'win32':
     from .builtin.windows import (AppControlTool, WindowControlTool, OpenWebsiteTool, OpenPathTool, UiControlTool,
                                   PdfNavigateTool)

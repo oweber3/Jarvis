@@ -355,6 +355,11 @@ class Settings:
     windows_fancyzones_enabled: bool = True
     # The TV's address on the home network (a private IP). Empty leaves the tvControl tool unregistered.
     roku_host: str = ""
+    # Play songs, albums, artists and library playlists in the Apple Music app (Windows). Off by default:
+    # catalogue searches send the search text to Apple's public iTunes Search API.
+    apple_music_enabled: bool = False
+    # Two-letter store country for catalogue searches; empty uses the Windows region.
+    apple_music_country: str = ""
     # Play Jarvis's voice on this PC's output device. Independent of any extension's voice output.
     tts_pc_speakers_enabled: bool = True
     fast_commands_enabled: bool = True
@@ -599,6 +604,12 @@ def _monitor_aliases(value: Any) -> Dict[str, str]:
         from .debug import debug_log
         debug_log(f"Ignored {len(value) - len(kept)} invalid display alias entries.", "config")
     return kept
+
+
+def _store_country(value: Any) -> str:
+    """A two-letter store country in upper case, or empty to use the Windows region."""
+    text = value.strip() if isinstance(value, str) else ""
+    return text.upper() if re.fullmatch(r"[A-Za-z]{2}", text) else ""
 
 
 def _path_aliases(value: Any) -> Dict[str, str]:
@@ -923,6 +934,8 @@ def get_default_config() -> Dict[str, Any]:
         "routines": {},
         "windows_fancyzones_enabled": True,
         "roku_host": "",
+        "apple_music_enabled": False,
+        "apple_music_country": "",
         "tts_pc_speakers_enabled": True,
         "fast_commands_enabled": True,
         "fast_commands_locales": ["en"],
@@ -1483,6 +1496,8 @@ def load_settings() -> Settings:
         routines=merged.get("routines") if isinstance(merged.get("routines"), dict) else {},
         windows_fancyzones_enabled=bool(merged.get("windows_fancyzones_enabled", True)),
         roku_host=merged.get("roku_host", "").strip() if isinstance(merged.get("roku_host", ""), str) else "",
+        apple_music_enabled=merged.get("apple_music_enabled") is True,
+        apple_music_country=_store_country(merged.get("apple_music_country")),
         tts_pc_speakers_enabled=bool(merged.get("tts_pc_speakers_enabled", True)),
         # Database & Storage
         db_path=db_path,

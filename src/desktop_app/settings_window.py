@@ -655,6 +655,18 @@ def _build_field_metadata() -> List[FieldMeta]:
       "mobile apps > Network access (Default or Permissive) on the TV. To find the address, run "
       "python -m jarvis.devices.roku --discover. Restart Jarvis after changing it.",
       "extras", "str", nullable=True)
+    heading("Apple Music")
+    f("apple_music_enabled", "Allow Apple Music",
+      "Play songs, albums, artists and your own playlists in the Apple Music app by voice, such as \"play "
+      "Bohemian Rhapsody\". Jarvis opens the item in the app and presses Play for you. To find songs, albums "
+      "and artists, the words you ask for are sent to Apple's public iTunes Search service (no account or "
+      "key); your own playlists are found in the app without sending anything. Needs the Apple Music app "
+      "from the Microsoft Store and an internet connection. Restart Jarvis after changing it.",
+      "extras", "bool")
+    f("apple_music_country", "Apple Music Store Country",
+      "Two-letter country of your Apple Music store, such as GB, used for searches. Empty uses the Windows "
+      "region.",
+      "extras", "str", nullable=True, advanced=True, shown_when=_on("apple_music_enabled"))
     heading("Gesture control")
     gestures = _on("gesture_snap_enabled")
     f("gesture_snap_enabled", "Allow Gesture Control",

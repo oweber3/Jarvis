@@ -290,6 +290,21 @@ A workspace is a named desk set-up that Jarvis opens in one go: "open my study w
 
 Spec: `src/jarvis/devices/roku.spec.md`.
 
+### Apple Music
+
+`playMusic` plays a song, album, artist or one of your own playlists in the Apple Music app for Windows (from the Microsoft Store): "play Bohemian Rhapsody", "put on some Taylor Swift", "play my Road Trip playlist". It is off by default: turn on **Allow Apple Music** in Settings → Extras → Apple Music (`apple_music_enabled`) and restart Jarvis.
+
+```json
+{ "apple_music_enabled": true, "apple_music_country": "GB" }
+```
+
+- To find a song, album or artist, the words you asked for are sent to Apple's public iTunes Search service (no account or key). That is the only thing sent, and only when this setting is on. Your own playlists are found in the Apple Music app and nothing is sent for them.
+- `apple_music_country` is the two-letter country of your Apple Music store. Empty uses the Windows region.
+- Jarvis opens the item in the app, presses its Play button through Windows accessibility (never the mouse or keyboard) and checks the Windows media controls to confirm what is playing. Pause, skip and "what's playing" work as for any player.
+- You need to be signed in to Apple Music in the app. Songs you uploaded yourself and Apple's editorial playlists cannot be searched.
+
+Spec: `src/jarvis/apple_music/apple_music.spec.md`.
+
 ### Gesture snapping
 
 Gesture snapping moves and scrolls windows with your hand through the webcam. It is off by default: turn on **Allow Gesture Control** in Settings → Extras → Gesture control (`gesture_snap_enabled`) and restart Jarvis. That only makes it available; the camera turns on when you say "start gesture control" (or "start gesture controls", "turn on gestures", "enable gesture snapping" and similar) and off when you say "stop gesture control" (or "turn off gestures" and similar).
