@@ -122,3 +122,47 @@ def test_echo_starting_just_after_playback_ended_is_still_rejected(no_fast_path)
 
     assert not listener.state_manager.is_collecting()
     listener.state_manager.stop()
+
+
+def test_echo_is_still_rejected_when_the_end_of_the_reply_is_unknown(no_fast_path):
+    """Without a recorded end of the reply, its own words in the hot window stay echo."""
+    listener, _tts = _create_listener()
+    _install_intent_judge(listener, _make_judgment(query="what time is it"))
+    listener.track_tts_start("What time is it? It is ten past four.")
+    listener.state_manager.schedule_hot_window_activation()  # no finish time recorded
+    assert _wait_for_hot_window_active(listener)
+
+    _hear(listener, "what time is it? it is ten past four.", started_ago=0.2, ended_ago=0.1)
+
+    assert not listener.state_manager.is_collecting()
+    listener.state_manager.stop()
+
+
+def test_an_answer_captured_by_the_microphone_reaches_the_pending_confirmation(monkeypatch):
+    """Real capture backdates an utterance's start by the VAD pre-roll. A "yes" whose voice
+    starts after the echo window must not count as echo because its pre-roll reaches into it."""
+    from tests.test_audio_capture_backlog import QUIET, VOICED, _drain_capture, _listener_with_audio, _queue_audio
+
+    listener = _listener_with_audio()
+    store = FakeConfirmationStore()
+    monkeypatch.setattr("jarvis.tools.confirmation.get_confirmation_store", lambda: store)
+    listener.track_tts_start(QUESTION)
+    time.sleep(0.05)
+    listener.activate_hot_window()
+    finished = listener.echo_detector._last_tts_finish_time
+    tolerance = listener.echo_detector.echo_tolerance
+
+    # 240 ms of quiet (the pre-roll), then "yes" heard about 0.4 s after the question ended.
+    time.sleep(max(0.0, finished + 1.58 - time.time()))
+    _queue_audio(listener, (0.24, QUIET), (0.4, VOICED), (0.8, QUIET))
+    _drain_capture(listener)
+    job = listener._transcription_jobs_q.get_nowait()
+    assert job.start_time < finished + tolerance  # the backdated start falls in the echo window
+
+    with patch.object(listener, "_transcribe_audio", return_value=("yes", "en", ())):
+        listener._transcribe_job(job)
+    listener._transcription_jobs_q.task_done()
+    listener._handle_transcription_result(listener._transcription_results_q.get_nowait())
+
+    assert store.answers == ["yes"]
+    listener.state_manager.stop()

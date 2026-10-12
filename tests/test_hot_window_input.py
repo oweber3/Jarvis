@@ -1278,9 +1278,9 @@ class TestEchoCaughtBeforeEngagementAndIntentJudge:
         _simulate_tts_finish(listener)
         _wait_for_hot_window_active(listener)
 
-        # First echo chunk
+        # First chunk: echo of the reply's opening, then words Jarvis did not say
         _process_transcript(listener,
-            "Tbilisi is a must-see",
+            "Tbilisi is a must-see especially the colourful old town",
             utterance_energy=0.01)
 
         # Second echo chunk
@@ -1288,14 +1288,18 @@ class TestEchoCaughtBeforeEngagementAndIntentJudge:
             "For breathtaking scenery you should explore Steneti",
             utterance_energy=0.01)
 
-        # Both should be rejected
-        assert _accepted_query(listener) == ""
+        # Without a judge the hot window keeps only what is not echo: the echo
+        # prefix of the first chunk is stripped and the pure-echo second chunk
+        # never joins the request.
+        assert _accepted_query(listener) == "especially the colourful old town"
 
         # Window should still expire on original schedule
         time.sleep(0.15)
         assert not listener.state_manager.is_hot_window_active()
 
-        # Speech after expiry requires wake word
+        # Speech after expiry requires wake word (once that request is dispatched)
+        listener.state_manager.clear_collection()
+        listener._end_engagement()
         _install_intent_judge(listener, _make_judgment(
             directed=True, query="what the hell"))
         _process_transcript(listener, "what the hell", utterance_energy=0.01)

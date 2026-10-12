@@ -244,6 +244,26 @@ def test_only_the_last_reply_handed_to_tts_arms_the_hot_window(face_states, engi
     listener.stop()
 
 
+def test_a_reply_with_nothing_to_say_leaves_the_orb_while_an_earlier_reply_still_speaks(
+        face_states, engine, no_fast_path):
+    listener, tts = _create_listener(echo_tolerance=0.05)
+    _ask(listener, engine, "tell me the news")
+    assert _wait_until(lambda: len(_spoken(tts)) == 1)
+    first_finished = _spoken(tts)[0][1]
+    tts.is_speaking.return_value = True  # the news is still playing
+    engine.replies["what's the weather"] = None
+
+    _ask(listener, engine, "what's the weather")
+    assert _wait_until(lambda: not listener._pending_replies)
+
+    assert face_states[-1] is not AssistantState.IDLE, face_states[-4:]
+
+    tts.is_speaking.return_value = False
+    first_finished()  # the news ends: it is now the last reply
+    assert _wait_until(listener.state_manager.is_hot_window_active)
+    listener.stop()
+
+
 def test_a_following_reply_with_nothing_to_say_returns_the_orb_to_idle(face_states, engine, no_fast_path):
     listener, tts = _create_listener()
     engine.replies["what's the weather"] = None

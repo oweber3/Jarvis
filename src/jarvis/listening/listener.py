@@ -79,6 +79,8 @@ class _TranscriptionJob:
     dictation_generation: int
     captured_during_tts: bool
     captured_tts_start_time: float
+    # When the VAD heard voice (start_time is backdated by the pre-roll); 0 when unknown.
+    voice_onset_time: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,7 @@ class _TranscriptionResult:
     captured_during_tts: bool
     captured_tts_start_time: float
     speaker_verdict: Verdict = Verdict.UNKNOWN
+    voice_onset_time: float = 0.0
 
 # Audio processing imports (optional)
 try:
@@ -445,6 +448,7 @@ class VoiceListener(threading.Thread):
     _whisper_device: Optional[str] = None  # "cpu" or "cuda" (resolved from CTranslate2)
     _whisper_compute: Optional[str] = None  # CTranslate2 compute type that loaded
     _last_voice_frame_time: float = 0.0  # Wall time of the latest voiced VAD frame
+    _utterance_onset_time: float = 0.0  # Wall time the VAD heard the current utterance start
     _turn: Optional[TurnLatency] = None  # Latency marks for the turn being processed
     _speaker_verifier: Optional[Any] = None  # Set when speaker verification is on and enrolled
     _barge_in_fired = False  # TTS was ducked for the reply being spoken
@@ -728,7 +732,7 @@ class VoiceListener(threading.Thread):
         debug_log(f"scheduling hot window activation (echo_tolerance={self.state_manager.echo_tolerance}s, hot_window={self.state_manager.hot_window_seconds}s)", "voice")
         self.state_manager.schedule_hot_window_activation(self.cfg.voice_debug)
 
-    def _process_transcript(self, text: str, utterance_energy: float = 0.0, utterance_start_time: float = 0.0, utterance_end_time: float = 0.0, *, captured_during_tts: bool, captured_tts_start_time: float, speaker_rejected: bool = False) -> None:
+    def _process_transcript(self, text: str, utterance_energy: float = 0.0, utterance_start_time: float = 0.0, utterance_end_time: float = 0.0, *, captured_during_tts: bool, captured_tts_start_time: float, speaker_rejected: bool = False, voice_onset_time: float = 0.0) -> None:
         """
         Process a transcript from speech recognition.
 
@@ -737,6 +741,9 @@ class VoiceListener(threading.Thread):
             utterance_energy: Pre-calculated energy from the utterance frames
             speaker_rejected: The voice was confidently not the owner's; the text
                 stays in the transcript buffer as context but cannot engage Jarvis
+            voice_onset_time: When the VAD heard voice; ``utterance_start_time``
+                is backdated by the pre-roll. Decides whether the speech could
+                hold echo (the start time when unknown).
         """
         if not text or not text.strip():
             self._check_query_timeout()
@@ -785,13 +792,25 @@ class VoiceListener(threading.Thread):
         # Echo is acoustic: only speech captured while the reply played, or
         # starting within echo_tolerance of its end, can hold Jarvis's own
         # voice. Later speech is never treated as echo, even when it repeats
-        # words of the reply ("yes" to "... say yes or no").
+        # words of the reply ("yes" to "... say yes or no"). The voice onset is
+        # used, not the start backdated by the VAD pre-roll: speech flagged as
+        # captured during TTS only because its pre-roll reaches back into the
+        # echo window holds no echo. When the end of the reply in this context
+        # is not known, the speech counts as possible echo.
+        onset = voice_onset_time if voice_onset_time > 0 else utterance_start_time
         same_context_finish = self.echo_detector._last_tts_finish_time if same_tts_context else 0.0
+        reply_end_known = same_context_finish > 0 and same_context_finish >= self.echo_detector._tts_start_time
+        reply_end_unknown = same_tts_context and bool(self.echo_detector._last_tts_text) and not reply_end_known
+        voice_after_echo_window = (
+            reply_end_known and onset > 0
+            and onset >= same_context_finish + self.echo_detector.echo_tolerance
+        )
         echo_possible = (
-            received_during_tts
-            or utterance_start_time <= 0
+            onset <= 0
+            or reply_end_unknown
+            or (received_during_tts and not voice_after_echo_window)
             or (same_context_finish > 0
-                and utterance_start_time < same_context_finish + self.echo_detector.echo_tolerance)
+                and onset < same_context_finish + self.echo_detector.echo_tolerance)
         )
         # The reply text that echo checks compare against; empty when echo is impossible.
         echo_reference = (self.echo_detector._last_tts_text or "") if (same_tts_context and echo_possible) else ""
@@ -815,7 +834,9 @@ class VoiceListener(threading.Thread):
             )
             if in_hot_window and not echo_possible:
                 debug_log("speech started after the echo window; no echo check", "voice")
-            if (in_hot_window or received_during_tts) and echo_possible:
+            # A fragment of a request being collected gets the same check, so
+            # echo never joins the request.
+            if (in_hot_window or received_during_tts or self.state_manager.is_collecting()) and echo_possible:
                 # Fuzzy echo check — instant, no intent judge needed.
                 # Only catches pure echo (transcript ≈ TTS text). Mixed
                 # echo+speech chunks (user spoke over echo) go to the
@@ -1597,9 +1618,21 @@ class VoiceListener(threading.Thread):
         """Take hot-window speech as a follow-up without the judge's verdict, unless it is pure echo.
 
         ``echo_reference`` is the reply the speech could echo ("" when it
-        cannot hold Jarvis's own voice). Returns whether the speech was taken.
+        cannot hold Jarvis's own voice). Leading echo is stripped first, as on
+        the other salvage paths, and only the rest is taken when it has at
+        least ``min_salvage_words`` words. Returns whether the speech was taken.
         """
         if echo_reference:
+            detector = self.echo_detector
+            salvaged = detector.cleanup_leading_echo(text_lower)
+            if salvaged == text_lower:
+                salvaged = detector.salvage_after_echo_tail(text_lower) or text_lower
+            if salvaged == text_lower:
+                salvaged = detector.strip_echo_prefix(text_lower)
+            if salvaged != text_lower and len(salvaged.split()) >= detector.min_salvage_words:
+                debug_log("hot window fallback: leading echo stripped", "voice")
+                self._transcript_buffer.update_last_segment_text(salvaged)
+                text_lower = salvaged
             echo_score = fuzz.partial_ratio(text_lower, echo_reference.lower())
             tts_words = len(echo_reference.split())
             if echo_score >= 70 and len(text_lower.split()) <= max(tts_words * 1.3, tts_words + 3):
@@ -1664,10 +1697,14 @@ class VoiceListener(threading.Thread):
                           first_audio_callback=_on_first_audio)
         else:
             debug_log(f"no TTS output: reply={bool(reply)}, tts={bool(self.tts)}, enabled={getattr(self.tts, 'enabled', False) if self.tts else False}", "voice")
-            # A reply already handed to TTS sets the face itself when it ends.
-            if self._reply_that_follows(spoken) == "generating":
-                # The face keeps showing the reply that is still to come.
-                debug_log("no TTS output, but another reply follows; face left as it is", "voice")
+            # Another reply still to come (generating, or queued and playing in
+            # TTS) sets the face itself; a reply handed to TTS that is no longer
+            # playing (stopped) does not count.
+            follows = self._reply_that_follows(spoken)
+            if follows == "queued" and not (self.tts is not None and self.tts.is_speaking()):
+                follows = None
+            if follows is not None:
+                debug_log(f"no TTS output, but another reply follows ({follows}); face left as it is", "voice")
                 return
             # End the engagement if there is no TTS response
             self._end_engagement()
@@ -2111,6 +2148,7 @@ class VoiceListener(threading.Thread):
                 captured_during_tts=job.captured_during_tts,
                 captured_tts_start_time=job.captured_tts_start_time,
                 speaker_verdict=speaker_verdict,
+                voice_onset_time=job.voice_onset_time,
             )
         )
 
@@ -2303,6 +2341,7 @@ class VoiceListener(threading.Thread):
             captured_during_tts=result.captured_during_tts,
             captured_tts_start_time=result.captured_tts_start_time,
             speaker_rejected=getattr(result, "speaker_verdict", None) is Verdict.OTHER,
+            voice_onset_time=getattr(result, "voice_onset_time", 0.0) or 0.0,
         )
 
     def _audio_frames(self, buf):
@@ -3199,6 +3238,7 @@ class VoiceListener(threading.Thread):
 
                     # Track utterance timing for echo detection
                     self.echo_detector.track_utterance_timing(utterance_start_time, 0.0)
+                    self._utterance_onset_time = frame_timestamp
 
                     # Seed with pre-roll
                     if self._pre_roll:
@@ -3262,6 +3302,9 @@ class VoiceListener(threading.Thread):
         # Track when utterance ends - but don't overwrite global timing yet
         utterance_end_time = time.time() if end_time is None else end_time
         utterance_start_time = self.echo_detector._utterance_start_time
+        # The start is backdated by the pre-roll; the voice onset travels with the
+        # job so echo rejection can tell when voice was actually heard.
+        voice_onset_time = self._utterance_onset_time or utterance_start_time
         speech_end_time = self._last_voice_frame_time or utterance_end_time
         TurnLatency(speech_end_time).mark("utterance finalised (VAD endpoint silence)")
 
@@ -3319,6 +3362,7 @@ class VoiceListener(threading.Thread):
                     )
                 )
             ),
+            voice_onset_time=voice_onset_time,
             captured_tts_start_time=self.echo_detector._tts_start_time,
         )
         try:
