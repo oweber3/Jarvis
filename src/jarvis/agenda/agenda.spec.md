@@ -36,20 +36,21 @@ Lets the user ask "what's on today?", "what have I got tomorrow?", "anything thi
 
 - `webcal://` and `webcals://` are fetched as `https://`; any scheme other than http(s) is refused. Private network addresses are allowed (a self-hosted calendar server).
 - One GET with a 15 second timeout and an 8 MB cap. A response that is not an iCalendar file (`BEGIN:VCALENDAR` near the start) is `not_a_calendar` and is never saved.
-- The fetched text is saved next to the database (`calendar_cache/calendar-<hash of name>.ics`, written atomically). A saved copy younger than `calendar_cache_minutes` is reused without a fetch. When a fetch fails (`unreachable`, `http_error`, `too_large`) and a copy exists, the copy answers with `offline_copy` and its save time; without a copy the source fails with the reason.
+- The fetched text is saved next to the database (`calendar_cache/calendar-<hash of name>.ics`, written atomically). A saved copy younger than `calendar_cache_minutes` is reused without a fetch. When a fetch fails (`unreachable`, `http_error`, `too_large`, or `not_a_calendar` such as a Wi-Fi login page) and a copy exists, the copy answers with `offline_copy`, its save time and the reason; without a copy the source fails with the reason. Text is decoded as UTF-8 unless the server names a charset (a byte-order mark is dropped). Sources are kept for the process, so a parsed copy is reused until the file changes.
 - Removing a source deletes its stored address and its saved copy.
 
 ### Reading ICS
 
 - Lines are unfolded, parameters may be quoted, text is unescaped and kept to one line of at most 300 characters. Only `SUMMARY` and `LOCATION` are read for display; descriptions, attendees, organisers and attachments are never read.
-- Times: `...Z` is UTC; a `TZID` is resolved as an IANA name (including `/mozilla.org/.../Area/City` forms), then from the calendar's own `VTIMEZONE` STANDARD and DAYLIGHT rules, then as a Windows zone name Outlook writes (`Eastern Standard Time`); anything else, and floating times, are local. All-day `VALUE=DATE` events cover their local days.
+- Times: `...Z` is UTC; a `TZID` is resolved as an IANA name (including `/mozilla.org/.../Area/City` forms), then from the calendar's own `VTIMEZONE` STANDARD and DAYLIGHT rules (the offset in force is that of the latest change before the time, however long ago), then as a Windows zone name Outlook writes (`Eastern Standard Time`); anything else, and floating times, are local. All-day `VALUE=DATE` events cover their local days.
 - Recurrence: `FREQ` DAILY, WEEKLY, MONTHLY and YEARLY with `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY` (with ordinals such as `2TU`, `-1FR`), `BYMONTHDAY` (negative counts from the month's end), `BYMONTH`, `BYSETPOS` and `WKST`. Instances keep the event's wall time across daylight-saving changes. `DTSTART` is always the first instance. `RDATE` adds instances, `EXDATE` removes them, a `RECURRENCE-ID` override replaces its instance (shown at its new time even when the original was outside the window) and a cancelled override removes it. `STATUS:CANCELLED` events are left out.
+- Unfolding is linear in the file size, and one malformed event (or override) is skipped without hiding the rest of the calendar; an unreadable override leaves its original instance in place. `BYMONTHDAY` in a yearly rule without `BYMONTH` repeats every month.
 - An unsupported rule (`HOURLY`, `BYWEEKNO`, `BYYEARDAY`, ...) keeps the first instance only. Expansion is bounded (60 000 periods, 2 000 instances per read, 20 000 events per file); rules without `COUNT` skip whole periods before the window.
 
 ### Classic Outlook
 
 - `platform/windows/outlook.install_state()` is `classic` when the `Outlook.Application` COM class is registered, `new_only` when only the new Outlook (`olk.exe`) is present, otherwise `none`. The new Outlook has no COM interface, so a source of type `outlook` then fails with `outlook_new_only` and the tool says to use the calendar's ICS address instead.
-- Calls run on a COM worker thread with a 20 second limit. Jarvis attaches to a running Outlook or starts it in the background. Items are read with `IncludeRecurrences` and a `Restrict` on the window (falling back to scanning the sorted items when a locale rejects the date form), at most 500 per read. COM times are Outlook's local wall times and are read as local.
+- Calls run on a COM worker thread with a 20 second limit. Jarvis attaches to a running Outlook or starts it in the background. Items are read with `IncludeRecurrences` and a `Restrict` on the window, written in the user's own short date and time format (Windows `GetDateFormat`/`GetTimeFormat`), falling back to scanning at most 5 000 sorted items when Outlook rejects it; at most 500 events per read. COM times are Outlook's local wall times and are read as local.
 
 ## calendar tool
 
@@ -72,7 +73,7 @@ Registered by `registry.configure_calendar_tool(cfg)` only when `calendar_enable
 
 ## Setup command
 
-`python -m jarvis.agenda setup` asks which kind of calendar to add (Google, Outlook.com or Microsoft 365, another ICS address, classic Outlook), a name, and for ICS the address (hidden input, with where to find it). It tests the source (events in the next seven days), stores the address only when the test passes, writes the entry and turns `calendar_enabled` on. `list` shows each source and whether its address is stored (never the address). `test [name]` fetches fresh. `remove <name>` deletes the entry, address and saved copy, and turns the calendar off when none is left. Output lines start with an emoji and are indented by level. Jarvis needs a restart to pick up changes.
+`python -m jarvis.agenda setup` asks which kind of calendar to add (Google, Outlook.com or Microsoft 365, another ICS address, classic Outlook), a name, and for ICS the address (hidden input, with where to find it). It tests the source (events in the next seven days), stores the address only when the test passes, writes the entry and turns `calendar_enabled` on. Names cannot contain `#`. `list` shows each source and whether its address is stored (never the address). `test [name]` fetches fresh and fails when only the saved copy answers. `remove <name>` deletes the entry, address and saved copy, and turns the calendar off when none is left. Output lines start with an emoji and are indented by level. Jarvis needs a restart to pick up changes.
 
 ## Configuration
 

@@ -26,12 +26,14 @@ class BridgeSettings:
 
 def private_dialogue_shared(cfg: Any) -> bool:
     """Private turns carry no record of which source made them private, so they go to a cloud model
-    only when the activity log is shared and the calendar and email are each off or shared too."""
+    only when the activity log is shared and the calendar and email are each shared too, or have never
+    been set up (turned off with sources still configured counts as set up: old turns may quote them)."""
     if not activity_runtime.shared_with_cloud(cfg):
         return False
-    for enabled, shared in (("calendar_enabled", "calendar_share_with_cloud"),
-                            ("email_enabled", "email_share_with_cloud")):
-        if getattr(cfg, enabled, False) is True and getattr(cfg, shared, False) is not True:
+    for enabled, configured, shared in (("calendar_enabled", "calendar_sources", "calendar_share_with_cloud"),
+                                        ("email_enabled", "email_accounts", "email_share_with_cloud")):
+        in_use = getattr(cfg, enabled, False) is True or bool(getattr(cfg, configured, None))
+        if in_use and getattr(cfg, shared, False) is not True:
             return False
     return True
 

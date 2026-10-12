@@ -4,13 +4,14 @@ On Windows this is Windows Credential Manager, through ``keyring``. Each key is 
 service ``jarvis`` with the setting's name as the user name. Per-account secrets (a calendar's secret
 address, an email password, a sign-in token) use ``account_key(kind, name)``, such as
 ``calendar_url:Work``. A value longer than the store accepts is split over numbered entries
-(``<key>#1``, ``<key>#2``, ...). Values are never logged or printed.
+(``<key>#<generation>.1``, ...). Values are never logged or printed.
 When no store is available, reads return empty and writes report failure, so callers can keep a
 key where it was rather than lose it.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+import secrets
+from typing import Any, List, Optional
 
 from .debug import debug_log
 
@@ -45,6 +46,8 @@ def account_key(kind: str, name: str) -> str:
     name = str(name or "").strip()
     if not name:
         raise ValueError("an account secret needs an account name")
+    if "#" in name:
+        raise ValueError("an account name cannot contain #")  # '#' separates the parts of a split value
     return f"{kind}:{name}"
 
 
@@ -52,27 +55,32 @@ def _check(key: str) -> None:
     if key in SECRET_KEYS:
         return
     kind, _, name = key.partition(":")
-    if kind not in ACCOUNT_SECRET_KINDS or not name.strip():
+    if kind not in ACCOUNT_SECRET_KINDS or not name.strip() or "#" in name:
         raise ValueError(f"not a secret setting: {key}")
 
 
-def _chunk_count(value: Optional[str]) -> int:
-    if value and value.startswith(_CHUNK_MARKER):
-        try:
-            return int(value[len(_CHUNK_MARKER):])
-        except ValueError:
-            return 0
-    return 0
+def _parts(key: str, value: Optional[str]) -> Optional[List[str]]:
+    """The entry names of a split value from its marker (``<marker><generation>.<count>``), [] for a
+    value that is not split, or None for a damaged marker."""
+    if not value or not value.startswith(_CHUNK_MARKER):
+        return []
+    generation, _, count = value[len(_CHUNK_MARKER):].partition(".")
+    if not generation.isalnum() or not count.isdigit() or int(count) < 1:
+        return None
+    return [f"{key}#{generation}.{n}" for n in range(1, int(count) + 1)]
 
 
 def get_secret(key: str) -> str:
-    """The stored value, or ``""`` when absent or when no store is available."""
+    """The stored value, or ``""`` when absent, damaged or when no store is available."""
     _check(key)
     try:
         value = _store().get_password(SERVICE, key) or ""
-        chunks = _chunk_count(value)
-        if chunks:
-            return "".join(_store().get_password(SERVICE, f"{key}#{n}") or "" for n in range(1, chunks + 1))
+        parts = _parts(key, value)
+        if parts is None:
+            return ""
+        if parts:
+            pieces = [_store().get_password(SERVICE, name) for name in parts]
+            return "" if any(piece is None for piece in pieces) else "".join(pieces)
         return value
     except Exception as exc:
         debug_log(f"credential store read failed for {_label(key)}: {type(exc).__name__}", "config")
@@ -84,22 +92,34 @@ def has_secret(key: str) -> bool:
 
 
 def set_secret(key: str, value: str) -> bool:
-    """Store ``value``; an empty value removes the key. Returns whether it worked."""
+    """Store ``value``; an empty value removes the key. Returns whether it worked.
+
+    A long value is written under a new generation of part names before the main entry switches to
+    it, so a failed or interrupted write leaves the previous value whole."""
     _check(key)
     if not value:
         return delete_secret(key)
+    written: List[str] = []
     try:
-        _delete_chunks(key)
+        old = _parts(key, _store().get_password(SERVICE, key)) or []
         if len(value) <= _CHUNK_CHARS:
             _store().set_password(SERVICE, key, value)
         else:
+            generation = secrets.token_hex(3)
             pieces = [value[i:i + _CHUNK_CHARS] for i in range(0, len(value), _CHUNK_CHARS)]
             for number, piece in enumerate(pieces, start=1):
-                _store().set_password(SERVICE, f"{key}#{number}", piece)
-            _store().set_password(SERVICE, key, f"{_CHUNK_MARKER}{len(pieces)}")
+                name = f"{key}#{generation}.{number}"
+                _store().set_password(SERVICE, name, piece)
+                written.append(name)
+            _store().set_password(SERVICE, key, f"{_CHUNK_MARKER}{generation}.{len(pieces)}")
+        _remove(old)
         debug_log(f"credential stored for {_label(key)}", "config")
         return True
     except Exception as exc:
+        try:
+            _remove(written)
+        except Exception:  # noqa: BLE001 - best effort; the main entry still names the old parts
+            pass
         debug_log(f"credential store write failed for {_label(key)}: {type(exc).__name__}", "config")
         return False
 
@@ -108,8 +128,9 @@ def delete_secret(key: str) -> bool:
     """Remove the key. Removing a key that is not stored succeeds."""
     _check(key)
     try:
-        _delete_chunks(key)
-        if not _store().get_password(SERVICE, key):
+        current = _store().get_password(SERVICE, key)
+        _remove(_parts(key, current) or [])
+        if not current:
             return True
         _store().delete_password(SERVICE, key)
         debug_log(f"credential removed for {_label(key)}", "config")
@@ -119,12 +140,10 @@ def delete_secret(key: str) -> bool:
         return False
 
 
-def _delete_chunks(key: str) -> None:
-    """Remove the numbered entries of a split value (the main entry stays for the caller)."""
-    chunks = _chunk_count(_store().get_password(SERVICE, key))
-    for number in range(1, chunks + 1):
-        if _store().get_password(SERVICE, f"{key}#{number}") is not None:
-            _store().delete_password(SERVICE, f"{key}#{number}")
+def _remove(names: List[str]) -> None:
+    for name in names:
+        if _store().get_password(SERVICE, name) is not None:
+            _store().delete_password(SERVICE, name)
 
 
 def _label(key: str) -> str:

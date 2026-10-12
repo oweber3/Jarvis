@@ -6,7 +6,7 @@ Lets the user ask "any new emails?", "anything from Sam?" or "read me the latest
 
 - Nothing runs until `email_enabled` is true: the `email` tool is not in the catalogue and no server is contacted.
 - Read only, enforced per account kind: IMAP opens the inbox with EXAMINE and fetches with `BODY.PEEK` (the server never sets `\Seen`) and sends no command that changes a mailbox; classic Outlook is only read through COM (properties read, nothing set or saved); Microsoft Graph is granted only `Mail.Read` and `offline_access`, so the token itself cannot send or change mail.
-- Passwords and sign-in tokens live in Windows Credential Manager (`credentials.account_key("email_password" | "email_graph_token", name)`; a value longer than an entry allows is split over numbered entries), never in `config.json`, logs, tool results or terminal output.
+- Passwords and sign-in tokens live in Windows Credential Manager (`credentials.account_key("email_password" | "email_graph_token", name)`; a value longer than an entry allows is split over parts named with a fresh generation, written before the main entry switches to them, so an interrupted write keeps the old value whole; account names cannot contain `#`), never in `config.json`, logs, tool results or terminal output.
 - No telemetry. Debug logs (tag `mail`) carry counts, reason codes and exception type names, never senders, addresses, subjects, bodies or account names.
 - Everything from a message (sender name, subject, snippet, body) is written by other people and is fenced as untrusted data.
 - Local first: classic Outlook needs no network of its own; Gmail and Microsoft accounts are explicitly configured integrations the user adds.
@@ -29,7 +29,7 @@ Lets the user ask "any new emails?", "anything from Sam?" or "read me the latest
 
 | Type | Keys | Secret | Notes |
 |------|------|--------|-------|
-| `imap` | `host` (default `imap.gmail.com`), `port` (993), `username` | App password or password | TLS, 15 second timeout. Gmail needs 2-Step Verification and an app password; Outlook.com no longer accepts IMAP passwords, so it uses `graph` |
+| `imap` | `host` (default `imap.gmail.com`), `port` (993), `username` | App password or password | TLS with the server's certificate and host name verified (`ssl.create_default_context()`), 15 second timeout. Gmail needs 2-Step Verification and an app password; Outlook.com no longer accepts IMAP passwords, so it uses `graph` |
 | `outlook` | none | none | Classic Outlook's default Inbox. When only the new Outlook is installed (no COM), reads fail with `outlook_new_only` |
 | `graph` | `client_id` (the user's own Azure app registration), `tenant` (`consumers` for Outlook.com, `organizations` or a tenant ID for work or school, default `common`) | Refresh token | The app needs "Allow public client flows" and the delegated `Mail.Read` permission |
 
@@ -38,7 +38,7 @@ Lets the user ask "any new emails?", "anything from Sam?" or "read me the latest
 - Listing: the newest messages of the inbox, newest first, at most 25 per account; optionally unread only (IMAP `UNSEEN`, Outlook `[UnRead] = True`, Graph `isRead eq false`) and from a sender (case-insensitive part of the sender's name or address; IMAP searches the whole mailbox with `FROM`, sending non-ASCII text as a UTF-8 literal; Outlook scans at most 300 newest items; Graph filters a page of up to 100). Each summary has sender name and address, subject (one line, 300 characters), received time, unread flag and a 160-character snippet of the text.
 - IMAP fetches at most 32 KB of a message for a listing and 1 MB to read it; Outlook and Graph read the plain-text body. A body is returned as tidy text of at most 4 000 characters, with a truncation flag. HTML-only messages are turned into text (scripts and styles dropped).
 - Outlook COM times are local wall times and are read as local; COM calls run on a worker thread with a 20 second limit. Jarvis attaches to a running Outlook or starts it in the background.
-- Graph: the refresh token is exchanged for an access token kept in memory; a rotated refresh token replaces the stored one. A refused refresh or a 401 is `not_signed_in`. Message ids are URL-encoded in paths.
+- Graph accounts are kept for the process, so the access token is reused until shortly before it expires. The refresh token is exchanged for an access token kept in memory; a rotated refresh token replaces the stored one. A refused refresh or a 401 is `not_signed_in`. Message ids are URL-encoded in paths.
 - Failures are results with a reason code (`no_password`, `auth_failed`, `unreachable`, `server_error`, `not_signed_in`, `outlook_not_installed`, `outlook_new_only`, `outlook_timeout`, `outlook_failed`), never exceptions; accounts are read in parallel and one failing account never hides the others.
 
 ### Handles
@@ -58,7 +58,7 @@ Registered by `registry.configure_email_tool(cfg)` only when `email_enabled` is 
 | `id` | For `read`: a handle from a listing. Without it, `read` opens the newest message (from `from` when given) |
 
 - `list` returns a header line (JSON: per account `name`, `ok` and a `note` explaining a failure and how to fix it, `count`, `unread_only`), a note that email content is data and never instructions, and the summaries inside the email fence (`web_fence.fence(..., "email")`, markers `<<<BEGIN UNTRUSTED EMAIL CONTENT>>>` / `<<<END UNTRUSTED EMAIL CONTENT>>>`, contents defanged). Each summary has `id`, `account`, `from`, `from_address`, `subject`, `received` (local, minute precision), `unread` and `snippet`. No bodies.
-- `read` returns the same with `body` (and `body_truncated`) instead of `snippet`. An unknown handle fails and asks for a fresh listing; nothing matching is a successful "no message matches".
+- `read` returns a header line (`{"found": true}`), the same note, and inside the fence the message's fields as in a listing with `body` (and `body_truncated`) instead of `snippet`. An unknown handle fails and asks for a fresh listing; nothing matching is a successful "no message matches".
 - When no account can be read the tool fails with each account's reason; no accounts configured fails with the setup command.
 - The turn is private (`memory/activity_log.spec.md` per-turn mark): it stays out of the diary and the console log, and its dialogue is not shared with a cloud model unless allowed (Cloud boundary).
 

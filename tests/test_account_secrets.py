@@ -59,3 +59,29 @@ def test_only_known_account_secret_kinds_are_accepted(store):
         secrets.get_secret("calendar_url")
     with pytest.raises(ValueError):
         secrets.account_key("calendar_url", "  ")
+
+
+def test_a_damaged_split_marker_reads_as_nothing_and_names_cannot_collide_with_parts(store):
+    key = secrets.account_key("email_graph_token", "Live")
+    store.items[("jarvis", key)] = secrets._CHUNK_MARKER + "abc"
+    assert secrets.get_secret(key) == ""
+    with pytest.raises(ValueError):
+        secrets.account_key("email_graph_token", "Work#1")
+
+
+def test_replacing_a_split_value_never_leaves_a_mixture(store):
+    key = secrets.account_key("email_graph_token", "Live")
+    secrets.set_secret(key, "a" * 2500)
+    original = store.set_password
+    calls = []
+
+    def failing(service, username, password):
+        calls.append(username)
+        if len(calls) == 2:
+            raise OSError("interrupted")
+        original(service, username, password)
+
+    store.set_password = failing
+    assert not secrets.set_secret(key, "b" * 2500)
+    store.set_password = original
+    assert secrets.get_secret(key) == "a" * 2500

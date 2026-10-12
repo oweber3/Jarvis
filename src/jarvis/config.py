@@ -599,7 +599,7 @@ def _named_entries(value: Any, fields: Dict[str, tuple]) -> list:
             continue
         name = entry.get("name").strip() if isinstance(entry.get("name"), str) else ""
         kind = entry.get("type")
-        if not name or kind not in fields or name.casefold() in seen:
+        if not name or "#" in name or kind not in fields or name.casefold() in seen:
             continue
         clean: Dict[str, Any] = {"name": name, "type": kind}
         for key in fields[kind]:

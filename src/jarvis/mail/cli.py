@@ -132,6 +132,9 @@ def setup(cfg: Any, io: Io) -> int:
     taken = {e["name"].casefold() for e in entries}
     default = {"gmail": "Gmail", "imap": "Mail", "outlook": "Outlook", "graph": "Outlook.com"}[kind]
     name = io.ask(f"   🏷️ Name for this account [{default}]: ").strip() or default
+    if "#" in name:
+        io.out("   ❌ A name cannot contain #.")
+        return 1
     if name.casefold() in taken:
         io.out(f"   ❌ An account called {name} already exists. Remove it first or pick another name.")
         return 1

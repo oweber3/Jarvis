@@ -86,3 +86,13 @@ def fence(text: str, kind: str = "web") -> str:
     """``text`` defanged and wrapped between the markers of ``kind`` (``web``, ``email`` or ``calendar``)."""
     begin, end = FENCES[kind]
     return f"{begin}\n{defang(text)}\n{end}"
+
+
+def fence_json(payload, kind: str) -> str:
+    """``payload`` as compact JSON (a list one item per line), defanged and fenced as ``kind``."""
+    import json
+    if isinstance(payload, list):
+        text = "[\n" + ",\n".join(json.dumps(item, ensure_ascii=False) for item in payload) + "\n]"
+    else:
+        text = json.dumps(payload, ensure_ascii=False)
+    return fence(text, kind)

@@ -99,13 +99,14 @@ class Occurrence:
 # ── Content lines ──────────────────────────────────────────────────────────
 
 def _unfold(text: str) -> List[str]:
-    lines: List[str] = []
+    # Pieces are joined once per logical line, so a long folded property costs linear time.
+    lines: List[List[str]] = []
     for raw in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         if raw[:1] in (" ", "\t") and lines:
-            lines[-1] += raw[1:]
+            lines[-1].append(raw[1:])
         elif raw:
-            lines.append(raw)
-    return lines
+            lines.append([raw])
+    return ["".join(pieces) for pieces in lines]
 
 
 def _split_line(line: str) -> Optional[Property]:
@@ -269,8 +270,27 @@ class VTimezone(tzinfo):
             self._cache[year] = sorted(set(found), key=lambda t: t[0])
         return self._cache[year]
 
+    def _last_before(self, year: int) -> Tuple[timedelta, bool]:
+        """The offset in force at the start of ``year``: the latest change before it, of any rule."""
+        latest: Optional[Tuple[datetime, timedelta, bool]] = None
+        limit = datetime(max(year, 1), 1, 1)
+        for onset, frm, to, rule, rdates, daylight in self._rules:
+            moments = [m for m in [onset] + rdates if m < limit]
+            if rule is not None and onset < limit:
+                rule = dict(rule)
+                until = _parse_until(rule.pop("UNTIL"), None, frm) if rule.get("UNTIL") else None
+                try:
+                    moments += [m for m in rrule.instances(rule, onset, until=until, stop_after=limit) if m < limit]
+                except rrule.UnsupportedRule:
+                    pass
+            if moments:
+                last = max(moments)
+                if latest is None or last > latest[0]:
+                    latest = (last, to, daylight)
+        return (latest[1], latest[2]) if latest else (self._before, False)
+
     def _current(self, local: datetime) -> Tuple[timedelta, bool]:
-        offset, daylight = self._before, False
+        offset, daylight = self._last_before(local.year - 1)
         for moment, to, is_daylight in self._transitions(local.year):
             if moment <= local:
                 offset, daylight = to, is_daylight
@@ -410,19 +430,22 @@ def occurrences(calendar: Calendar, window_start: datetime, window_end: datetime
             masters.append(event)
 
     found: List[Occurrence] = []
-    for event in masters:
+
+    def add(event: Component, moved: Dict[str, Dict[str, Component]], single_only: bool = False) -> None:
         try:
-            found.extend(_event_occurrences(event, calendar, overrides, window_start, window_end))
-        except (ValueError, OverflowError) as exc:
+            found.extend(_event_occurrences(event, calendar, moved, window_start, window_end, single_only=single_only))
+        except (ValueError, TypeError, OverflowError) as exc:
+            # One malformed event never hides the rest of the calendar.
             debug_log(f"calendar event skipped ({type(exc).__name__})", "agenda")
-        if len(found) >= MAX_INSTANCES:
-            break
+
+    for event in masters:
+        add(event, overrides)
     # Overrides whose series is missing are events of their own.
     master_uids = {e.get("UID").value.strip() for e in masters if e.get("UID") is not None}
     for uid, moved in overrides.items():
         if uid not in master_uids:
             for event in moved.values():
-                found.extend(_event_occurrences(event, calendar, {}, window_start, window_end, single_only=True))
+                add(event, {}, single_only=True)
     found.sort(key=lambda o: (o.start, o.title))
     return found[:MAX_INSTANCES]
 
@@ -435,7 +458,10 @@ def _single(event: Component, calendar: Calendar) -> Optional[Tuple[datetime, da
     end_prop = event.get("DTEND")
     duration_prop = event.get("DURATION")
     if end_prop is not None:
-        end = _parse_value(end_prop, calendar.zones)[0]
+        end, end_all_day = _parse_value(end_prop, calendar.zones)[:2]
+        if end_all_day != all_day:
+            # DTEND of the other kind than DTSTART: read it as the same kind.
+            end = (end.astimezone().replace(tzinfo=None) if all_day else end.astimezone())
     elif duration_prop is not None and _duration(duration_prop.value) is not None:
         end = start + _duration(duration_prop.value)
     else:
@@ -493,8 +519,13 @@ def _event_occurrences(event, calendar, overrides, window_start, window_end, sin
                 excluded.add(_key(moment, ex_all_day or all_day))
     moved = overrides.get(uid, {})
     # A moved instance is listed where it moved to, even when its original time is outside the window.
-    for override in moved.values():
-        replaced = None if _cancelled(override) else _single(override, calendar)
+    broken = set()
+    for key, override in moved.items():
+        try:
+            replaced = None if _cancelled(override) else _single(override, calendar)
+        except (ValueError, TypeError, OverflowError):
+            broken.add(key)  # an unreadable override leaves its original instance in place
+            continue
         if replaced is not None:
             emit(override, replaced[0], replaced[1], replaced[2])
 
@@ -542,7 +573,7 @@ def _event_occurrences(event, calendar, overrides, window_start, window_end, sin
         key = _key(instance_start, all_day)
         if key in excluded:
             continue
-        if key in moved:
+        if key in moved and key not in broken:
             continue
         emit(event, instance_start, instance_start + length, all_day)
     return out

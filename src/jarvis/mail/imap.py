@@ -9,6 +9,7 @@ from __future__ import annotations
 import imaplib
 import re
 import socket
+import ssl
 from typing import Callable, List, Optional
 
 from ..debug import debug_log
@@ -32,7 +33,7 @@ class ImapAccount:
         self.port = int(port or 993)
         self.username = username
         self._password = password
-        self._connect = connect or (lambda host, port, timeout: imaplib.IMAP4_SSL(host, port, timeout=timeout))
+        self._connect = connect or _verified_connection
         self._mailbox = mailbox
 
     # ── Connection ─────────────────────────────────────────────────────────
@@ -48,14 +49,18 @@ class ImapAccount:
             raise _Failure("unreachable") from exc
         try:
             conn.login(self.username, password)
-        except imaplib.IMAP4.error as exc:
+        except (imaplib.IMAP4.error, UnicodeEncodeError) as exc:
             debug_log("imap sign-in refused", "mail")
             _logout(conn)
             raise _Failure("auth_failed") from exc
         except (OSError, socket.timeout) as exc:
             _logout(conn)
             raise _Failure("unreachable") from exc
-        status, _ = conn.select(self._mailbox, readonly=True)
+        try:
+            status, _ = conn.select(self._mailbox, readonly=True)
+        except (OSError, imaplib.IMAP4.error) as exc:
+            debug_log(f"imap select failed ({type(exc).__name__})", "mail")
+            status = "NO"
         if status != "OK":
             _logout(conn)
             raise _Failure("server_error")
@@ -131,7 +136,7 @@ class ImapAccount:
             return None
         try:
             fetched = self._fetch(conn, str(native_id).encode(), FULL_BYTES)
-        except (_Failure, OSError, imaplib.IMAP4.error):
+        except (_Failure, OSError, imaplib.IMAP4.error, ValueError):
             return None
         finally:
             _logout(conn)
@@ -145,6 +150,11 @@ class ImapAccount:
 
     def test(self) -> m.AccountResult:
         return self.list_messages(limit=1)
+
+
+def _verified_connection(host: str, port: int, timeout: float):
+    """IMAP over TLS that checks the server's certificate and name (imaplib does not by default)."""
+    return imaplib.IMAP4_SSL(host, port, ssl_context=ssl.create_default_context(), timeout=timeout)
 
 
 class _Failure(Exception):

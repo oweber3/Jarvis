@@ -11,7 +11,7 @@ import hashlib
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
@@ -23,6 +23,7 @@ from . import ics
 FETCH_TIMEOUT_SEC = 15.0
 MAX_DOWNLOAD_BYTES = 8_000_000
 OUTLOOK_MAX_ITEMS = 500
+OUTLOOK_MAX_SCANNED = 5000
 _OL_FOLDER_CALENDAR = 9
 
 __all__ = ["IcsSource", "OutlookCalendarSource", "OutlookUnavailable", "SourceResult", "normalise_address"]
@@ -78,8 +79,13 @@ def fetch_text(url: str, timeout_sec: float = FETCH_TIMEOUT_SEC) -> str:
                     raise FetchError("too_large")
                 chunks.append(chunk)
             data = b"".join(chunks)
-            return data.decode(response.encoding or "utf-8", errors="replace") if response.encoding \
-                else data.decode("utf-8", errors="replace")
+            # iCalendar is UTF-8 unless the server names a charset (requests would assume Latin-1).
+            charset = _declared_charset(response.headers.get("Content-Type", ""))
+            try:
+                text = data.decode(charset or "utf-8", errors="replace")
+            except LookupError:
+                text = data.decode("utf-8", errors="replace")
+            return text.lstrip("\ufeff")
     except FetchError:
         raise
     except ValueError as exc:
@@ -87,6 +93,14 @@ def fetch_text(url: str, timeout_sec: float = FETCH_TIMEOUT_SEC) -> str:
     except Exception as exc:  # noqa: BLE001 - every network failure means the same to the user
         debug_log(f"calendar fetch failed ({type(exc).__name__})", "agenda")
         raise FetchError("unreachable") from exc
+
+
+def _declared_charset(content_type: str) -> str:
+    for part in content_type.split(";")[1:]:
+        key, _, value = part.partition("=")
+        if key.strip().lower() == "charset":
+            return value.strip().strip('"')
+    return ""
 
 
 class IcsSource:
@@ -161,6 +175,10 @@ class IcsSource:
             return SourceResult(self.name, self.kind, False, error=exc.code)
         except ics.CalendarFormatError:
             debug_log("calendar address did not return a calendar", "agenda")
+            if saved is not None:  # a Wi-Fi login page, for example: the saved copy still answers
+                result = self._result(saved, start, end, offline=True)
+                result.error = "not_a_calendar"
+                return result
             return SourceResult(self.name, self.kind, False, error="not_a_calendar")
         self._save(text, now)
         stamp = self.cache_path.stat().st_mtime if self.cache_path.exists() else now
@@ -182,8 +200,16 @@ def _local(moment: Any) -> datetime:
 
 
 def _restrict_time(moment: datetime) -> str:
-    """A time in the form Outlook's ``Items.Restrict`` accepts (local wall time)."""
-    return moment.astimezone().strftime("%m/%d/%Y %I:%M %p")
+    """A local wall time in the user's short date and time format, which Outlook's ``Items.Restrict``
+    expects. pywin32 reads a UTC-labelled time as the wall time to format."""
+    local = moment.astimezone()
+    try:
+        import pywintypes
+        import win32api
+        stamp = pywintypes.Time(local.replace(tzinfo=timezone.utc))
+        return f"{win32api.GetDateFormat(0x0400, 0, stamp, None)} {win32api.GetTimeFormat(0x0400, 0x2, stamp, None)}"
+    except Exception:  # noqa: BLE001 - no pywin32: the US form most Outlook installs accept
+        return local.strftime("%m/%d/%Y %I:%M %p")
 
 
 class OutlookCalendarSource:
@@ -211,16 +237,18 @@ class OutlookCalendarSource:
             query = f"[Start] < '{_restrict_time(end)}' AND [End] > '{_restrict_time(start)}'"
             try:
                 chosen = items.Restrict(query)
-            except Exception:  # noqa: BLE001 - a locale that reads the date differently
+            except Exception:  # noqa: BLE001 - a date form Outlook did not accept
                 debug_log("outlook restrict failed; scanning sorted items", "agenda")
                 chosen = items
             out = []
             for index, item in enumerate(chosen):
-                if index >= OUTLOOK_MAX_ITEMS:
+                if index >= OUTLOOK_MAX_SCANNED or len(out) >= OUTLOOK_MAX_ITEMS:
                     break
                 item_start = _local(item.Start)
                 if item_start >= end:
                     break
+                if _local(item.End) <= start and item_start < start:
+                    continue
                 out.append({"title": str(item.Subject or ""), "location": str(getattr(item, "Location", "") or ""),
                             "start": item_start, "end": _local(item.End),
                             "all_day": bool(getattr(item, "AllDayEvent", False))})

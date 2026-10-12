@@ -277,3 +277,41 @@ def test_the_real_imap_client_reads_without_changing_the_mailbox(box):
     assert set(commands) <= {"CAPABILITY", "LOGIN", "EXAMINE", "UID", "LOGOUT"}
     assert all("BODY.PEEK" in line for line in server.lines if " FETCH " in line)
     assert box.writes == [] and box.selected_readonly is True
+
+
+def test_the_default_imap_connection_verifies_the_server_certificate(monkeypatch):
+    import ssl
+    seen = {}
+
+    class Capture:
+        def __init__(self, host, port, **kwargs):
+            seen.update(kwargs)
+            raise OSError("stop here")
+
+    monkeypatch.setattr(imap.imaplib, "IMAP4_SSL", Capture)
+    imap.ImapAccount("Gmail", host="imap.gmail.com", port=993, username="u", password=lambda: "pw").list_messages()
+    context = seen.get("ssl_context")
+    assert context is not None and context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
+
+
+def test_imap_failures_after_sign_in_are_results_not_exceptions(box, monkeypatch):
+    import imaplib
+    from fake_imap import FakeImapConnection
+
+    def broken_select(self, mailbox="INBOX", readonly=False):
+        raise imaplib.IMAP4.abort("connection dropped")
+
+    monkeypatch.setattr(FakeImapConnection, "select", broken_select)
+    assert _imap(box).list_messages().error == "server_error"
+    assert _imap(box).read_message("101") is None
+    assert _imap(box, password="pässword").list_messages().error in ("auth_failed", "server_error")
+
+
+def test_graph_accounts_reuse_their_access_token_between_requests(mock_config, monkeypatch):
+    from jarvis import credentials
+    monkeypatch.setattr(credentials, "get_secret", lambda key: "")
+    mock_config.email_accounts = [{"name": "Outlook.com", "type": "graph", "client_id": "abc", "tenant": "consumers"}]
+    first = service.accounts_from_config(mock_config)[0]
+    assert service.accounts_from_config(mock_config)[0] is first
+    mock_config.email_accounts = [{"name": "Outlook.com", "type": "graph", "client_id": "other", "tenant": "consumers"}]
+    assert service.accounts_from_config(mock_config)[0] is not first

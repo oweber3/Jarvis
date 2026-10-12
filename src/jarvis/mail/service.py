@@ -23,6 +23,7 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 _handles: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 _lock = threading.Lock()
+_graph_accounts: dict = {}
 
 
 @dataclass
@@ -63,10 +64,17 @@ def accounts_from_config(cfg: Any) -> list:
         elif kind == "outlook":
             built.append(OutlookMailAccount(name))
         elif kind == "graph":
-            key = credentials.account_key("email_graph_token", name)
-            built.append(GraphAccount(name, client_id=entry.get("client_id") or "", tenant=entry.get("tenant") or "common",
-                                      get_token=lambda key=key: credentials.get_secret(key),
-                                      set_token=lambda value, key=key: credentials.set_secret(key, value)))
+            # Kept for the process so its in-memory access token is reused instead of refreshed per request.
+            identity = (name, entry.get("client_id") or "", entry.get("tenant") or "common")
+            with _lock:
+                account = _graph_accounts.get(identity)
+                if account is None:
+                    key = credentials.account_key("email_graph_token", name)
+                    account = GraphAccount(name, client_id=identity[1], tenant=identity[2],
+                                           get_token=lambda key=key: credentials.get_secret(key),
+                                           set_token=lambda value, key=key: credentials.set_secret(key, value))
+                    _graph_accounts[identity] = account
+            built.append(account)
     return built
 
 

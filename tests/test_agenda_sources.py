@@ -201,3 +201,21 @@ def test_sources_come_from_the_configuration_with_addresses_from_the_credential_
 def test_named_ranges_are_whole_local_days(name, expected):
     start, end = service.named_range(name, datetime(2026, 10, 12, 15, 30).astimezone())
     assert (start, end) == tuple(d.astimezone() for d in expected)
+
+
+def test_a_login_page_instead_of_the_calendar_falls_back_to_the_saved_copy(server, tmp_path):
+    clock = Clock()
+    _ics(server, tmp_path, clock, ttl=60).read(*DAY)
+    server.body, server.content_type = "<html>Wi-Fi login</html>", "text/html"
+    clock.now += 3600
+    result = _ics(server, tmp_path, clock, ttl=60).read(*DAY)
+    assert result.ok and result.offline_copy and result.error == "not_a_calendar"
+
+
+def test_a_calendar_without_a_charset_is_read_as_utf8(tmp_path):
+    fake = FakeIcsServer(CALENDAR.replace("Seminar", "Café Grüße"), content_type="text/calendar")
+    try:
+        result = _ics(fake, tmp_path, Clock()).read(*DAY)
+    finally:
+        fake.stop()
+    assert result.occurrences[0].title == "Café Grüße"

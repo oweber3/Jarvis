@@ -176,3 +176,50 @@ def test_a_long_daily_series_is_bounded_but_still_reaches_the_window():
                        "RRULE:FREQ=DAILY"))
     found = _between(text, _utc(2026, 10, 12), _utc(2026, 10, 14))
     assert [o.start.day for o in found] == [12, 13]
+
+
+def test_a_huge_folded_property_parses_in_linear_time():
+    import time as _time
+    blob = "\r\n ".join(["A" * 74] * 80_000)  # about 6 MB of folded attachment
+    text = _cal(_event("UID:1", "SUMMARY:Big", "DTSTART:20261012T090000Z", "DURATION:PT1H", "ATTACH:" + blob))
+    began = _time.monotonic()
+    assert [o.title for o in _between(text, _utc(2026, 10, 12), _utc(2026, 10, 13))] == ["Big"]
+    assert _time.monotonic() - began < 5
+
+
+def test_malformed_events_are_skipped_and_never_hide_the_rest():
+    text = _cal(
+        _event("UID:ok", "SUMMARY:Fine", "DTSTART:20261012T090000Z", "DTEND:20261012T100000Z"),
+        _event("UID:orphan", "RECURRENCE-ID:20261012T090000Z", "SUMMARY:Orphan", "DTSTART:2026-10-12"),
+        _event("UID:mixed", "SUMMARY:Mixed", "DTSTART:20261012T110000Z", "DTEND;VALUE=DATE:20261013"),
+        _event("UID:s", "SUMMARY:Series", "DTSTART:20261012T120000Z", "DURATION:PT30M", "RRULE:FREQ=DAILY;COUNT=2"),
+        _event("UID:s", "RECURRENCE-ID:20261013T120000Z", "SUMMARY:Series", "DTSTART:bad"))
+    titles = [o.title for o in _between(text, _utc(2026, 10, 12), _utc(2026, 10, 14))]
+    assert "Fine" in titles and titles.count("Series") >= 1
+
+
+def test_a_zone_whose_last_change_was_long_ago_keeps_that_offset():
+    zone = ("BEGIN:VTIMEZONE\r\nTZID:Old Rules\r\n"
+            "BEGIN:STANDARD\r\nDTSTART:19701025T030000\r\nTZOFFSETFROM:+0300\r\nTZOFFSETTO:+0200\r\n"
+            "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU;UNTIL=20101031T000000Z\r\nEND:STANDARD\r\n"
+            "BEGIN:DAYLIGHT\r\nDTSTART:19700329T020000\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0300\r\n"
+            "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU;UNTIL=20100328T000000Z\r\nEND:DAYLIGHT\r\n"
+            "BEGIN:STANDARD\r\nDTSTART:20110327T020000\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0400\r\nEND:STANDARD\r\n"
+            "END:VTIMEZONE\r\n")
+    text = _cal(_event("UID:1", "SUMMARY:Call", "DTSTART;TZID=Old Rules:20261012T100000", "DURATION:PT1H"),
+                extra=zone)
+    assert _between(text, _utc(2026, 10, 12), _utc(2026, 10, 13))[0].start.astimezone(UTC) == _utc(2026, 10, 12, 6)
+
+
+def test_the_instance_cap_keeps_the_earliest_events():
+    events = [_event(f"UID:{n}", f"SUMMARY:E{n:05d}", f"DTSTART:20261012T{n // 60 % 24:02d}{n % 60:02d}00Z",
+                     "DURATION:PT1M") for n in reversed(range(ics.MAX_INSTANCES + 50))]
+    found = _between(_cal(*events), _utc(2026, 10, 12), _utc(2026, 10, 13))
+    assert len(found) == ics.MAX_INSTANCES and found[0].start == _utc(2026, 10, 12, 0, 0)
+
+
+def test_a_yearly_rule_with_only_a_month_day_repeats_every_month():
+    text = _cal(_event("UID:1", "SUMMARY:Pay day", "DTSTART;VALUE=DATE:20260115", "RRULE:FREQ=YEARLY;BYMONTHDAY=15"))
+    start = datetime(2026, 10, 1).astimezone()
+    assert [o.start_date for o in _between(text, start, datetime(2026, 12, 1).astimezone())] == [
+        date(2026, 10, 15), date(2026, 11, 15)]

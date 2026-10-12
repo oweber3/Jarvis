@@ -324,3 +324,16 @@ def test_email_logs_never_carry_senders_subjects_or_account_names(mail_cfg, monk
     call(mail_cfg, "email", action="read", **{"from": "sam"})
     text = "\n".join(lines).casefold()
     assert lines and not any(word in text for word in ("sam", "lunch", "ada", "coursework", "gmail", "app-password"))
+
+
+def test_a_start_time_without_an_end_reads_the_rest_of_that_day(cal_cfg):
+    start = (datetime.now() + timedelta(days=1)).replace(hour=0, minute=1, second=0, microsecond=0)
+    result = call(cal_cfg, "calendar", start=start.isoformat(timespec="minutes"))
+    assert result.success, result.error_message
+
+
+def test_private_turns_stay_local_while_a_configured_source_is_unshared_even_if_turned_off(cal_cfg):
+    from jarvis.bridge.settings import bridge_settings
+    switched_off = _bridge_cfg(cal_cfg, activity_log_share_with_cloud=True, calendar_share_with_cloud=True,
+                               email_enabled=False, email_accounts=[{"name": "Gmail", "type": "imap"}])
+    assert not bridge_settings(switched_off, "claude").share_private_dialogue

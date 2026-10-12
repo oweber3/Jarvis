@@ -16,7 +16,7 @@ from ...mail import service
 from ...mail.messages import MailMessage, MailSummary
 from ..base import Tool, ToolContext
 from ..types import ToolExecutionResult
-from .web_fence import fence
+from .web_fence import fence_json
 
 MAX_LIMIT = 20
 DEFAULT_LIMIT = 5
@@ -142,7 +142,7 @@ class EmailTool(Tool):
         from ...memory.activity_log import mark_turn_private
         mark_turn_private()
         text = (json.dumps(header, ensure_ascii=False) + "\n" + FENCE_NOTE + "\n"
-                + fence(json.dumps(payload, ensure_ascii=False, indent=1), "email"))
+                + fence_json(payload, "email"))
         return ToolExecutionResult(success=True, reply_text=text)
 
     @staticmethod

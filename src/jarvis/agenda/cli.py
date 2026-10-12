@@ -63,7 +63,7 @@ def _save(entries: List[Dict[str, Any]], *, enable: Optional[bool] = None) -> bo
 def _check(source, io: Io) -> bool:
     now = datetime.now().astimezone()
     result = source.read(now, now + timedelta(days=7))
-    if result.ok:
+    if result.ok and not result.offline_copy:
         io.out(f"   ✅ Connected: {len(result.occurrences)} events in the next 7 days")
         return True
     io.out(f"   ❌ Could not read it: {ERRORS.get(result.error, 'unknown error')}")
@@ -89,6 +89,9 @@ def setup(cfg: Any, io: Io) -> int:
     taken = {e["name"].casefold() for e in entries}
     default = {"google": "Google", "outlookcom": "Outlook.com", "ics": "Calendar", "outlook": "Outlook"}[kind]
     name = io.ask(f"   🏷️ Name for this calendar [{default}]: ").strip() or default
+    if "#" in name:
+        io.out("   ❌ A name cannot contain #.")
+        return 1
     if name.casefold() in taken:
         io.out(f"   ❌ A calendar called {name} already exists. Remove it first or pick another name.")
         return 1

@@ -172,7 +172,8 @@ def _generate(freq, interval, count, bymonth, bymonthday, setpos, byday, wkst, d
                 elif 0 < abs(ordinal) <= len(matching):
                     out.append(datetime.combine(matching[ordinal - 1] if ordinal > 0 else matching[ordinal], clock))
             return sorted(set(out))
-        for month in (bymonth or [dtstart.month]):
+        # BYMONTHDAY without BYMONTH repeats in every month of the year (RFC 5545).
+        for month in (bymonth or (list(range(1, 13)) if bymonthday else [dtstart.month])):
             out.extend(datetime.combine(date(year, month, d), clock)
                        for d in _month_days(year, month, bymonthday, byday, dtstart.day))
         return sorted(out)

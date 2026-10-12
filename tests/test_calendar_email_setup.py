@@ -143,3 +143,14 @@ def test_outlook_when_only_the_new_outlook_is_installed_explains_why(env, monkey
     io, lines = _io(mail_cli, ["3", ""])
     assert mail_cli.main(["setup"], io) == 1
     assert any("new Outlook" in line for line in lines)
+
+
+def test_calendar_test_reports_an_unreachable_address_even_with_a_saved_copy(env):
+    path, store = env
+    server = FakeIcsServer(CALENDAR)
+    agenda_cli.main(["setup"], _io(agenda_cli, ["3", "Club"], [server.url])[0])
+    server.stop()
+    io, lines = _io(agenda_cli, [])
+    assert agenda_cli.main(["test", "Club"], io) == 1
+    assert any("❌" in line for line in lines)
+    agenda_cli.main(["remove", "Club"], _io(agenda_cli, [])[0])

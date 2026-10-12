@@ -15,7 +15,7 @@ from ...agenda.ics import Occurrence
 from ...debug import debug_log
 from ..base import Tool, ToolContext
 from ..types import ToolExecutionResult
-from .web_fence import fence
+from .web_fence import fence_json
 
 MAX_EVENTS = 60
 NEXT_SEARCH_DAYS = 30
@@ -123,7 +123,8 @@ class CalendarTool(Tool):
             try:
                 if args.get("start"):
                     start = _parse_day_or_time(args["start"], end=False)
-                    end = _parse_day_or_time(args.get("end") or args["start"], end=True)
+                    # Without an end the range runs to the end of the start's day.
+                    end = _parse_day_or_time(args.get("end") or start.date().isoformat(), end=True)
                     label = "dates"
                 else:
                     label = str(args.get("range") or "today").strip().lower()
@@ -169,7 +170,7 @@ class CalendarTool(Tool):
         mark_turn_private()
         context.user_print(f"📅 Calendar: {count} event{'s' if count != 1 else ''}")
         text = (json.dumps(header, ensure_ascii=False) + "\n" + FENCE_NOTE + "\n"
-                + fence(json.dumps(payload, ensure_ascii=False, indent=1), "calendar"))
+                + fence_json(payload, "calendar"))
         return ToolExecutionResult(success=True, reply_text=text)
 
     @staticmethod

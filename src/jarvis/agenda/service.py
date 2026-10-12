@@ -4,6 +4,7 @@ See ``agenda.spec.md``.
 """
 from __future__ import annotations
 
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
@@ -17,6 +18,8 @@ from .sources import IcsSource, OutlookCalendarSource, SourceResult
 RANGES = ("today", "tomorrow", "week")
 SOURCE_TYPES = ("ics", "outlook")
 _WEEK_DAYS = 7
+_lock = threading.Lock()
+_ics_sources: dict = {}
 
 
 @dataclass
@@ -41,9 +44,16 @@ def sources_from_config(cfg: Any) -> list:
     for entry in getattr(cfg, "calendar_sources", None) or []:
         name, kind = entry.get("name"), entry.get("type")
         if kind == "ics":
-            key = credentials.account_key("calendar_url", name)
-            built.append(IcsSource(name, cache_dir=folder, ttl_sec=ttl,
-                                   address=lambda key=key: credentials.get_secret(key)))
+            # Kept for the process so the parsed copy is reused instead of read again per request.
+            identity = (name, str(folder), ttl)
+            with _lock:
+                source = _ics_sources.get(identity)
+                if source is None:
+                    key = credentials.account_key("calendar_url", name)
+                    source = IcsSource(name, cache_dir=folder, ttl_sec=ttl,
+                                       address=lambda key=key: credentials.get_secret(key))
+                    _ics_sources[identity] = source
+            built.append(source)
         elif kind == "outlook":
             built.append(OutlookCalendarSource(name))
     return built
