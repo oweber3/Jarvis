@@ -27,7 +27,7 @@ from conftest import requires_judge_llm
 from helpers import (
     MockConfig,
     JUDGE_MODEL,
-    JUDGE_BASE_URL,
+    make_eval_llm_config,
     call_judge_llm,
     JudgeVerdict,
 )
@@ -147,6 +147,7 @@ class TestDiaryRecencyOrder:
         results = search_conversation_memory_by_keywords(
             db=db,
             keywords=case.search_keywords,
+            cfg=make_eval_llm_config(),
             max_results=10,
         )
 
@@ -250,8 +251,8 @@ class TestMergeSupersession:
             store=graph_store,
             node_id=node.id,
             new_facts=[new_line],
-            ollama_base_url=JUDGE_BASE_URL,
-            ollama_chat_model=JUDGE_MODEL,
+            cfg=make_eval_llm_config(),
+            chat_model=JUDGE_MODEL,
             timeout_sec=30.0,
         )
 

@@ -239,20 +239,53 @@ def create_mock_tool_run(
     return mock_tool_run
 
 
+def eval_fast_model() -> str:
+    """The fast-tier model the evals run, as ``load_settings`` resolves it on
+    the Ollama path: ``EVAL_FAST_MODEL`` when set, otherwise the product's
+    default fast model."""
+    from jarvis.config import DEFAULT_FAST_MODEL
+    return os.environ.get("EVAL_FAST_MODEL", "").strip() or DEFAULT_FAST_MODEL
+
+
+# Ollama-path aliases and the provider-aware field each one resolves into.
+_OLLAMA_ALIASES = {
+    "ollama_chat_model": "llm_chat_model",
+    "ollama_embed_model": "embedding_model",
+}
+
+
 @dataclass
 class MockConfig:
-    """Minimal config object for eval tests."""
+    """Minimal config object for eval tests.
+
+    Model fields resolve the way ``jarvis.config.load_settings`` resolves
+    them (``llm.spec.md``, Configuration): on the Ollama path the
+    ``ollama_*`` keys are authoritative, so setting ``ollama_chat_model``
+    (the pattern most evals use) also sets the ``llm_chat_model`` every
+    context reads; ``fast_model`` defaults to the product's fast model on
+    Ollama and to the chat model on an OpenAI-compatible provider.
+    """
     ollama_base_url: str = "http://localhost:11434"
-    ollama_chat_model: str = "gemma4:e2b"
+    # The model under test (``EVAL_JUDGE_MODEL``), so contexts a mocked eval
+    # leaves live run on a model the machine actually has.
+    ollama_chat_model: str = JUDGE_MODEL
     ollama_embed_model: str = "nomic-embed-text"
     # Provider-aware fields (for LM Studio, OpenAI-compatible, etc.)
     llm_provider: str = ""
     llm_base_url: str = ""
     llm_chat_model: str = ""
     embedding_model: Optional[str] = None
+    fast_model: str = ""
+
+    def __setattr__(self, name, value):
+        object.__setattr__(self, name, value)
+        target = _OLLAMA_ALIASES.get(name)
+        if target and getattr(self, "llm_provider", "") != "openai_compatible":
+            object.__setattr__(self, target, value)
 
     def __post_init__(self):
-        """Auto-configure provider from EVAL_JUDGE_BASE_URL when set."""
+        """Auto-configure provider from EVAL_JUDGE_BASE_URL when set, then
+        resolve the provider-aware model fields like ``load_settings``."""
         import os as _os
         judge_url = _os.environ.get("EVAL_JUDGE_BASE_URL", "").strip()
         if judge_url and "11434" not in judge_url:
@@ -267,6 +300,13 @@ class MockConfig:
             if judge_model:
                 self.llm_chat_model = judge_model
                 self.ollama_chat_model = judge_model
+        openai = self.llm_provider == "openai_compatible"
+        if not self.llm_chat_model:
+            self.llm_chat_model = self.ollama_chat_model
+        if not self.embedding_model:
+            self.embedding_model = self.ollama_embed_model
+        if not self.fast_model:
+            self.fast_model = self.llm_chat_model if openai else eval_fast_model()
     db_path: str = ":memory:"
     sqlite_vss_path: Optional[str] = None
     voice_debug: bool = True
