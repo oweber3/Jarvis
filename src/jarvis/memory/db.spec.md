@@ -62,6 +62,12 @@ Lists, their items and quick notes keep `user_lists`, `user_list_items` and `use
 same SQLite file, created and owned by `ListsNotesStore` (`memory/lists_notes.spec.md`), not by
 `Database`. They are never read by retrieval, the diary or the graph.
 
+## Document index
+
+Opt-in document search keeps `document_files`, `document_chunks` and `document_index_meta` in the same
+SQLite file, created and owned by `DocumentStore` (`documents/documents.spec.md`), not by `Database`.
+They are never read by retrieval, the diary or the graph.
+
 ## Web chat
 
 The opt-in web chat keeps `chat_projects`, `chats`, `chat_messages` and `chat_state`

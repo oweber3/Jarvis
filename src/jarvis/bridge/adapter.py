@@ -21,21 +21,22 @@ MODE_LABELS = {"codex": "Codex", "claude": "Claude"}
 def build_dialogue_context(dialogue_memory: Any, settings: BridgeSettings) -> List[Dict[str, str]]:
     """Bounded, redacted recent user and assistant messages shared with the bridge.
 
-    Turns kept out of the diary because they quote the activity log stay local unless the user
-    shares the activity log with cloud modes (``memory/activity_log.spec.md``)."""
+    Turns kept out of the diary because they quote the activity log or the user's documents stay local
+    unless ``settings.share_private_turns`` allows them (``memory/activity_log.spec.md``,
+    ``documents/documents.spec.md``)."""
     return _shared_dialogue(dialogue_memory, settings)[0]
 
 
 def _shared_dialogue(dialogue_memory: Any, settings: BridgeSettings) -> Tuple[List[Dict[str, str]], bool]:
     """The dialogue shared with the bridge, and whether any shared message is a private
-    (activity log) turn."""
+    (activity log or documents) turn."""
     if not settings.share_recent_dialogue or dialogue_memory is None:
         return [], False
     limit = settings.recent_dialogue_messages
     if not limit:
         return [], False
     try:
-        messages = (dialogue_memory.get_recent_messages(include_private=settings.share_activity_log,
+        messages = (dialogue_memory.get_recent_messages(include_private=settings.share_private_turns,
                                                         flag_private=True)
                     if dialogue_memory.has_recent_messages() else [])
     except Exception as exc:
@@ -103,11 +104,11 @@ def run_bridge_reply(mode: str, db: Any, cfg: Any, tts: Any, redacted: str, dial
     if outcome.kind == "cancelled" or not (outcome.text or "").strip():
         return None
     if shared_private:
-        # A reply built on shared activity data is as private as the turn that read it
+        # A reply built on shared private data is as private as the turn that read it
         # (memory/activity_log.spec.md): out of the diary and the console log.
         from ..memory.activity_log import mark_turn_private
         mark_turn_private()
-        debug_log("shared dialogue held activity data; reply kept private", "bridge")
+        debug_log("shared dialogue held private data; reply kept private", "bridge")
     try:
         return deliver(outcome.text, redacted, cfg, tts, dialogue_memory, quiet)
     except RequestCancelled:

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 from ..debug import debug_log
+from ..documents import runtime as documents_runtime
 from ..memory import activity_runtime
 
 EXECUTE_TOOL = "jarvis_execute"
@@ -19,8 +20,11 @@ EXECUTE_TOOL = "jarvis_execute"
 # or end a turn without a reply (dismissals are handled locally before a request reaches a bridge).
 ALWAYS_EXCLUDED_TOOLS = frozenset({"toolSearchTool", "refreshMCPTools", "replyMode", "gestureControl", "stop"})
 PERSONAL_DATA_TOOLS = frozenset({"logMeal", "fetchMeals", "deleteMeal"})
-# Offered to a cloud model only while ``activity_runtime.shared_with_cloud`` allows it.
-ACTIVITY_TOOLS = frozenset({"activityLog"})
+# Opt-in personal sources, each offered to a cloud model only while its own sharing switch allows it.
+CLOUD_GATED_TOOLS = {
+    "activityLog": activity_runtime.shared_with_cloud,
+    "documentSearch": documents_runtime.shared_with_cloud,
+}
 _DESCRIPTION_CHARS = 600
 _REQUEST_ID = {"type": "string", "description": "The request ID from the turn input."}
 _EXECUTE_DESCRIPTION = ("Run one allowed Jarvis tool for this request. Allowed tools (name: description. "
@@ -103,7 +107,8 @@ def build_tool_snapshot(cfg: Any, *, share_long_term_memory: bool, log_tag: str 
         personal = name in PERSONAL_DATA_TOOLS or getattr(tool, "personal_data", False) is True
         if name in ALWAYS_EXCLUDED_TOOLS or (personal and not share_long_term_memory):
             continue
-        if name in ACTIVITY_TOOLS and not activity_runtime.shared_with_cloud(cfg):
+        gate = CLOUD_GATED_TOOLS.get(name)
+        if gate is not None and not gate(cfg):
             continue
         snapshot[name] = {
             "description": (tool.description or "")[:_DESCRIPTION_CHARS],

@@ -538,6 +538,31 @@ def _build_field_metadata() -> List[FieldMeta]:
       "Time without keyboard or mouse input before time is recorded as idle instead of as the "
       "application you left open.",
       "privacy", "float", min_val=30, max_val=3600, step=30, suffix="s", advanced=True, shown_when=logging)
+    heading("Document search")
+    documents = _on("document_search_enabled")
+    f("document_search_enabled", "Search My Documents",
+      "Off by default. When on, Jarvis reads the .txt, .md, .pdf and .docx files in the folders below and "
+      "builds a search index on this PC with your local embedding model, so you can ask what a document "
+      "says (\"what did my lease say about pets?\"). The index is stored only in Jarvis's database on this "
+      "PC. Hidden folders and files kept only in the cloud (OneDrive online-only files) are never read. "
+      "Indexing runs in the background while Jarvis is idle. Rebuild or delete the index from the tray. "
+      "Takes effect after Jarvis restarts.",
+      "privacy", "bool")
+    f("document_search_folders", "Folders to Index",
+      "Folders inside your home folder: Documents, Desktop, a path such as Documents/University, or a full "
+      "path. Folders outside your home folder are skipped.",
+      "privacy", "list", shown_when=documents)
+    f("document_search_share_with_cloud", "Share With Codex and Claude",
+      "Off by default: document search is available only to the local model, and your documents never leave "
+      "this PC. Turn on to let the Codex and Claude reply modes search them, which sends the passages they "
+      "ask for (with file names and paths) to OpenAI or Anthropic.",
+      "privacy", "bool", shown_when=documents)
+    f("document_search_max_file_mb", "Largest File",
+      "Files bigger than this are not indexed.",
+      "privacy", "int", min_val=1, max_val=500, step=1, suffix="MB", advanced=True, shown_when=documents)
+    f("document_search_rescan_minutes", "Check for Changes Every",
+      "How often the folders are checked for new or changed documents.",
+      "privacy", "int", min_val=5, max_val=1440, step=5, suffix="min", advanced=True, shown_when=documents)
     heading("Location")
     located = _on("location_enabled")
     f("location_enabled", "Use Location",
