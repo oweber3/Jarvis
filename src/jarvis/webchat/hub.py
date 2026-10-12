@@ -11,10 +11,17 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ..debug import debug_log
-from ..memory.chat_store import ANY_PROJECT, Chat, ChatStore
+from ..memory.chat_store import ANY_PROJECT, Chat, ChatStore, Message
+from ..tools.step_log import StepLog, get_step_log, humanise
+from . import suggestions
+from .mic import MicSessions
+from ..reply.attachments import (KIND_IMAGE, MAX_ATTACHMENTS, MAX_FILE_CHARS, MAX_IMAGES, RequestAttachment,
+                                 attachment_summary)
+from . import uploads
+from .uploads import UploadRefused, UploadStore, classify
 
 DEFAULT_CHAT_TITLE = "Voice and quick questions"
 RESTORE_TURNS = 20
@@ -49,15 +56,27 @@ class ModelResult:
 
 def chat_dict(chat: Chat) -> Dict[str, Any]:
     return {"id": chat.id, "project_id": chat.project_id, "title": chat.title, "created_at": chat.created_at,
-            "updated_at": chat.updated_at, "last_mode": chat.last_mode, "last_model": chat.last_model}
+            "updated_at": chat.updated_at, "last_mode": chat.last_mode, "last_model": chat.last_model,
+            "pinned": chat.pinned}
+
+
+def message_dict(message: Message) -> Dict[str, Any]:
+    """A stored message as the page gets it: never the private flag, steps as stored, attachments as kind and size only."""
+    return {"id": message.id, "role": message.role, "text": message.content, "ts": message.ts,
+            "source": message.source, "steps": [dict(step) for step in message.steps],
+            "attachments": [dict(a) for a in message.attachments]}
 
 
 class ChatHub:
     """Thread-safe state behind the web chat. ``backend`` is a ``DaemonBackend`` or a test fake."""
 
     def __init__(self, backend, store: ChatStore, *, sync_interval_sec: float = SYNC_INTERVAL_SEC,
-                 restore_turns: int = RESTORE_TURNS, clock: Callable[[], float] = time.time) -> None:
+                 restore_turns: int = RESTORE_TURNS, clock: Callable[[], float] = time.time,
+                 steps: Optional[StepLog] = None) -> None:
         self._backend = backend
+        self._steps = steps if steps is not None else get_step_log()
+        # Steps up to here belong to nothing the open chat shows: they were taken before it was open.
+        self._step_cursor = self._steps.latest()
         self._store = store
         self._interval = sync_interval_sec
         self._restore_turns = restore_turns
@@ -70,6 +89,7 @@ class ChatHub:
         self._next_notice_id = 1
         self._next_query_id = 1
         self._pending: Dict[int, Dict[str, Any]] = {}
+        self._uploads = UploadStore()
         self._submitting: set = set()
         self._outcomes: Dict[int, str] = {}
         self._memory = None
@@ -79,10 +99,15 @@ class ChatHub:
         self._wake = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._unsubscribe: Optional[Callable[[], None]] = None
+        self.mic = MicSessions(backend)
 
     @property
     def store(self) -> ChatStore:
         return self._store
+
+    @property
+    def uploads(self) -> UploadStore:
+        return self._uploads
 
     # -- lifecycle ---------------------------------------------------------------
 
@@ -98,6 +123,7 @@ class ChatHub:
     def stop(self) -> None:
         self._stop.set()
         self._wake.set()
+        self.mic.shutdown()
         with self._sync_lock:
             self._let_go_of_memory()
         if self._unsubscribe is not None:
@@ -189,10 +215,28 @@ class ChatHub:
             source = last[0].source
         else:
             source = "voice"
+        steps = self._take_steps(turn) if turn.role == "assistant" else []
         self._store.append_message(chat_id, turn.role, turn.content, ts=turn.ts, source=source,
-                                   private=bool(turn.private))
+                                   private=bool(turn.private), steps=steps,
+                                   attachments=self._claim_attachments() if turn.role == "user" else ())
         if turn.role == "assistant":
             self._remember_model()
+
+    def _take_steps(self, turn) -> List[Dict[str, Any]]:
+        """The tool steps taken since the last reply and no later than this one, as stored with it. A
+        reply that quotes the activity log keeps only the tool and its status, never what it did."""
+        found = self._steps.since(self._step_cursor, until_ts=turn.ts)
+        if not found:
+            return []
+        self._step_cursor = found[-1].seq
+        debug_log(f"webchat: {len(found)} tool steps stored with a reply", "webchat")
+        return [{"tool": s.tool, "status": s.status,
+                 "label": humanise(s.tool) if turn.private else s.label,
+                 "summary": None if turn.private else s.summary} for s in found]
+
+    def _drop_steps(self) -> None:
+        """Forget the steps taken so far: a request that gave no reply must not lend them to the next one."""
+        self._step_cursor = self._steps.latest()
 
     def _restore_payload(self, chat_id: str) -> List[dict]:
         return [{"role": m.role, "content": m.content, **({"diary": False} if m.private else {})}
@@ -201,6 +245,15 @@ class ChatHub:
     def _typed_in_flight(self) -> bool:
         with self._cond:
             return bool(self._pending)
+
+    def _claim_attachments(self) -> List[Dict[str, Any]]:
+        """The kind and size of what the typed request in flight carried, once, for its user turn."""
+        with self._cond:
+            for record in self._pending.values():
+                if record.get("attachments") and not record.get("claimed"):
+                    record["claimed"] = True
+                    return list(record["attachments"])
+        return []
 
     def _signature_now(self):
         mode = self._backend.reply_mode_state() or {}
@@ -277,6 +330,7 @@ class ChatHub:
             if cursor is None:
                 return "busy"
             self._store.delete_all()
+            self._uploads.clear()
             self._opened(None, cursor)
             return "ok"
 
@@ -285,6 +339,7 @@ class ChatHub:
         that lands right after the swap still reaches the new chat."""
         self._store.set_active_chat_id(chat_id)
         self._cursor = cursor
+        self._drop_steps()
         with self._cond:
             self._notices.clear()
             self._library_rev += 1
@@ -302,18 +357,34 @@ class ChatHub:
 
     # -- requests ----------------------------------------------------------------
 
-    def submit(self, text: str) -> SubmitResult:
-        """Send a typed request through the daemon's text path, into the open chat."""
+    def submit(self, text: str, attachment_ids: Sequence[str] = ()) -> SubmitResult:
+        """Send a typed request through the daemon's text path, into the open chat. ``attachment_ids`` are
+        uploads waiting in the store: they go with this request only. An id that is unknown, or an image the
+        active route cannot see, refuses the whole request and keeps the uploads for another try."""
         with self._sync_lock:
             self.sync()
             self._ensure_open_chat()
+            if attachment_ids:
+                self._check_images(self._uploads.peek(attachment_ids))
             # Registered before the lock is released, so no chat can be opened between here and the daemon.
             with self._cond:
                 query_id = self._next_query_id
                 self._next_query_id += 1
                 self._pending[query_id] = {"display": None, "started": False, "cancel": False, "status": "pending"}
                 self._bump_locked()
-        debug_log(f"webchat: query {query_id} submitted", "webchat")
+            attachments: List[RequestAttachment] = []
+            if attachment_ids:
+                try:
+                    attachments = self._uploads.take(attachment_ids)
+                except UploadRefused:
+                    with self._cond:
+                        self._pending.pop(query_id, None)
+                        self._bump_locked()
+                    raise
+                with self._cond:
+                    self._pending[query_id]["attachments"] = attachment_summary(attachments)
+        debug_log(f"webchat: query {query_id} submitted" + (f" with {len(attachments)} attachment(s)"
+                                                            if attachments else ""), "webchat")
 
         def on_start(display: str) -> None:
             with self._cond:
@@ -340,7 +411,8 @@ class ChatHub:
         with self._cond:
             self._submitting.add(query_id)
         try:
-            self._backend.submit(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy)
+            extra = {"attachments": tuple(attachments)} if attachments else {}
+            self._backend.submit(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy, **extra)
         except Exception as exc:
             debug_log(f"webchat: query {query_id} could not be submitted: {type(exc).__name__}", "webchat")
             self._finish(query_id, "unavailable")
@@ -348,6 +420,17 @@ class ChatHub:
             self._submitting.discard(query_id)
             outcome = self._outcomes.pop(query_id, "accepted")
         return SubmitResult(status=outcome if outcome in ("busy", "unavailable") else "accepted", query_id=query_id)
+
+    def _check_images(self, held: Sequence[RequestAttachment]) -> None:
+        """Refuse an image the active route cannot see. A local model without vision still gets a screenshot's
+        text; a cloud mode that takes no images gets neither."""
+        images = (self._backend.attachment_support() or {}).get("images") or {}
+        if images.get("ok", True):
+            return
+        reason = images.get("reason") or "no_vision"
+        if any(a.kind == KIND_IMAGE for a in held) or (reason != "no_vision" and any(a.image for a in held)):
+            debug_log(f"webchat: attachments refused ({reason})", "webchat")
+            raise UploadRefused(reason)
 
     def _finish(self, query_id: int, status: str, *, request: Optional[str] = None) -> None:
         with self._cond:
@@ -363,6 +446,8 @@ class ChatHub:
             self._bump_locked()
         if status == "done":
             self._remember_model()
+        elif status != "busy":
+            self._drop_steps()
         debug_log(f"webchat: query {query_id} {status}", "webchat")
 
     def _remember_model(self) -> None:
@@ -381,6 +466,32 @@ class ChatHub:
             for record in self._pending.values():
                 record["cancel"] = True
         self._backend.cancel()
+
+    # -- attachments ------------------------------------------------------------------
+
+    def add_upload(self, data: bytes) -> Dict[str, Any]:
+        """Check and prepare an uploaded file by its content and hold it for the next request."""
+        return self._held(classify(data))
+
+    def capture_screenshot(self) -> Dict[str, Any]:
+        """Capture the screen through the screenshot tool's own path and hold it for the next request."""
+        return self._held(self._backend.capture_screenshot())
+
+    def _held(self, attachment: RequestAttachment) -> Dict[str, Any]:
+        return {"id": self._uploads.add(attachment), "kind": attachment.kind, "size": attachment.size}
+
+    def discard_upload(self, upload_id: str) -> None:
+        self._uploads.discard(upload_id)
+
+    def attachment_support(self) -> Dict[str, Any]:
+        """What attaching can do now: images, the Screenshot button, and the limits."""
+        support = self._backend.attachment_support() or {}
+        return {
+            "images": support.get("images") or {"ok": False, "reason": "unavailable"},
+            "screenshot": support.get("screenshot") or {"ok": False, "reason": "screenshot_unavailable"},
+            "limits": {"max_upload_bytes": uploads.MAX_UPLOAD_BYTES, "max_attachments": MAX_ATTACHMENTS,
+                       "max_images": MAX_IMAGES, "max_file_chars": MAX_FILE_CHARS},
+        }
 
     # -- models --------------------------------------------------------------------
 
@@ -416,6 +527,16 @@ class ChatHub:
                 "switchable": bool(state.get("switchable")), "models": self._backend.local_models(),
                 "cloud": {**cloud, "models": self._backend.cloud_models()} if cloud else None}
 
+    def suggestions(self) -> Dict[str, Any]:
+        """The start screen's cards. Never fails: a backend that cannot say gives the generic examples."""
+        try:
+            sources = self._backend.suggestion_sources()
+            templates = suggestions.load_templates(self._backend.suggestion_languages())
+        except Exception as exc:
+            debug_log(f"webchat: start screen sources unavailable: {type(exc).__name__}", "webchat")
+            sources, templates = {}, {}
+        return {"cards": suggestions.build_cards(sources, templates)}
+
     def library(self) -> Dict[str, Any]:
         if self._backend.is_ready():
             self._ensure_open_chat()
@@ -444,8 +565,7 @@ class ChatHub:
             "busy_query": self._typed_in_flight(),
             "active_chat_id": chat.id if chat else None,
             "chat": chat_dict(chat) if chat else None,
-            "messages": [{"id": m.id, "role": m.role, "text": m.content, "ts": m.ts, "source": m.source}
-                         for m in messages],
+            "messages": [message_dict(m) for m in messages],
             "notices": notices,
             "mode": self._backend.reply_mode_state(),
             "model": self._backend.local_model_state(),

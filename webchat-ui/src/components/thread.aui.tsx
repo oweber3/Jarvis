@@ -1,6 +1,16 @@
 "use client";
 
+import {
+  AttachmentNotice,
+  ComposerAddAttachment,
+  ComposerAttachments,
+  ComposerScreenshot,
+  UserMessageAttachments,
+  useAttachmentGate,
+} from "@/components/attachment.aui";
 import { MarkdownText } from "@/components/markdown-text";
+import { DayDivider, MessageTime } from "@/components/MessageTime";
+import { ToolStepRow } from "@/components/ToolSteps";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -29,9 +39,12 @@ import {
 import {
   createContext,
   useContext,
+  useEffect,
   type ComponentType,
   type FC,
 } from "react";
+import { messageSelector, scrollTarget, useScrollTarget } from "@/scrollTarget";
+import { dayDividerLabel, startsNewDay } from "@/time";
 
 /**
  * Optional component overrides for the thread. `AssistantMessage` and
@@ -42,6 +55,7 @@ export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
   Welcome?: ComponentType | undefined;
   ComposerLeading?: ComponentType | undefined;
+  ComposerTrailing?: ComponentType | undefined;
 };
 
 export type ThreadProps = {
@@ -96,7 +110,10 @@ export const Thread: FC<ThreadProps> = ({
 
   return (
     <ThreadComponentsContext.Provider value={components}>
-      <ThreadRoot isEmpty={isEmpty} autoFocus={autoFocus} />
+      {/* A file dropped anywhere on the thread is attached to the next message. */}
+      <ComposerPrimitive.AttachmentDropzone className="aui-dropzone data-[dragging=true]:ring-primary/50 h-full rounded-lg data-[dragging=true]:ring-2 data-[dragging=true]:ring-inset">
+        <ThreadRoot isEmpty={isEmpty} autoFocus={autoFocus} />
+      </ComposerPrimitive.AttachmentDropzone>
     </ThreadComponentsContext.Provider>
   );
 };
@@ -123,6 +140,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
         data-slot="aui_thread-viewport"
         className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll"
       >
+        <ScrollToSearchHit />
         <div
           className={cn(
             "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4",
@@ -168,10 +186,74 @@ const ThreadMessage: FC = () => {
   const isSpoken = useAuiState((s) => s.message.metadata.modality === "voice");
   const isNotice = useAuiState((s) => s.message.metadata.custom?.["notice"] === true);
 
-  if (isNotice) return <NoticeLine />;
-  if (isSpoken) return <SpokenMessage />;
-  if (role === "user") return <UserMessage />;
-  return <AssistantMessageComponent />;
+  return (
+    <>
+      <DayStart />
+      {isNotice ? (
+        <NoticeLine />
+      ) : isSpoken ? (
+        <SpokenMessage />
+      ) : role === "user" ? (
+        <UserMessage />
+      ) : (
+        <AssistantMessageComponent />
+      )}
+    </>
+  );
+};
+
+const dayOf = (date: Date | undefined) => (date ? date.getTime() / 1000 : undefined);
+
+// A divider above the first message of each day. A pending message, which has no stored time yet, counts as now.
+const DayStart: FC = () => {
+  const label = useAuiState((s) => {
+    const own = dayOf(s.message.createdAt);
+    if (own === undefined) return null;
+    const previous = dayOf(s.thread.messages[s.message.index - 1]?.createdAt);
+    return startsNewDay(previous, own) ? dayDividerLabel(own) : null;
+  });
+  return label ? <DayDivider label={label} /> : null;
+};
+
+// Opening a search result scrolls to the message it found and marks it for a moment.
+const ScrollToSearchHit: FC = () => {
+  const target = useScrollTarget();
+
+  useEffect(() => {
+    if (target === null) return;
+    let cancelled = false;
+    let element: Element | null = null;
+    const timers: number[] = [];
+    const started = performance.now();
+    const show = () => element?.scrollIntoView({ block: "center" });
+    const look = () => {
+      if (cancelled) return;
+      element = document.querySelector(messageSelector(target));
+      if (!element) {
+        if (performance.now() - started < 4000) timers.push(window.setTimeout(look, 80));
+        else scrollTarget.set(null);
+        return;
+      }
+      element.setAttribute("data-search-hit", "");
+      show();
+      // The thread settles to the bottom while a chat loads; look again once it has.
+      timers.push(window.setTimeout(show, 250), window.setTimeout(show, 700));
+      timers.push(
+        window.setTimeout(() => {
+          element?.removeAttribute("data-search-hit");
+          scrollTarget.set(null);
+        }, 2500),
+      );
+    };
+    look();
+    return () => {
+      cancelled = true;
+      timers.forEach((t) => window.clearTimeout(t));
+      element?.removeAttribute("data-search-hit");
+    };
+  }, [target]);
+
+  return null;
 };
 
 // A local line from Jarvis (busy, stopped, could not answer). It is shown here but never stored.
@@ -195,10 +277,17 @@ type VoiceRunPosition = "single" | "start" | "middle" | "end";
 
 const useVoiceRunPosition = (): VoiceRunPosition =>
   useAuiState((s) => {
+    const own = dayOf(s.message.createdAt);
+    const sameDay = (other: Date | undefined) =>
+      own !== undefined &&
+      dayOf(other) !== undefined &&
+      !startsNewDay(own, dayOf(other)!);
+    const previous = s.thread.messages[s.message.index - 1];
+    const next = s.thread.messages[s.message.index + 1];
     const before =
-      s.thread.messages[s.message.index - 1]?.metadata.modality === "voice";
+      previous?.metadata.modality === "voice" && sameDay(previous.createdAt);
     const after =
-      s.thread.messages[s.message.index + 1]?.metadata.modality === "voice";
+      next?.metadata.modality === "voice" && sameDay(next.createdAt);
     if (before) return after ? "middle" : "end";
     return after ? "start" : "single";
   });
@@ -249,8 +338,11 @@ const SpokenMessage: FC = () => {
           {role === "user" ? "You said" : "Assistant said"}
         </span>
         <div className="min-w-0 flex-1 wrap-break-word">
-          <MessagePrimitive.Parts components={{ Text: SpokenText }} />
+          <MessagePrimitive.Parts
+            components={{ Text: SpokenText, tools: { Fallback: ToolStepRow } }}
+          />
         </div>
+        <MessageTime className="mt-0.5" />
         <SpokenActionBar />
       </div>
     </MessagePrimitive.Root>
@@ -303,12 +395,14 @@ const ThreadWelcome: FC = () => {
 };
 
 const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
+  const gate = useAttachmentGate();
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <div
         data-slot="aui_composer-shell"
         className="border-foreground/10 focus-within:border-foreground/25 flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color]"
       >
+        <ComposerAttachments />
         <ComposerPrimitive.Input
           placeholder="Send a message..."
           className="aui-composer-input caret-primary placeholder:text-muted-foreground/60 max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
@@ -316,22 +410,30 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
           autoFocus={autoFocus}
           enterKeyHint="send"
           aria-label="Message input"
+          // Enter must not slip past what disables the Send button, or the message and its attachments are lost.
+          onKeyDown={(event) => {
+            if (gate.blocked && event.key === "Enter" && !event.shiftKey) event.preventDefault();
+          }}
         />
-        <ComposerAction />
+        <AttachmentNotice gate={gate} />
+        <ComposerAction blocked={gate.blocked} />
       </div>
     </ComposerPrimitive.Root>
   );
 };
 
-const ComposerAction: FC = () => {
-  const { ComposerLeading } = useContext(ThreadComponentsContext);
+const ComposerAction: FC<{ blocked: boolean }> = ({ blocked }) => {
+  const { ComposerLeading, ComposerTrailing } = useContext(ThreadComponentsContext);
 
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
       <div className="flex min-w-0 items-center gap-1.5">
+        <ComposerAddAttachment />
+        <ComposerScreenshot />
         {ComposerLeading ? <ComposerLeading /> : null}
       </div>
       <div className="flex items-center gap-1.5">
+        {ComposerTrailing ? <ComposerTrailing /> : null}
         <AuiIf condition={(s) => !s.composer.canCancel}>
           <ComposerPrimitive.Send asChild>
             <TooltipIconButton
@@ -340,6 +442,7 @@ const ComposerAction: FC = () => {
               type="button"
               variant="default"
               size="icon"
+              disabled={blocked}
               className="aui-composer-send size-7 rounded-full"
               aria-label="Send message"
             >
@@ -375,7 +478,7 @@ const MessageError: FC = () => {
   );
 };
 
-// Replies are plain text, so no parts are grouped (the thinking indicator still arrives as a part).
+// Replies are text after their tool steps, so no parts are grouped (the thinking indicator still arrives as a part).
 const noGroups = () => [] as const;
 
 const AssistantMessage: FC = () => {
@@ -396,6 +499,8 @@ const AssistantMessage: FC = () => {
         <MessagePrimitive.GroupedParts groupBy={noGroups}>
           {({ part }) => {
             switch (part.type) {
+              case "tool-call":
+                return <ToolStepRow args={part.args} />;
               case "text":
                 return <MarkdownText />;
               case "indicator":
@@ -421,6 +526,7 @@ const AssistantMessage: FC = () => {
         className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
       >
         <AssistantActionBar />
+        <MessageTime className="ms-2" />
       </div>
     </MessagePrimitive.Root>
   );
@@ -454,10 +560,12 @@ const UserMessage: FC = () => {
       className="fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2"
       data-role="user"
     >
+      <UserMessageAttachments />
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
         <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
           <MessagePrimitive.Parts />
         </div>
+        <MessageTime className="mt-1 block text-end" />
       </div>
     </MessagePrimitive.Root>
   );

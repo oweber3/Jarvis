@@ -20,6 +20,11 @@ class FakeWebChatBackend:
         self.busy = False
         self.cancelled = 0
         self.submitted: List[str] = []
+        # What came with each typed request (a tuple of ``RequestAttachment``), and what attaching can do now.
+        self.attachments_received: List[tuple] = []
+        self.support = {"images": {"ok": True, "reason": None}, "screenshot": {"ok": True, "reason": None}}
+        self.screenshot_result = None
+        self.screenshot_error: Optional[str] = None
         self.reply_mode = {"mode": "local", "enabled": ["local", "claude"]}
         self.local_model = {"current": "gemma4:12b", "switchable": True}
         self.models = [{"id": "gemma4:12b", "name": "Gemma 4 12B", "installed": True},
@@ -27,6 +32,7 @@ class FakeWebChatBackend:
         # The active cloud mode's choice (None in local mode) and the models its bridge reported.
         self.cloud: Optional[dict] = None
         self.cloud_options: List[dict] = []
+        self.suggestion_data = {"routines": [], "workspaces": [], "workspaces_available": True}
         self.refuse_cloud: Optional[str] = None
         self.cloud_calls: List[tuple] = []
         self.refuse_mode: Optional[str] = None
@@ -34,6 +40,15 @@ class FakeWebChatBackend:
         self.switch_calls: List[list] = []
         # Runs right after a swap, before the hub looks at the memory again (a turn landing in that instant).
         self.after_switch: Optional[Callable[[], None]] = None
+        # Runs while a typed request is being answered, before its turns are stored (a tool call happening).
+        self.while_answering: Optional[Callable[[], None]] = None
+        # The microphone: a refusal reason, the transcript a recording returns, and what was asked.
+        self.mic_refusal: Optional[str] = None
+        self.mic_text = "hello from the microphone"
+        self.mic_capped = False
+        self.mic_open: Optional[int] = None
+        self.mic_handle = 0
+        self.mic_calls: List[tuple] = []
         self._subscribers: List[Callable[[str], None]] = []
         self._held: Optional[tuple] = None
 
@@ -42,8 +57,9 @@ class FakeWebChatBackend:
     def is_ready(self) -> bool:
         return self.memory is not None
 
-    def submit(self, text: str, *, on_start, on_complete, on_busy) -> None:
+    def submit(self, text: str, *, on_start, on_complete, on_busy, attachments: tuple = ()) -> None:
         self.submitted.append(text)
+        self.attachments_received.append(tuple(attachments))
         if self.mode == "busy":
             on_busy()
             return
@@ -58,6 +74,15 @@ class FakeWebChatBackend:
             self._held = (text, on_complete)
             return
         self._answer(text, on_complete)
+
+    def attachment_support(self) -> dict:
+        return self.support
+
+    def capture_screenshot(self):
+        from jarvis.webchat.uploads import UploadRefused
+        if self.screenshot_error:
+            raise UploadRefused(self.screenshot_error)
+        return self.screenshot_result
 
     def cancel(self) -> None:
         self.cancelled += 1
@@ -128,6 +153,39 @@ class FakeWebChatBackend:
             self.after_switch()
         return cursor
 
+    # -- microphone ----------------------------------------------------------------
+
+    def mic_reason(self) -> Optional[str]:
+        """Why a recording cannot start (``unavailable``, ``disabled``, ``not_ready``, ``busy``), or None."""
+        return self.mic_refusal
+
+    def mic_start(self, max_seconds: float) -> Tuple[Optional[int], Optional[str]]:
+        self.mic_calls.append(("start", max_seconds))
+        if self.mic_refusal:
+            return None, self.mic_refusal
+        self.mic_handle += 1
+        self.mic_open = self.mic_handle
+        return self.mic_handle, None
+
+    def mic_state(self, handle: int) -> Optional[str]:
+        if handle != self.mic_open:
+            return None
+        return "full" if self.mic_capped else "recording"
+
+    def mic_stop(self, handle: int) -> Optional[str]:
+        self.mic_calls.append(("stop", handle))
+        if handle != self.mic_open:
+            return None
+        self.mic_open = None
+        return self.mic_text
+
+    def mic_cancel(self, handle: int) -> bool:
+        self.mic_calls.append(("cancel", handle))
+        if handle != self.mic_open:
+            return False
+        self.mic_open = None
+        return True
+
     # -- helpers ---------------------------------------------------------------
 
     def speak(self, user: str, reply: str) -> None:
@@ -135,12 +193,22 @@ class FakeWebChatBackend:
         self.memory.add_message("user", user)
         self.memory.add_message("assistant", reply)
 
+    def suggestion_sources(self) -> dict:
+        if isinstance(self.suggestion_data, Exception):
+            raise self.suggestion_data
+        return self.suggestion_data
+
+    def suggestion_languages(self) -> List[str]:
+        return ["en"]
+
     def set_state(self, state: str) -> None:
         self.state = state
         for callback in list(self._subscribers):
             callback(state)
 
     def _answer(self, text: str, on_complete) -> None:
+        if self.while_answering is not None:
+            self.while_answering()
         self.memory.add_message("user", text)
         self.memory.add_message("assistant", self.reply_text)
         on_complete(self.reply_text)

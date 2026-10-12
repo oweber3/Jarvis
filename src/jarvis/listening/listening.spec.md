@@ -58,7 +58,9 @@ reopened by the listener loop, so listening never needs a restart:
   check, which opens its stream without the lock, is still running.
 - Attempts are spaced 5 s apart, doubling up to 30 s, and continue until the
   microphone is back, so one plugged in again minutes later is picked up.
-  Recovery pauses while dictation is recording.
+  Recovery pauses while dictation is recording. A recording the web chat's
+  microphone button starts is a dictation session and pauses the listener the
+  same way (`dictation/dictation.spec.md`, Capture for a Caller).
 - The console shows the existing missing-callback or silence warning, one
   `🔄 Reconnecting to the microphone...` line per outage, and
   `✅ Microphone audio is arriving again.` once audio is heard. Attempts and

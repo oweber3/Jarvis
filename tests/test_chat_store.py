@@ -206,3 +206,159 @@ class TestSharedDatabaseFile:
         finally:
             store.close()
             db.close()
+
+
+class TestPinned:
+    def test_chats_are_not_pinned_until_pinned(self, store):
+        chat = store.create_chat()
+        assert chat.pinned is False
+        assert store.set_pinned(chat.id, True) is True
+        assert store.get_chat(chat.id).pinned is True
+        assert store.set_pinned(chat.id, False) is True
+        assert store.get_chat(chat.id).pinned is False
+
+    def test_pinning_an_unknown_chat_reports_false(self, store):
+        assert store.set_pinned("nope", True) is False
+
+    def test_pinning_does_not_change_when_the_chat_was_last_active(self, store):
+        chat = store.create_chat()
+        before = store.get_chat(chat.id).updated_at
+        store.set_pinned(chat.id, True)
+        assert store.get_chat(chat.id).updated_at == before
+
+    def test_a_database_made_before_pinning_gains_the_column_and_keeps_its_chats(self, tmp_path):
+        path = str(tmp_path / "old.db")
+        conn = sqlite3.connect(path)
+        conn.executescript(
+            "CREATE TABLE chat_projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER NOT NULL,"
+            " created_at REAL NOT NULL);"
+            "CREATE TABLE chats (id TEXT PRIMARY KEY, project_id TEXT, title TEXT NOT NULL DEFAULT '',"
+            " created_at REAL NOT NULL, updated_at REAL NOT NULL, last_mode TEXT NOT NULL DEFAULT '',"
+            " last_model TEXT NOT NULL DEFAULT '');"
+            "INSERT INTO chats(id, title, created_at, updated_at) VALUES ('old', 'Old chat', 1, 2);")
+        conn.commit()
+        conn.close()
+        migrated = ChatStore(path)
+        try:
+            chat = migrated.get_chat("old")
+            assert chat.title == "Old chat" and chat.pinned is False
+            assert migrated.set_pinned("old", True) is True
+        finally:
+            migrated.close()
+        reopened = ChatStore(path)  # a second start must not try to add the column again
+        try:
+            assert reopened.get_chat("old").pinned is True
+        finally:
+            reopened.close()
+
+
+class TestSearch:
+    def fill(self, store, title, *texts, ts=1.0):
+        chat = store.create_chat(title=title)
+        for i, text in enumerate(texts):
+            store.append_message(chat.id, "user" if i % 2 == 0 else "assistant", text, ts=ts + i)
+        return chat
+
+    def test_finds_chats_by_message_text_ignoring_case(self, store):
+        trains = self.fill(store, "Trips", "Which train goes to Leeds?", "The 9:15 train.")
+        self.fill(store, "Food", "What is for dinner?")
+        hits = store.search_messages("LEEDS")
+        assert [h.chat_id for h in hits] == [trains.id]
+        assert "Leeds" in hits[0].snippet
+
+    def test_case_folding_is_not_limited_to_ascii(self, store):
+        chat = self.fill(store, "Wetter", "Wie ist das Wetter in Düsseldorf?")
+        assert [h.chat_id for h in store.search_messages("DÜSSELDORF")] == [chat.id]
+
+    def test_one_hit_per_chat_pointing_at_its_newest_match(self, store):
+        chat = self.fill(store, "Pets", "my cat is grey", "nice cat", "the cat sat")
+        hits = store.search_messages("cat")
+        assert len(hits) == 1
+        assert hits[0].message_id == store.messages(chat.id)[-1].id
+
+    def test_most_recently_active_chats_come_first(self, store):
+        older = self.fill(store, "A", "needle here", ts=100.0)
+        newer = self.fill(store, "B", "another needle", ts=200.0)
+        assert [h.chat_id for h in store.search_messages("needle")] == [newer.id, older.id]
+
+    def test_results_are_bounded(self, store):
+        for i in range(8):
+            self.fill(store, f"c{i}", "needle", ts=float(i))
+        assert len(store.search_messages("needle", limit=3)) == 3
+
+    def test_wildcards_and_quotes_in_the_query_are_plain_text(self, store):
+        chat = self.fill(store, "Maths", "50% of 20 is 10", "it's 'fine'")
+        self.fill(store, "Other", "500 things")
+        assert [h.chat_id for h in store.search_messages("50%")] == [chat.id]
+        assert store.search_messages("_") == []
+        assert [h.chat_id for h in store.search_messages("it's 'fine'")] == [chat.id]
+        assert store.search_messages("x'; DROP TABLE chats; --") == []
+        assert store.get_chat(chat.id) is not None
+
+    def test_a_blank_query_finds_nothing(self, store):
+        self.fill(store, "A", "text")
+        assert store.search_messages("   ") == []
+
+    def test_a_long_snippet_is_trimmed_around_the_match(self, store):
+        text = "word " * 200 + "needle" + " word" * 200
+        self.fill(store, "Long", text)
+        snippet = store.search_messages("needle")[0].snippet
+        assert "needle" in snippet and len(snippet) < 200
+        assert snippet.startswith("…") and snippet.endswith("…")
+
+    def test_deleted_chats_are_not_found(self, store):
+        chat = self.fill(store, "Gone", "needle")
+        store.delete_chat(chat.id)
+        assert store.search_messages("needle") == []
+
+
+class TestAttachmentMarkers:
+    """A message records that something was attached (kind and size), never what it was."""
+
+    def test_a_message_remembers_the_kind_and_size_of_what_was_attached(self, store):
+        chat = store.create_chat()
+        store.append_message(chat.id, "user", "look", ts=1.0,
+                             attachments=[{"kind": "image", "size": 2048}, {"kind": "text", "size": 12}])
+        store.append_message(chat.id, "assistant", "ok", ts=2.0)
+        first, second = store.messages(chat.id)
+        assert first.attachments == ({"kind": "image", "size": 2048}, {"kind": "text", "size": 12})
+        assert second.attachments == ()
+
+    def test_only_kind_and_size_are_stored_whatever_else_is_passed(self, store, tmp_path):
+        chat = store.create_chat()
+        store.append_message(chat.id, "user", "look", ts=1.0,
+                             attachments=[{"kind": "text", "size": 5, "text": "SECRETWORDS", "name": "C:/x.txt"}])
+        store.close()
+        assert b"SECRETWORDS" not in (tmp_path / "jarvis.db").read_bytes()
+        assert b"x.txt" not in (tmp_path / "jarvis.db").read_bytes()
+
+    def test_unknown_kinds_and_bad_sizes_are_refused(self, store):
+        chat = store.create_chat()
+        with pytest.raises(ValueError):
+            store.append_message(chat.id, "user", "x", ts=1.0, attachments=[{"kind": "video", "size": 1}])
+        with pytest.raises(ValueError):
+            store.append_message(chat.id, "user", "x", ts=1.0, attachments=[{"kind": "image", "size": -1}])
+
+    def test_a_database_from_before_attachments_gains_the_column_and_keeps_its_messages(self, tmp_path):
+        path = str(tmp_path / "old.db")
+        old = sqlite3.connect(path)
+        old.executescript("""
+            CREATE TABLE chats (id TEXT PRIMARY KEY, project_id TEXT, title TEXT NOT NULL DEFAULT '',
+              created_at REAL NOT NULL, updated_at REAL NOT NULL, last_mode TEXT NOT NULL DEFAULT '',
+              last_model TEXT NOT NULL DEFAULT '');
+            CREATE TABLE chat_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id TEXT NOT NULL,
+              role TEXT NOT NULL, content TEXT NOT NULL, ts REAL NOT NULL, source TEXT NOT NULL DEFAULT 'typed',
+              private INTEGER NOT NULL DEFAULT 0);
+            INSERT INTO chats(id, title, created_at, updated_at) VALUES ('abc', 't', 1, 1);
+            INSERT INTO chat_messages(chat_id, role, content, ts) VALUES ('abc', 'user', 'old message', 1);
+        """)
+        old.commit()
+        old.close()
+        reopened = ChatStore(path)
+        try:
+            [message] = reopened.messages("abc")
+            assert message.content == "old message" and message.attachments == ()
+            reopened.append_message("abc", "user", "new", ts=2.0, attachments=[{"kind": "image", "size": 3}])
+            assert reopened.messages("abc")[-1].attachments == ({"kind": "image", "size": 3},)
+        finally:
+            reopened.close()

@@ -1,22 +1,37 @@
 """The only bridge between the web chat and the rest of Jarvis: the daemon, reply modes and local models."""
 from __future__ import annotations
 
+import sys
 import time
 from typing import Callable, List, Optional, Tuple
 
 from .. import assistant_state
 from ..debug import debug_log
+from ..reply.attachments import KIND_SCREENSHOT, RequestAttachment
+from .uploads import UploadRefused
 
 INSTALLED_CACHE_SEC = 30.0
 # The settings keys of each cloud reply mode: (model, effort).
 CLOUD_KEYS = {"codex": ("codex_model", "codex_reasoning_effort"), "claude": ("claude_model", "claude_effort")}
 
 
+def suggestion_sources(cfg) -> dict:
+    """Names only of the owner's routines and workspaces, for the start screen. Definitions (steps,
+    arguments, paths, URLs, aliases) never leave this function."""
+    if cfg is None:
+        return {"routines": [], "workspaces": [], "workspaces_available": False}
+    from ..routines import store
+    return {"routines": list(store.current(cfg)),
+            "workspaces": [str(name) for name in (getattr(cfg, "windows_workspaces", None) or {})],
+            "workspaces_available": bool(getattr(cfg, "windows_tools_enabled", False))}
+
+
 class DaemonBackend:
     """What the web chat needs from the running daemon. Every call returns quickly except a mode switch."""
 
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic, screenshot_tool=None) -> None:
         self._clock = clock
+        self._screenshot_tool = screenshot_tool
         self._installed: Optional[set] = None
         self._installed_at = 0.0
 
@@ -26,9 +41,10 @@ class DaemonBackend:
         from .. import daemon
         return daemon.get_dialogue_memory() is not None and daemon.get_settings() is not None
 
-    def submit(self, text: str, *, on_start, on_complete, on_busy) -> None:
+    def submit(self, text: str, *, on_start, on_complete, on_busy, attachments: tuple = ()) -> None:
         from .. import daemon
-        daemon.submit_text_query(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy, origin="chat")
+        daemon.submit_text_query(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy, origin="chat",
+                                 attachments=attachments)
 
     def cancel(self) -> None:
         from .. import daemon
@@ -46,6 +62,125 @@ class DaemonBackend:
         """Swap the conversation for ``messages``: the mirror cursor after the swap, or None when refused."""
         from .. import daemon
         return daemon.switch_chat_conversation(messages)
+
+    # -- start screen ------------------------------------------------------------
+
+    def suggestion_sources(self) -> dict:
+        from .. import daemon
+        return suggestion_sources(daemon.get_settings())
+
+    def suggestion_languages(self) -> List[str]:
+        from .. import daemon
+        cfg = daemon.get_settings()
+        return list(getattr(cfg, "fast_commands_locales", None) or [])
+
+    # -- microphone --------------------------------------------------------------
+
+    def mic_reason(self) -> Optional[str]:
+        """Why a recording cannot start now (``disabled``, ``unavailable``, ``busy``, ``not_ready``), or None.
+
+        The recording is made by the daemon's dictation engine, never by the browser."""
+        from .. import daemon
+        cfg = daemon.get_settings()
+        if cfg is not None and getattr(cfg, "dictation_enabled", True) is False:
+            return "disabled"
+        engine = daemon.get_dictation_engine()
+        if engine is None:
+            return "unavailable"
+        if daemon.is_query_running() or assistant_state.current() is not assistant_state.AssistantState.IDLE:
+            return "busy"
+        return engine.capture_blocker()
+
+    def mic_start(self, max_seconds: float) -> Tuple[Optional[int], Optional[str]]:
+        """Start a recording: ``(handle, None)``, or ``(None, reason)``."""
+        from .. import daemon
+        from ..dictation.dictation_engine import CaptureRefused
+        reason = self.mic_reason()
+        if reason is not None:
+            return None, reason
+        try:
+            return daemon.get_dictation_engine().start_capture(max_seconds), None
+        except CaptureRefused as refused:
+            return None, refused.reason
+        except Exception as exc:
+            debug_log(f"webchat: recording could not start: {type(exc).__name__}", "webchat")
+            return None, "unavailable"
+
+    def mic_state(self, handle: int) -> Optional[str]:
+        engine = self._engine()
+        return engine.capture_state(handle) if engine is not None else None
+
+    def mic_stop(self, handle: int) -> Optional[str]:
+        engine = self._engine()
+        return engine.stop_capture(handle) if engine is not None else None
+
+    def mic_cancel(self, handle: int) -> bool:
+        engine = self._engine()
+        return engine.cancel_capture(handle) if engine is not None else False
+
+    @staticmethod
+    def _engine():
+        from .. import daemon
+        return daemon.get_dictation_engine()
+
+    # -- attachments -------------------------------------------------------------
+
+    def attachment_support(self) -> dict:
+        """What attaching can do now: whether the route that answers can see images, and whether the Screenshot
+        button works. Each is ``{"ok", "reason"}``."""
+        return {"images": self._image_support(), "screenshot": self._screenshot_support()}
+
+    def _image_support(self) -> dict:
+        from .. import daemon
+        from ..bridge import modes, runtime
+        if modes.active_mode() in CLOUD_KEYS:
+            service = runtime.get_service()
+            if service is None:
+                return {"ok": False, "reason": "cloud_not_ready"}
+            sees = getattr(service, "accepts_images", False) is True
+            return {"ok": sees, "reason": None if sees else "cloud_no_images"}
+        cfg = daemon.get_settings()
+        try:
+            from .. import llm
+            sees = cfg is not None and bool(llm.get_llm_backend(cfg).supports_images(str(cfg.llm_chat_model)))
+        except Exception as exc:
+            debug_log(f"webchat: could not tell whether the local model sees images: {type(exc).__name__}",
+                      "webchat")
+            sees = False
+        return {"ok": sees, "reason": None if sees else "no_vision"}
+
+    @staticmethod
+    def _screenshot_support() -> dict:
+        from .. import daemon
+        cfg = daemon.get_settings()
+        if cfg is None:
+            return {"ok": False, "reason": "screenshot_unavailable"}
+        if getattr(cfg, "screen_awareness_enabled", True) is not True:
+            return {"ok": False, "reason": "screen_awareness_off"}
+        if sys.platform != "win32" or not getattr(cfg, "windows_tools_enabled", False):
+            return {"ok": False, "reason": "screenshot_unavailable"}
+        return {"ok": True, "reason": None}
+
+    def capture_screenshot(self) -> RequestAttachment:
+        """Capture the screen with the screenshot tool (the same capture, scaling and OCR as when the model asks
+        for it) and return it as an attachment. Raises ``UploadRefused`` when it cannot."""
+        from .. import daemon
+        from ..tools.base import ToolContext
+        support = self._screenshot_support()
+        if not support["ok"]:
+            raise UploadRefused(support["reason"])
+        tool = self._screenshot_tool
+        if tool is None:
+            from ..tools.builtin.screenshot import ScreenshotTool
+            tool = self._screenshot_tool = ScreenshotTool()
+        context = ToolContext(None, daemon.get_settings(), "", "", "", 1, lambda _text: None)
+        result = tool.run({}, context)
+        if not result.success or not result.images:
+            debug_log("webchat: the screenshot could not be captured", "webchat")
+            raise UploadRefused("screenshot_unavailable")
+        image = result.images[0]
+        return RequestAttachment(KIND_SCREENSHOT, len(image.data) * 3 // 4, image=image,
+                                 text=result.reply_text or "")
 
     # -- state -------------------------------------------------------------------
 

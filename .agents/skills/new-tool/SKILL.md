@@ -58,6 +58,10 @@ a separate client, conditional registration, fast-path targets) and commit
 - [ ] `returns_outside_content` (or `returns_outside_content_for`) is True if
       results carry web, file, screen or other-app content. Fence such content
       as untrusted data.
+- [ ] Optional `step_note(args, result)`: how the web chat words a successful
+      call as a tool step ("Set the volume to 30%"). Without it the step is
+      named after the tool. Never put paths, addresses, window titles or
+      content in it (`webchat/webchat.spec.md`, Tool steps).
 - [ ] No hardcoded language patterns. Words the tool must understand go in a
       locale phrase file (`tools/phrases/<lang>.json` or
       `fastpath/phrases/<lang>.json`).

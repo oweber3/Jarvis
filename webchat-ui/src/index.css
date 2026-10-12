@@ -110,3 +110,10 @@
   background-image: linear-gradient(135deg, var(--hud-accent-secondary), var(--hud-accent-deep));
   color: var(--hud-ink-on-accent);
 }
+
+/* The message a search result pointed at, marked for a moment after it scrolls into view. */
+[data-message-id][data-search-hit] {
+  background-color: color-mix(in oklab, var(--color-primary) 16%, transparent);
+  border-radius: 0.75rem;
+  transition: background-color 0.4s;
+}

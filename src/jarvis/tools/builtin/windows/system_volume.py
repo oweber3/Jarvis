@@ -7,11 +7,18 @@ from typing import Any, Dict, Optional
 from ....debug import debug_log
 from ....platform.windows import audio
 from ...base import Tool, ToolContext
-from ...types import ToolExecutionResult
+from ...types import StepNote, ToolExecutionResult
 from ._common import disabled_result, failure, parse_number
 
 _ACTIONS = ["get", "set", "up", "down", "mute", "unmute"]
 _DEFAULT_STEP = 10
+_STEP_LABELS = {
+    "get": "Checked the volume",
+    "up": "Turned the volume up",
+    "down": "Turned the volume down",
+    "mute": "Muted the audio",
+    "unmute": "Unmuted the audio",
+}
 
 
 def _describe(state: audio.VolumeState) -> str:
@@ -59,6 +66,15 @@ class SystemVolumeTool(Tool):
             },
             "required": ["action"],
         }
+
+    def step_note(self, args: Optional[Dict[str, Any]], result: ToolExecutionResult) -> Optional[StepNote]:
+        args = args or {}
+        action = str(args.get("action") or "").strip().lower()
+        if action == "set":
+            percent = parse_number(args.get("percent"))
+            return StepNote(f"Set the volume to {round(percent)}%") if percent is not None else None
+        label = _STEP_LABELS.get(action)
+        return StepNote(label) if label else None
 
     def run(self, args: Optional[Dict[str, Any]], context: ToolContext) -> ToolExecutionResult:
         blocked = disabled_result(context)

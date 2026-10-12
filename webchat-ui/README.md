@@ -47,11 +47,14 @@ copy, and apply the differences to ours.
 
 | File | Origin |
 |---|---|
-| `components/thread.aui.tsx` | assistant-ui, trimmed (no attachments, tool and reasoning groups, feedback, editing, branching, dictation), with a notice line and a slot for the model picker |
-| `components/thread-list.aui.tsx` | assistant-ui, with a "Move to project" item instead of Archive |
+| `components/thread.aui.tsx` | assistant-ui, trimmed (no tool and reasoning groups, feedback, editing, branching, dictation), with a notice line, a slot for the model picker, message times, day dividers, scroll-to-search-result, and the attachment chips, drop target and buttons wired in |
+| `components/attachment.aui.tsx` | assistant-ui's attachment components (commit `a1b2540`), trimmed to a chip with a thumbnail or icon (no preview dialog or avatar), plus the Screenshot button and the send gate notice |
+| `components/thread-list.aui.tsx` | assistant-ui, with "Pin" and "Move to project" items instead of Archive |
 | `components/markdown-text.tsx`, `model-selector.tsx`, `model-selector.aui.tsx`, `tooltip-icon-button.tsx`, `hooks/use-copy-to-clipboard.ts` | assistant-ui, unchanged |
 | `components/ui/*` | shadcn primitives from the same registry; `cn` imported from `@/lib/utils` |
-| `api.ts`, `conversion.ts`, `sync.ts`, `confirm.ts`, `layout.ts`, `models.ts`, `theme.ts`, `useJarvis.tsx`, `App.tsx`, `components/ModelPicker.tsx`, `components/ProjectsSidebar.tsx`, `components/ConfirmDialog.tsx` | written for Jarvis: the API client, the poll and ordering logic (`sync.ts`, free of React so it can be tested), the runtime wiring, the model and effort pickers (the model menu is assistant-ui's `ModelSelector`; the effort menu is ours), the light and dark switch, the projects sidebar and the delete confirmations |
+| `attachments.ts`, `attachmentAdapter.ts` | written for Jarvis: the attachment rules free of React (labels, sizes, what blocks a send and why, the Screenshot marker file) and the adapter that connects the composer to the server's upload endpoint; the page never reads a file's name or path to the server |
+| `api.ts`, `conversion.ts`, `steps.ts`, `components/ToolSteps.tsx`, `sync.ts`, `confirm.ts`, `layout.ts`, `models.ts`, `theme.ts`, `time.ts`, `sidebar.ts`, `search.ts`, `shortcuts.ts`, `scrollTarget.ts`, `hooks/use-message-search.ts`, `useJarvis.tsx`, `App.tsx`, `components/ModelPicker.tsx`, `components/ProjectsSidebar.tsx`, `components/ConfirmDialog.tsx`, `components/MessageTime.tsx`, `startScreen.ts`, `components/StartScreen.tsx` | written for Jarvis: the API client, the poll and ordering logic (`sync.ts`, free of React so it can be tested), the runtime wiring, the model and effort pickers (the model menu is assistant-ui's `ModelSelector`; the effort menu is ours), the light and dark switch, the projects sidebar, the delete confirmations and the start screen (greeting and suggestion cards) |
+| `mic.ts`, `components/MicButton.tsx` | written for Jarvis: the microphone button. `mic.ts` (free of React so it can be tested) drives the daemon's recording through `/api/mic/*`; the page never uses the browser's microphone or speech APIs |
 | `index.css` | maps assistant-ui's colour tokens onto the Jarvis HUD palettes, dark and light (`generated/theme.css`) |
 
 ## Offline

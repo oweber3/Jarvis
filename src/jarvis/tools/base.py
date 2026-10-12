@@ -6,7 +6,7 @@ ensuring consistency with MCP tool format and enabling dictionary-based executio
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Callable
-from .types import ToolExecutionResult
+from .types import StepNote, ToolExecutionResult
 
 
 class ToolContext:
@@ -60,6 +60,13 @@ class Tool(ABC):
         """Whether this call's result carries outside content. A tool with only some such actions (the
         clipboard read, a window list) overrides this to name them."""
         return bool(self.returns_outside_content)
+
+    def step_note(self, args: Optional[Dict[str, Any]], result: ToolExecutionResult) -> Optional[StepNote]:
+        """How the web chat words this finished, successful call as a tool step ("Set the volume to 30%").
+
+        Return ``None`` to be named after the tool. A note holds only what the tool's spec allows in
+        results: never paths, addresses, window titles, track names or other content."""
+        return None
 
     @property
     @abstractmethod

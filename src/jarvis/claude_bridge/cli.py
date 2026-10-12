@@ -206,8 +206,12 @@ class ClaudeSession:
                      "request": {"subtype": subtype, **(payload or {})}})
         return request_id
 
-    def send_user_text(self, text: str) -> None:
-        self._write({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": text}]}})
+    def send_user_text(self, text: str, images: Sequence[Any] = ()) -> None:
+        """The user message of a turn: the text, then any images (``ToolImage``) as base64 image blocks."""
+        content: List[Dict[str, Any]] = [{"type": "text", "text": text}]
+        content.extend({"type": "image", "source": {"type": "base64", "media_type": image.mime_type,
+                                                     "data": image.data}} for image in images)
+        self._write({"type": "user", "message": {"role": "user", "content": content}})
 
     def respond(self, request_id: Any, response: Dict[str, Any]) -> None:
         self._write({"type": "control_response",

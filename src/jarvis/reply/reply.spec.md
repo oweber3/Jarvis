@@ -24,6 +24,7 @@ Design principles enforced by the engine:
   - persistent store: a database-like service, optionally with vector search.
   - configuration: model endpoints, timeouts, feature flags, and tool settings.
   - speech synthesizer (optional): for spoken output and hot-window activation.
+  - attachments (optional, typed requests only): what the web chat's owner attached to this one message (`reply/attachments.py`, `webchat/webchat.spec.md`, Attachments).
 
 ### Steps and Branches (Agentic Messages Loop)
 1. Redact
@@ -310,6 +311,12 @@ With `tool_model` set (default empty, off), a local reply splits the work betwee
 - **Reply phase:** the phase ends when the tool model answers without a tool call, after at most `TOOL_PHASE_MAX_CALLS` (6) tool calls, or when the tool model fails (no response, error, or no native tool support). The tool model's closing text is not delivered. The system message becomes the normal persona prompt (with any recalled memory); reasoning traces are removed from the tool phase's assistant messages; one user-role note says which tools ran (or that none was needed, or that the tool step failed), carries the tool model's closing text as a note, and asks for the reply in the assistant's own voice without tools, describing an action as done only when a tool result above says so. The chat model then runs with no tools offered. A tool call it emits anyway is ignored; when it produces no text, the tool model's closing text is delivered instead.
 - **Models and memory:** the two models load in turn. When both do not fit in VRAM together, every request reloads them; setting the chat (and fast) model to the tool model avoids that at the cost of the persona model's voice.
 
+### Attachments
+- A request may carry attachments: image, file text (fenced as untrusted data, capped) and screenshots (image plus fenced OCR text). The request's own words are what is redacted, matched, planned and recorded; the attachments are not.
+- A request with attachments is never taken by the fast-command path, and it counts as having read outside content (`routines/routines.spec.md`, Prompt-injection boundary).
+- Local route: the user message the model reads is the redacted request, a blank line, then one note ("The user attached ...") with each file's fenced text. Images travel as that message's internal `_images`, sent per call only to a model that reports vision (the mechanism a tool's images use). The dialogue memory, the diary, the graph, tool carry-over and logs get the request's words only.
+- Background bridge route: see below and `bridge/bridge.spec.md`.
+
 ### Fast-Command Path
 - Contract: `match(text, language)` returns one command (tool name, validated arguments, reply template) or nothing. Matching is pure; execution is separate.
 - A match requires the normalised utterance (wake word and configured politeness fillers removed) to be consumed entirely by exactly one command template. Extra words, unknown verbs, multiple commands, ambiguous slot values (for example two close application matches) and low-confidence slot resolution all return nothing and fall through unchanged.
@@ -324,6 +331,7 @@ With `tool_model` set (default empty, off), a local reply splits the work betwee
 - The bridge returns exactly one validated outcome (answer, question, confirmation question, error or cancellation). It is delivered through `_deliver_reply`, so voice speaks it once, text stays silent, and both record the same dialogue. A cancellation delivers nothing.
 - Tools a bridge requests run on the query thread through `run_tool_with_retries`, so central safety, confirmation and denial apply exactly as in the local loop. A confirmation question is returned immediately and the query lock is released.
 - A missing or failed bridge produces an explicit message offering local mode. It never falls back to the local model.
+- Attachments go to the bridge with the request: redacted text in the request JSON and images as the bridge's native image input. A bridge that takes no images refuses a request with one, out loud, and sends nothing.
 - Contract and data flow: `src/jarvis/bridge/bridge.spec.md`, `src/jarvis/codex_bridge/codex_bridge.spec.md`, `src/jarvis/claude_bridge/claude_bridge.spec.md`.
 
 ### Action Safety

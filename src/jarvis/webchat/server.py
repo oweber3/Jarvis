@@ -17,9 +17,12 @@ from typing import Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..debug import debug_log
+from ..memory.chat_store import SEARCH_QUERY_MAX_CHARS
 from ..utils.local_guard import refusal
 from . import identity
-from .hub import chat_dict
+from .hub import chat_dict, message_dict
+from .mic import MAX_RECORDING_SEC
+from .uploads import MAX_UPLOAD_BYTES, UploadRefused
 
 MAX_BODY_BYTES = 64 * 1024
 DRAIN_LIMIT_BYTES = 1024 * 1024
@@ -46,11 +49,16 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
+    # Jarvis records, never the page, so the browser has nothing to ask permission for.
+    "Permissions-Policy": "microphone=(), camera=(), geolocation=()",
 }
 
 _PROJECT_PATH = re.compile(r"^/api/projects/([0-9a-f]+)$")
 _CHAT_PATH = re.compile(r"^/api/chats/([0-9a-f]+)$")
 _CHAT_OPEN_PATH = re.compile(r"^/api/chats/([0-9a-f]+)/open$")
+_SESSION = re.compile(r"^[0-9a-f]{32}$")
+_UPLOAD_PATH = re.compile(r"^/api/attachments/([0-9a-f]+)$")
+_UPLOAD_ROUTE = ("POST", "/api/attachments")
 
 
 @dataclass(frozen=True)
@@ -130,6 +138,8 @@ def _make_handler(server: WebChatServer):
     class Handler(BaseHTTPRequestHandler):
         server_version = "Jarvis"
         sys_version = ""
+        # A client that stalls mid-request (an upload can be large) frees its thread and buffer after this.
+        timeout = 60
 
         def log_message(self, format, *args) -> None:  # noqa: A002 - request lines never reach the console
             return
@@ -162,9 +172,11 @@ def _make_handler(server: WebChatServer):
                 self._body_error = _Refused(400, "bad_length")
                 self.close_connection = True
                 return
-            if length > MAX_BODY_BYTES:
+            # Only an upload may be large; everything else is a small JSON body.
+            limit = MAX_UPLOAD_BYTES if self._is_upload(urlsplit(self.path).path) else MAX_BODY_BYTES
+            if length > limit:
                 self._body_error = _Refused(413, "too_large")
-                remaining = min(length, DRAIN_LIMIT_BYTES)
+                remaining = min(length, limit + DRAIN_LIMIT_BYTES)
                 while remaining > 0:
                     chunk = self.rfile.read(min(65536, remaining))
                     if not chunk:
@@ -174,6 +186,18 @@ def _make_handler(server: WebChatServer):
                 return
             if length > 0:
                 self._raw_body = self.rfile.read(length)
+
+        def _is_upload(self, path: str) -> bool:
+            return (self.command, path) == _UPLOAD_ROUTE
+
+        def _upload_body(self) -> dict:
+            """The raw bytes of an upload. What they are is decided from their content, never from a declared
+            type or name, and no name or path is read from the request."""
+            if self._body_error is not None:
+                raise self._body_error
+            if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/octet-stream":
+                raise _Refused(415, "octet_stream_required")
+            return {"bytes": self._raw_body}
 
         def _body(self) -> dict:
             if self._body_error is not None:
@@ -208,7 +232,8 @@ def _make_handler(server: WebChatServer):
                 return
             if not path.startswith("/api/"):
                 raise _Refused(404, "not_found")
-            body = self._body()  # parsed first so a bad body is refused whatever the route
+            # Parsed first so a bad body is refused whatever the route.
+            body = self._upload_body() if self._is_upload(path) else self._body()
             handler = self._route(path)
             handler(body)
 
@@ -217,7 +242,7 @@ def _make_handler(server: WebChatServer):
             if (method, path) in self._FIXED:
                 return getattr(self, self._FIXED[(method, path)])
             for pattern, table in ((_PROJECT_PATH, self._PROJECT), (_CHAT_PATH, self._CHAT),
-                                   (_CHAT_OPEN_PATH, self._OPEN)):
+                                   (_CHAT_OPEN_PATH, self._OPEN), (_UPLOAD_PATH, self._UPLOAD)):
                 found = pattern.match(path)
                 if found and method in table:
                     identifier = found.group(1)
@@ -229,18 +254,29 @@ def _make_handler(server: WebChatServer):
             ("GET", "/api/state"): "_state",
             ("GET", "/api/models"): "_models",
             ("GET", "/api/library"): "_library",
+            ("GET", "/api/suggestions"): "_suggestions",
+            ("GET", "/api/search"): "_search",
             ("GET", "/api/poll"): "_poll",
             ("GET", "/api/identity"): "_identity",
             ("POST", "/api/projects"): "_create_project",
             ("POST", "/api/chats"): "_create_chat",
             ("POST", "/api/chat"): "_chat",
+            ("GET", "/api/attachments/support"): "_attachment_support",
+            ("POST", "/api/attachments"): "_upload",
+            ("POST", "/api/attachments/screenshot"): "_screenshot",
             ("POST", "/api/stop"): "_stop",
             ("POST", "/api/model"): "_model",
             ("POST", "/api/clear"): "_clear",
+            ("GET", "/api/mic"): "_mic_status",
+            ("POST", "/api/mic/start"): "_mic_start",
+            ("POST", "/api/mic/heartbeat"): "_mic_heartbeat",
+            ("POST", "/api/mic/stop"): "_mic_stop",
+            ("POST", "/api/mic/cancel"): "_mic_cancel",
         }
         _PROJECT = {"PATCH": "_rename_project", "DELETE": "_delete_project"}
         _CHAT = {"GET": "_get_chat", "PATCH": "_patch_chat", "DELETE": "_delete_chat"}
         _OPEN = {"POST": "_open_chat"}
+        _UPLOAD = {"DELETE": "_discard_upload"}
 
         def _run(self) -> None:
             try:
@@ -290,6 +326,16 @@ def _make_handler(server: WebChatServer):
 
         def _library(self, _body) -> None:
             self._json(200, hub.library())
+
+        def _suggestions(self, _body) -> None:
+            self._json(200, hub.suggestions())
+        def _search(self, _body) -> None:
+            query = parse_qs(urlsplit(self.path).query).get("q", [""])[0]
+            if not query.strip() or len(query) > SEARCH_QUERY_MAX_CHARS:
+                raise _Refused(400, "bad_query")
+            self._json(200, {"results": [{"chat_id": h.chat_id, "message_id": h.message_id,
+                                          "snippet": h.snippet, "ts": h.ts}
+                                         for h in store.search_messages(query)]})
 
         def _poll(self, _body) -> None:
             query = parse_qs(urlsplit(self.path).query)
@@ -354,8 +400,7 @@ def _make_handler(server: WebChatServer):
             if chat is None:
                 raise _Refused(404, "unknown")
             self._json(200, {"chat": chat_dict(chat),
-                             "messages": [{"id": m.id, "role": m.role, "text": m.content, "ts": m.ts,
-                                           "source": m.source} for m in store.messages(chat_id)]})
+                             "messages": [message_dict(m) for m in store.messages(chat_id)]})
 
         def _patch_chat(self, chat_id, body) -> None:
             if store.get_chat(chat_id) is None:
@@ -366,10 +411,14 @@ def _make_handler(server: WebChatServer):
                     raise _Refused(400, "bad_name")
             if "project_id" in body and body["project_id"] is not None and not isinstance(body["project_id"], str):
                 raise _Refused(400, "bad_project")
+            if "pinned" in body and not isinstance(body["pinned"], bool):
+                raise _Refused(400, "bad_pinned")
             if "project_id" in body and not store.move_chat(chat_id, body["project_id"]):
                 raise _Refused(404, "unknown_project")
             if "title" in body:
                 store.rename_chat(chat_id, body["title"])
+            if "pinned" in body:
+                store.set_pinned(chat_id, body["pinned"])
             hub.changed_library()
             self._json(200, {"ok": True})
 
@@ -393,13 +442,76 @@ def _make_handler(server: WebChatServer):
             text = body.get("text")
             if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
                 raise _Refused(400, "bad_text")
-            result = hub.submit(text)
+            ids = body.get("attachments", [])
+            if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
+                raise _Refused(400, "bad_attachments")
+            try:
+                result = hub.submit(text, ids)
+            except UploadRefused as refused:
+                raise _Refused(refused.status, refused.code)
             if result.status != "accepted":
                 raise _Refused({"busy": 409}.get(result.status, 503), result.status)
             self._json(202, {"query_id": result.query_id, "status": result.status})
 
+        # -- endpoints: attachments -------------------------------------------------------
+
+        def _upload(self, body) -> None:
+            try:
+                info = hub.add_upload(body["bytes"])
+            except UploadRefused as refused:
+                raise _Refused(refused.status, refused.code)
+            self._json(201, info)
+
+        def _screenshot(self, _body) -> None:
+            try:
+                info = hub.capture_screenshot()
+            except UploadRefused as refused:
+                raise _Refused(refused.status, refused.code)
+            self._json(201, info)
+
+        def _discard_upload(self, upload_id, _body) -> None:
+            hub.discard_upload(upload_id)
+            self._json(200, {"ok": True})
+
+        def _attachment_support(self, _body) -> None:
+            self._json(200, hub.attachment_support())
+
         def _stop(self, _body) -> None:
             hub.cancel()
+            self._json(200, {"ok": True})
+
+        # -- endpoints: the microphone ----------------------------------------------------
+
+        @staticmethod
+        def _session(body: dict) -> str:
+            value = body.get("session")
+            if not isinstance(value, str) or not _SESSION.match(value):
+                raise _Refused(400, "bad_session")
+            return value
+
+        def _mic_status(self, _body) -> None:
+            self._json(200, hub.mic.status())
+
+        def _mic_start(self, _body) -> None:
+            session, reason = hub.mic.start()
+            if session is None:
+                raise _Refused(409 if reason == "busy" else 503, reason or "unavailable")
+            self._json(200, {"session": session, "max_seconds": MAX_RECORDING_SEC})
+
+        def _mic_heartbeat(self, body) -> None:
+            state = hub.mic.beat(self._session(body))
+            if state is None:
+                raise _Refused(404, "unknown")
+            self._json(200, {"state": state})
+
+        def _mic_stop(self, body) -> None:
+            text = hub.mic.stop(self._session(body))  # the transcript goes to this response only
+            if text is None:
+                raise _Refused(404, "unknown")
+            self._json(200, {"text": text})
+
+        def _mic_cancel(self, body) -> None:
+            hub.mic.cancel(self._session(body))
             self._json(200, {"ok": True})
 
         def _model(self, body) -> None:
