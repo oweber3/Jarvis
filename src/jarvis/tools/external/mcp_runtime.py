@@ -37,6 +37,9 @@ A server config may set ``timeout_sec`` to bound how long a single
 ``_DEFAULT_INVOKE_TIMEOUT_SEC``. Servers whose tools legitimately run
 long (e.g. delegating a task to an external CLI agent) should raise
 this; a bare ``concurrent.futures.TimeoutError`` propagates on expiry.
+A request that times out while queued is skipped by the worker; one
+that times out in flight means the session is stuck, so the worker is
+replaced and the next call gets a fresh session.
 """
 
 from __future__ import annotations
@@ -50,7 +53,7 @@ from typing import Any, Dict, Optional
 
 from ...debug import debug_log
 from . import mcp_client as _mcp_client_module
-from .mcp_client import MCPClient
+from .mcp_client import MCPClient, MCPServerSessionError
 
 _DEFAULT_INVOKE_TIMEOUT_SEC = 120.0
 _SETUP_TIMEOUT_SEC = 30.0
@@ -191,7 +194,7 @@ class _PersistentMCPRuntime:
                 f"MCP worker '{server_name}' died; restarting and retrying once",
                 "mcp",
             )
-            self._drop_worker(server_name)
+            self._drop_worker(server_name, worker)
             worker = self._get_worker(server_name, server_cfg)
             return worker.invoke(tool_name, arguments, timeout)
 
@@ -225,7 +228,7 @@ class _PersistentMCPRuntime:
                 f"MCP worker '{server_name}' died during list_tools; restarting",
                 "mcp",
             )
-            self._drop_worker(server_name)
+            self._drop_worker(server_name, worker)
             worker = self._get_worker(server_name, server_cfg)
             return worker.list_tools(timeout)
 
@@ -263,15 +266,20 @@ class _PersistentMCPRuntime:
             self._workers[server_name] = worker
             return worker
 
-    def _drop_worker(self, server_name: str) -> None:
-        """Forcibly evict and shut down the cached worker for ``server_name``.
+    def _drop_worker(self, server_name: str, dead: "_ServerWorker") -> None:
+        """Evict and shut down ``dead`` if it is still the cached worker.
 
         Used after the worker has signalled it is no longer servicing
-        requests (e.g. a ``_WorkerDeadError``). Safe to call when no
-        worker is cached.
+        requests (e.g. a ``_WorkerDeadError``). A worker another caller
+        has already put in its place is left alone, so concurrent
+        retries do not tear down each other's fresh session.
         """
         with self._workers_lock:
-            worker = self._workers.pop(server_name, None)
+            worker = self._workers.get(server_name)
+            if worker is dead:
+                del self._workers[server_name]
+            else:
+                worker = dead
         if worker is not None:
             try:
                 worker.shutdown()
@@ -362,7 +370,18 @@ class _ServerWorker:
         # Block until the worker has initialised the MCP session, or
         # surfaced a startup error. Without this, the first ``invoke``
         # would race the session handshake.
-        self._ready.result(timeout=_SETUP_TIMEOUT_SEC)
+        try:
+            self._ready.result(timeout=_SETUP_TIMEOUT_SEC)
+        except concurrent.futures.TimeoutError:
+            # The half-started session would otherwise keep its
+            # subprocess running with no owner.
+            debug_log(
+                f"MCP server '{self._server_name}' did not finish its handshake "
+                f"within {_SETUP_TIMEOUT_SEC}s; stopping it",
+                "mcp",
+            )
+            self.shutdown()
+            raise
 
     async def _run(self) -> None:
         try:
@@ -408,6 +427,23 @@ class _ServerWorker:
                         if cmd is None:
                             return
                         kind, payload, fut = cmd
+                        if not self.alive:
+                            # Shut down while this request waited: hand it
+                            # back so the caller retries on a fresh worker.
+                            if not fut.done():
+                                fut.set_exception(_WorkerDeadError(
+                                    f"MCP server '{self._server_name}' session ended"
+                                ))
+                            return
+                        if not fut.set_running_or_notify_cancel():
+                            # The caller gave up while the request was
+                            # queued and was told it failed: never run it.
+                            debug_log(
+                                f"MCP worker '{self._server_name}' skipped a "
+                                "request whose caller already timed out",
+                                "mcp",
+                            )
+                            continue
                         try:
                             if kind == "call":
                                 tool_name, arguments = payload
@@ -423,8 +459,20 @@ class _ServerWorker:
                             if not fut.done():
                                 fut.set_result(res)
                         except BaseException as e:  # noqa: BLE001
+                            cancelled = isinstance(e, asyncio.CancelledError)
                             if not fut.done():
-                                fut.set_exception(e)
+                                # A call stopped part-way may already have
+                                # acted, so it is reported, never retried.
+                                fut.set_exception(
+                                    MCPServerSessionError(
+                                        f"MCP server '{self._server_name}' session "
+                                        "was stopped during the call"
+                                    ) if cancelled else e
+                                )
+                            if cancelled:
+                                # The worker is being shut down: stop
+                                # serving instead of pulling the next request.
+                                raise
         except BaseException as e:  # noqa: BLE001
             # Setup or session loop crashed. Surface to ``start()`` if
             # we never signalled readiness; otherwise log and let the
@@ -508,17 +556,34 @@ class _ServerWorker:
         try:
             return fut.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
-            # If the worker died between our enqueue and the wait, the
-            # drain in ``_run``'s finally would normally resolve the
-            # future with ``_WorkerDeadError`` — but if our cmd landed
-            # on the queue *after* the drain ran, no one will ever
-            # resolve it. Treat that as a worker death so the runtime
-            # can replace the worker instead of returning a misleading
-            # plain timeout to the caller.
-            if not self.alive:
-                raise _WorkerDeadError(
-                    f"MCP server '{self._server_name}' died while servicing call"
-                ) from None
+            if fut.cancel():
+                # Never started. A dead worker (our request landed after
+                # the drain) is retried on a fresh one; otherwise the
+                # request waited behind another call and the worker
+                # skips it, so it never runs after this caller gave up.
+                if not self.alive:
+                    raise _WorkerDeadError(
+                        f"MCP server '{self._server_name}' died while servicing call"
+                    ) from None
+                debug_log(
+                    f"MCP call to '{self._server_name}' timed out while queued; "
+                    "it will not run",
+                    "mcp",
+                )
+                raise
+            if fut.done():
+                # Finished just after the deadline: the answer is real.
+                return fut.result()
+            # The session is stuck inside this call. Replace the worker
+            # (ending its subprocess) so the next call gets a fresh
+            # session and requests queued behind this one do not wait
+            # on it or run after their callers gave up.
+            debug_log(
+                f"MCP call to '{self._server_name}' timed out in flight; "
+                "replacing its session",
+                "mcp",
+            )
+            self.shutdown()
             raise
 
     def shutdown(self) -> None:

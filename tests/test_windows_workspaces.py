@@ -184,6 +184,17 @@ def test_an_app_with_several_open_windows_is_ambiguous_and_not_launched(monkeypa
     assert desk.startfiles == [] and desk.placed == {}
 
 
+def test_a_workspace_never_launches_an_uninstaller(monkeypatch):
+    uninstaller = apps.Application('Uninstall Word', 'word-uninstall.lnk', 'C:/Windows/System32/msiexec.exe',
+                                   '/x {11111111-2222-3333-4444-555555555555}', uninstaller=True)
+    desk = Desk(monkeypatch, applications=(uninstaller,))
+    with pytest.raises(workspaces.WorkspaceError) as caught:
+        run(desk, [app_item(target='Uninstall Word')])
+    item = caught.value.data['items'][0]
+    assert item['outcome'] == 'failed' and 'confirmation' in item['reason']
+    assert desk.startfiles == []
+
+
 # --- validation: all or nothing -------------------------------------------------------
 
 def bad_cases(tmp_path):

@@ -94,7 +94,7 @@ class LoadedExtensions:
             for callback in reg.on_start:
                 try:
                     callback()
-                except Exception as exc:
+                except BaseException as exc:  # noqa: BLE001 - as when loading: one extension never stops start-up
                     started = False
                     _warn(f"Extension {reg.name} did not start: {type(exc).__name__}")
                     debug_log(f"extension {reg.name} start failed: {type(exc).__name__}", "extensions")
@@ -228,7 +228,7 @@ def load_extensions(cfg: Any, raw: Optional[Dict[str, Any]] = None, *, quiet: bo
                 registrations.append(registration)
                 debug_log(f"extension {name} registered", "extensions")
                 continue
-            except Exception as exc:
+            except BaseException as exc:  # noqa: BLE001 - an extension's sys.exit() never stops start-up
                 _forget(name)
                 reason = str(exc) if isinstance(exc, AttributeError) else type(exc).__name__
                 debug_log(f"extension {name} failed to load: {type(exc).__name__}", "extensions")

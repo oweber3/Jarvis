@@ -153,6 +153,11 @@ class WindowsTool(Tool):
             return None
         return placement_request(given, always=action in self.placement_required)
 
+    def _call_options(self, action, args):
+        """Extra ``_operate`` options taken from the call itself (its approval), read before the OS call leaves
+        this thread."""
+        return {}
+
     def _extra_request(self, action, args):
         """Validate the extra text arguments: each is only accepted by the actions that declare it."""
         given = {key: args[key] for key in self.extra_properties if args.get(key) not in (None, '')}
@@ -190,6 +195,7 @@ class WindowsTool(Tool):
             if placement:
                 options['placement'] = placement
             options.update(self._extra_request(action, args))
+            options.update(self._call_options(action, args))
             from ....platform.windows._bounded import run_bounded
             outcome = run_bounded(lambda: self._operate(action, target, context.cfg, **options), self.timeout_sec)
             launch = outcome if isinstance(outcome, _Launched) else None
@@ -230,20 +236,43 @@ def _window_target(target, cfg):
     return PureWindowsPath(app.executable).stem
 
 
-def _catalogue_entry(target, cfg):
-    """The catalogue entry a launch would use, or ``None`` when there is none to judge.
+def _owned_process(target, cfg):
+    """For a window action that matches only exactly (``close``): an application name from the ready catalogue
+    becomes the executable stem that application alone runs, so "close Word" reaches Word's own windows and
+    never a window whose title merely mentions Word. Anything else passes through unchanged."""
+    from ....platform.windows.apps import APP_INDEX, launch_identity, launcher_stem, resolve_application
+    apps = APP_INDEX.snapshot()
+    if apps is None or target.strip().isdigit():
+        return target
+    try:
+        app = resolve_application(target, list(apps), cfg.windows_app_aliases)
+    except ValueError:
+        return target
+    stem = launcher_stem(app)
+    if not stem:
+        return target
+    # A program other entries run differently (a script through cmd.exe) does not identify this application.
+    identities = {launch_identity(other) for other in apps
+                  if other.executable and PureWindowsPath(other.executable).stem.casefold() == stem.casefold()}
+    return stem if len(identities) == 1 else target
 
-    Uses the ready catalogue; while discovery is running it waits as the launch itself would. An unknown or
-    ambiguous name launches nothing, so it is not judged here."""
+
+# ``_catalogue_entry`` could not read the catalogue, so it cannot tell whether a launch removes software.
+_CATALOGUE_UNAVAILABLE = object()
+
+
+def _catalogue_entry(target, cfg):
+    """The catalogue entry a launch would use, ``None`` when the name launches nothing (unknown or ambiguous),
+    or ``_CATALOGUE_UNAVAILABLE`` when the catalogue cannot be read.
+
+    Uses the ready catalogue; otherwise it starts or waits for discovery as the launch itself would."""
     from ....platform.windows.apps import APP_INDEX, resolve_application
     apps = APP_INDEX.snapshot()
-    if apps is None and APP_INDEX.started:
+    if apps is None:
         try:
             apps = APP_INDEX.applications()
         except OSError:
-            return None
-    if apps is None:
-        return None
+            return _CATALOGUE_UNAVAILABLE
     try:
         return resolve_application(target, list(apps), getattr(cfg, 'windows_app_aliases', {}))
     except ValueError:
@@ -288,13 +317,29 @@ class AppControlTool(WindowsTool):
         if not isinstance(args, dict) or args.get('action') != 'open' or not isinstance(args.get('target'), str):
             return request
         app = _catalogue_entry(args['target'], cfg)
+        from ...confirmation import ConfirmationRequest, SafetyTier
+        if app is _CATALOGUE_UNAVAILABLE:
+            # Fail closed: without the catalogue nothing shows the launch is not an uninstaller.
+            debug_log('appControl open with no application catalogue; desktop confirmation required.', 'safety')
+            return ConfirmationRequest(
+                tool_name=self.name, tier=SafetyTier.CONFIRM_DIALOG, action='open', target=args['target'],
+                parameters=dict(args),
+                consequence=('The list of installed applications is not ready, so it cannot be checked whether '
+                             'this opens an uninstaller, which would remove installed software.'))
         if app is None or not app.uninstaller:
             return request
-        from ...confirmation import ConfirmationRequest, SafetyTier
         debug_log('appControl open names an uninstaller; desktop confirmation required.', 'safety')
         return ConfirmationRequest(
             tool_name=self.name, tier=SafetyTier.CONFIRM_DIALOG, action='open', target=app.name,
             parameters=dict(args), consequence='This opens an uninstaller, which removes installed software.')
+
+    def _call_options(self, action, args):
+        """An approved ``open`` may launch an uninstaller; the approval is read on the calling thread."""
+        if action != 'open':
+            return {}
+        from ...request_scope import current_call
+        approval = current_call().approval
+        return {'uninstaller_approved': True} if approval is not None and approval.tool_name == self.name else {}
 
     def fast_targets(self, cfg):
         """Expose ready catalogue names to routing without OS calls or waiting.
@@ -364,13 +409,14 @@ class AppControlTool(WindowsTool):
                 grouped[identity] = FastTarget(tuple(faithful_names), launch_name, window_stem, app.name)
         return tuple(grouped.values())
 
-    def _operate(self, action, target, cfg, process_only=False, placement=None):
+    def _operate(self, action, target, cfg, process_only=False, placement=None, uninstaller_approved=False):
         if action == 'open' and placement:
             from ....platform.windows.apps import open_application_placed
             monitor, rectangle, label, state = _resolve_placement(cfg, placement)
             extra = {'zone': label} if label else {}
             try:
-                result = open_application_placed(target, cfg.windows_app_aliases, monitor, rectangle, state)
+                result = open_application_placed(target, cfg.windows_app_aliases, monitor, rectangle, state,
+                                                 allow_uninstaller=uninstaller_approved)
             except PartialPlacementError as exc:
                 exc.data.update(monitor=monitor.device, **extra)
                 raise
@@ -382,10 +428,13 @@ class AppControlTool(WindowsTool):
             except Exception as exc:  # noqa: BLE001 - an unknown app fails in the launch below
                 debug_log(f'Launch tracking unavailable ({type(exc).__name__}).', 'windows')
                 process, resolve = '', None
-            return _Launched(open_application(target, cfg.windows_app_aliases), process, resolve)
-        from ....platform.windows.windows_mgmt import control_window
+            return _Launched(open_application(target, cfg.windows_app_aliases,
+                                              allow_uninstaller=uninstaller_approved), process, resolve)
+        from ....platform.windows.windows_mgmt import DESTRUCTIVE_WINDOW_ACTIONS, control_window
         if action != 'list':
             target = _window_target(target, cfg)
+            if action in DESTRUCTIVE_WINDOW_ACTIONS and not process_only:
+                target = _owned_process(target, cfg)
         return control_window(action, target, process_only=process_only)
 
 
