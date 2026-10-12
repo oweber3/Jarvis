@@ -95,6 +95,7 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
 export const api = {
   library: () => request<Library>("GET", "/api/library"),
   models: () => request<ModelsResponse>("GET", "/api/models"),
+  suggestions: () => request<unknown>("GET", "/api/suggestions"),
   chat: (id: string) => request<{ chat: Chat; messages: ChatMessage[] }>("GET", `/api/chats/${id}`),
   poll: (rev: number, after: number, signal: AbortSignal) =>
     request<Snapshot>("GET", `/api/poll?rev=${rev}&after=${after}`, undefined, signal),

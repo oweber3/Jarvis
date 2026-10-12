@@ -229,6 +229,7 @@ def _make_handler(server: WebChatServer):
             ("GET", "/api/state"): "_state",
             ("GET", "/api/models"): "_models",
             ("GET", "/api/library"): "_library",
+            ("GET", "/api/suggestions"): "_suggestions",
             ("GET", "/api/poll"): "_poll",
             ("GET", "/api/identity"): "_identity",
             ("POST", "/api/projects"): "_create_project",
@@ -290,6 +291,9 @@ def _make_handler(server: WebChatServer):
 
         def _library(self, _body) -> None:
             self._json(200, hub.library())
+
+        def _suggestions(self, _body) -> None:
+            self._json(200, hub.suggestions())
 
         def _poll(self, _body) -> None:
             query = parse_qs(urlsplit(self.path).query)

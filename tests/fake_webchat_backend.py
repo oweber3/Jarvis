@@ -27,6 +27,7 @@ class FakeWebChatBackend:
         # The active cloud mode's choice (None in local mode) and the models its bridge reported.
         self.cloud: Optional[dict] = None
         self.cloud_options: List[dict] = []
+        self.suggestion_data = {"routines": [], "workspaces": [], "workspaces_available": True}
         self.refuse_cloud: Optional[str] = None
         self.cloud_calls: List[tuple] = []
         self.refuse_mode: Optional[str] = None
@@ -134,6 +135,14 @@ class FakeWebChatBackend:
         """A voice exchange: the same two turns a spoken request adds to the shared memory."""
         self.memory.add_message("user", user)
         self.memory.add_message("assistant", reply)
+
+    def suggestion_sources(self) -> dict:
+        if isinstance(self.suggestion_data, Exception):
+            raise self.suggestion_data
+        return self.suggestion_data
+
+    def suggestion_languages(self) -> List[str]:
+        return ["en"]
 
     def set_state(self, state: str) -> None:
         self.state = state

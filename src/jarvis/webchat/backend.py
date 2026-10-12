@@ -12,6 +12,17 @@ INSTALLED_CACHE_SEC = 30.0
 CLOUD_KEYS = {"codex": ("codex_model", "codex_reasoning_effort"), "claude": ("claude_model", "claude_effort")}
 
 
+def suggestion_sources(cfg) -> dict:
+    """Names only of the owner's routines and workspaces, for the start screen. Definitions (steps,
+    arguments, paths, URLs, aliases) never leave this function."""
+    if cfg is None:
+        return {"routines": [], "workspaces": [], "workspaces_available": False}
+    from ..routines import store
+    return {"routines": list(store.current(cfg)),
+            "workspaces": [str(name) for name in (getattr(cfg, "windows_workspaces", None) or {})],
+            "workspaces_available": bool(getattr(cfg, "windows_tools_enabled", False))}
+
+
 class DaemonBackend:
     """What the web chat needs from the running daemon. Every call returns quickly except a mode switch."""
 
@@ -46,6 +57,17 @@ class DaemonBackend:
         """Swap the conversation for ``messages``: the mirror cursor after the swap, or None when refused."""
         from .. import daemon
         return daemon.switch_chat_conversation(messages)
+
+    # -- start screen ------------------------------------------------------------
+
+    def suggestion_sources(self) -> dict:
+        from .. import daemon
+        return suggestion_sources(daemon.get_settings())
+
+    def suggestion_languages(self) -> List[str]:
+        from .. import daemon
+        cfg = daemon.get_settings()
+        return list(getattr(cfg, "fast_commands_locales", None) or [])
 
     # -- state -------------------------------------------------------------------
 
