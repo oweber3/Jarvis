@@ -359,7 +359,9 @@ def test_the_wake_word_sound_during_the_hot_window_changes_nothing(face_states):
     listener, _ = _listening_listener(_ScriptedDetector(hits=(0,)))
     listener.state_manager.schedule_hot_window_activation()
     deadline = time.time() + 2.0
-    while not listener.state_manager.is_hot_window_active() and time.time() < deadline:
+    # The hot window opens just before it lights the face; wait for both.
+    while time.time() < deadline and not (listener.state_manager.is_hot_window_active()
+                                          and assistant_state.current() is AssistantState.LISTENING):
         time.sleep(0.02)
     assert assistant_state.current() is AssistantState.LISTENING
 
