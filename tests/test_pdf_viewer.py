@@ -97,6 +97,14 @@ def test_edge_address_bars_give_the_exact_file(tmp_path):
     assert Path(pv.path_from_address(str(book))) == book
 
 
+def test_chrome_address_bar_without_scheme_gives_the_exact_file(tmp_path):
+    # Chrome shows a local PDF as a bare forward-slash path with the URL's percent escapes.
+    book = tmp_path / 'Fox and McDonald – Anna’s Archive.pdf'
+    book.write_bytes(b'%PDF-1.4')
+    shown = book.as_posix().replace(' ', '%20') + '#page=4'
+    assert Path(pv.path_from_address(shown)) == book
+
+
 def test_page_boxes_are_chosen_by_page_range_and_automation_id():
     boxes = [PageBoxCandidate('ZoomBox', 100.0), PageBoxCandidate('', 3.0), PageBoxCandidate('Search', None)]
     assert choose_page_box(boxes, 40) == 1

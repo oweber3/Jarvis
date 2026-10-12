@@ -224,7 +224,10 @@ def path_from_address(value: str) -> Optional[str]:
         if parsed.netloc:
             path = f'//{parsed.netloc}{path}'
         text = path.replace('/', os.sep)
-    elif not re.match(r'^[A-Za-z]:[\\/]', text):
+    elif re.match(r'^[A-Za-z]:/', text):
+        # Chrome shows a file URL without its scheme: forward slashes, still percent-escaped.
+        text = unquote(text).replace('/', os.sep)
+    elif not re.match(r'^[A-Za-z]:\\', text):
         return None
     text = text.split('#', 1)[0]
     return text if text.casefold().endswith('.pdf') else None
