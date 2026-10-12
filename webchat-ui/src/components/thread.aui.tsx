@@ -329,6 +329,10 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
           autoFocus={autoFocus}
           enterKeyHint="send"
           aria-label="Message input"
+          // Enter must not slip past what disables the Send button, or the message and its attachments are lost.
+          onKeyDown={(event) => {
+            if (gate.blocked && event.key === "Enter" && !event.shiftKey) event.preventDefault();
+          }}
         />
         <AttachmentNotice gate={gate} />
         <ComposerAction blocked={gate.blocked} />

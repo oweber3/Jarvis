@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import secrets
 import threading
 import time
@@ -29,7 +30,7 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_TEXT_BYTES = 1024 * 1024
-MAX_PIXELS = 50_000_000
+MAX_PIXELS = 25_000_000
 PDF_MAX_PAGES = 100
 PDF_BUDGET_SEC = 6.0
 JPEG_QUALITY = 85
@@ -37,6 +38,8 @@ HOLD_SEC = 15 * 60
 MAX_HELD = 8
 
 _IMAGE_FORMATS = ("PNG", "JPEG", "GIF", "WEBP")
+# One image is decoded at a time: a large one takes hundreds of megabytes while it is turned into a small JPEG.
+_DECODING = threading.Semaphore(1)
 _MAX_CONTROL_SHARE = 0.02
 _BINARY_PROBE_BYTES = 8192
 
@@ -63,7 +66,7 @@ def _is_image(data: bytes) -> bool:
 
 
 def _is_pdf(data: bytes) -> bool:
-    return b"%PDF-" in data[:1024]
+    return data[:1024].lstrip(b"\xef\xbb\xbf \t\r\n\x00").startswith(b"%PDF-")
 
 
 def classify(data: bytes) -> RequestAttachment:
@@ -80,25 +83,26 @@ def classify(data: bytes) -> RequestAttachment:
 def _image(data: bytes) -> RequestAttachment:
     if len(data) > MAX_IMAGE_BYTES:
         raise UploadRefused("too_large")
-    from PIL import Image, UnidentifiedImageError
+    from PIL import Image, ImageOps, UnidentifiedImageError
     from ..tools.builtin.screenshot import MAX_IMAGE_EDGE
     try:
-        with Image.open(io.BytesIO(data)) as opened:
+        with _DECODING, Image.open(io.BytesIO(data)) as opened:
             if opened.format not in _IMAGE_FORMATS:
                 raise UploadRefused("unsupported")
             if opened.width * opened.height > MAX_PIXELS:
                 raise UploadRefused("too_large")
             opened.load()
-            frame = opened.convert("RGBA") if (opened.mode in ("RGBA", "LA", "PA") or "transparency" in opened.info
-                                                or opened.mode == "P") else opened.convert("RGB")
-        if frame.mode == "RGBA":  # transparency is flattened onto white; the JPEG has no alpha
-            flat = Image.new("RGB", frame.size, "white")
-            flat.paste(frame, mask=frame.getchannel("A"))
-            frame = flat
-        if max(frame.size) > MAX_IMAGE_EDGE:
-            frame.thumbnail((MAX_IMAGE_EDGE, MAX_IMAGE_EDGE), Image.Resampling.LANCZOS)
-        buffer = io.BytesIO()
-        frame.save(buffer, format="JPEG", quality=JPEG_QUALITY)  # re-encoding drops metadata such as location
+            upright = ImageOps.exif_transpose(opened)  # the metadata is dropped below, so turn the photo now
+            frame = upright.convert("RGBA") if (upright.mode in ("RGBA", "LA", "PA") or "transparency" in upright.info
+                                                or upright.mode == "P") else upright.convert("RGB")
+            if max(frame.size) > MAX_IMAGE_EDGE:
+                frame.thumbnail((MAX_IMAGE_EDGE, MAX_IMAGE_EDGE), Image.Resampling.LANCZOS)
+            if frame.mode == "RGBA":  # transparency is flattened onto white; the JPEG has no alpha
+                flat = Image.new("RGB", frame.size, "white")
+                flat.paste(frame, mask=frame.getchannel("A"))
+                frame = flat
+            buffer = io.BytesIO()
+            frame.save(buffer, format="JPEG", quality=JPEG_QUALITY)  # re-encoding drops metadata such as location
     except UploadRefused:
         raise
     except (UnidentifiedImageError, OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:
@@ -109,10 +113,18 @@ def _image(data: bytes) -> RequestAttachment:
     return RequestAttachment(KIND_IMAGE, len(data), image=ToolImage("image/jpeg", sent))
 
 
+class _Silence(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return False
+
+
 def _pdf(data: bytes) -> RequestAttachment:
     if len(data) > MAX_PDF_BYTES:
         raise UploadRefused("too_large")
     from pypdf import PdfReader
+    quiet = _Silence()
+    pypdf_log = logging.getLogger("pypdf")
+    pypdf_log.addFilter(quiet)  # pypdf quotes what it found in a damaged file; none of it may reach a log
     try:
         reader = PdfReader(io.BytesIO(data))
         if reader.is_encrypted and not reader.decrypt(""):
@@ -131,6 +143,8 @@ def _pdf(data: bytes) -> RequestAttachment:
     except Exception as exc:  # noqa: BLE001 - pypdf raises many kinds for damaged files
         debug_log(f"webchat: PDF upload unreadable ({type(exc).__name__})", "webchat")
         raise UploadRefused("unreadable") from exc
+    finally:
+        pypdf_log.removeFilter(quiet)
     text = "\n\n".join(chunk.strip() for chunk in chunks if chunk.strip())
     if not text:
         raise UploadRefused("no_text")

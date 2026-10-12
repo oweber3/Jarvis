@@ -63,9 +63,17 @@ class TestImages:
         refused = _refused(_png()[:30])
         assert refused.code == "unreadable"
 
+    def test_a_photo_taken_sideways_is_turned_upright_before_the_metadata_goes(self):
+        exif = Image.Exif()
+        exif[0x0112] = 6  # the camera says: rotate to display
+        buffer = io.BytesIO()
+        Image.new("RGB", (40, 20), "blue").save(buffer, format="JPEG", exif=exif)
+        decoded = Image.open(io.BytesIO(base64.b64decode(classify(buffer.getvalue()).image.data)))
+        assert decoded.size == (20, 40)
+
     def test_an_image_with_an_absurd_pixel_count_is_refused(self):
         buffer = io.BytesIO()
-        Image.new("L", (9000, 9000)).save(buffer, format="PNG")
+        Image.new("L", (uploads.MAX_PIXELS // 4000 + 1, 4000)).save(buffer, format="PNG")
         assert len(buffer.getvalue()) < uploads.MAX_IMAGE_BYTES
         assert _refused(buffer.getvalue()).code == "too_large"
 
@@ -121,6 +129,16 @@ class TestPdf:
     def test_a_pdf_with_no_text_is_refused_with_its_reason(self, tmp_path):
         path = make_pdf(tmp_path / "blank.pdf", [""])
         assert _refused(path.read_bytes()).code == "no_text"
+
+    def test_reading_a_pdf_never_prints_what_pypdf_found_in_the_file(self, tmp_path, capfd):
+        for sample in (b"%PDF-1.4 SECRET-IN-FILE not really a pdf", make_pdf(tmp_path / "d.pdf", ["words"]).read_bytes()[:90]):
+            with pytest.raises(UploadRefused):
+                classify(sample)
+        captured = capfd.readouterr()
+        assert "SECRET-IN-FILE" not in captured.out + captured.err and not captured.err
+
+    def test_a_text_file_that_merely_mentions_the_pdf_signature_is_still_text(self):
+        assert classify(b"notes: files start with %PDF- as a header").kind == "text"
 
     def test_a_damaged_pdf_is_refused(self, tmp_path):
         path = make_pdf(tmp_path / "doc.pdf", ["words"])

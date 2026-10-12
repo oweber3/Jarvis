@@ -133,6 +133,8 @@ def _make_handler(server: WebChatServer):
     class Handler(BaseHTTPRequestHandler):
         server_version = "Jarvis"
         sys_version = ""
+        # A client that stalls mid-request (an upload can be large) frees its thread and buffer after this.
+        timeout = 60
 
         def log_message(self, format, *args) -> None:  # noqa: A002 - request lines never reach the console
             return
