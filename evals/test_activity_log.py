@@ -69,9 +69,18 @@ def _run(query, cfg, db, memory):
 
     capture = ToolCallCapture()
 
-    def recording(db_, cfg_, tool_name, tool_args, *args, **kwargs):
-        capture.record(tool_name, tool_args or {})
-        return run_tool_with_retries(db_, cfg_, tool_name, tool_args, *args, **kwargs)
+    def recording(*args, **kwargs):
+        import inspect
+        from jarvis.tools.types import ToolExecutionResult
+
+        call = inspect.signature(run_tool_with_retries).bind(*args, **kwargs)
+        tool_name = call.arguments["tool_name"]
+        capture.record(tool_name, call.arguments.get("tool_args") or {})
+        if tool_name != "activityLog":
+            # Only the tool under test runs for real; a mis-routed call never
+            # touches this machine's files, windows or devices.
+            return ToolExecutionResult(success=True, reply_text="OK")
+        return run_tool_with_retries(*args, **kwargs)
 
     cfg.ollama_chat_model = JUDGE_MODEL
     with patch("jarvis.reply.engine.run_tool_with_retries", side_effect=recording):

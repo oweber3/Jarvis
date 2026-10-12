@@ -425,6 +425,7 @@ class TestMemoryEnrichment:
     ])
     def test_enrichment_extracts_correct_keywords(self, query: str, expected_keywords: list, mock_config):
         """Enrichment should extract keywords that find relevant memory context."""
+        from jarvis.llm import Tier, resolve_model
         from jarvis.reply.enrichment import extract_search_params_for_memory
         from helpers import JUDGE_MODEL
 
@@ -434,7 +435,7 @@ class TestMemoryEnrichment:
         result = extract_search_params_for_memory(
             query=query,
             cfg=mock_config,
-            chat_model=mock_config.ollama_chat_model,
+            chat_model=resolve_model(mock_config, Tier.FAST),  # the tier the engine runs it on
             timeout_sec=15.0
         )
 
@@ -463,6 +464,7 @@ class TestMemoryEnrichment:
         the query generator should not emit implicit questions asking for that same
         information — we don't want to pull it from long-term memory redundantly.
         """
+        from jarvis.llm import Tier, resolve_model
         from jarvis.reply.enrichment import extract_search_params_for_memory
         from helpers import JUDGE_MODEL
 
@@ -480,7 +482,7 @@ class TestMemoryEnrichment:
         result = extract_search_params_for_memory(
             query="recommend a restaurant I'd enjoy",
             cfg=mock_config,
-            chat_model=mock_config.ollama_chat_model,
+            chat_model=resolve_model(mock_config, Tier.FAST),  # the tier the engine runs it on
             timeout_sec=15.0,
             context_hint=context_hint,
         )
