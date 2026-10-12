@@ -377,18 +377,39 @@ def test_one_finger_ends_the_scroll_and_aiming_resumes():
     rig.start()
     rig.two_at(0.5, 0.5)
     rig.glide((0.51, 0.51), (0.51, 0.45), gesture="two")
-    rig.start(0.51, 0.45)
+    rig.show(hand(0.51, 0.45), frames=9)
     count = len(rig.desk.of("scroll"))
     rig.glide((0.51, 0.45), (0.51, 0.35))
     assert len(rig.desk.of("scroll")) == count and rig.snap.state == "aiming"
 
 
-def test_a_fist_from_scrolling_grabs_the_window_under_the_pointer():
+def test_closing_the_hand_from_two_fingers_ends_the_scroll_and_grabs_nothing():
     rig = Rig(FakeDesktop(windows=[window((0, 0, 1920, 1080))]))
     rig.start()
     rig.two_at(0.5, 0.5)
-    rig.show(hand(0.51, 0.51, gesture="fist"), frames=SETTLE)
+    rig.show(hand(0.51, 0.51, gesture="fist"), frames=12)
+    assert rig.desk.of("grab") == [] and rig.snap.state != "scrolling"
+    rig.start(0.51, 0.51)  # point first, then a fist grabs
+    rig.grab_at(0.51, 0.51)
     assert rig.snap.state == "holding"
+
+
+def test_fingers_bending_briefly_while_scrolling_do_not_end_the_scroll():
+    """Measured on a real webcam: moving the hand bends the two raised fingers to about 0.92 to 1.0."""
+    rig = Rig(FakeDesktop(windows=[window((0, 0, 1920, 1080))]))
+    rig.start()
+    rig.two_at(0.5, 0.5)
+    rig.show(hand(0.51, 0.51, gesture="two", curls={"index": 0.9, "middle": 0.9}), frames=6)  # 0.2 s
+    rig.show(hand(0.51, 0.51, gesture="two"), frames=3)
+    assert rig.snap.state == "scrolling" and rig.desk.of("grab") == []
+
+
+def test_one_finger_held_long_enough_ends_the_scroll():
+    rig = Rig(FakeDesktop())
+    rig.start()
+    rig.two_at(0.5, 0.5)
+    rig.show(hand(0.51, 0.51), frames=9)  # 0.3 s
+    assert rig.snap.state == "aiming"
 
 
 def test_a_window_that_refuses_scrolling_does_not_break_tracking():
@@ -542,6 +563,7 @@ def test_the_state_names_what_the_hand_is_doing():
     assert rig.snap.state == "hand changing"
     rig.show(hand(0.5, 0.5, gesture="two"), frames=SETTLE)
     assert rig.snap.state == "scrolling"
+    rig.show(hand(0.5, 0.5), frames=9)
     rig.show(hand(0.5, 0.5, gesture="fist"), frames=SETTLE)
     assert rig.snap.state == "holding"
     empty = Rig(FakeDesktop(windows=[]))

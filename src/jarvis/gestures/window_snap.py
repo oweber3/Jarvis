@@ -20,6 +20,8 @@ from .hand_tracking import Hand, HandFrame, Landmark
 Rectangle = Tuple[int, int, int, int]
 
 HAND_LOST_SEC = 0.25
+# Leaving a scroll needs the new gesture to last at least this long: the raised fingers bend as the hand moves.
+SCROLL_EXIT_SEC = 0.25
 # After a gesture change the pointer's distance from the palm's place fades with this time constant.
 CATCH_UP_SEC = 0.15
 _PALM = (Landmark.WRIST, Landmark.INDEX_MCP, Landmark.MIDDLE_MCP, Landmark.RING_MCP, Landmark.PINKY_MCP)
@@ -333,7 +335,8 @@ class WindowSnap:
         else:
             if shape != self._candidate:
                 self._candidate, self._candidate_since = shape, t
-            if t - self._candidate_since >= self._s.debounce:
+            needed = max(self._s.debounce, SCROLL_EXIT_SEC) if self._state == _SCROLLING else self._s.debounce
+            if t - self._candidate_since >= needed:
                 self._candidate = None
                 self._confirm(shape, p)
             # Until the new gesture counts the pointer (and a held window) stays still.
@@ -361,6 +364,10 @@ class WindowSnap:
             self._state = _AIMING
         if self._state == _SCROLLING and shape != TWO:
             self._end_scroll()
+            if shape == FIST:
+                # A fist grabs only after pointing: closing the hand from a scroll grabs nothing.
+                self._state = _HOLDING_NOTHING
+                return
             self._state = _AIMING
         if shape in (ONE, TWO, FIST):
             if paused:
