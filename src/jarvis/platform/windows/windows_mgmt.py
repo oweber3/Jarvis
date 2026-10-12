@@ -137,16 +137,10 @@ def list_windows() -> list[Window]:
     return windows
 
 
-# Actions that end what a window holds: they match only exactly (process, full title or handle).
-DESTRUCTIVE_WINDOW_ACTIONS = frozenset({'close'})
-
-
-def resolve_window(target: str, windows: list[Window], *, process_only: bool = False,
-                   exact_only: bool = False) -> Window:
+def resolve_window(target: str, windows: list[Window], *, process_only: bool = False) -> Window:
     """Pick one window. ``process_only`` matches the owning process name or a
     handle, never window titles, so a deterministic route cannot hit another
-    application whose title merely contains the word. ``exact_only`` matches the
-    process name, the full title or a handle, never words within a title."""
+    application whose title merely contains the word."""
     query = target.strip().casefold()
     if not query:
         raise ValueError('An application name or window handle is required.')
@@ -156,16 +150,11 @@ def resolve_window(target: str, windows: list[Window], *, process_only: bool = F
     else:
         exact = [window for window in windows if query in
                  (str(window.hwnd), window.process.casefold(), window.title.casefold())]
-        matches = exact or ([] if exact_only else
-                            [window for window in windows if name_tokens(query) and
-                             name_tokens(query) <= name_tokens(window.title)])
+        matches = exact or [window for window in windows if name_tokens(query) and
+                           name_tokens(query) <= name_tokens(window.title)]
     if len(matches) == 1:
         return matches[0]
     if not matches:
-        if exact_only:
-            debug_log('No window matches exactly; words within titles are not used for this action.', 'windows')
-            raise ValueError(f'No open application window matches: {target}. Name its process, its full window '
-                             'title or a window handle from list.')
         raise ValueError(f'No open application window matches: {target}')
     raise ValueError('Multiple windows match; specify a window handle from list: ' +
                      ', '.join(str(window.hwnd) for window in matches))
@@ -231,8 +220,7 @@ def control_window(action: str, target: str = '', *, process_only: bool = False)
     windows = list_windows()
     if action == 'list':
         return {'windows': [asdict(window) for window in windows]}
-    window = resolve_window(target, windows, process_only=process_only,
-                            exact_only=action in DESTRUCTIVE_WINDOW_ACTIONS)
+    window = resolve_window(target, windows, process_only=process_only)
     if action == 'close':
         _close_window(window.hwnd)
     elif action == 'focus':

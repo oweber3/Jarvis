@@ -10,6 +10,7 @@ import asyncio
 import base64
 import ctypes
 import io
+import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -19,9 +20,9 @@ from .displays import Monitor, Rectangle
 
 _DWMWA_EXTENDED_FRAME_BOUNDS = 9
 _JPEG_QUALITY = 85
-# Neighbouring OCR tiles share this many pixels, so every word up to half as wide is seen whole in
-# the tile that keeps it.
-_OCR_TILE_OVERLAP = 400
+# Neighbouring OCR tiles share at least this many pixels, so a word cut by one tile's edge is seen
+# whole in the tile that keeps it (each word is kept once, by the tile owning its centre).
+_OCR_TILE_OVERLAP = 128
 
 
 def list_monitors() -> list[Monitor]:
@@ -93,56 +94,29 @@ async def _recognise(engine, image) -> list[OcrLine]:
     return lines
 
 
-def _tile_starts(length: int, limit: int) -> list[int]:
-    """Where tiles of at most ``limit`` pixels start along one side, overlapping by ``_OCR_TILE_OVERLAP``."""
+def _tiles(length: int, limit: int) -> tuple[int, list[int]]:
+    """``(size, starts)``: the fewest equal tiles of at most ``limit`` pixels covering one side, with
+    neighbours sharing at least ``_OCR_TILE_OVERLAP`` pixels."""
     if length <= limit:
-        return [0]
-    step = max(1, limit - _OCR_TILE_OVERLAP)
-    return list(range(0, length - limit, step)) + [length - limit]
+        return length, [0]
+    count = math.ceil((length - _OCR_TILE_OVERLAP) / max(1, limit - _OCR_TILE_OVERLAP))
+    size = math.ceil((length + (count - 1) * _OCR_TILE_OVERLAP) / count)
+    return size, [round(i * (length - size) / (count - 1)) for i in range(count)]
 
 
-def _owned_ranges(starts: list[int], limit: int) -> list[tuple[float, float]]:
+def _owned_ranges(starts: list[int], size: int) -> list[tuple[float, float]]:
     """Each tile owns the part of the side up to the middle of its overlaps, so a word seen in two
     tiles is kept once: by the tile whose owned range holds the word's centre."""
-    cuts = [(starts[i] + limit + starts[i + 1]) / 2 for i in range(len(starts) - 1)]
+    cuts = [(starts[i] + size + starts[i + 1]) / 2 for i in range(len(starts) - 1)]
     edges = [float('-inf'), *cuts, float('inf')]
     return [(edges[i], edges[i + 1]) for i in range(len(starts))]
-
-
-def _same_row(a: list[OcrWord], b: list[OcrWord]) -> bool:
-    top, bottom = max(a[0].top, b[0].top), min(a[0].bottom, b[0].bottom)
-    height = min(a[0].bottom - a[0].top, b[0].bottom - b[0].top)
-    return height > 0 and bottom - top >= height / 2
-
-
-def _join_tiles(pieces: list[tuple[int, list[OcrWord]]]) -> list[str]:
-    """Lines cut by a tile edge joined again, then all lines in reading order (top to bottom, left
-    to right within a row)."""
-    lines: list[tuple[set, list[OcrWord]]] = []
-    for tile, words in sorted(pieces, key=lambda piece: piece[1][0].left):
-        for seen, line in lines:
-            gap = words[0].left - line[-1].right
-            height = line[-1].bottom - line[-1].top
-            if tile not in seen and _same_row(line, words) and -height <= gap <= 2 * height:
-                seen.add(tile)
-                line.extend(words)
-                break
-        else:
-            lines.append(({tile}, list(words)))
-    rows: list[list[list[OcrWord]]] = []
-    for _seen, line in sorted(lines, key=lambda item: (item[1][0].top + item[1][0].bottom) / 2):
-        if rows and _same_row(rows[-1][0], line):
-            rows[-1].append(line)
-        else:
-            rows.append([line])
-    return [' '.join(word.text for word in line)
-            for row in rows for line in sorted(row, key=lambda words: words[0].left)]
 
 
 def read_text(image) -> Optional[list[str]]:
     """Lines of text in ``image`` in reading order, read by Windows' built-in OCR in the user's
     installed OCR languages, at full resolution: an image larger than the engine accepts is read in
-    overlapping tiles. ``None`` when OCR is unavailable (no OCR language, or no runtime)."""
+    equal tiles, row by row, each tile's lines in the engine's order. ``None`` when OCR is
+    unavailable (no OCR language, or no runtime)."""
     try:
         engine_type, engine = _ocr_engine()
     except (ImportError, OSError) as exc:
@@ -157,20 +131,22 @@ def read_text(image) -> Optional[list[str]]:
     try:
         if max(width, height) <= limit:
             return [line.text for line in asyncio.run(_recognise(engine, rgba))]
-        xs, ys = _tile_starts(width, limit), _tile_starts(height, limit)
-        x_owned, y_owned = _owned_ranges(xs, limit), _owned_ranges(ys, limit)
+        (tile_width, xs), (tile_height, ys) = _tiles(width, limit), _tiles(height, limit)
+        x_owned, y_owned = _owned_ranges(xs, tile_width), _owned_ranges(ys, tile_height)
         debug_log(f'screen OCR reading {width}x{height} in {len(xs) * len(ys)} tiles', 'screen')
-        pieces = []
+        lines = []
         for row, y in enumerate(ys):
             for column, x in enumerate(xs):
-                tile = rgba.crop((x, y, min(x + limit, width), min(y + limit, height)))
+                tile = rgba.crop((x, y, x + tile_width, y + tile_height))
                 for line in asyncio.run(_recognise(engine, tile)):
-                    kept = [OcrWord(w.text, w.left + x, w.top + y, w.right + x, w.bottom + y) for w in line.words
+                    kept = [w.text for w in line.words
                             if x_owned[column][0] <= x + (w.left + w.right) / 2 < x_owned[column][1]
                             and y_owned[row][0] <= y + (w.top + w.bottom) / 2 < y_owned[row][1]]
-                    if kept:
-                        pieces.append(((row, column), kept))
-        return _join_tiles(pieces)
+                    if len(kept) == len(line.words):
+                        lines.append(line.text)
+                    elif kept:
+                        lines.append(' '.join(kept))
+        return lines
     except OSError as exc:
         debug_log(f'screen OCR failed ({type(exc).__name__})', 'screen')
         return None

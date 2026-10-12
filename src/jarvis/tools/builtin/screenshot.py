@@ -53,6 +53,22 @@ def _fenced(lines: List[str]) -> str:
     return f"{_FENCE_NOTE}\n<<<BEGIN UNTRUSTED SCREEN TEXT>>>\n{text}\n<<<END UNTRUSTED SCREEN TEXT>>>"
 
 
+def _read_text(screen: Any, image: Any, bounds, monitors) -> Optional[List[str]]:
+    """The capture's text. With several ``monitors`` (target ``all``) each monitor's part is read on its own,
+    in monitor order, so their lines never interleave and each part stays within what the OCR engine reads
+    at once; ``None`` when OCR is unavailable."""
+    if len(monitors) < 2:
+        return screen.read_text(image)
+    lines: List[str] = []
+    for left, top, right, bottom in monitors:
+        part = screen.read_text(image.crop((left - bounds[0], top - bounds[1], right - bounds[0],
+                                            bottom - bounds[1])))
+        if part is None:
+            return None
+        lines.extend(part)
+    return lines
+
+
 def _default_foreground() -> Optional[dict]:
     from ...platform.windows import ui_automation
     return ui_automation.foreground_target()
@@ -125,7 +141,8 @@ class ScreenshotTool(Tool):
             return None
 
     def _bounds(self, args: Dict[str, Any], cfg: Any, screen: Any, front: Optional[dict]):
-        """``(bounds, description)`` of what to capture, or a failure result."""
+        """``(bounds, description)`` of what to capture, plus the monitors' rectangles to read one by one for
+        ``all``; or a failure result."""
         from ...platform.windows import displays
         target = str(args.get("target") or "screen").strip().casefold()
         if target not in _TARGETS:
@@ -143,7 +160,7 @@ class ScreenshotTool(Tool):
         if target == "all":
             bounds = (min(m.bounds[0] for m in monitors), min(m.bounds[1] for m in monitors),
                       max(m.bounds[2] for m in monitors), max(m.bounds[3] for m in monitors))
-            return bounds, f"all {len(monitors)} monitors"
+            return bounds, f"all {len(monitors)} monitors", tuple(m.bounds for m in monitors)
         requested = str(args.get("monitor") or "").strip()
         if requested:
             try:
@@ -169,7 +186,7 @@ class ScreenshotTool(Tool):
             return _failure("I could not work out what to capture on the screen.")
         if isinstance(chosen, ToolExecutionResult):
             return chosen
-        bounds, what = chosen
+        bounds, what, *regions = chosen
         context.user_print("👀 Looking at the screen…")
         try:
             image = run_bounded(lambda: screen.capture(bounds), _CAPTURE_TIMEOUT_SEC)
@@ -177,7 +194,8 @@ class ScreenshotTool(Tool):
             debug_log(f"screenshot: capture failed ({type(exc).__name__})", "screen")
             return _failure("I could not capture the screen (it may be locked or showing a protected prompt).")
         try:
-            lines = run_bounded(lambda: screen.read_text(image), _OCR_TIMEOUT_SEC)
+            lines = run_bounded(lambda: _read_text(screen, image, bounds, regions[0] if regions else ()),
+                                _OCR_TIMEOUT_SEC)
         except Exception as exc:  # noqa: BLE001 - the image still answers without the text
             debug_log(f"screenshot: OCR failed ({type(exc).__name__})", "screen")
             lines = None

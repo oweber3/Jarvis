@@ -226,6 +226,26 @@ def test_without_a_catalogue_opening_an_application_asks_on_the_desktop(windows_
     assert request.tier == SafetyTier.CONFIRM_DIALOG
 
 
+def test_after_failed_discovery_opening_asks_nothing_and_fails_honestly(windows_tools, monkeypatch, no_launch):
+    """A failed discovery cannot launch anything, so a confirmation would only be followed by a failure."""
+    from jarvis.platform.windows import apps
+    from jarvis.tools.builtin.windows.desktop_control import AppControlTool
+    from jarvis.tools.confirmation import SafetyTier, evaluate_safety
+
+    def broken_discovery():
+        raise RuntimeError('no catalogue')
+
+    index = apps.ApplicationIndex()
+    monkeypatch.setattr(apps, 'discover_applications', broken_discovery)
+    monkeypatch.setattr(apps, 'APP_INDEX', index)
+    index.start()
+    request = evaluate_safety('appControl', {'action': 'open', 'target': 'Microsoft Word'}, windows_tools,
+                              tool=AppControlTool())
+    assert request.tier == SafetyTier.SAFE
+    result = _open(windows_tools, 'Microsoft Word')
+    assert not result.success and 'discovery failed' in result.error_message.casefold() and no_launch == []
+
+
 def test_launching_an_uninstaller_needs_the_users_approval(windows_tools, no_launch):
     from jarvis.platform.windows.apps import open_application
     with pytest.raises(PermissionError):

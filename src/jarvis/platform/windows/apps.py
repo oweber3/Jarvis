@@ -248,6 +248,11 @@ class ApplicationIndex:
         """Whether discovery has been started (it may still be running)."""
         return self._started
 
+    @property
+    def failed(self) -> bool:
+        """Whether discovery has finished with an error (so no launch can run)."""
+        return self._ready.is_set() and self._error is not None
+
     def snapshot(self):
         """Return the ready catalogue without starting discovery or waiting."""
         if not self._ready.is_set() or self._error:

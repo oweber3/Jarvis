@@ -27,6 +27,12 @@ _FAKE_SERVER = textwrap.dedent(
     from mcp.server.fastmcp import FastMCP
 
     work = Path(sys.argv[1])
+    if os.environ.get("JARVIS_TEST_DECOY"):
+        # Another program running the very same server command line.
+        import time
+        (work / "decoy-pid").write_text(str(os.getpid()))
+        while True:
+            time.sleep(0.2)
     (work / f"pid-{os.getpid()}").write_text(str(os.getpid()))
     mcp = FastMCP("fake")
 
@@ -49,6 +55,22 @@ _FAKE_SERVER = textwrap.dedent(
     def echo(text: str) -> str:
         """Return the text."""
         return text
+
+    @mcp.tool()
+    async def slow_effect() -> str:
+        """Act later from a thread that keeps this process alive after its
+        stdin closes (as a server finishing work in the background would)."""
+        import threading, time
+
+        def act():
+            while not (work / "go").exists():
+                time.sleep(0.05)
+            with open(work / "actions.log", "a", encoding="utf-8") as fh:
+                fh.write("slow\\n")
+
+        threading.Thread(target=act).start()
+        while True:
+            await asyncio.sleep(0.05)
 
     mcp.run()
     '''
@@ -108,8 +130,10 @@ def runtime_cleanup(tmp_path):
     from jarvis.tools.external.mcp_runtime import shutdown_runtime
 
     (tmp_path / "release").write_text("x")
+    (tmp_path / "go").write_text("x")
     shutdown_runtime()
-    for pid in _spawned_pids(tmp_path):
+    decoy = tmp_path / "decoy-pid"
+    for pid in _spawned_pids(tmp_path) + ([int(decoy.read_text())] if decoy.exists() else []):
         try:
             psutil.Process(pid).kill()
         except psutil.NoSuchProcess:
@@ -183,6 +207,168 @@ def test_call_queued_behind_a_hung_call_runs_once_on_a_fresh_session(tmp_path, r
     assert waiting.result(timeout=20).content[0].text == "recorded once"
     assert _logged(tmp_path) == ["once"]
     assert len(_spawned_pids(tmp_path)) == 2
+
+
+def _timed_out_server_then_next_call(tmp_path, cfg):
+    """A call times out while its server keeps running; return the old
+    server's pid, whether it was still alive when the next call answered,
+    and that answer."""
+    from jarvis.tools.external.mcp_runtime import get_runtime
+
+    runtime = get_runtime()
+    with pytest.raises(concurrent.futures.TimeoutError):
+        runtime.invoke("fake", cfg, "slow_effect", {}, timeout=1)
+    (old_pid,) = _spawned_pids(tmp_path)
+    answer = runtime.invoke("fake", cfg, "record", {"text": "fast"}, timeout=30)
+    return old_pid, _alive(old_pid), answer
+
+
+def test_a_timed_out_call_never_acts_alongside_or_after_the_next_call(tmp_path, runtime_cleanup):
+    """The replacement session starts only once the stuck one has ended, so
+    the timed-out call's side effect can never land after the next call's."""
+    cfg = _server_cfg(tmp_path, _FAKE_SERVER)
+    old_pid, old_alive, answer = _timed_out_server_then_next_call(tmp_path, cfg)
+
+    assert answer.content[0].text == "recorded fast"
+    assert not old_alive, "the old server was still running when the next call ran"
+    (tmp_path / "go").write_text("x")  # the old server's background work would act now
+    time.sleep(1.0)
+    assert _logged(tmp_path) == ["fast"]
+
+
+def test_a_session_that_will_not_stop_is_killed_before_its_replacement_starts(
+    tmp_path, monkeypatch, runtime_cleanup
+):
+    """If the old session does not end within the stop window, its process
+    tree is killed rather than left running beside the replacement."""
+    import mcp.client.stdio as stdio
+
+    from jarvis.tools.external import mcp_runtime
+
+    monkeypatch.setattr(stdio, "PROCESS_TERMINATION_TIMEOUT", 60.0)
+    monkeypatch.setattr(mcp_runtime, "_STOP_WAIT_SEC", 1.0)
+    cfg = _server_cfg(tmp_path, _FAKE_SERVER)
+    started = time.monotonic()
+    old_pid, old_alive, answer = _timed_out_server_then_next_call(tmp_path, cfg)
+
+    assert answer.content[0].text == "recorded fast"
+    assert not old_alive and time.monotonic() - started < 30
+
+
+def _start_decoy(tmp_path, cfg):
+    """Start the server's exact command line as a process outside this test's process tree (its launcher
+    exits, so it is nobody's descendant here), as another Jarvis running the same server would be."""
+    import os
+    import subprocess
+
+    launcher = ("import subprocess, sys; subprocess.Popen(sys.argv[1:], close_fds=True, "
+                "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, "
+                "creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0), start_new_session=True)")
+    subprocess.run([sys.executable, "-c", launcher, cfg["command"], *cfg["args"]], check=True,
+                   env={**os.environ, "JARVIS_TEST_DECOY": "1"}, timeout=30)
+    assert _wait_for((tmp_path / "decoy-pid").exists)
+    decoy = int((tmp_path / "decoy-pid").read_text())
+    ours = {proc.pid for proc in psutil.Process().children(recursive=True)}
+    assert decoy not in ours and _alive(decoy)
+    return decoy
+
+
+def test_the_stop_kill_reaches_only_our_own_server_never_another_programs(
+    tmp_path, monkeypatch, runtime_cleanup
+):
+    """Another Jarvis may run the very same server command line; only our own stuck server is killed."""
+    import mcp.client.stdio as stdio
+
+    from jarvis.tools.external import mcp_runtime
+
+    monkeypatch.setattr(stdio, "PROCESS_TERMINATION_TIMEOUT", 60.0)
+    monkeypatch.setattr(mcp_runtime, "_STOP_WAIT_SEC", 1.0)
+    cfg = _server_cfg(tmp_path, _FAKE_SERVER)
+    decoy = _start_decoy(tmp_path, cfg)
+
+    old_pid, old_alive, answer = _timed_out_server_then_next_call(tmp_path, cfg)
+
+    assert answer.content[0].text == "recorded fast" and not old_alive
+    assert _alive(decoy), "a process outside Jarvis's own tree was killed"
+    # Even named directly, a process that is not our descendant is never killed.
+    mcp_runtime._kill_process_trees([(decoy, psutil.Process(decoy).create_time())])
+    time.sleep(0.5)
+    assert _alive(decoy)
+
+
+def test_a_recorded_process_id_reused_by_another_process_is_never_killed():
+    """The kill checks the recorded start time, so a PID reused since the session started is left alone."""
+    import subprocess
+
+    from jarvis.tools.external import mcp_runtime
+
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        created = psutil.Process(child.pid).create_time()
+        mcp_runtime._kill_process_trees([(child.pid, created + 5)])
+        time.sleep(0.5)
+        assert child.poll() is None
+        mcp_runtime._kill_process_trees([(child.pid, created)])
+        assert child.wait(timeout=10) is not None
+    finally:
+        child.kill()
+
+
+def test_a_caller_cancelling_during_the_drain_never_stops_it(monkeypatch, runtime_cleanup):
+    """The worker resolves queued requests when its session ends; a caller
+    giving up at that same moment must not stop the others being resolved."""
+    import asyncio
+
+    from jarvis.tools.external import mcp_runtime
+
+    in_flight = threading.Event()
+
+    class Conn:
+        async def __aenter__(self):
+            return object(), object()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class Session:
+        def __init__(self, read, write):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def initialize(self):
+            return None
+
+        async def call_tool(self, name, arguments):
+            in_flight.set()
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr("jarvis.tools.external.mcp_client._resolve_command", lambda c: c)
+    monkeypatch.setattr("jarvis.tools.external.mcp_client.stdio_client", lambda params, **kw: Conn())
+    monkeypatch.setattr("jarvis.tools.external.mcp_client.ClientSession", Session)
+
+    class CancelledMeanwhile(concurrent.futures.Future):
+        """Its caller cancels it just after the worker saw it was not done."""
+
+        def set_exception(self, exception):
+            self.cancel()
+            return super().set_exception(exception)
+
+    runtime = mcp_runtime.get_runtime()
+    worker = runtime._get_worker("blocking", {"command": "fake"})
+    _in_background(lambda: worker.invoke("block", {}, 30))
+    assert in_flight.wait(5)
+    racing, waiting = CancelledMeanwhile(), concurrent.futures.Future()
+    for fut in (racing, waiting):
+        worker._loop.call_soon_threadsafe(worker._queue.put_nowait, ("call", ("x", {}), fut))
+
+    worker.shutdown()
+
+    assert isinstance(waiting.exception(timeout=5), mcp_runtime._WorkerDeadError)
 
 
 def test_setup_timeout_does_not_leave_server_processes(tmp_path, monkeypatch, runtime_cleanup):

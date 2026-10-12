@@ -124,6 +124,32 @@ def test_all_captures_every_monitor_in_one_image():
     assert result.success and screen.captured == [(-1080, -162, 2560, 1758)]
 
 
+def test_all_reads_each_monitors_text_on_its_own_in_monitor_order():
+    """One image for the model, but OCR reads each monitor's part separately so lines never interleave."""
+
+    class PerMonitorScreen(FakeScreen):
+        def capture(self, bounds):
+            self.captured.append(tuple(bounds))
+            image = Image.new("RGB", (bounds[2] - bounds[0], bounds[3] - bounds[1]), "white")
+            for shade, monitor in enumerate(self.monitors, 1):
+                left, top, right, bottom = monitor.bounds
+                image.paste((shade, shade, shade), (left - bounds[0], top - bounds[1], right - bounds[0],
+                                                    bottom - bounds[1]))
+            return image
+
+        def read_text(self, image):
+            shade = image.getpixel((0, 0))[0]
+            monitor = self.monitors[shade - 1]
+            left, top, right, bottom = monitor.bounds
+            assert image.size == (right - left, bottom - top)
+            return [f"{monitor.device} line 1", f"{monitor.device} line 2"]
+
+    result, _ = run({"target": "all"}, screen=PerMonitorScreen())
+    expected = [f"{m.device} line {n}" for m in (MAIN, SIDE) for n in (1, 2)]
+    positions = [result.reply_text.index(line) for line in expected]
+    assert positions == sorted(positions)
+
+
 def test_window_captures_the_window_the_user_is_looking_at():
     result, screen = run({"target": "window"})
     assert result.success and screen.captured == [(-1000, 0, -200, 600)]
