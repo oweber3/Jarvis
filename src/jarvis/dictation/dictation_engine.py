@@ -802,6 +802,17 @@ class DictationEngine:
     # Capture for a caller
     # ------------------------------------------------------------------
 
+    def capture_blocker(self) -> Optional[str]:
+        """Why a capture could not start now (``unavailable``, ``not_ready`` or ``busy``), or ``None``."""
+        if sd is None or np is None:
+            return "unavailable"
+        if self._whisper_model_ref() is None and self._whisper_backend_ref() != "mlx":
+            return "not_ready"
+        with self._lock:
+            if self._capture is not None or self._recording or self._open_sessions:
+                return "busy"
+        return None
+
     def start_capture(self, max_seconds: float) -> int:
         """Record from the microphone until ``stop_capture`` or ``cancel_capture``; returns the capture's token.
 
@@ -811,10 +822,9 @@ class DictationEngine:
         for ``stop_capture``. Raises ``CaptureRefused``. Opens the stream on the calling thread, so the
         caller must not be the pynput hook thread.
         """
-        if sd is None or np is None:
-            raise CaptureRefused("unavailable")
-        if self._whisper_model_ref() is None and self._whisper_backend_ref() != "mlx":
-            raise CaptureRefused("not_ready")
+        reason = self.capture_blocker()
+        if reason is not None:
+            raise CaptureRefused(reason)
         with self._lock:
             if self._capture is not None or self._recording or self._open_sessions:
                 raise CaptureRefused("busy")

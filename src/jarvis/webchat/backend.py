@@ -47,6 +47,55 @@ class DaemonBackend:
         from .. import daemon
         return daemon.switch_chat_conversation(messages)
 
+    # -- microphone --------------------------------------------------------------
+
+    def mic_reason(self) -> Optional[str]:
+        """Why a recording cannot start now (``disabled``, ``unavailable``, ``busy``, ``not_ready``), or None.
+
+        The recording is made by the daemon's dictation engine, never by the browser."""
+        from .. import daemon
+        cfg = daemon.get_settings()
+        if cfg is not None and getattr(cfg, "dictation_enabled", True) is False:
+            return "disabled"
+        engine = daemon.get_dictation_engine()
+        if engine is None:
+            return "unavailable"
+        if daemon.is_query_running() or assistant_state.current() is not assistant_state.AssistantState.IDLE:
+            return "busy"
+        return engine.capture_blocker()
+
+    def mic_start(self, max_seconds: float) -> Tuple[Optional[int], Optional[str]]:
+        """Start a recording: ``(handle, None)``, or ``(None, reason)``."""
+        from .. import daemon
+        from ..dictation.dictation_engine import CaptureRefused
+        reason = self.mic_reason()
+        if reason is not None:
+            return None, reason
+        try:
+            return daemon.get_dictation_engine().start_capture(max_seconds), None
+        except CaptureRefused as refused:
+            return None, refused.reason
+        except Exception as exc:
+            debug_log(f"webchat: recording could not start: {type(exc).__name__}", "webchat")
+            return None, "unavailable"
+
+    def mic_state(self, handle: int) -> Optional[str]:
+        engine = self._engine()
+        return engine.capture_state(handle) if engine is not None else None
+
+    def mic_stop(self, handle: int) -> Optional[str]:
+        engine = self._engine()
+        return engine.stop_capture(handle) if engine is not None else None
+
+    def mic_cancel(self, handle: int) -> bool:
+        engine = self._engine()
+        return engine.cancel_capture(handle) if engine is not None else False
+
+    @staticmethod
+    def _engine():
+        from .. import daemon
+        return daemon.get_dictation_engine()
+
     # -- state -------------------------------------------------------------------
 
     def assistant_state(self) -> str:

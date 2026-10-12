@@ -20,6 +20,7 @@ from ..debug import debug_log
 from ..utils.local_guard import refusal
 from . import identity
 from .hub import chat_dict
+from .mic import MAX_RECORDING_SEC
 
 MAX_BODY_BYTES = 64 * 1024
 DRAIN_LIMIT_BYTES = 1024 * 1024
@@ -51,6 +52,7 @@ SECURITY_HEADERS = {
 _PROJECT_PATH = re.compile(r"^/api/projects/([0-9a-f]+)$")
 _CHAT_PATH = re.compile(r"^/api/chats/([0-9a-f]+)$")
 _CHAT_OPEN_PATH = re.compile(r"^/api/chats/([0-9a-f]+)/open$")
+_SESSION = re.compile(r"^[0-9a-f]{32}$")
 
 
 @dataclass(frozen=True)
@@ -237,6 +239,11 @@ def _make_handler(server: WebChatServer):
             ("POST", "/api/stop"): "_stop",
             ("POST", "/api/model"): "_model",
             ("POST", "/api/clear"): "_clear",
+            ("GET", "/api/mic"): "_mic_status",
+            ("POST", "/api/mic/start"): "_mic_start",
+            ("POST", "/api/mic/heartbeat"): "_mic_heartbeat",
+            ("POST", "/api/mic/stop"): "_mic_stop",
+            ("POST", "/api/mic/cancel"): "_mic_cancel",
         }
         _PROJECT = {"PATCH": "_rename_project", "DELETE": "_delete_project"}
         _CHAT = {"GET": "_get_chat", "PATCH": "_patch_chat", "DELETE": "_delete_chat"}
@@ -400,6 +407,40 @@ def _make_handler(server: WebChatServer):
 
         def _stop(self, _body) -> None:
             hub.cancel()
+            self._json(200, {"ok": True})
+
+        # -- endpoints: the microphone ----------------------------------------------------
+
+        @staticmethod
+        def _session(body: dict) -> str:
+            value = body.get("session")
+            if not isinstance(value, str) or not _SESSION.match(value):
+                raise _Refused(400, "bad_session")
+            return value
+
+        def _mic_status(self, _body) -> None:
+            self._json(200, hub.mic.status())
+
+        def _mic_start(self, _body) -> None:
+            session, reason = hub.mic.start()
+            if session is None:
+                raise _Refused(409 if reason == "busy" else 503, reason or "unavailable")
+            self._json(200, {"session": session, "max_seconds": MAX_RECORDING_SEC})
+
+        def _mic_heartbeat(self, body) -> None:
+            state = hub.mic.beat(self._session(body))
+            if state is None:
+                raise _Refused(404, "unknown")
+            self._json(200, {"state": state})
+
+        def _mic_stop(self, body) -> None:
+            text = hub.mic.stop(self._session(body))  # the transcript goes to this response only
+            if text is None:
+                raise _Refused(404, "unknown")
+            self._json(200, {"text": text})
+
+        def _mic_cancel(self, body) -> None:
+            hub.mic.cancel(self._session(body))
             self._json(200, {"ok": True})
 
         def _model(self, body) -> None:

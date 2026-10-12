@@ -323,3 +323,21 @@ def test_a_capture_can_follow_a_finished_one(world):
     assert second != first
     assert world.engine.capture_state(second) == "recording"
     world.engine.cancel_capture(second)
+
+
+def test_the_blocker_says_why_a_capture_could_not_start_now(world):
+    assert world.engine.capture_blocker() is None
+    token = world.engine.start_capture(max_seconds=30)
+    assert world.engine.capture_blocker() == "busy"
+    world.engine.cancel_capture(token)
+    assert world.engine.capture_blocker() is None
+    with patch.object(world.de, "sd", None):
+        assert world.engine.capture_blocker() == "unavailable"
+
+
+def test_the_blocker_reports_whisper_not_loaded(tmp_path):
+    from jarvis.dictation import dictation_engine as de
+
+    engine = _engine(_Ui(), tmp_path, model_ref=lambda: None)
+    with patch.object(de, "sd"):
+        assert engine.capture_blocker() == "not_ready"

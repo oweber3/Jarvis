@@ -34,6 +34,13 @@ class FakeWebChatBackend:
         self.switch_calls: List[list] = []
         # Runs right after a swap, before the hub looks at the memory again (a turn landing in that instant).
         self.after_switch: Optional[Callable[[], None]] = None
+        # The microphone: a refusal reason, the transcript a recording returns, and what was asked.
+        self.mic_refusal: Optional[str] = None
+        self.mic_text = "hello from the microphone"
+        self.mic_capped = False
+        self.mic_open: Optional[int] = None
+        self.mic_handle = 0
+        self.mic_calls: List[tuple] = []
         self._subscribers: List[Callable[[str], None]] = []
         self._held: Optional[tuple] = None
 
@@ -127,6 +134,39 @@ class FakeWebChatBackend:
         if self.after_switch is not None:
             self.after_switch()
         return cursor
+
+    # -- microphone ----------------------------------------------------------------
+
+    def mic_reason(self) -> Optional[str]:
+        """Why a recording cannot start (``unavailable``, ``disabled``, ``not_ready``, ``busy``), or None."""
+        return self.mic_refusal
+
+    def mic_start(self, max_seconds: float) -> Tuple[Optional[int], Optional[str]]:
+        self.mic_calls.append(("start", max_seconds))
+        if self.mic_refusal:
+            return None, self.mic_refusal
+        self.mic_handle += 1
+        self.mic_open = self.mic_handle
+        return self.mic_handle, None
+
+    def mic_state(self, handle: int) -> Optional[str]:
+        if handle != self.mic_open:
+            return None
+        return "full" if self.mic_capped else "recording"
+
+    def mic_stop(self, handle: int) -> Optional[str]:
+        self.mic_calls.append(("stop", handle))
+        if handle != self.mic_open:
+            return None
+        self.mic_open = None
+        return self.mic_text
+
+    def mic_cancel(self, handle: int) -> bool:
+        self.mic_calls.append(("cancel", handle))
+        if handle != self.mic_open:
+            return False
+        self.mic_open = None
+        return True
 
     # -- helpers ---------------------------------------------------------------
 
