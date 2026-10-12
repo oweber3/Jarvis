@@ -11,7 +11,7 @@ import pytest
 from PyQt6.QtCore import QUrl, pyqtSignal
 from PyQt6.QtWidgets import QWidget
 
-from desktop_app.web_chat_window import WebChatWindow, is_chat_url, web_chat_url
+from desktop_app.web_chat_window import FOREIGN, JARVIS, UNREACHABLE, WebChatWindow, is_chat_url, web_chat_url
 
 PORT = 8766
 
@@ -27,11 +27,26 @@ class StubView(QWidget):
         self.loaded.append(url.toString())
 
 
+class Verifier:
+    """Stands in for the identity check: says Jarvis (or whatever ``verdict`` is) and records calls."""
+
+    def __init__(self, verdict=JARVIS):
+        self.verdict = verdict
+        self.calls = []
+
+    def __call__(self, port, token):
+        self.calls.append((port, token))
+        return self.verdict
+
+
 @pytest.fixture
 def window(qapp):
     view = StubView()
-    win = WebChatWindow(PORT, "stopped", view_factory=lambda: view, retry_ms=15)
+    verifier = Verifier()
+    win = WebChatWindow(PORT, "stopped", view_factory=lambda: view, retry_ms=15,
+                        identity=lambda: "token", verifier=verifier)
     win.stub = view
+    win.verifier = verifier
     yield win
     win.close()
 
@@ -42,6 +57,12 @@ def pump(qapp, ms=120):
     while time.time() < end:
         qapp.processEvents()
         time.sleep(0.005)
+
+
+def running(window, qapp):
+    """Report the daemon running and let the identity check (on its own thread) come back."""
+    window.set_daemon_status("running")
+    pump(qapp, 60)
 
 
 def test_the_chat_address_is_the_loopback_port():
@@ -69,26 +90,26 @@ class TestDaemonStatusPage:
 
 
 class TestLoadingTheChat:
-    def test_a_running_daemon_loads_the_chat_once(self, window):
-        window.set_daemon_status("running")
-        window.set_daemon_status("running")
+    def test_a_running_daemon_loads_the_chat_once(self, window, qapp):
+        running(window, qapp)
+        running(window, qapp)
         assert window.stub.loaded == [web_chat_url(PORT)]
 
-    def test_the_chat_shows_once_the_page_has_loaded(self, window):
-        window.set_daemon_status("running")
+    def test_the_chat_shows_once_the_page_has_loaded(self, window, qapp):
+        running(window, qapp)
         assert not window.is_showing_chat()
         window.stub.loadFinished.emit(True)
         assert window.is_showing_chat()
 
-    def test_a_restarted_daemon_reloads_the_page(self, window):
-        window.set_daemon_status("running")
+    def test_a_restarted_daemon_reloads_the_page(self, window, qapp):
+        running(window, qapp)
         window.stub.loadFinished.emit(True)
         window.set_daemon_status("stopped")
-        window.set_daemon_status("running")
+        running(window, qapp)
         assert len(window.stub.loaded) == 2
 
     def test_a_page_that_is_not_up_yet_is_retried_until_it_loads(self, window, qapp):
-        window.set_daemon_status("running")
+        running(window, qapp)
         window.stub.loadFinished.emit(False)
         assert not window.is_showing_chat()
         pump(qapp)
@@ -100,7 +121,7 @@ class TestLoadingTheChat:
         assert len(window.stub.loaded) == attempts  # no more retries once it loaded
 
     def test_retries_stop_when_the_daemon_stops(self, window, qapp):
-        window.set_daemon_status("running")
+        running(window, qapp)
         window.stub.loadFinished.emit(False)
         window.set_daemon_status("stopped")
         pump(qapp)
@@ -108,10 +129,70 @@ class TestLoadingTheChat:
         pump(qapp)
         assert len(window.stub.loaded) == before
 
-    def test_a_page_that_never_comes_up_explains_what_to_check(self, window):
-        window.set_daemon_status("running")
+    def test_a_page_that_never_comes_up_explains_what_to_check(self, window, qapp):
+        running(window, qapp)
         window.stub.loadFinished.emit(False)
         assert "settings" in window.notice_text().lower()
+
+
+class TestOnlyJarvisIsShown:
+    def test_every_load_is_checked_against_the_current_identity(self, window, qapp):
+        running(window, qapp)
+        window.stub.loadFinished.emit(False)
+        pump(qapp)
+        assert window.verifier.calls and all(call == (PORT, "token") for call in window.verifier.calls)
+        assert len(window.verifier.calls) >= len(window.stub.loaded) >= 2
+
+    def test_another_program_on_the_port_is_never_loaded_and_the_window_says_so(self, window, qapp):
+        window.verifier.verdict = FOREIGN
+        running(window, qapp)
+        pump(qapp)
+        assert window.stub.loaded == []
+        assert not window.is_showing_chat()
+        assert "another program" in window.notice_text().lower()
+
+    def test_the_chat_loads_once_jarvis_holds_the_port_again(self, window, qapp):
+        window.verifier.verdict = FOREIGN
+        running(window, qapp)
+        window.verifier.verdict = JARVIS
+        pump(qapp)
+        assert window.stub.loaded and window.stub.loaded[0] == web_chat_url(PORT)
+
+    def test_nothing_on_the_port_yet_means_waiting(self, window, qapp):
+        window.verifier.verdict = UNREACHABLE
+        running(window, qapp)
+        assert window.stub.loaded == []
+        assert "waiting" in window.notice_text().lower()
+
+    def test_an_unknown_identity_loads_nothing_and_asks_no_server(self, qapp):
+        view, verifier = StubView(), Verifier()
+        win = WebChatWindow(PORT, "stopped", view_factory=lambda: view, retry_ms=15,
+                            identity=lambda: None, verifier=verifier)
+        try:
+            running(win, qapp)
+            assert view.loaded == [] and verifier.calls == []
+            assert not win.is_showing_chat()
+        finally:
+            win.close()
+
+    def test_a_check_that_returns_after_the_daemon_stopped_loads_nothing(self, qapp):
+        import threading
+        release = threading.Event()
+
+        def slow(port, token):
+            release.wait(2)
+            return JARVIS
+
+        view = StubView()
+        win = WebChatWindow(PORT, "stopped", view_factory=lambda: view, identity=lambda: "token", verifier=slow)
+        try:
+            win.set_daemon_status("running")
+            win.set_daemon_status("stopped")
+            release.set()
+            pump(qapp, 150)
+            assert view.loaded == []
+        finally:
+            win.close()
 
 
 class TestWithoutAnEmbeddedBrowser:

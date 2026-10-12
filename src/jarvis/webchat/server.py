@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +18,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..debug import debug_log
 from ..utils.local_guard import refusal
+from . import identity
 from .hub import chat_dict
 
 MAX_BODY_BYTES = 64 * 1024
@@ -69,6 +71,14 @@ class _HTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False
 
+    def server_bind(self) -> None:
+        # Windows lets another socket of the same user bind a port that is already bound, and take its
+        # connections, unless the first one asked for exclusive use.
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if exclusive is not None:
+            self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        super().server_bind()
+
 
 class WebChatServer:
     """Serves the web chat for ``hub`` on the loopback interface."""
@@ -76,6 +86,8 @@ class WebChatServer:
     def __init__(self, hub, settings: ServerSettings) -> None:
         self.hub = hub
         self.settings = settings
+        # Known only to the daemon and the desktop app; the server proves it holds it (``/api/identity``).
+        self.identity_token = identity.new_token()
         self._httpd: Optional[_HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -218,6 +230,7 @@ def _make_handler(server: WebChatServer):
             ("GET", "/api/models"): "_models",
             ("GET", "/api/library"): "_library",
             ("GET", "/api/poll"): "_poll",
+            ("GET", "/api/identity"): "_identity",
             ("POST", "/api/projects"): "_create_project",
             ("POST", "/api/chats"): "_create_chat",
             ("POST", "/api/chat"): "_chat",
@@ -282,6 +295,12 @@ def _make_handler(server: WebChatServer):
             query = parse_qs(urlsplit(self.path).query)
             self._json(200, hub.wait(rev=_int_param(query, "rev", -1), after=_int_param(query, "after", 0),
                                      timeout_sec=server.settings.poll_timeout_sec))
+
+        def _identity(self, _body) -> None:
+            nonce = parse_qs(urlsplit(self.path).query).get("nonce", [""])[0]
+            if not identity.is_valid_nonce(nonce):
+                raise _Refused(400, "bad_nonce")
+            self._json(200, {"proof": identity.proof(server.identity_token, nonce)})
 
         # -- endpoints: projects ---------------------------------------------------------
 

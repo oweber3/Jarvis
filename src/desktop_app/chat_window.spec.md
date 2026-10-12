@@ -107,8 +107,10 @@ thread, and it skips a torn-down signal bridge (emitting on a deleted Qt object
 from a worker thread crashes the process). The result is shown as an ordinary
 assistant message and is never spoken. Cancelled and expired requests deliver
 nothing. Closing the window only hides it, so a result that lands afterwards is
-still in the transcript. Subprocess mode has no desktop dialog, so it has no
-such delivery.
+still in the transcript. In subprocess mode the dialog is shown by the
+desktop app over the daemon's pipes (`desktop_app.spec.md`, Action
+Confirmation Dialog), and the daemon forwards the redacted outcome as a
+`confirmed` chat event, which the window shows the same way.
 
 ### Callbacks (bundled mode, same process)
 
@@ -144,6 +146,7 @@ Event shapes (mirrors the diary IPC):
 {"type": "complete", "data": "<final reply or null>"}
 {"type": "busy",   "data": null}
 {"type": "rewind", "data": true}             // answer to __CHAT_REWIND__: true, or false when the message is no longer in memory
+{"type": "confirmed", "data": "<redacted outcome>"}  // a confirmed action this chat asked for has run
 ```
 
 `__CHAT__:` lines must never contain unredacted user text. The `start` event
@@ -165,7 +168,8 @@ parses these lines and calls ``submit_text_query(text, use_ipc=True)`` so the
 reply comes back via the ``__CHAT__:`` event stream above. A bare
 ``__CHAT_CANCEL__`` line cancels the query in flight, travelling the same pipe
 for the same reason: the query runs in this process, so the flag has to be set
-in it. Lines that don't match any prefix are ignored (the monitor still treats
+in it. Answers to desktop confirmation dialogs (``__CONFIRM_ANSWER__:``) travel
+the same pipe (`desktop_app.spec.md`, Action Confirmation Dialog). Lines that don't match any prefix are ignored (the monitor still treats
 bare ``SHUTDOWN`` and EOF as shutdown signals, unchanged).
 
 Rewind travels the same pipe (the conversation lives in the daemon's memory,
