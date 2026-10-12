@@ -134,9 +134,9 @@ class ReplyModeSignals(QObject):
 
 
 class ConfirmIpcSignals(QObject):
-    """Carries the daemon subprocess's ``__CONFIRM__:`` lines from the log reader to the GUI thread."""
+    """Carries a daemon subprocess's ``__CONFIRM__:`` lines, with that daemon's relay, to the GUI thread."""
 
-    line_received = pyqtSignal(str)
+    line_received = pyqtSignal(str, object)
 
 
 def _should_emit_as_log(line: str) -> bool:
@@ -155,20 +155,34 @@ def _should_emit_as_log(line: str) -> bool:
     from jarvis.daemon import CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX, WEB_CHAT_EVENT_PREFIX
     from jarvis.tools.confirmation_pipe import CONFIRM_IPC_PREFIX
 
-    return not line.startswith((CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX, CONFIRM_IPC_PREFIX,
-                                WEB_CHAT_EVENT_PREFIX))
+    if line.startswith((CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX)):
+        return False
+    # Found anywhere: another thread's output can end up in front of them on the same line.
+    return CONFIRM_IPC_PREFIX not in line and WEB_CHAT_EVENT_PREFIX not in line
 
 
-def _web_chat_token_from_line(line: str) -> Optional[str]:
-    """The identity token in a daemon's ``__WEB_CHAT__:`` ready event, or ``None``."""
+def _web_chat_token_from_line(line: str) -> tuple:
+    """``(token, port)`` from a daemon's ``__WEB_CHAT__:`` ready event, or ``(None, None)``."""
     import json
     from jarvis.daemon import WEB_CHAT_EVENT_PREFIX
     try:
         event = json.loads(line[len(WEB_CHAT_EVENT_PREFIX):])
-        token = event["data"]["token"] if event.get("type") == "ready" else None
+        data = event["data"] if event.get("type") == "ready" else {}
+        token, port = data.get("token"), data.get("port")
     except (ValueError, KeyError, TypeError, AttributeError):
-        token = None
-    return token if isinstance(token, str) and token else None
+        return None, None
+    if not isinstance(token, str) or not token or not isinstance(port, int) or isinstance(port, bool):
+        return None, None
+    return token, port
+
+
+def _is_confirmed_chat_event(line: str) -> bool:
+    import json
+    from jarvis.daemon import CHAT_IPC_PREFIX
+    try:
+        return json.loads(line[len(CHAT_IPC_PREFIX):]).get("type") == "confirmed"
+    except (ValueError, AttributeError):
+        return False
 
 
 def _collect_runtime_status_snapshot(
@@ -3008,6 +3022,7 @@ class JarvisSystemTray:
                 # Start log reader thread
                 log_thread = threading.Thread(
                     target=self._read_daemon_logs,
+                    kwargs={"relay": self._confirm_relay},
                     daemon=True
                 )
                 log_thread.start()
@@ -3068,14 +3083,20 @@ class JarvisSystemTray:
         except Exception as exc:
             debug_log(f"reply mode state unavailable: {exc}", "desktop")
 
-    def _read_daemon_logs(self) -> None:
-        """Read logs from daemon subprocess in a background thread."""
+    def _read_daemon_logs(self, relay=None) -> None:
+        """Read logs from daemon subprocess in a background thread.
+
+        ``relay`` is the confirmation relay of the daemon being read (the current one by default), so
+        a request from a daemon that has since been replaced never reaches the new daemon's relay.
+        """
         if not self.daemon_process or not self.daemon_process.stdout:
             return
 
         from jarvis.daemon import CHAT_IPC_PREFIX, WEB_CHAT_EVENT_PREFIX
         from jarvis.tools.confirmation_pipe import CONFIRM_IPC_PREFIX
 
+        if relay is None:
+            relay = getattr(self, "_confirm_relay", None)
         try:
             while True:
                 line = self.daemon_process.stdout.readline()
@@ -3090,13 +3111,16 @@ class JarvisSystemTray:
                 # bridge. The line is parsed and the chat window is created
                 # on the Qt main thread, never here on the log reader thread
                 # (Qt widgets must be created on the GUI thread).
+                # Confirmation and web chat events are found anywhere in the line: output printed by
+                # another daemon thread at the same moment can end up in front of them.
+                confirm_at = line.find(CONFIRM_IPC_PREFIX)
+                web_chat_at = line.find(WEB_CHAT_EVENT_PREFIX)
                 if line.startswith(CHAT_IPC_PREFIX):
                     self._chat_ipc_signals.line_received.emit(line)
-                elif line.startswith(CONFIRM_IPC_PREFIX):
-                    self._confirm_ipc_signals.line_received.emit(line)
-                elif line.startswith(WEB_CHAT_EVENT_PREFIX):
-                    self._web_chat_token = _web_chat_token_from_line(line)
-                    debug_log(f"web chat identity {'received' if self._web_chat_token else 'malformed'}", "desktop")
+                elif confirm_at >= 0:
+                    self._confirm_ipc_signals.line_received.emit(line[confirm_at:], relay)
+                elif web_chat_at >= 0:
+                    self._take_web_chat_announcement(line[web_chat_at:])
                 self._on_reply_mode_ipc_line(line)
                 if _should_emit_as_log(line):
                     self.log_signals.new_log.emit(line)
@@ -3111,6 +3135,10 @@ class JarvisSystemTray:
         the line to ``ChatWindow.process_ipc_line`` for parsing + signal emit.
         """
         if self.chat_window is None:
+            if _is_confirmed_chat_event(line):
+                # A confirmed outcome for a chat that is not open (e.g. the web chat, which shows it
+                # from the shared memory) needs no hidden window.
+                return
             from desktop_app.chat_window import ChatWindow
             self.chat_window = ChatWindow(
                 submit_fn=self._chat_submit_fn,
@@ -3120,9 +3148,25 @@ class JarvisSystemTray:
             )
         self.chat_window.process_ipc_line(line)
 
-    def _on_confirm_ipc_line(self, line: str) -> None:
+    def _take_web_chat_announcement(self, line: str) -> None:
+        """Keep the web chat identity token a daemon announced: the first one of the run, for our port.
+
+        Anything printed later that looks like an announcement (a tool's output, say) is ignored.
+        """
+        if getattr(self, "_web_chat_token", None) is not None:
+            debug_log("web chat identity: a later announcement was ignored", "desktop")
+            return
+        token, port = _web_chat_token_from_line(line)
+        if token is None or port != getattr(self, "_web_chat_port", None):
+            debug_log("web chat identity: malformed or for another port, ignored", "desktop")
+            return
+        self._web_chat_token = token
+        debug_log("web chat identity received", "desktop")
+
+    def _on_confirm_ipc_line(self, line: str, relay=None) -> None:
         """Show the confirmation dialog a daemon subprocess asked for (Qt main thread)."""
-        relay = getattr(self, "_confirm_relay", None)
+        if relay is None:
+            relay = getattr(self, "_confirm_relay", None)
         if relay is None:
             debug_log("confirmation request ignored: no daemon subprocess", "desktop")
             return

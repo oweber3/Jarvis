@@ -224,6 +224,36 @@ class TestDaemonAsksTheDesktop:
     def test_other_lines_are_not_answers(self):
         assert daemon.handle_confirm_answer_stdin_line("__CHAT_CANCEL__") is False
 
+    def test_a_failing_answer_never_takes_the_stdin_monitor_down(self, output):
+        presenter = PipeDialogPresenter(output)
+
+        def broken(_approved):
+            raise RuntimeError("boom")
+
+        handle = presenter(SimpleNamespace(id="r1", action="a", target="t", consequence=None, tool_name="x"), broken)
+        assert handle is not None
+        assert presenter.handle_answer_line(_answer("r1", True)) is True
+
+    @pytest.mark.parametrize("line, handler", [
+        ("__CHAT_CANCEL__", "cancel_active_chat_query"),
+        ("__WAKE__", "toggle_manual_wake"),
+        ("__CHAT_NEW_SESSION__", "new_chat_session"),
+    ])
+    def test_the_other_requests_still_reach_their_handlers(self, monkeypatch, line, handler):
+        seen = []
+        monkeypatch.setattr(daemon, handler, lambda *a, **k: seen.append(line))
+        assert daemon.handle_ipc_stdin_line(line) is True
+        assert seen == [line]
+
+    def test_a_typed_query_still_reaches_the_reply_engine(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(daemon, "submit_text_query", lambda text, **k: seen.append(text))
+        assert daemon.handle_ipc_stdin_line(daemon.CHAT_QUERY_IPC_PREFIX + json.dumps({"text": "hello"})) is True
+        assert seen == ["hello"]
+
+    def test_unknown_lines_are_ignored(self):
+        assert daemon.handle_ipc_stdin_line("just some text") is False
+
     def test_the_stdin_monitor_routes_answers(self, presenter, output, tool):
         _request()
         request_id = output.events()[0]["data"]["id"]
@@ -413,6 +443,25 @@ class TestDesktopRelay:
     def test_other_lines_are_not_confirmation_events(self, relay_parts):
         assert relay_parts.relay.handle_line("__CHAT__:{}") is False
 
+    def test_a_duplicate_open_keeps_the_first_dialog(self, relay_parts):
+        relay_parts.relay.handle_line(_open_line())
+        relay_parts.relay.handle_line(_open_line())
+        assert len(relay_parts.dialogs.shown) == 1
+
+    def test_a_relay_whose_daemon_went_away_shows_nothing_more(self, relay_parts):
+        relay_parts.relay.close_all()
+        assert relay_parts.relay.handle_line(_open_line()) is True
+        assert relay_parts.dialogs.shown == []
+
+    def test_a_dialog_the_daemon_never_closes_is_closed_unanswered_after_the_timeout(self):
+        from desktop_app.confirmation_dialog import SubprocessConfirmationRelay
+        dialogs, pipe = FakeDialogs(), Pipe()
+        relay = SubprocessConfirmationRelay(pipe, presenter=dialogs, timeout_sec=0.05)
+        relay.handle_line(_open_line())
+        assert _wait(lambda: dialogs.shown[0].handle.closed)
+        dialogs.shown[0].resolve(True)
+        assert pipe.lines == []
+
     def test_a_broken_pipe_is_not_an_approval_and_does_not_raise(self):
         from desktop_app.confirmation_dialog import SubprocessConfirmationRelay
         dialogs = FakeDialogs()
@@ -567,10 +616,34 @@ class TestTrayWiring:
         tray._confirm_ipc_signals.line_received.connect(tray._on_confirm_ipc_line)
         proc = MagicMock()
         proc.stdin = io.StringIO()
+        proc.stdout = io.StringIO("")  # the real log reader started below reads nothing and ends
         monkeypatch.setattr(app_mod.subprocess, "Popen", MagicMock(return_value=proc))
-        monkeypatch.setattr(app_mod.threading, "Thread", MagicMock())
         tray.start_daemon()
+        tray.log_reader_threads[-1].join(5)
         return SimpleNamespace(tray=tray, dialogs=dialogs, proc=proc)
+
+    def test_a_request_mixed_into_another_output_line_is_still_handled_and_kept_out_of_the_log(self, tray, qapp):
+        tray.proc.stdout = io.StringIO("🎤 Listening..." + _open_line() + "\n")
+        tray.tray.daemon_process = tray.proc
+
+        tray.tray._read_daemon_logs()
+        assert _wait(lambda: (qapp.processEvents(), tray.dialogs.shown)[1])
+
+        logged = "".join(call.args[0] for call in tray.tray.log_signals.new_log.emit.call_args_list)
+        assert "Example App" not in logged
+
+    def test_requests_from_a_daemon_that_was_replaced_never_reach_the_new_one(self, tray, qapp):
+        old_relay = tray.tray._confirm_relay
+        old_proc = tray.proc
+        old_proc.stdout = io.StringIO(_open_line("old") + "\n")
+        tray.tray.daemon_process = old_proc
+        reader_relay = tray.tray._confirm_relay
+        tray.tray._confirm_relay = SimpleNamespace(handle_line=lambda line: pytest.fail("reached the new daemon"),
+                                                   close_all=lambda: None)
+        tray.tray._read_daemon_logs(relay=reader_relay)
+        _wait(lambda: (qapp.processEvents(), tray.dialogs.shown)[1])
+        assert reader_relay is old_relay
+        assert [s.request.id for s in tray.dialogs.shown] == ["old"]
 
     def test_a_daemon_request_shows_the_dialog_and_the_answer_reaches_its_stdin(self, tray):
         tray.tray._on_confirm_ipc_line(_open_line() + "\n")
@@ -604,6 +677,15 @@ class TestTrayWiring:
 
 
 class TestQtChatHearsTheOutcome:
+    def test_an_outcome_with_no_chat_window_open_creates_no_window(self, qapp):
+        import desktop_app.app as app_mod
+        tray = app_mod.JarvisSystemTray.__new__(app_mod.JarvisSystemTray)
+        tray.chat_window = None
+        tray._chat_submit_fn = None
+        tray.is_listening = True
+        tray._on_chat_ipc_line(daemon.CHAT_IPC_PREFIX + json.dumps({"type": "confirmed", "data": "done"}))
+        assert tray.chat_window is None
+
     def test_a_confirmed_event_shows_the_outcome_in_the_chat(self, qapp):
         from desktop_app.chat_window import ChatWindow
         win = ChatWindow(submit_fn=lambda text: None)
