@@ -7,6 +7,11 @@ import difflib
 from ..debug import debug_log
 
 
+def _names(wake_word: str, aliases: List[str]) -> set:
+    """The wake word and its aliases, without blank entries (a blank name would match any text)."""
+    return {name for name in [wake_word, *(aliases or [])] if isinstance(name, str) and name.strip()}
+
+
 def is_wake_word_detected(text_lower: str, wake_word: str, aliases: List[str], fuzzy_ratio: float = 0.78) -> bool:
     """
     Check if text contains wake word using exact and fuzzy matching.
@@ -22,16 +27,14 @@ def is_wake_word_detected(text_lower: str, wake_word: str, aliases: List[str], f
     """
     if not text_lower or not text_lower.strip():
         return False
-    
-    # Combine wake word and aliases
-    all_aliases = set(aliases) | {wake_word}
-    
-    # Check exact match first
-    if wake_word in text_lower:
-        return True
-    
-    # Check aliases exact match
-    for alias in aliases:
+
+    # Combine wake word and aliases. A blank name would match every utterance, so it never counts.
+    all_aliases = _names(wake_word, aliases)
+    if not all_aliases:
+        return False
+
+    # Exact match first
+    for alias in all_aliases:
         if alias in text_lower:
             return True
     
@@ -65,7 +68,7 @@ def extract_query_after_wake(text_lower: str, wake_word: str, aliases: List[str]
     if not text_lower:
         return ""
     
-    all_aliases = set(aliases) | {wake_word}
+    all_aliases = _names(wake_word, aliases)
     fragment = text_lower
     
     # Remove all aliases from the text

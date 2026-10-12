@@ -150,7 +150,7 @@ Instead of extracting post-wake-word audio, we:
 
 ### 2. Text-Based Wake Detection
 
-Wake word detection operates on the rolling transcript buffer. When Whisper produces text, it is checked for the configured wake word and aliases using fuzzy matching (`rapidfuzz`). This supports arbitrary wake words in any language.
+Wake word detection operates on the rolling transcript buffer. When Whisper produces text, it is checked for the configured wake word and aliases using fuzzy matching (`rapidfuzz`). This supports arbitrary wake words in any language. A blank or whitespace-only `wake_word` (or one that is not text) is replaced by the default wake word when the config loads, and blank aliases are ignored by detection and by removing the wake word from the query, so an empty name can never match every utterance.
 
 ### 3. Context-Aware Intent Judge
 

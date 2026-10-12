@@ -57,6 +57,7 @@ class FieldMeta:
     # Shown only while this returns True; it reads other fields' current values through ``get(key)``.
     shown_when: Optional[Callable[[Callable[[str], Any]], bool]] = None
     column: str = ""  # On a page with columns (Codex and Claude), the column the field sits in
+    required: bool = False  # A text field that Save refuses to leave blank
 
 
 # Categories and their display order
@@ -265,8 +266,8 @@ def _build_field_metadata() -> List[FieldMeta]:
       choices=[("16000", "16000 Hz"), ("44100", "44100 Hz"), ("48000", "48000 Hz")])
     heading("Wake word")
     f("wake_word", "Wake Word",
-      "The word that gets Jarvis's attention.",
-      "listening", "str")
+      "The word that gets Jarvis's attention. It cannot be left empty.",
+      "listening", "str", required=True)
     f("wake_fuzzy_ratio", "Wake Word Strictness",
       "How closely what you say must match the wake word, from 0.5 (loose) to 1.0 (exact). Raise it if "
       "Jarvis wakes by mistake; lower it if it misses you.",
@@ -1722,6 +1723,8 @@ class SettingsWindow(QDialog):
                     return int(val)
                 except (TypeError, ValueError):
                     return 16000
+            if val == "" and fm.field_type == "choice" and any(value == "" for value, _ in (fm.choices or [])):
+                return ""  # an offered empty choice ("Model default", "Automatic") is a value of its own
             return val if val != "" else None
 
         if fm.field_type == "list":
@@ -1741,6 +1744,18 @@ class SettingsWindow(QDialog):
 
     def _on_save(self) -> None:
         """Collect values from widgets and save to config.json."""
+        # A required text field left blank (the wake word) is refused before anything is written.
+        blank = [fm for fm in self._fields if fm.required and fm.field_type == "str"
+                 and not self._widgets[fm.key].text().strip()]
+        if blank:
+            item = self._page_items.get(blank[0].category)
+            if item is not None:
+                self._sidebar.setCurrentItem(item)
+            debug_log(f"settings not saved: {blank[0].key} is blank", "settings")
+            QMessageBox.warning(self, "Settings not saved",
+                                f"{blank[0].label} cannot be empty. Enter a value, then save again.")
+            return
+
         # Start from the file as it is now (keys the UI does not show, and values written while the
         # window was open by voice or the tray), and apply only the fields the user changed.
         config = _load_json(self._config_path) or {}

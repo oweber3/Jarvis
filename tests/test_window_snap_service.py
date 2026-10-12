@@ -179,3 +179,50 @@ def test_no_thread_of_the_mode_is_left_running_once_it_is_off(mock_config, desk)
     assert {t.name for t in alive() - before} == set(names), "the camera, the detector and the watchdog run while on"
     svc.stop()
     assert alive() - before == set(), "nothing keeps polling once it is off"
+
+
+def test_a_daemon_restarted_in_the_same_process_uses_the_settings_saved_before_the_restart(monkeypatch):
+    """The installed app runs the daemon in a thread; Restart runs ``daemon.main`` again in the same process. The
+    shutdown releases the camera and leaves nothing running, and the next start builds gesture snapping from the
+    new settings (here the camera)."""
+    import threading
+    from types import SimpleNamespace
+
+    import jarvis.platform.windows.window_snap as windows_output
+    from jarvis.gestures import window_snap_service
+    from jarvis.tools import registry
+
+    trackers = []
+
+    def fake_snap_tracker(cfg, camera, **kwargs):
+        trackers.append(FakeTracker(camera))
+        return trackers[-1]
+
+    class OneMonitor:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def desktop(self):
+            return [(0, 0, 1920, 1080)]
+
+    monkeypatch.setattr(windows_output, "WindowsSnapOutput", OneMonitor)
+    monkeypatch.setattr(window_snap_service, "snap_tracker", fake_snap_tracker)
+    monkeypatch.setattr(window_snap_service, "_service", None)
+    monkeypatch.setattr(registry, "BUILTIN_TOOLS", dict(registry.BUILTIN_TOOLS))
+
+    registry.configure_gesture_tool(SimpleNamespace(gesture_snap_enabled=True, gesture_snap_camera=0),
+                                    platform="win32")
+    assert window_snap_service.get_service().start() == "started"
+    window_snap_service.stop_service()  # daemon shutdown
+    assert trackers[0].running is False and trackers[0].stopped == 1, "the camera is released at shutdown"
+    assert window_snap_service.get_service() is None
+    assert not any(t.name == "gesture-snap-watchdog" for t in threading.enumerate())
+
+    registry.configure_gesture_tool(SimpleNamespace(gesture_snap_enabled=True, gesture_snap_camera=2),
+                                    platform="win32")
+    service = window_snap_service.get_service()
+    try:
+        assert service.start() == "started"
+        assert trackers[-1].camera == 2
+    finally:
+        window_snap_service.stop_service()
