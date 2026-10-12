@@ -457,6 +457,7 @@ class VoiceListener(threading.Thread):
     # Reply generation runs on one serial worker so the listener keeps hearing.
     _reply_executor: Optional[ThreadPoolExecutor] = None
     _pending_replies: tuple = ()  # Cancel flags of replies queued or being generated
+    _latest_spoken_reply: Optional[threading.Event] = None  # The reply most recently handed to TTS
     _reply_lock = threading.Lock()
     _engagement_lock = threading.RLock()  # Engagement starts and ends on listener and reply threads
 
@@ -613,11 +614,37 @@ class VoiceListener(threading.Thread):
             self._dictation_generation += 1
         self._dictation_is_active = active
 
-    def _start_engagement(self) -> None:
-        """Mark that Jarvis has been engaged and is working on the user's speech."""
+    def _start_engagement(self) -> bool:
+        """Mark that Jarvis has been engaged and is working on the user's speech.
+
+        Returns whether this call started the engagement (False when one was
+        already in progress or TTS is speaking).
+        """
         with self._engagement_lock:
-            if self.tts is None or not self.tts.is_speaking():
-                self._engaged = True
+            if self._engaged or (self.tts is not None and self.tts.is_speaking()):
+                return False
+            self._engaged = True
+            return True
+
+    def _engage_early(self, reason: str) -> bool:
+        """Acknowledge an engaged utterance before it is judged; returns whether it started the engagement.
+
+        An engagement already in progress (a request being collected or a reply
+        being generated) keeps its face, so speech heard meanwhile never shows
+        LISTENING over THINKING.
+        """
+        started = self._start_engagement()
+        if started:
+            self._set_face_state_listening()
+        debug_log(f"early engagement: {reason}" + ("" if started else " (engagement already in progress)"), "voice")
+        return started
+
+    def _end_own_engagement(self, engaged_here: bool) -> None:
+        """End the engagement only when this utterance started it."""
+        if engaged_here:
+            self._end_engagement()
+        elif self._is_engaged():
+            debug_log("utterance not taken; the engagement in progress continues", "voice")
 
     def _end_engagement(self) -> None:
         """End the engagement and revert face state to IDLE."""
@@ -654,12 +681,42 @@ class VoiceListener(threading.Thread):
             self.echo_detector.track_tts_start(tts_text, baseline_energy)
             self._barge_in_settle()
 
-    def activate_hot_window(self) -> None:
-        """Activate hot window after TTS completion."""
+    def _reply_that_follows(self, spoken: threading.Event) -> Optional[str]:
+        """Whether another reply follows ``spoken``: "queued" when one was handed to TTS
+        after it, "generating" when one is queued for or running on the reply worker,
+        None when ``spoken`` is the last. Stopped replies do not count."""
+        with self._reply_lock:
+            latest = self._latest_spoken_reply
+            generating = any(flag is not spoken and not flag.is_set() for flag in self._pending_replies)
+        if latest is not None and latest is not spoken and not latest.is_set():
+            return "queued"
+        if generating:
+            return "generating"
+        return None
+
+    def activate_hot_window(self, spoken: Optional[threading.Event] = None) -> None:
+        """Activate hot window after TTS completion.
+
+        ``spoken`` identifies the reply that finished. When another reply
+        follows it, that reply arms the hot window instead and the face is left
+        to it (THINKING while it is still being generated).
+        """
         debug_log("TTS completed, checking hot window activation", "voice")
 
         # Track TTS finish time for echo detection, with or without a hot window
         self.echo_detector.track_tts_finish()
+
+        follows = None
+        if spoken is not None:
+            follows = self._reply_that_follows(spoken)
+            with self._reply_lock:
+                if self._latest_spoken_reply is spoken:
+                    self._latest_spoken_reply = None
+        if follows is not None:
+            debug_log(f"another reply follows ({follows}); the hot window waits for the last one", "voice")
+            if follows == "generating" and not self.state_manager.is_collecting():
+                set_state(AssistantState.THINKING)
+            return
 
         if not self.cfg.hot_window_enabled:
             debug_log("hot window disabled in config, back to wake word mode", "voice")
@@ -725,6 +782,24 @@ class VoiceListener(threading.Thread):
             self._stop_after_spoken_stop()
             return
 
+        # Echo is acoustic: only speech captured while the reply played, or
+        # starting within echo_tolerance of its end, can hold Jarvis's own
+        # voice. Later speech is never treated as echo, even when it repeats
+        # words of the reply ("yes" to "... say yes or no").
+        same_context_finish = self.echo_detector._last_tts_finish_time if same_tts_context else 0.0
+        echo_possible = (
+            received_during_tts
+            or utterance_start_time <= 0
+            or (same_context_finish > 0
+                and utterance_start_time < same_context_finish + self.echo_detector.echo_tolerance)
+        )
+        # The reply text that echo checks compare against; empty when echo is impossible.
+        echo_reference = (self.echo_detector._last_tts_text or "") if (same_tts_context and echo_possible) else ""
+
+        # Whether this utterance started the engagement in progress, so a later
+        # rejection ends only its own engagement, never a reply being worked on.
+        engaged_here = False
+
         # --- Early echo check + early engagement ---
         # Check for echo BEFORE starting engagement and BEFORE intent judge.
         # This prevents: false engagement on echo, intent judge blocking the audio
@@ -732,16 +807,20 @@ class VoiceListener(threading.Thread):
         # Audio captured while TTS played but transcribed after it ended (slow
         # CPU Whisper) gets the same check: the during-TTS echo check below
         # only covers transcripts that arrive while TTS is still playing.
-        if not active_tts_overlapped and not self._is_engaged():
+        # Wake detection runs for every utterance, including one heard while an
+        # earlier request is still collected or its reply generated.
+        if not active_tts_overlapped:
             in_hot_window = self.state_manager.was_speech_during_hot_window(
                 utterance_start_time, utterance_end_time
             )
-            if in_hot_window or received_during_tts:
+            if in_hot_window and not echo_possible:
+                debug_log("speech started after the echo window; no echo check", "voice")
+            if (in_hot_window or received_during_tts) and echo_possible:
                 # Fuzzy echo check — instant, no intent judge needed.
                 # Only catches pure echo (transcript ≈ TTS text). Mixed
                 # echo+speech chunks (user spoke over echo) go to the
                 # intent judge which can extract the user's speech.
-                last_tts_text = self.echo_detector._last_tts_text if same_tts_context else ""
+                last_tts_text = echo_reference
                 if last_tts_text:
                     echo_score = fuzz.partial_ratio(
                         text_lower, last_tts_text.lower()
@@ -799,9 +878,7 @@ class VoiceListener(threading.Thread):
                 pass
             elif in_hot_window:
                 # Non-echo (or salvaged) in hot window — start engagement
-                self._start_engagement()
-                self._set_face_state_listening()
-                debug_log("early engagement: hot window active", "voice")
+                engaged_here = self._engage_early("hot window active")
             else:
                 # Not in hot window — check for wake word
                 wake_word = getattr(self.cfg, "wake_word", "jarvis")
@@ -809,9 +886,7 @@ class VoiceListener(threading.Thread):
                 fuzzy_ratio = float(getattr(self.cfg, "wake_fuzzy_ratio", 0.78))
                 if is_wake_word_detected(text_lower, wake_word, aliases, fuzzy_ratio):
                     self._wake_timestamp = utterance_start_time
-                    self._start_engagement()
-                    self._set_face_state_listening()
-                    debug_log("early engagement: wake word detected", "voice")
+                    engaged_here = self._engage_early("wake word detected")
 
         # Echo rejection — only while TTS is actively playing.
         # After TTS finishes, the intent judge handles everything (echo detection,
@@ -997,11 +1072,11 @@ class VoiceListener(threading.Thread):
                 "voice",
             )
 
+        judge_ready = self._intent_judge is not None and self._intent_judge.available
         if (
             not skip_intent_judge_during_tts
             and has_engagement_signal
-            and self._intent_judge is not None
-            and self._intent_judge.available
+            and judge_ready
         ):
             # Get recent transcript segments for context (full buffer)
             context_segments = self._transcript_buffer.get_last_seconds(self._buffer_duration)
@@ -1020,6 +1095,9 @@ class VoiceListener(threading.Thread):
                 current_text=text_lower,
             )
             self._mark_turn("intent judge", (time.perf_counter() - judge_started) * 1000)
+            # The judge sees the reply as context; the echo checks below compare
+            # against it only when this speech could hold Jarvis's own voice.
+            last_tts_text = echo_reference
 
             if intent_judgment is not None:
                 # Log intent judge decision for user visibility
@@ -1034,24 +1112,8 @@ class VoiceListener(threading.Thread):
                 debug_log(f"intent judge returned None — falling back ({reason})", "voice")
                 # Hot window fallback: if the early echo check already cleared
                 # this text, accept it even without the judge's verdict.
-                if could_be_hot_window:
-                    last_tts_text_fb = (self.echo_detector._last_tts_text or "") if same_tts_context else ""
-                    is_pure_echo = False
-                    if last_tts_text_fb:
-                        echo_score = fuzz.partial_ratio(
-                            text_lower, last_tts_text_fb.lower()
-                        )
-                        tts_words = len(last_tts_text_fb.split())
-                        text_words = len(text_lower.split())
-                        is_pure_echo = (
-                            echo_score >= 70
-                            and text_words <= max(tts_words * 1.3, tts_words + 3)
-                        )
-                    if not is_pure_echo:
-                        print(f"  🧠 Intent fallback: accepting hot window speech", flush=True)
-                        debug_log(f"✅ Hot window fallback (judge unavailable): \"{text_lower}\"", "voice")
-                        self._begin_collection(text_lower, text_lower)
-                        return
+                if could_be_hot_window and self._accept_hot_window_without_judge(text_lower, echo_reference):
+                    return
 
             if intent_judgment is not None:
                 # If judge says stop command, stop like a spoken stop
@@ -1115,7 +1177,7 @@ class VoiceListener(threading.Thread):
                                 if query_echo_score >= 70 or query_heard_score < 70:
                                     debug_log(f"🔇 Echo in hot window (directed, score={echo_score}): \"{text_lower}\"", "voice")
                                     print(f"  🔇 Heard (echo): \"{text_lower[:50]}{'...' if len(text_lower) > 50 else ''}\"", flush=True)
-                                    self._end_engagement()
+                                    self._end_own_engagement(engaged_here)
                                     return
                                 else:
                                     debug_log(
@@ -1181,7 +1243,7 @@ class VoiceListener(threading.Thread):
                             if is_pure_echo:
                                 debug_log(f"🔇 Echo in hot window (directed/no-query, score={echo_score}): \"{text_lower}\"", "voice")
                                 print(f"  🔇 Heard (echo): \"{text_lower[:50]}{'...' if len(text_lower) > 50 else ''}\"", flush=True)
-                                self._end_engagement()
+                                self._end_own_engagement(engaged_here)
                                 return
 
                         debug_log(f"✅ Intent judge accepted (directed, high confidence, using actual text): \"{text_lower}\"", "voice")
@@ -1239,7 +1301,7 @@ class VoiceListener(threading.Thread):
                                 )
                             if is_pure_echo:
                                 debug_log(f"🔇 Echo in hot window (echo reasoning confirmed, score={echo_score}): \"{text_lower}\"", "voice")
-                                self._end_engagement()
+                                self._end_own_engagement(engaged_here)
                                 return
                             # Mixed echo+speech — override the echo reasoning
                             print(f"  🧠 Intent override: accepting hot window speech (mixed echo+speech)", flush=True)
@@ -1274,7 +1336,7 @@ class VoiceListener(threading.Thread):
                             # Confirmed pure echo — early check should have caught
                             # this, but handle as safety net.
                             debug_log(f"🔇 Echo in hot window (score={echo_score}): \"{text_lower}\"", "voice")
-                            self._end_engagement()
+                            self._end_own_engagement(engaged_here)
                             return
 
                         if could_be_hot_window:
@@ -1311,11 +1373,23 @@ class VoiceListener(threading.Thread):
                             # Fall through to Priority 4: wake word detection
                         else:
                             debug_log(f"🚫 Intent judge rejected (not directed, high confidence): \"{text_lower}\"", "voice")
-                            self._end_engagement()
+                            self._end_own_engagement(engaged_here)
                             return
                 else:
                     # For inconclusive results, fall through to wake word detection
                     debug_log(f"⏭️ Intent judge inconclusive ({intent_judgment.confidence}), checking wake word", "voice")
+
+        if not judge_ready and not skip_intent_judge_during_tts and could_be_hot_window:
+            # No judge, or it is backing off after a failed request: the hot
+            # window still takes non-echo speech as a follow-up.
+            if self._intent_judge is None:
+                reason = "not configured"
+            else:
+                reason = self._intent_judge.last_failure_reason or "backing off after an error"
+            print(f"  🧠 Intent judge: unavailable ({reason})", flush=True)
+            debug_log(f"intent judge not ready in the hot window; falling back ({reason})", "voice")
+            if self._accept_hot_window_without_judge(text_lower, echo_reference):
+                return
 
         # Priority 4: Wake word detection (fallback when intent judge unavailable/inconclusive)
         wake_word = getattr(self.cfg, "wake_word", "jarvis")
@@ -1343,8 +1417,9 @@ class VoiceListener(threading.Thread):
         if intent_judgment is not None:
             intent_info = f", intent={intent_judgment.directed}/{intent_judgment.confidence}"
 
-        # End any early-started engagement since we're not processing this input
-        self._end_engagement()
+        # End the engagement this utterance started, if any; a request being
+        # collected or a reply being generated keeps its own.
+        self._end_own_engagement(engaged_here)
 
         if received_during_tts:
             # User spoke during TTS but it wasn't a stop command - this is likely a response
@@ -1475,13 +1550,14 @@ class VoiceListener(threading.Thread):
                 print(f"\n  ❌ Reply engine error: {e}", flush=True)
                 debug_log(f"reply engine exception: {e}", "voice")
                 # Spoken like any reply, so echo timing, the face and the hot window follow it
-                self._speak_reply("Sorry, I encountered an error processing your request.")
+                self._speak_reply("Sorry, I encountered an error processing your request.",
+                                  reply_flag=cancelled)
                 return
 
             if cancelled.is_set():
                 debug_log("reply discarded: stopped while it was being generated", "voice")
                 return
-            self._speak_reply(reply, turn)
+            self._speak_reply(reply, turn, reply_flag=cancelled)
         finally:
             with self._reply_lock:
                 self._pending_replies = tuple(
@@ -1517,6 +1593,23 @@ class VoiceListener(threading.Thread):
         except Exception:
             pass
 
+    def _accept_hot_window_without_judge(self, text_lower: str, echo_reference: str) -> bool:
+        """Take hot-window speech as a follow-up without the judge's verdict, unless it is pure echo.
+
+        ``echo_reference`` is the reply the speech could echo ("" when it
+        cannot hold Jarvis's own voice). Returns whether the speech was taken.
+        """
+        if echo_reference:
+            echo_score = fuzz.partial_ratio(text_lower, echo_reference.lower())
+            tts_words = len(echo_reference.split())
+            if echo_score >= 70 and len(text_lower.split()) <= max(tts_words * 1.3, tts_words + 3):
+                debug_log(f"hot window fallback skipped: pure echo (score={echo_score})", "voice")
+                return False
+        print("  🧠 Intent fallback: accepting hot window speech", flush=True)
+        debug_log(f"✅ Hot window fallback (judge unavailable): \"{text_lower}\"", "voice")
+        self._begin_collection(text_lower, text_lower)
+        return True
+
     def _speech_pending(self) -> bool:
         """True while the user is talking or an utterance awaits its transcript."""
         return (
@@ -1530,17 +1623,25 @@ class VoiceListener(threading.Thread):
         if self._turn is not None:
             self._turn.mark(stage, duration_ms)
 
-    def _speak_reply(self, reply: Optional[str], turn: Optional[TurnLatency] = None) -> None:
-        """Speak a reply and open the hot window when it finishes."""
+    def _speak_reply(self, reply: Optional[str], turn: Optional[TurnLatency] = None,
+                     reply_flag: Optional[threading.Event] = None) -> None:
+        """Speak a reply and open the hot window when it finishes.
+
+        ``reply_flag`` is the cancel flag of the reply worker job speaking it, so
+        that job is not counted as a reply that follows this one.
+        """
+        spoken = reply_flag if reply_flag is not None else threading.Event()
         if reply and self.tts and self.tts.enabled:
             # End the engagement when TTS starts
             self._end_engagement()
+            with self._reply_lock:
+                self._latest_spoken_reply = spoken
 
             # TTS completion callback for hot window
             def _on_tts_complete():
                 import time as _time
                 debug_log(f"TTS completion callback triggered at {_time.time():.3f}", "voice")
-                self.activate_hot_window()
+                self.activate_hot_window(spoken)
 
             # Duration callback to update echo detector with exact timing (Piper only)
             def _on_duration_known(duration: float):
@@ -1563,8 +1664,15 @@ class VoiceListener(threading.Thread):
                           first_audio_callback=_on_first_audio)
         else:
             debug_log(f"no TTS output: reply={bool(reply)}, tts={bool(self.tts)}, enabled={getattr(self.tts, 'enabled', False) if self.tts else False}", "voice")
+            # A reply already handed to TTS sets the face itself when it ends.
+            if self._reply_that_follows(spoken) == "generating":
+                # The face keeps showing the reply that is still to come.
+                debug_log("no TTS output, but another reply follows; face left as it is", "voice")
+                return
             # End the engagement if there is no TTS response
             self._end_engagement()
+            if not self.state_manager.is_collecting():
+                set_state(AssistantState.IDLE)
 
     def _calculate_audio_energy(self, frames: list) -> float:
         """Calculate RMS energy from audio frames."""

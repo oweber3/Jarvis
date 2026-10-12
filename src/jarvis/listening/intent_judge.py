@@ -51,6 +51,19 @@ def warm_up_chat_model(cfg, model: str, timeout: float) -> bool:
     return ok
 
 
+def _json_flag(value: Any) -> bool:
+    """Read a boolean field of the judge's JSON strictly.
+
+    Only JSON ``true`` or the string ``"true"`` (any case) count: small models
+    sometimes quote their booleans, and ``bool("false")`` would read as true.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
+
+
 def _extract_json_object(text: str, last: bool = False) -> str:
     """Return a balanced `{...}` object in `text`, or "" if none.
 
@@ -357,18 +370,19 @@ Examples:
             # occasionally echoes a misheard wake word back verbatim ("Chavis"
             # stayed in the transcript, judge emitted it in the query), which
             # then leaks into the reply engine's memory search and prompts.
-            raw_query = str(data.get("query", "")).strip()
+            # A JSON null is an absent value, never the text "None".
+            raw_query = str(data.get("query") or "").strip()
             normalized_query = self._normalize_aliases(raw_query)
 
             return IntentJudgment(
-                directed=bool(data.get("directed", False)),
+                directed=_json_flag(data.get("directed")),
                 query=normalized_query,
-                stop=bool(data.get("stop", False)),
-                confidence=str(data.get("confidence", "low")).lower(),
-                reasoning=str(data.get("reasoning", "")),
+                stop=_json_flag(data.get("stop")),
+                confidence=str(data.get("confidence") or "low").lower(),
+                reasoning=str(data.get("reasoning") or ""),
                 raw_response=response_text,
             )
-        except (json.JSONDecodeError, KeyError) as e:
+        except (json.JSONDecodeError, KeyError, AttributeError) as e:
             debug_log(f"intent judge: failed to parse response: {e}", "voice")
             return None
 
