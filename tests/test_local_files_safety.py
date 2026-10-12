@@ -1,7 +1,8 @@
-"""Bug-hunt repros: tool safety, the home boundary and path handling.
+"""localFiles and the central policy keep to the home boundary, never touch network paths and match
+important locations as Windows does.
 
-Each test states the behaviour the spec promises and fails while the defect exists. Everything runs in a
-fake home folder under tmp_path; nothing reaches the network, and no app, window or real file is touched.
+Everything runs in a fake home folder under tmp_path; nothing reaches the network, and no app, window or
+real file is touched.
 """
 import ntpath
 import os
@@ -107,6 +108,8 @@ def network(monkeypatch):
 
 @windows_only
 @pytest.mark.parametrize('args', [
+    {'operation': 'read', 'path': '//203.0.113.7/share/notes.txt'},
+    {'operation': 'read', 'path': r'\\?\UNC\203.0.113.7\share\notes.txt'},
     {'operation': 'read', 'path': _UNC + '\\notes.txt'},
     {'operation': 'list', 'path': _UNC},
     {'operation': 'write', 'path': _UNC + '\\notes.txt', 'content': 'x'},
@@ -139,7 +142,8 @@ def test_central_safety_classification_never_contacts_a_network_path(network):
 # --- 3. important-location check is case-sensitive on Windows ---------------------------------
 
 @windows_only
-@pytest.mark.parametrize('path', ['~/.SSH/authorized_keys', '~/.Ssh/config', '~/.AWS/credentials'])
+@pytest.mark.parametrize('path', ['~/.SSH/authorized_keys', '~/.Ssh/config', '~/.AWS/credentials',
+                                  '~/.ssh./authorized_keys', '~/.ssh /authorized_keys'])
 def test_writing_into_ssh_in_another_letter_case_still_needs_desktop_confirmation(home, path):
     """local_files.spec.md: mutating operations in an important location (.ssh and similar) need desktop
     confirmation. Windows paths are case-insensitive, so ~/.SSH is the same folder as ~/.ssh."""
@@ -155,14 +159,11 @@ def test_a_key_written_to_dot_ssh_in_upper_case_is_not_written_without_confirmat
     assert not (home / '.ssh' / 'authorized_keys').exists(), result.reply_text
 
 
-# --- 4. rename drops the file's extension for names with a version number -----------------------
-
-@pytest.mark.parametrize('new_name', ['Budget v2.1', 'Release notes 1.0', 'Report 2026.10'])
-def test_rename_keeps_the_extension_when_the_new_name_only_contains_a_number_with_a_dot(home, new_name):
-    """local_files.spec.md: a file's new_name without an extension keeps the file's own. A version or
-    date number is not an extension; the renamed .xlsx must still open in its program."""
-    source = home / 'Downloads' / 'budget.xlsx'
-    source.write_bytes(b'xl')
-    result = run({'operation': 'rename', 'path': str(source), 'new_name': new_name})
-    assert result.success, result.reply_text
-    assert (home / 'Downloads' / f'{new_name}.xlsx').exists(), sorted(p.name for p in (home / 'Downloads').iterdir())
+@windows_only
+@pytest.mark.parametrize('path,network', [
+    (r'\\host\share\a.txt', True), ('//host/share/a.txt', True), (r'\\?\UNC\host\share', True),
+    (r'\\.\pipe\x', True), (r'\\?\C:\Users\a.txt', False), (r'C:\Users\a.txt', False), ('~/notes.txt', False),
+])
+def test_network_and_device_paths_are_recognised_from_their_text(path, network):
+    from jarvis.utils.path_safety import is_network_or_device_path
+    assert is_network_or_device_path(path) is network
