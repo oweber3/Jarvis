@@ -127,34 +127,15 @@ def test_only_the_new_outlook_is_reported():
 # ── Microsoft Graph ────────────────────────────────────────────────────────
 
 class FakeGraph:
-    """Microsoft identity platform and Graph endpoints as a transport: (method, url, data/params)."""
+    """Microsoft Graph as a transport: (method, url, params, headers). Accepts the access tokens in ``valid``."""
 
     def __init__(self):
         self.calls = []
-        self.refresh_token = "refresh-1"
-        self.device_polls = 0
-
-    def post(self, url, data):
-        self.calls.append(("POST", url, dict(data)))
-        if url.endswith("/devicecode"):
-            return 200, {"device_code": "dev-123", "user_code": "ABCD-EFGH", "interval": 0, "expires_in": 900,
-                         "verification_uri": "https://microsoft.com/devicelogin",
-                         "message": "To sign in, open https://microsoft.com/devicelogin and enter ABCD-EFGH."}
-        if url.endswith("/token") and data.get("grant_type") == graph.DEVICE_GRANT:
-            self.device_polls += 1
-            if self.device_polls < 2:
-                return 400, {"error": "authorization_pending"}
-            return 200, {"access_token": "access-1", "refresh_token": self.refresh_token, "expires_in": 3600}
-        if url.endswith("/token") and data.get("grant_type") == "refresh_token":
-            if data.get("refresh_token") != self.refresh_token:
-                return 400, {"error": "invalid_grant"}
-            self.refresh_token = "refresh-2"
-            return 200, {"access_token": "access-2", "refresh_token": "refresh-2", "expires_in": 3600}
-        return 404, {}
+        self.valid = {"access-1"}
 
     def get(self, url, params, headers):
         self.calls.append(("GET", url, dict(params or {}), dict(headers or {})))
-        if headers.get("Authorization") not in ("Bearer access-1", "Bearer access-2"):
+        if headers.get("Authorization", "").removeprefix("Bearer ") not in self.valid:
             return 401, {}
         if url.endswith("/me/mailFolders/inbox/messages"):
             items = [
@@ -171,42 +152,35 @@ class FakeGraph:
         return 404, {}
 
 
-class TokenStore(dict):
-    def get_token(self):
-        return self.get("token", "")
+class FakeSession:
+    """A sign-in's session: hands out ``tokens`` in turn, or fails like a revoked sign-in."""
 
-    def set_token(self, value):
-        self["token"] = value
-        return True
+    def __init__(self, *tokens, error=None):
+        self.tokens, self.error, self.invalidated = list(tokens), error, 0
 
+    def access_token(self):
+        from jarvis.accounts.logins import LoginError
+        if self.error or not self.tokens:
+            raise LoginError(self.error or "not_signed_in")
+        return self.tokens[0] if len(self.tokens) == 1 else self.tokens.pop(0)
 
-def _graph(fake, store):
-    return graph.GraphAccount("Outlook.com", client_id="client-abc", tenant="consumers", transport=fake,
-                              get_token=store.get_token, set_token=store.set_token)
-
-
-def test_device_code_sign_in_stores_the_refresh_token_only_in_the_store():
-    fake, store = FakeGraph(), TokenStore()
-    prompts = []
-    assert graph.device_sign_in("client-abc", "consumers", set_token=store.set_token, show=prompts.append,
-                                transport=fake, sleep=lambda s: None)
-    assert store["token"] == "refresh-1"
-    assert "ABCD-EFGH" in prompts[0]
-    scope = fake.calls[0][2]["scope"]
-    assert "Mail.Read" in scope and "offline_access" in scope and "Send" not in scope
+    def invalidate(self):
+        self.invalidated += 1
 
 
-def test_graph_lists_the_inbox_and_keeps_the_rotated_refresh_token():
-    fake, store = FakeGraph(), TokenStore(token="refresh-1")
-    result = _graph(fake, store).list_messages()
+def _graph(fake, session):
+    return graph.GraphAccount("Outlook.com", session=session, transport=fake, base="https://graph.test/v1.0")
+
+
+def test_graph_lists_the_inbox_newest_first():
+    result = _graph(FakeGraph(), FakeSession("access-1")).list_messages()
     assert [(m.sender_name, m.subject, m.unread) for m in result.messages] == [("Help", "Ticket update", True),
                                                                               ("Sam Lee", "Hello", False)]
-    assert store["token"] == "refresh-2"
 
 
 def test_graph_unread_and_sender_filters_and_reading_a_message():
-    fake, store = FakeGraph(), TokenStore(token="refresh-1")
-    account = _graph(fake, store)
+    fake = FakeGraph()
+    account = _graph(fake, FakeSession("access-1"))
     account.list_messages(unread_only=True)
     params = [c for c in fake.calls if c[0] == "GET"][-1][2]
     assert "isRead eq false" in params["$filter"]
@@ -214,10 +188,24 @@ def test_graph_unread_and_sender_filters_and_reading_a_message():
     assert account.read_message("BBB").body == "Hi there, long text."
 
 
-def test_graph_without_a_sign_in_or_with_an_expired_one_says_to_sign_in_again():
+def test_graph_without_a_sign_in_or_with_a_revoked_one_says_to_sign_in_again():
     fake = FakeGraph()
-    assert _graph(fake, TokenStore()).list_messages().error == "not_signed_in"
-    assert _graph(fake, TokenStore(token="stale")).list_messages().error == "not_signed_in"
+    assert _graph(fake, FakeSession(error="not_signed_in")).list_messages().error == "not_signed_in"
+    session = FakeSession("stale-1", "stale-2")
+    assert _graph(fake, session).list_messages().error == "not_signed_in"
+    assert session.invalidated == 2  # refused once, refreshed, refused again
+
+
+def test_a_refused_access_token_is_refreshed_once_before_giving_up():
+    session = FakeSession("expired", "access-1")
+    assert _graph(FakeGraph(), session).list_messages().ok
+
+
+def test_graph_unreachable_is_not_a_sign_in_problem():
+    class Offline:
+        def get(self, url, params, headers):
+            return 0, {}
+    assert _graph(Offline(), FakeSession("access-1")).list_messages().error == "unreachable"
 
 
 # ── Several accounts ───────────────────────────────────────────────────────
@@ -250,7 +238,7 @@ def test_accounts_come_from_the_configuration(mock_config, monkeypatch):
     mock_config.email_accounts = [
         {"name": "Gmail", "type": "imap", "host": "imap.gmail.com", "port": 993, "username": "me@gmail.test"},
         {"name": "Outlook", "type": "outlook"},
-        {"name": "Outlook.com", "type": "graph", "client_id": "abc", "tenant": "consumers"},
+        {"name": "Outlook.com", "type": "graph", "login": "microsoft-1a2b3c4d"},
     ]
     built = service.accounts_from_config(mock_config)
     assert [(type(a).__name__, a.name) for a in built] == [
@@ -307,11 +295,13 @@ def test_imap_failures_after_sign_in_are_results_not_exceptions(box, monkeypatch
     assert _imap(box, password="pässword").list_messages().error in ("auth_failed", "server_error")
 
 
-def test_graph_accounts_reuse_their_access_token_between_requests(mock_config, monkeypatch):
-    from jarvis import credentials
-    monkeypatch.setattr(credentials, "get_secret", lambda key: "")
-    mock_config.email_accounts = [{"name": "Outlook.com", "type": "graph", "client_id": "abc", "tenant": "consumers"}]
-    first = service.accounts_from_config(mock_config)[0]
-    assert service.accounts_from_config(mock_config)[0] is first
-    mock_config.email_accounts = [{"name": "Outlook.com", "type": "graph", "client_id": "other", "tenant": "consumers"}]
-    assert service.accounts_from_config(mock_config)[0] is not first
+def test_a_sign_ins_calendar_and_inbox_share_one_session(mock_config):
+    from jarvis.accounts import logins
+    from jarvis.agenda import service as agenda_service
+    logins.forget_sessions()
+    mock_config.email_accounts = [{"name": "Outlook.com", "type": "graph", "login": "microsoft-1a2b3c4d"}]
+    mock_config.calendar_sources = [{"name": "Outlook.com", "type": "microsoft", "login": "microsoft-1a2b3c4d"}]
+    mailbox = service.accounts_from_config(mock_config)[0]
+    calendar = agenda_service.sources_from_config(mock_config)[0]
+    assert mailbox._session is calendar._session is logins.session_for("microsoft-1a2b3c4d")
+    logins.forget_sessions()

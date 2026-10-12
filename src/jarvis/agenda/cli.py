@@ -1,8 +1,9 @@
 """Add, list, test and remove calendars from a terminal: ``python -m jarvis.agenda setup | list | test [name] |
-remove <name>``.
+remove <name>``. Settings > Calendar & Email does the same without a terminal.
 
-Secret addresses are typed hidden and go straight to the credential store; they are never printed or
-written to ``config.json``. Adding a calendar turns the calendar on. See ``agenda.spec.md``.
+Microsoft and Google accounts sign in in the browser. Secret addresses are typed hidden. Both go straight to
+the credential store and are never printed or written to ``config.json``. Adding a calendar turns the
+calendar on. See ``agenda.spec.md``.
 """
 from __future__ import annotations
 
@@ -12,24 +13,17 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 from .. import credentials
+from ..accounts.manage import CALENDAR_ERRORS as ERRORS
+from ..accounts.manage import AccountStore
 from . import service
 from .sources import IcsSource, OutlookCalendarSource, normalise_address
 
 USAGE = "ℹ️ Usage: python -m jarvis.agenda setup | list | test [name] | remove <name>"
-ERRORS = {
-    "no_address": "no address is stored for it",
-    "unreachable": "the address did not answer (offline, or a mistyped address)",
-    "http_error": "the address was refused (it may have been reset; copy the current secret address)",
-    "not_a_calendar": "the address did not return a calendar (use the secret address in iCal format)",
-    "too_large": "the calendar file is too large",
-    "outlook_not_installed": "classic Outlook is not installed",
-    "outlook_new_only": "only the new Outlook is installed, and it has no interface Jarvis can read",
-    "outlook_timeout": "Outlook did not answer in time",
-    "outlook_failed": "Outlook could not be read",
-}
 KINDS = [
-    ("google", "Google Calendar (secret address in iCal format)"),
-    ("outlookcom", "Outlook.com or Microsoft 365 (published calendar ICS link)"),
+    ("microsoft_signin", "Microsoft account: Outlook.com or Microsoft 365 (sign in in your browser)"),
+    ("google_signin", "Google account (sign in in your browser)"),
+    ("google", "Google Calendar by its secret address in iCal format"),
+    ("outlookcom", "Outlook.com or Microsoft 365 by a published calendar ICS link"),
     ("ics", "Any other calendar address (.ics or webcal://)"),
     ("outlook", "Classic Outlook on this PC"),
 ]
@@ -44,8 +38,12 @@ HOW_TO = {
 
 class Io:
     def __init__(self, ask: Callable[[str], str] = input, ask_secret: Callable[[str], str] = getpass.getpass,
-                 out: Callable[[str], None] = print):
+                 out: Callable[[str], None] = print, store: Optional[AccountStore] = None):
         self.ask, self.ask_secret, self.out = ask, ask_secret, out
+        self.store = store  # test seam: the account store (browser sign-in and its endpoints)
+
+    def accounts(self) -> AccountStore:
+        return self.store or AccountStore()
 
 
 def _entries(cfg: Any) -> List[Dict[str, Any]]:
@@ -74,7 +72,7 @@ def _choose(io: Io) -> Optional[str]:
     io.out("📅 Add a calendar")
     for number, (_key, label) in enumerate(KINDS, start=1):
         io.out(f"   {number}. {label}")
-    answer = io.ask("   👉 Choose 1-4: ").strip()
+    answer = io.ask(f"   👉 Choose 1-{len(KINDS)}: ").strip()
     if answer.isdigit() and 1 <= int(answer) <= len(KINDS):
         return KINDS[int(answer) - 1][0]
     io.out("   ❌ Not a choice.")
@@ -85,6 +83,16 @@ def setup(cfg: Any, io: Io) -> int:
     kind = _choose(io)
     if kind is None:
         return 1
+    if kind.endswith("_signin"):
+        provider = kind[:-len("_signin")]
+        io.out(f"   🌐 Your browser opens {provider.capitalize()}'s sign-in page. Sign in there and allow "
+               "reading your calendar.")
+        io.out("   ⏳ Waiting up to 3 minutes...")
+        outcome = io.accounts().connect_oauth(provider, calendar=True, mail=False)
+        io.out(f"   {'✅' if outcome.ok else '❌'} {outcome.message}")
+        if outcome.ok:
+            io.out("   🔄 Restart Jarvis to use it.")
+        return 0 if outcome.ok else 1
     entries = _entries(cfg)
     taken = {e["name"].casefold() for e in entries}
     default = {"google": "Google", "outlookcom": "Outlook.com", "ics": "Calendar", "outlook": "Outlook"}[kind]
@@ -140,6 +148,11 @@ def list_sources(cfg: Any, io: Io) -> int:
         if entry["type"] == "ics":
             stored = credentials.has_secret(credentials.account_key("calendar_url", entry["name"]))
             io.out(f"   🗓️ {entry['name']}  (ICS address, {'stored' if stored else '⚠️ missing'})")
+        elif entry["type"] in ("microsoft", "google"):
+            from ..accounts import logins
+            signed_in = logins.load(entry.get("login", "")) is not None
+            io.out(f"   🗓️ {entry['name']}  ({entry['type'].capitalize()} account, "
+                   f"{'signed in' if signed_in else '⚠️ not signed in'})")
         else:
             io.out(f"   🗓️ {entry['name']}  (classic Outlook)")
     return 0
@@ -166,13 +179,11 @@ def remove(cfg: Any, io: Io, name: str) -> int:
         io.out(f"❌ No calendar called {name}.")
         return 1
     removed = next(e for e in entries if e["name"].casefold() == name.casefold())
-    if removed["type"] == "ics":
-        credentials.delete_secret(credentials.account_key("calendar_url", removed["name"]))
-        IcsSource(removed["name"], cache_dir=service.cache_dir(cfg), ttl_sec=0, address=lambda: "").forget_copy()
-    if not _save(kept, enable=False if not kept else None):
-        io.out("❌ The settings file could not be written.")
+    outcome = io.accounts().remove("calendar", removed["name"])
+    if not outcome.ok:
+        io.out(f"❌ {outcome.message}")
         return 1
-    io.out(f"🗑️ Removed {removed['name']}, its stored address and its saved copy.")
+    io.out(f"🗑️ Removed {removed['name']} with its stored address, sign-in or saved copy.")
     return 0
 
 

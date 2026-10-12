@@ -171,7 +171,7 @@ def test_no_calendars_set_up_fails_with_how_to_add_one(mock_config, tmp_path):
     mock_config.calendar_sources = []
     configure_calendar_tool(mock_config)
     result = call(mock_config, "calendar")
-    assert not result.success and "python -m jarvis.agenda setup" in (result.error_message or "")
+    assert not result.success and "Settings > Calendar & Email" in (result.error_message or "")
 
 
 def test_reading_the_calendar_keeps_the_reply_out_of_the_diary(cal_cfg):

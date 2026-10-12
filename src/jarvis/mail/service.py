@@ -23,7 +23,6 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 _handles: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 _lock = threading.Lock()
-_graph_accounts: dict = {}
 
 
 @dataclass
@@ -48,7 +47,7 @@ def _lookup(handle: str) -> Optional[Tuple[str, str]]:
 
 
 def accounts_from_config(cfg: Any) -> list:
-    """One account per entry of ``email_accounts``; passwords and tokens come from the credential store."""
+    """One account per entry of ``email_accounts``; passwords and sign-ins come from the credential store."""
     from .. import credentials
     from .graph import GraphAccount
     from .imap import ImapAccount
@@ -64,17 +63,9 @@ def accounts_from_config(cfg: Any) -> list:
         elif kind == "outlook":
             built.append(OutlookMailAccount(name))
         elif kind == "graph":
-            # Kept for the process so its in-memory access token is reused instead of refreshed per request.
-            identity = (name, entry.get("client_id") or "", entry.get("tenant") or "common")
-            with _lock:
-                account = _graph_accounts.get(identity)
-                if account is None:
-                    key = credentials.account_key("email_graph_token", name)
-                    account = GraphAccount(name, client_id=identity[1], tenant=identity[2],
-                                           get_token=lambda key=key: credentials.get_secret(key),
-                                           set_token=lambda value, key=key: credentials.set_secret(key, value))
-                    _graph_accounts[identity] = account
-            built.append(account)
+            # The sign-in's session is shared with its calendar, so one access token serves both.
+            from ..accounts import logins
+            built.append(GraphAccount(name, session=logins.session_for(entry.get("login") or "")))
     return built
 
 

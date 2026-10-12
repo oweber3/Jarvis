@@ -1,7 +1,7 @@
 """Add, list, test and remove email accounts from a terminal: ``python -m jarvis.mail setup | list |
-test [name] | signin <name> | remove <name>``.
+test [name] | remove <name>``. Settings > Calendar & Email does the same without a terminal.
 
-Passwords are typed hidden and sign-in tokens arrive from Microsoft; both go straight to the
+Passwords are typed hidden and Microsoft accounts sign in in the browser; secrets go straight to the
 credential store and are never printed or written to ``config.json``. Adding an account turns email
 on. See ``mail.spec.md``.
 """
@@ -12,28 +12,17 @@ import sys
 from typing import Any, Callable, Dict, List, Optional
 
 from .. import credentials
-from . import graph, service
-from .graph import GraphAccount
+from ..accounts.manage import MAIL_ERRORS as ERRORS
+from ..accounts.manage import AccountStore
 from .imap import ImapAccount
 from .outlook import OutlookMailAccount
 
-USAGE = "ℹ️ Usage: python -m jarvis.mail setup | list | test [name] | signin <name> | remove <name>"
-ERRORS = {
-    "no_password": "no password is stored for it",
-    "auth_failed": "the server refused the sign-in (Gmail needs an app password, not your normal password)",
-    "unreachable": "the server did not answer (offline, or a mistyped server name)",
-    "server_error": "the server returned an error",
-    "not_signed_in": "the Microsoft sign-in is missing or has expired",
-    "outlook_not_installed": "classic Outlook is not installed",
-    "outlook_new_only": "only the new Outlook is installed, and it has no interface Jarvis can read",
-    "outlook_timeout": "Outlook did not answer in time",
-    "outlook_failed": "Outlook could not be read",
-}
+USAGE = "ℹ️ Usage: python -m jarvis.mail setup | list | test [name] | remove <name>"
 KINDS = [
     ("gmail", "Gmail (with an app password)"),
     ("imap", "Another IMAP mailbox"),
     ("outlook", "Classic Outlook on this PC"),
-    ("graph", "Outlook.com or Microsoft 365 (Microsoft sign-in, needs your own Azure app ID)"),
+    ("microsoft", "Outlook.com or Microsoft 365 (sign in in your browser)"),
 ]
 GMAIL_HOW_TO = [
     "Gmail needs an app password: a separate 16-letter password just for Jarvis.",
@@ -41,24 +30,18 @@ GMAIL_HOW_TO = [
     "2. Open myaccount.google.com/apppasswords, name it Jarvis, and copy the password it shows.",
     "You can revoke it there at any time without changing your Google password.",
 ]
-GRAPH_HOW_TO = [
-    "Microsoft sign-in uses an app registration you own (free, no Azure subscription costs):",
-    "1. Open portal.azure.com > Microsoft Entra ID > App registrations > New registration.",
-    "2. Name it Jarvis. Supported account types: personal accounts (Outlook.com) and/or work or school.",
-    "3. No redirect address is needed. Register, then copy the Application (client) ID.",
-    "4. Authentication > Advanced settings > Allow public client flows: Yes > Save.",
-    "5. API permissions > Add a permission > Microsoft Graph > Delegated permissions > Mail.Read > Add.",
-    "Jarvis asks only for Mail.Read, so it can never send, move or delete mail.",
-]
 
 
 class Io:
     def __init__(self, ask: Callable[[str], str] = input, ask_secret: Callable[[str], str] = getpass.getpass,
-                 out: Callable[[str], None] = print, transport: Any = None, sleep: Optional[Callable] = None,
+                 out: Callable[[str], None] = print, store: Optional[AccountStore] = None,
                  connect: Optional[Callable] = None):
         self.ask, self.ask_secret, self.out = ask, ask_secret, out
-        # Test seams: the Graph transport, the device-code wait and the IMAP connection.
-        self.transport, self.sleep, self.connect = transport, sleep, connect
+        # Test seams: the account store (browser sign-in and its endpoints) and the IMAP connection.
+        self.store, self.connect = store, connect
+
+    def accounts(self) -> AccountStore:
+        return self.store or AccountStore()
 
 
 def _entries(cfg: Any) -> List[Dict[str, Any]]:
@@ -92,25 +75,21 @@ def _account(entry: Dict[str, Any], io: Io):
                            username=entry.get("username", ""), password=lambda: credentials.get_secret(key),
                            connect=io.connect)
     if entry["type"] == "graph":
-        key = credentials.account_key("email_graph_token", name)
-        return GraphAccount(name, client_id=entry.get("client_id", ""), tenant=entry.get("tenant", "common"),
-                            get_token=lambda: credentials.get_secret(key),
-                            set_token=lambda value: credentials.set_secret(key, value), transport=io.transport)
+        return io.accounts()._account(entry)
     return OutlookMailAccount(name)
 
 
-def _sign_in(entry: Dict[str, Any], io: Io) -> bool:
-    key = credentials.account_key("email_graph_token", entry["name"])
-    io.out("   🌐 Sign in with Microsoft:")
-    kwargs = {"transport": io.transport} if io.transport is not None else {}
-    if io.sleep is not None:
-        kwargs["sleep"] = io.sleep
-    done = graph.device_sign_in(entry["client_id"], entry.get("tenant", "common"),
-                                set_token=lambda value: credentials.set_secret(key, value),
-                                show=lambda text: io.out(f"      👉 {text}"), **kwargs)
-    io.out("   ✅ Signed in." if done else "   ❌ Sign-in did not finish (check the app ID and "
-                                            "that public client flows are allowed).")
-    return done
+def _sign_in(io: Io) -> int:
+    """Microsoft: sign in in the browser; the account store tests and saves it."""
+    io.out("   🌐 Your browser opens Microsoft's sign-in page. Sign in there and allow reading your mail.")
+    io.out("   ⏳ Waiting up to 3 minutes...")
+    outcome = io.accounts().connect_oauth("microsoft", calendar=False, mail=True)
+    if not outcome.ok:
+        io.out(f"   ❌ {outcome.message}")
+        return 1
+    io.out(f"   ✅ {outcome.message}")
+    io.out("   🔄 Restart Jarvis to use it.")
+    return 0
 
 
 def _choose(io: Io) -> Optional[str]:
@@ -128,9 +107,11 @@ def setup(cfg: Any, io: Io) -> int:
     kind = _choose(io)
     if kind is None:
         return 1
+    if kind == "microsoft":
+        return _sign_in(io)
     entries = _entries(cfg)
     taken = {e["name"].casefold() for e in entries}
-    default = {"gmail": "Gmail", "imap": "Mail", "outlook": "Outlook", "graph": "Outlook.com"}[kind]
+    default = {"gmail": "Gmail", "imap": "Mail", "outlook": "Outlook"}[kind]
     name = io.ask(f"   🏷️ Name for this account [{default}]: ").strip() or default
     if "#" in name:
         io.out("   ❌ A name cannot contain #.")
@@ -163,25 +144,8 @@ def setup(cfg: Any, io: Io) -> int:
             io.out("   ❌ Windows Credential Manager could not store the password. Nothing was saved.")
             return 1
         entry: Dict[str, Any] = {"name": name, "type": "imap", "host": host, "port": port, "username": username}
-    elif kind == "outlook":
-        entry = {"name": name, "type": "outlook"}
     else:
-        for line in GRAPH_HOW_TO:
-            io.out(f"   📋 {line}")
-        client_id = io.ask("   🆔 Application (client) ID: ").strip()
-        if not client_id:
-            io.out("   ❌ The application ID is needed.")
-            return 1
-        personal = io.ask("   🏠 Personal Outlook.com account (y) or work or school account (n)? [y]: ").strip().lower()
-        tenant = "consumers"
-        if personal.startswith("n"):
-            tenant = io.ask("   🏢 Directory (tenant) ID from the app's Overview page [organizations]: ").strip() \
-                or "organizations"
-        entry = {"name": name, "type": "graph", "client_id": client_id, "tenant": tenant}
-        secret_key = credentials.account_key("email_graph_token", name)
-        if not _sign_in(entry, io):
-            credentials.delete_secret(secret_key)
-            return 1
+        entry = {"name": name, "type": "outlook"}
 
     io.out("   🔎 Testing the account...")
     if not _check(_account(entry, io), io):
@@ -207,8 +171,9 @@ def list_accounts(cfg: Any, io: Io) -> int:
             io.out(f"   📮 {entry['name']}  (IMAP {entry.get('host', '')}, password "
                    f"{'stored' if stored else '⚠️ missing'})")
         elif entry["type"] == "graph":
-            stored = credentials.has_secret(credentials.account_key("email_graph_token", entry["name"]))
-            io.out(f"   📮 {entry['name']}  (Microsoft Graph, {'signed in' if stored else '⚠️ not signed in'})")
+            from ..accounts import logins
+            stored = logins.load(entry.get("login", "")) is not None
+            io.out(f"   📮 {entry['name']}  (Microsoft account, {'signed in' if stored else '⚠️ not signed in'})")
         else:
             io.out(f"   📮 {entry['name']}  (classic Outlook)")
     return 0
@@ -230,27 +195,14 @@ def test(cfg: Any, io: Io, name: Optional[str]) -> int:
     return 0 if worked else 1
 
 
-def signin(cfg: Any, io: Io, name: str) -> int:
-    entry = _find(cfg, name)
-    if entry is None or entry["type"] != "graph":
-        io.out(f"❌ No Microsoft (Graph) account called {name}.")
-        return 1
-    io.out(f"📧 {entry['name']}")
-    return 0 if _sign_in(entry, io) else 1
-
-
 def remove(cfg: Any, io: Io, name: str) -> int:
     entry = _find(cfg, name)
     if entry is None:
         io.out(f"❌ No account called {name}.")
         return 1
-    if entry["type"] == "imap":
-        credentials.delete_secret(credentials.account_key("email_password", entry["name"]))
-    elif entry["type"] == "graph":
-        credentials.delete_secret(credentials.account_key("email_graph_token", entry["name"]))
-    kept = [e for e in _entries(cfg) if e["name"] != entry["name"]]
-    if not _save(kept, enable=False if not kept else None):
-        io.out("❌ The settings file could not be written.")
+    outcome = io.accounts().remove("email", entry["name"])
+    if not outcome.ok:
+        io.out(f"❌ {outcome.message}")
         return 1
     io.out(f"🗑️ Removed {entry['name']} and its stored password or sign-in.")
     return 0
@@ -272,8 +224,6 @@ def main(argv=None, io: Optional[Io] = None) -> int:
         return list_accounts(cfg, io)
     if command == "test":
         return test(cfg, io, rest or None)
-    if command == "signin" and rest:
-        return signin(cfg, io, rest)
     if command == "remove" and rest:
         return remove(cfg, io, rest)
     io.out(USAGE)

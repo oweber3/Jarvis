@@ -34,7 +34,7 @@ def test_entries_are_validated_and_only_known_keys_kept(tmp_path, monkeypatch):
         "email_accounts": [
             {"name": "Gmail", "type": "imap", "host": "imap.gmail.com", "port": "993", "username": "me@gmail.test",
              "password": "should-not-stay"},
-            {"name": "Live", "type": "graph", "client_id": "abc", "tenant": "consumers", "token": "x"},
+            {"name": "Live", "type": "graph", "login": "microsoft-1a2b3c4d", "user": "me@x.test", "token": "x"},
             {"name": "Bad port", "type": "imap", "host": "h", "port": 70000},
         ],
         "email_share_with_cloud": "true",
@@ -43,19 +43,32 @@ def test_entries_are_validated_and_only_known_keys_kept(tmp_path, monkeypatch):
     assert cfg.calendar_sources == [{"name": "Work", "type": "ics"}, {"name": "Desk", "type": "outlook"}]
     assert cfg.email_accounts == [
         {"name": "Gmail", "type": "imap", "host": "imap.gmail.com", "port": 993, "username": "me@gmail.test"},
-        {"name": "Live", "type": "graph", "client_id": "abc", "tenant": "consumers"},
+        {"name": "Live", "type": "graph", "login": "microsoft-1a2b3c4d", "user": "me@x.test"},
         {"name": "Bad port", "type": "imap", "host": "h"},
     ]
     assert cfg.email_share_with_cloud is False  # only a real true shares
 
 
-def test_the_switches_are_in_settings_and_the_accounts_are_named_as_config_only():
+def test_the_switches_sit_on_the_calendar_and_email_page_with_the_accounts():
     from desktop_app import settings_window
     fields = {field.key: field for field in settings_window.FIELD_METADATA}
     for key in ("calendar_enabled", "calendar_cache_minutes", "calendar_share_with_cloud",
                 "email_enabled", "email_share_with_cloud"):
-        assert key in fields, key
-    # Accounts hold structured entries; the setup command adds them (with their secrets).
-    assert "python -m jarvis.agenda setup" in fields["calendar_enabled"].description
-    assert "python -m jarvis.mail setup" in fields["email_enabled"].description
+        assert fields[key].category == settings_window.ACCOUNTS_CATEGORY, key
+    assert (settings_window.ACCOUNTS_CATEGORY, "Calendar & Email") in settings_window.CATEGORIES
     assert fields["calendar_share_with_cloud"].shown_when is not None
+    # The OAuth client IDs are for whoever builds Jarvis, not a setting people change.
+    assert not any(key.endswith(("_oauth_client_id", "_oauth_client_secret")) for key in fields)
+
+
+def test_oauth_client_ids_default_to_the_built_in_ones_and_config_overrides_them(tmp_path, monkeypatch):
+    from jarvis.accounts import clients
+    monkeypatch.setitem(clients.BUILT_IN_OAUTH_CLIENTS, "microsoft_oauth_client_id", "built-in-id")
+    defaults = get_default_config()
+    for key in clients.BUILT_IN_OAUTH_CLIENTS:
+        assert key in defaults
+    cfg = _load(tmp_path, monkeypatch, {"google_oauth_client_id": "  my-own-id  "})
+    from jarvis.accounts import oauth
+    assert oauth.client_for("microsoft", cfg).client_id == "built-in-id"
+    assert cfg.google_oauth_client_id == "my-own-id"
+    assert oauth.client_for("google", cfg).client_id == "my-own-id"

@@ -18,7 +18,7 @@ from .debug import debug_log
 SERVICE = "jarvis"
 SECRET_KEYS = ("llm_api_key", "embedding_api_key", "brave_search_api_key")
 # Per-account secrets: ``<kind>:<account name>``.
-ACCOUNT_SECRET_KINDS = ("calendar_url", "email_password", "email_graph_token")
+ACCOUNT_SECRET_KINDS = ("calendar_url", "email_password", "oauth_login")
 # Windows Credential Manager holds at most 2560 bytes (1280 UTF-16 characters) per entry.
 _CHUNK_CHARS = 1000
 _CHUNK_MARKER = "\x00chunks:"
