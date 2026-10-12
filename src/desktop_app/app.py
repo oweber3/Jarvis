@@ -758,7 +758,9 @@ def check_previous_crash() -> Optional[str]:
                 content = crash_log.read_text(encoding='utf-8', errors='replace')
                 # Only report if there's actual crash info (faulthandler output or errors)
                 if 'Fatal' in content or 'Error' in content or 'Traceback' in content:
-                    crash_content = content
+                    from desktop_app.report_filter import report_safe_log
+                    # The bundled app's crash log holds the daemon's output, conversation included.
+                    crash_content = report_safe_log(content)
                     # On macOS, append the native .ips stack so the crash
                     # dialog and report-issue body carry the C-level abort
                     # source faulthandler cannot show.
@@ -1505,23 +1507,22 @@ class LogViewerWindow(QMainWindow):
         self.append_log("🗑️ Logs cleared\n")
 
     def _report_issue(self) -> None:
-        """Open GitHub issue with redacted log contents."""
+        """Open GitHub issue with the report-safe part of the log."""
         from jarvis import get_version
-        from jarvis.utils.redact import _REDACTION_RULES
+        from desktop_app.report_filter import report_safe_log
+        from jarvis.utils.redact import scrub_secrets
 
         try:
             version = get_version()
         except Exception:
             version = "unknown"
 
-        # Get all log content and redact sensitive information (preserving line breaks)
-        log_content = self.log_display.toPlainText()
+        # The log window shows the conversation; the report carries the start-up section and the shape of the rest.
+        redacted_logs = report_safe_log(self.log_display.toPlainText())
         if not self.download_card.isHidden():
             percentage = f"{self.download_bar.value()}% · " if self.download_bar.maximum() else ''
-            log_content += f"\n{self.download_title.text()}: {percentage}{self.download_detail.text()}\n"
-        redacted_logs = log_content
-        for pattern, repl in _REDACTION_RULES:
-            redacted_logs = pattern.sub(repl, redacted_logs)
+            redacted_logs += scrub_secrets(
+                f"\n{self.download_title.text()}: {percentage}{self.download_detail.text()}\n")
 
         # Truncate if too long for URL (GitHub has ~8000 char limit for URLs)
         # Keep init lines + recent tail (recent logs are most useful for debugging)
@@ -1547,6 +1548,8 @@ class LogViewerWindow(QMainWindow):
 
 <details>
 <summary>📋 Logs (click to expand)</summary>
+
+Lines after start-up show only their icons, so the conversation stays on this PC.
 
 ```
 {redacted_logs}
