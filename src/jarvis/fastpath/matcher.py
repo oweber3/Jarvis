@@ -169,6 +169,53 @@ def _device(value: str, ctx: _Context):
     return ({'name': name}, name) if name else None
 
 
+# The longest timer the fast path sets; anything longer is the model's to read.
+MAX_FAST_TIMER_SEC = 86400
+
+
+def _alternation(words) -> str:
+    return '|'.join(re.escape(word) for word in sorted(words, key=len, reverse=True))
+
+
+def _duration_expression(data: dict) -> str:
+    number = '|'.join(filter(None, [r'\d{1,4}', _alternation(data.get('numbers', {}))]))
+    part = rf'(?:{number})[\s-](?:{_alternation(data.get("duration_units", {}) or {"_": 0})})'
+    phrases = _alternation(data.get('duration_phrases', {}))
+    return rf'(?:{phrases}|{part}(?:\s{part}){{0,2}})' if phrases else rf'(?:{part}(?:\s{part}){{0,2}})'
+
+
+def _duration(value: str, ctx: _Context):
+    """A spoken duration as whole seconds: a locale phrase ("half an hour") or numbers with locale unit words
+    ("1 hour 30 minutes"). Each unit at most once, between one second and a day."""
+    fixed = ctx.data.get('duration_phrases', {}).get(value)
+    if fixed is not None:
+        return {'seconds': int(fixed)}, value
+    units = ctx.data.get('duration_units', {})
+    numbers = ctx.data.get('numbers', {})
+    words = value.replace('-', ' ').split()
+    if len(words) % 2:
+        return None
+    total, seen = 0, set()
+    for amount, unit in zip(words[::2], words[1::2]):
+        size = units.get(unit)
+        count = int(amount) if amount.isdigit() else numbers.get(amount)
+        if size is None or count is None or size in seen:
+            return None
+        seen.add(size)
+        total += int(count) * int(size)
+    return ({'seconds': total}, value) if 1 <= total <= MAX_FAST_TIMER_SEC else None
+
+
+def _label(value: str, ctx: _Context):
+    """A short name for a timer ("pasta", "boiled egg"): no digits, number or unit words, at most four words."""
+    name = _strip_articles(value, ctx.data)
+    words = name.split()
+    vocabulary = set(ctx.data.get('duration_units', {})) | set(ctx.data.get('numbers', {}))
+    if not words or len(words) > 4 or re.search(r'\d', name) or vocabulary & set(words):
+        return None
+    return {'label': name}, name
+
+
 # Every ``{slot}`` that locale phrases may use. Rules rename a slot's argument with ``slot_args``.
 SLOTS: dict[str, _Slot] = {
     'app': _Slot(_free_text, _app),
@@ -183,6 +230,8 @@ SLOTS: dict[str, _Slot] = {
     'tv_app': _Slot(_free_text, _tv_app),
     'page_number': _Slot(_page_number_expression, _page_number),
     'routine': _Slot(_free_text, _routine),
+    'duration': _Slot(_duration_expression, _duration),
+    'label': _Slot(lambda _data: r'.{1,40}?', _label),
 }
 
 

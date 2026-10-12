@@ -112,6 +112,16 @@ desktop app over the daemon's pipes (`desktop_app.spec.md`, Action
 Confirmation Dialog), and the daemon forwards the redacted outcome as a
 `confirmed` chat event, which the window shows the same way.
 
+### Announcements
+
+Something Jarvis brings up on its own (a timer, alarm or reminder, or a
+scheduled routine's report; `jarvis/scheduler/scheduler.spec.md`) reaches the
+chat the same way: `deliver_announcement` forwards it to every listener
+registered with `add_chat_result_listener` in bundled mode, and emits a
+`notice` event in subprocess mode, which `process_ipc_line` shows through the
+same confirmed-result signal. It appears as an ordinary assistant message and
+is never spoken by the chat.
+
 ### Callbacks (bundled mode, same process)
 
 `submit_text_query` accepts optional per-call callbacks as keyword arguments.
@@ -147,6 +157,7 @@ Event shapes (mirrors the diary IPC):
 {"type": "busy",   "data": null}
 {"type": "rewind", "data": true}             // answer to __CHAT_REWIND__: true, or false when the message is no longer in memory
 {"type": "confirmed", "data": "<redacted outcome>"}  // a confirmed action this chat asked for has run
+{"type": "notice", "data": "<redacted announcement>"}  // a timer, alarm, reminder or scheduled routine (see Announcements)
 ```
 
 `__CHAT__:` lines must never contain unredacted user text. The `start` event

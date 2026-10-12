@@ -143,6 +143,30 @@
     "period": "period",
     "plus": "equals"
   },
+  "duration_units": {
+    "second": 1,
+    "seconds": 1,
+    "sec": 1,
+    "secs": 1,
+    "minute": 60,
+    "minutes": 60,
+    "min": 60,
+    "mins": 60,
+    "hour": 3600,
+    "hours": 3600,
+    "hr": 3600,
+    "hrs": 3600
+  },
+  "duration_phrases": {
+    "a minute": 60,
+    "one minute": 60,
+    "half a minute": 30,
+    "an hour": 3600,
+    "one hour": 3600,
+    "half an hour": 1800,
+    "a quarter of an hour": 900,
+    "quarter of an hour": 900
+  },
   "rules": [
     {
       "id": "time",
@@ -1525,6 +1549,109 @@
         "launch {tv_app} on my tv",
         "start {tv_app} on my tv",
         "watch {tv_app} on my tv"
+      ]
+    },
+    {
+      "id": "timer.set",
+      "family": "timers",
+      "tool": "scheduleControl",
+      "args": {
+        "action": "set_timer"
+      },
+      "reply": null,
+      "phrases": [
+        "set a timer for {duration}",
+        "set timer for {duration}",
+        "start a timer for {duration}",
+        "timer for {duration}",
+        "set a {duration} timer",
+        "start a {duration} timer",
+        "{duration} timer",
+        "set a {duration} {label} timer",
+        "start a {duration} {label} timer",
+        "set a {label} timer for {duration}",
+        "start a {label} timer for {duration}",
+        "set the {label} timer for {duration}"
+      ]
+    },
+    {
+      "id": "timer.left",
+      "family": "timers",
+      "tool": "scheduleControl",
+      "args": {
+        "action": "list",
+        "kind": "timer"
+      },
+      "reply": null,
+      "phrases": [
+        "how long left on the {label} timer",
+        "how long is left on the {label} timer",
+        "how much time is left on the {label} timer",
+        "how much longer on the {label} timer",
+        "how long left on my {label} timer",
+        "how long is left on my {label} timer",
+        "how much time is left on my {label} timer",
+        "how long left on the timer",
+        "how long is left on the timer",
+        "how much time is left on the timer",
+        "how long left on my timer",
+        "how long is left on my timer",
+        "how much time is left on my timer",
+        "what timers do i have",
+        "list my timers",
+        "what timers are running",
+        "which timers are running"
+      ]
+    },
+    {
+      "id": "timer.cancel",
+      "family": "timers",
+      "tool": "scheduleControl",
+      "args": {
+        "action": "cancel",
+        "kind": "timer"
+      },
+      "reply": null,
+      "phrases": [
+        "cancel the {label} timer",
+        "cancel my {label} timer",
+        "stop the {label} timer",
+        "stop my {label} timer",
+        "cancel the timer",
+        "cancel my timer",
+        "cancel timer"
+      ]
+    },
+    {
+      "id": "reminder.list",
+      "family": "timers",
+      "tool": "scheduleControl",
+      "args": {
+        "action": "list",
+        "kind": "reminder"
+      },
+      "reply": null,
+      "phrases": [
+        "what are my reminders",
+        "what reminders do i have",
+        "list my reminders",
+        "do i have any reminders"
+      ]
+    },
+    {
+      "id": "alarm.list",
+      "family": "timers",
+      "tool": "scheduleControl",
+      "args": {
+        "action": "list",
+        "kind": "alarm"
+      },
+      "reply": null,
+      "phrases": [
+        "what alarms do i have",
+        "what are my alarms",
+        "list my alarms",
+        "do i have any alarms"
       ]
     }
   ]

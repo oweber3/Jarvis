@@ -101,14 +101,30 @@ def _entry(value: dict, name: str):
     return next((entry for key, entry in value.items() if isinstance(key, str) and names.key(key) == wanted), None)
 
 
-def save(name: str, steps: list[dict], *, replaces: Optional[str] = None) -> dict[str, Routine]:
-    """Write a routine of ``steps``. When it replaces ``replaces``, that routine's aliases and any other
-    keys it has are kept and only its steps change."""
+def save(name: str, steps: list[dict], *, replaces: Optional[str] = None,
+         report: Optional[str] = None) -> dict[str, Routine]:
+    """Write a routine of ``steps``. When it replaces ``replaces``, that routine's aliases, schedule and any
+    other keys it has are kept and only its steps change. ``report`` ``results`` makes it a briefing."""
     def change(value: dict) -> dict:
         previous = _entry(value, replaces) if replaces is not None else None
         kept = {key: entry for key, entry in previous.items() if key != "steps"} if isinstance(previous, dict) else {}
+        if report == "results":
+            kept["report"] = "results"
+        elif report == "actions":
+            kept.pop("report", None)
         return _put(value, name, {**kept, "steps": copy.deepcopy(steps)}, remove=(replaces,) if replaces else ())
     return _write(change, "save")
+
+
+def set_schedule(name: str, schedule: dict) -> dict[str, Routine]:
+    """Write a routine's ``schedule`` value, keeping everything else it has."""
+    def change(value: dict) -> dict:
+        definition = _entry(value, name)
+        if not isinstance(definition, dict):
+            raise RoutineStoreError("That routine is no longer in config.json, so nothing was changed.")
+        key = next(key for key, entry in value.items() if entry is definition)
+        return _put(value, key, {**definition, "schedule": copy.deepcopy(schedule)})
+    return _write(change, "schedule")
 
 
 def delete(name: str) -> dict[str, Routine]:

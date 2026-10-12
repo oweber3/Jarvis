@@ -668,6 +668,9 @@ class ChatWindow(QMainWindow):
             self.signals.rewound.emit(data is True)
         elif kind == "confirmed" and isinstance(data, str):
             self.signals.confirmed_result.emit(data)
+        elif kind == "notice":
+            # Something Jarvis brought up on its own (a timer or reminder), shown like a confirmed result.
+            self.signals.confirmed_result.emit(str(data or ""))
         return True
 
     # --- Rendering helpers ----------------------------------------------

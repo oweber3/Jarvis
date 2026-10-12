@@ -50,6 +50,12 @@ The opt-in activity log keeps its `activity_sessions` table in the same SQLite
 file, created and owned by `ActivityStore` (`memory/activity_log.spec.md`), not by
 `Database`. It is never read by retrieval, the diary or the graph.
 
+## Timers, alarms and reminders
+
+The scheduler keeps its `scheduled_items` table in the same SQLite file, created
+and owned by `ScheduleStore` (`scheduler/scheduler.spec.md`), not by `Database`.
+It is never read by retrieval, the diary or the graph.
+
 ## Web chat
 
 The opt-in web chat keeps `chat_projects`, `chats`, `chat_messages` and `chat_state`
