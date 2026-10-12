@@ -186,6 +186,46 @@ class TestDelivery:
         assert reply is None and spoken == []
         assert dialogue_memory.get_recent_messages() == []
 
+    def test_a_typed_stop_while_the_bridge_works_delivers_and_records_nothing(self, codex_cfg, activate, db,
+                                                                            dialogue_memory, forbid_local):
+        import threading
+
+        from jarvis.reply import engine
+        from jarvis.reply.cancellation import cancel_scope
+
+        stop = threading.Event()
+
+        class StoppedWhileWorking(FakeService):
+            def run_request(self, *args, **kwargs):
+                outcome = super().run_request(*args, **kwargs)
+                stop.set()  # the chat Stop button, pressed before the answer came back
+                return outcome
+
+        service = activate(StoppedWhileWorking())
+        with cancel_scope(stop):
+            reply = engine.run_reply_engine(db, codex_cfg, None, "tell me about black holes", dialogue_memory,
+                                            quiet=True)
+        assert reply is None
+        assert len(service.requests) == 1
+        assert dialogue_memory.get_recent_messages() == []
+
+    def test_a_typed_stop_before_the_hand_off_sends_nothing(self, codex_cfg, activate, db, dialogue_memory,
+                                                            forbid_local):
+        import threading
+
+        from jarvis.reply import engine
+        from jarvis.reply.cancellation import cancel_scope
+
+        service = activate(FakeService())
+        stop = threading.Event()
+        stop.set()
+        with cancel_scope(stop):
+            reply = engine.run_reply_engine(db, codex_cfg, None, "tell me about black holes", dialogue_memory,
+                                            quiet=True)
+        assert reply is None
+        assert service.requests == []
+        assert dialogue_memory.get_recent_messages() == []
+
 
 @pytest.mark.unit
 class TestRequestContext:
