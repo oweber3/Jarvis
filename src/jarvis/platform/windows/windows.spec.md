@@ -41,6 +41,7 @@ Transport controls and now-playing through the System Media Transport Controls (
 - With no active media session, transport actions fail with a message saying there is nothing to control, and no key is sent. `now_playing` succeeds and says nothing is playing.
 - A session that rejects `play`, `pause` or `play_pause` produces an "unsupported" failure. The toggle media key is never used as a substitute.
 - Only apps that publish SMTC sessions are visible. Apps that do not appear as "nothing is playing".
+- The description offers resuming, never starting something new: it says it is not for starting a song, artist or album by name, which is `playMusic` when Apple Music is turned on (`apple_music/apple_music.spec.md`).
 - A successful action, including one that finds the media already in the requested state, and a `now_playing` that finds a session record the session's application (the name Windows shows for its application identifier, else a readable form of the identifier) and its playback state as a desktop referent (`memory/desktop_referents.spec.md`), so "pause it" reaches the player. Track titles and artists are never recorded.
 
 ## systemInfo

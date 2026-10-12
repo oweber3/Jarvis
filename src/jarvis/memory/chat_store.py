@@ -326,8 +326,8 @@ class ChatStore:
                        attachments: Sequence[Dict[str, object]] = ()) -> Message:
         """Add a message. The first user message titles a chat that has no title yet.
 
-        ``private`` marks a turn that quotes the activity log: it stays out of the diary and of any
-        context that leaves the PC, also when the chat is opened again. ``steps`` are the tool steps taken
+        ``private`` marks a turn that quotes a private source (the activity log, documents, a calendar or email):
+        it stays out of the diary and of any context that leaves the PC, also when the chat is opened again. ``steps`` are the tool steps taken
         for an assistant reply. ``attachments`` are recorded as kind
         and size only.
         """

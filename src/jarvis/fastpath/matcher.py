@@ -169,6 +169,126 @@ def _device(value: str, ctx: _Context):
     return ({'name': name}, name) if name else None
 
 
+# The longest timer the fast path sets; anything longer is the model's to read.
+MAX_FAST_TIMER_SEC = 86400
+
+
+def _alternation(words) -> str:
+    return '|'.join(re.escape(word) for word in sorted(words, key=len, reverse=True))
+
+
+def _duration_expression(data: dict) -> str:
+    number = '|'.join(filter(None, [r'\d{1,4}', _alternation(data.get('numbers', {}))]))
+    part = rf'(?:{number})[\s-](?:{_alternation(data.get("duration_units", {}) or {"_": 0})})'
+    phrases = _alternation(data.get('duration_phrases', {}))
+    return rf'(?:{phrases}|{part}(?:\s{part}){{0,2}})' if phrases else rf'(?:{part}(?:\s{part}){{0,2}})'
+
+
+def _duration(value: str, ctx: _Context):
+    """A spoken duration as whole seconds: a locale phrase ("half an hour") or numbers with locale unit words
+    ("1 hour 30 minutes"). Each unit at most once, between one second and a day."""
+    fixed = ctx.data.get('duration_phrases', {}).get(value)
+    if fixed is not None:
+        return {'seconds': int(fixed)}, value
+    units = ctx.data.get('duration_units', {})
+    numbers = ctx.data.get('numbers', {})
+    words = value.replace('-', ' ').split()
+    if len(words) % 2:
+        return None
+    total, seen = 0, set()
+    for amount, unit in zip(words[::2], words[1::2]):
+        size = units.get(unit)
+        count = int(amount) if amount.isdigit() else numbers.get(amount)
+        if size is None or count is None or size in seen:
+            return None
+        seen.add(size)
+        total += int(count) * int(size)
+    return ({'seconds': total}, value) if 1 <= total <= MAX_FAST_TIMER_SEC else None
+
+
+def _label(value: str, ctx: _Context):
+    """A short name for a timer ("pasta", "boiled egg"): no digits, number or unit words, at most four words."""
+    name = _strip_articles(value, ctx.data)
+    words = name.split()
+    vocabulary = set(ctx.data.get('duration_units', {})) | set(ctx.data.get('numbers', {}))
+    if not words or len(words) > 4 or re.search(r'\d', name) or vocabulary & set(words):
+        return None
+    return {'label': name}, name
+
+
+# One number, then any number of (operator, number) pairs; a number may carry a percent sign or a square or
+# cube. Two operators in a row, a missing number or a bare number is not a sum.
+_TERM = r'-?\d+(?:\.\d+)?(?:\s*%)?(?:\s*\*\*\s*[23])?'
+_SUM = re.compile(rf'{_TERM}(?:\s*(?:\*\*|[+\-*/%])\s*{_TERM})*')
+_OPERATION = re.compile(r'\d\s*(?:\*\*|[+\-*/]|%\s*\S)')
+
+
+def _expression(value: str, ctx: _Context):
+    """Spoken arithmetic as an expression for the calculator. Words come from the locale ``arithmetic``
+    table (operators, and the word that joins a percentage to the value it is taken of) and ``numbers``;
+    digits and + - % pass through. Anything else, or a malformed sum, rejects the rule."""
+    table = ctx.data.get('arithmetic', {})
+    operators = table.get('operators', {})
+    joins = set(table.get('percent_of', ()))
+    numbers = ctx.data.get('numbers', {})
+    phrases = sorted((phrase.split() for phrase in operators), key=len, reverse=True)
+    words, tokens, index = value.split(), [], 0
+    while index < len(words):
+        phrase = next((p for p in phrases if words[index:index + len(p)] == p), None)
+        word = words[index]
+        if phrase:
+            tokens.append(operators[' '.join(phrase)])
+            index += len(phrase)
+            continue
+        if word in joins and tokens and tokens[-1].endswith('%'):
+            tokens.append('*')
+        elif word in numbers:
+            tokens.append(str(numbers[word]))
+        elif re.fullmatch(r'[\d.%+\-]+', word):
+            tokens.append(word)
+        else:
+            return None
+        index += 1
+    expression = ' '.join(tokens)
+    if not _SUM.fullmatch(expression) or not _OPERATION.search(expression):
+        return None
+    from ..maths import MathsError
+    from ..maths.expression import validate  # pure: checks the syntax only
+    try:
+        validate(expression)
+    except MathsError:
+        return None
+    return {'expression': expression}, value
+
+
+def _amount_expression(data: dict) -> str:
+    words = sorted({*data.get('numbers', {}), *data.get('amount_words', {})}, key=len, reverse=True)
+    return '|'.join([r'-?\d{1,9}(?:\.\d{1,9})?', *(re.escape(word) for word in words)])
+
+
+def _amount(value: str, ctx: _Context):
+    if re.fullmatch(r'-?\d+', value):
+        return {'value': int(value)}, value
+    if re.fullmatch(r'-?\d+\.\d+', value):
+        return {'value': float(value)}, value
+    number = ctx.data.get('numbers', {}).get(value, ctx.data.get('amount_words', {}).get(value))
+    return None if number is None else ({'value': number}, value)
+
+
+def _unit(arg: str, other: str):
+    """A unit name from the locale ``units`` table as the calculator's symbol. When the other unit of the
+    conversion is already resolved, both must measure the same thing, or the rule falls through."""
+    def resolve(value: str, ctx: _Context):
+        symbol = ctx.data.get('units', {}).get(value)
+        if symbol is None:
+            return None
+        from ..maths.units import compatible
+        if other in ctx.args and not compatible(symbol, ctx.args[other]):
+            return None
+        return {arg: symbol}, value
+    return resolve
+
+
 # Every ``{slot}`` that locale phrases may use. Rules rename a slot's argument with ``slot_args``.
 SLOTS: dict[str, _Slot] = {
     'app': _Slot(_free_text, _app),
@@ -183,6 +303,12 @@ SLOTS: dict[str, _Slot] = {
     'tv_app': _Slot(_free_text, _tv_app),
     'page_number': _Slot(_page_number_expression, _page_number),
     'routine': _Slot(_free_text, _routine),
+    'duration': _Slot(_duration_expression, _duration),
+    'label': _Slot(lambda _data: r'.{1,40}?', _label),
+    'expression': _Slot(_free_text, _expression),
+    'amount': _Slot(_amount_expression, _amount),
+    'from_unit': _Slot(lambda _data: r'.{1,40}?', _unit('from_unit', 'to_unit')),
+    'to_unit': _Slot(lambda _data: r'.{1,40}?', _unit('to_unit', 'from_unit')),
 }
 
 

@@ -659,6 +659,7 @@ _HINT_MESSAGE_CHAR_LIMIT = 200
 _DIGEST_SKIP_TOOLS = frozenset({
     "getWeather",
     "getTime",
+    "calculator",
 })
 
 
@@ -956,12 +957,13 @@ def _deliver_reply(reply, redacted, cfg, tts, dialogue_memory, quiet, *,
                    record_tools=None, error=False):
     """Shared reply output and dialogue recording for every engine route."""
     safe_reply = reply.strip()
-    # A reply that quoted the opt-in activity log stays out of the diary and the console log.
+    # A reply that quoted an opt-in private source (the activity log, documents, a calendar or email) stays out
+    # of the diary and the console log.
     private = consume_turn_private()
     try:
         if not quiet:
             icon = '⚠️' if error else '🤖'
-            shown = "🔒 Reply withheld from the log (it quotes the activity log)." if private else safe_reply
+            shown = "🔒 Reply withheld from the log (it quotes private data)." if private else safe_reply
             print(f"\n{icon} Jarvis\n  {_indent_text(shown)}\n", flush=True)
     except Exception as exc:
         debug_log(f'reply formatting failed: {exc}', 'planning')
@@ -1124,12 +1126,12 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
             )
         else:
             recent_messages = dialogue_memory.get_recent_messages()
-        # A follow-up answered from activity data already in the context is as private as the turn
+        # A follow-up answered from private data already in the context is as private as the turn
         # that read it (memory/activity_log.spec.md), even when the tool does not run again.
         has_private = getattr(dialogue_memory, "has_private_context", None)
         if callable(has_private) and has_private(max_tool_turns=getattr(cfg, "tool_carryover_max_turns", 2)) is True:
             mark_turn_private()
-            debug_log("turn context holds activity data; reply kept private", "memory")
+            debug_log("turn context holds private data; reply kept private", "memory")
 
     # Refresh MCP tools on new conversation (memory expired)
     if is_new_conversation and getattr(cfg, "mcps", {}):
@@ -2402,7 +2404,7 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
             break
 
         # Debug: log raw LLM response structure
-        # A private turn (it read the activity log) logs sizes only, never the model's words.
+        # A private turn (it read a private source) logs sizes only, never the model's words.
         _private_turn = is_turn_private()
         if getattr(cfg, 'voice_debug', False):
             debug_log(f"  🔍 Raw LLM response keys: {list(llm_resp.keys()) if isinstance(llm_resp, dict) else type(llm_resp)}", "planning")

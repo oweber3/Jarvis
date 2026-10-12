@@ -54,6 +54,15 @@ class TestReplyModeSettingsFields:
         description = field(key).description.lower()
         assert "off" in description or "never" in description
 
+    @pytest.mark.parametrize("mode,provider", [("codex", "openai"), ("claude", "anthropic")])
+    def test_the_lists_row_says_what_it_lets_the_model_do_and_where_lists_go(self, mode, provider):
+        lists = field(f"{mode}_share_lists_reminders")
+        description = lists.description.lower()
+        for word in ("timers", "reminders", "lists", "notes", provider):
+            assert word in description, word
+        keys = [fm.key for fm in FIELD_METADATA]
+        assert keys.index(lists.key) == keys.index(f"{mode}_share_long_term_memory") + 1
+
 
 @pytest.fixture
 def open_window(qapp, tmp_path, monkeypatch):

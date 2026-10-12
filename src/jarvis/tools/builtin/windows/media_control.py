@@ -73,10 +73,11 @@ class MediaControlTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Control the media player that is currently active (Spotify, YouTube "
-            "in a browser, etc.): play, pause, toggle, next or previous track, "
+            "Control the media player that is already active (Spotify, YouTube "
+            "in a browser, etc.): pause, resume, toggle, next or previous track, "
             "or say what song is playing (e.g. 'pause the music', 'next song', "
-            "'what's playing?'). NOT for loudness; that is systemVolume."
+            "'what's playing?'). NOT for starting a song, artist or album by "
+            "name. NOT for loudness; that is systemVolume."
         )
 
     @property

@@ -32,6 +32,11 @@ A locale phrase marks a variable part with `{name}`. Every slot a phrase may use
 | `tv_app` | An app or input name on the Roku TV | `app`, resolved against the TV's cached app list (see below) |
 | `page_number` | Up to five digits, or a number word from the locale `numbers` table, of at least 1 | `page`, an integer |
 | `routine` | A routine name or alias | `name`, resolved against the user's routines offered by `routineControl` (see below) |
+| `duration` | A phrase from the locale `duration_phrases` table ("half an hour"), or one to three parts of a number (digits or a locale `numbers` word) and a locale `duration_units` word ("1 hour 30 minutes", "10-minute"), each unit at most once | `seconds`, between 1 and 86,400 |
+| `label` | A timer's name of one to four words, with leading locale `article_prefixes` words removed; a name with a digit, a number word or a unit word is rejected | `label` |
+| `expression` | Spoken arithmetic: digits, `+ - %`, locale `numbers` words, locale `arithmetic.operators` words, and the `arithmetic.percent_of` word after a percentage | `expression` for the calculator. It must be one number followed by operator and number pairs, contain an operation and be valid calculator syntax (`maths/maths.spec.md`) |
+| `amount` | Digits with an optional sign and decimal point, a locale `numbers` word or a locale `amount_words` word | `value`, a number |
+| `from_unit`, `to_unit` | A unit name from the locale `units` table | the calculator's unit symbol. Once both are resolved they must measure the same thing |
 
 Locale tables are in normalised form (case folded, no apostrophes) so lookups match the normalised utterance, and every value in them refers to something the tools know: slugs exist in the settings page table, plan keys are known power plan keys, key names are known to the input layer.
 
@@ -113,6 +118,10 @@ Spoken clicks use `gestureControl` `click`, `double_click` and `right_click` (th
 
 A local extension can add phrase files in the same format (`extensions/extensions.spec.md`, Phrases). Their rules follow the built-in rules for that language, may name only tools the same extension added, and obey every rule here: whole-utterance matches, SAFE actions only, and a fall-through when unsure. They are available only while the extension's tools are registered and are removed when Jarvis stops.
 
+Timers use `scheduleControl` (`scheduler/scheduler.spec.md`): `set_timer` with a `{duration}` and an optional `{label}` ("set a timer for 5 minutes", "set a 10 minute pasta timer", "set a pasta timer for 10 minutes"), `list` with `kind` `timer` and an optional label for the time left ("how long left on the pasta timer") and for "what timers do I have", `cancel` with `kind` `timer` ("cancel the pasta timer", "cancel the timer"), and `list` of reminders or alarms. Replies are the tool's own sentences. Reminders and alarms at a clock time ("remind me at 2:30", "wake me at 7") are never fast commands: the model produces the ISO time. A duration over a day, or a timer without a duration, falls through. The family does not depend on `windows_tools_enabled`.
+
+Sums and unit conversions use `calculator` (`maths/maths.spec.md`, Fast path): `evaluate` for "what is {expression}", "calculate {expression}" and similar, `convert` for "convert {amount} {from_unit} to {to_unit}", "how many {to_unit} in {amount} {from_unit}" and similar. The bare forms ("{expression}", "{amount} {from_unit} in {to_unit}") are marked `needs_wake_word`. Unknown units, units of different kinds, currencies and anything that is not a well-formed sum fall through to the model. The reply is the tool result ("17 × 23 = 391"). The family does not depend on `windows_tools_enabled`.
+
 Placement (`monitor`, `zone`, `state`, `windowControl displays` and `place`) is not a fast command. An utterance that adds a destination to an open, maximise or other command is not a whole-utterance match, so it falls through to the model path, which can discover displays and use the combined action.
 
 ## Execution and reply flow
@@ -153,6 +162,6 @@ hot-window activation.
 
 `debug_log` records `FAST_ROUTE` with the family, tool and redacted normalised
 arguments (only the argument names for a tool whose arguments are the user's own
-names, `routineControl`), or `LLM_ROUTE` for conversational engine requests. Voice bypass logs
+words, `routineControl` and `scheduleControl`), or `LLM_ROUTE` for conversational engine requests. Voice bypass logs
 the skipped judge/collection decision. Matcher failures fail open with a concise
 exception type, without raw utterances or application paths.

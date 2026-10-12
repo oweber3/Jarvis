@@ -7,7 +7,7 @@ from jarvis.config import get_default_config, load_settings, update_config_value
 
 CLAUDE_SUFFIXES = ("timeout_sec", "queue_limit", "share_recent_dialogue", "recent_dialogue_messages",
                    "share_desktop_referents", "share_foreground_window", "share_long_term_memory",
-                   "max_tool_calls")
+                   "share_lists_reminders", "max_tool_calls")
 
 
 def write(tmp_path, monkeypatch, values):
@@ -44,6 +44,14 @@ class TestDefaults:
         assert getattr(load_settings(), f"{mode}_share_foreground_window") is True
         write(tmp_path, monkeypatch, {"_config_version": 6, f"{mode}_share_foreground_window": False})
         assert getattr(load_settings(), f"{mode}_share_foreground_window") is False
+
+    @pytest.mark.parametrize("mode", ["codex", "claude"])
+    def test_lists_and_reminders_are_shared_unless_turned_off(self, tmp_path, monkeypatch, mode):
+        write(tmp_path, monkeypatch, {})
+        assert get_default_config()[f"{mode}_share_lists_reminders"] is True
+        assert getattr(load_settings(), f"{mode}_share_lists_reminders") is True
+        write(tmp_path, monkeypatch, {"_config_version": 6, f"{mode}_share_lists_reminders": False})
+        assert getattr(load_settings(), f"{mode}_share_lists_reminders") is False
 
 
 @pytest.mark.unit

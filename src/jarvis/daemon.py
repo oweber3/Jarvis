@@ -44,7 +44,8 @@ from .memory.conversation import DialogueMemory, update_diary_from_dialogue_memo
 from .output.tts import create_tts_engine
 from .tools.registry import (start_mcp_discovery, configure_windows_tools, configure_reply_mode_tool,
                              configure_activity_log_tool, configure_tv_tool, configure_screen_tool,
-                             configure_gesture_tool)
+                             configure_gesture_tool, configure_document_search_tool,
+                             configure_apple_music_tool, configure_calendar_tool, configure_email_tool)
 from .assistant_state import AssistantState, set_state
 from .extensions import load_extensions
 from .gestures import window_snap_service
@@ -119,6 +120,9 @@ ACTIVITY_IPC_PREFIX = "__ACTIVITY__:"
 # Web chat (subprocess mode): once the server is up the daemon tells the desktop app its port and the
 # identity token the server proves it holds, so the chat window never shows another program on the port.
 WEB_CHAT_EVENT_PREFIX = "__WEB_CHAT__:"
+# Document search (subprocess mode): the tray asks to rebuild or delete the index, and Settings to stop
+# cloud sharing, with ``{"action": "rebuild" | "delete" | "stop_sharing"}``.
+DOCUMENTS_IPC_PREFIX = "__DOCUMENTS__:"
 
 # The running voice listener, so a wake request can reach it.
 _global_voice_listener = None
@@ -645,6 +649,44 @@ def deliver_chat_confirmed_result(reply: str, success: bool) -> None:
             debug_log(f"chat result delivery failed: {exc}", "chat")
 
 
+def deliver_announcement(text: str) -> None:
+    """Say something Jarvis brings up on its own (a timer, alarm, reminder or scheduled routine).
+
+    Printed to the console, recorded in the shared conversation (so "what was that?" works), shown in
+    the chat (bundled listeners, or a ``notice`` IPC event in subprocess mode) and spoken through the
+    voice listener's reply path, so stop and barge-in cut it like any reply. Without a listener the TTS
+    engine speaks it directly."""
+    from .utils.redact import redact
+    safe = redact(text or "").strip()
+    if not safe:
+        return
+    print(f"⏰ {safe}", flush=True)
+    dm = _global_dialogue_memory
+    if dm is not None:
+        try:
+            dm.add_message("assistant", safe)
+        except Exception as exc:
+            debug_log(f"recording announcement failed: {type(exc).__name__}", "scheduler")
+    with _chat_result_listeners_lock:
+        listeners = list(_chat_result_listeners)
+    for callback in listeners:
+        try:
+            callback(safe)
+        except Exception as exc:
+            debug_log(f"announcement chat delivery failed: {type(exc).__name__}", "scheduler")
+    if _stdin_ipc_enabled():
+        _emit_chat_event("notice", safe)
+    listener = _global_voice_listener
+    tts = _global_tts_engine
+    try:
+        if listener is not None:
+            listener.speak_announcement(safe)
+        elif tts is not None and getattr(tts, "enabled", False):
+            tts.speak(safe)
+    except Exception as exc:
+        debug_log(f"announcement not spoken: {type(exc).__name__}", "scheduler")
+
+
 def install_chat_result_delivery() -> None:
     """Route chat-origin confirmed-action results to ``deliver_chat_confirmed_result``."""
     from .tools.confirmation import ORIGIN_CHAT, set_result_handler
@@ -998,6 +1040,47 @@ def delete_activity_history() -> int:
     return activity_runtime.delete_history()
 
 
+def rebuild_document_index() -> None:
+    """Delete the document index and index again (tray, bundled mode)."""
+    from .documents import runtime as documents_runtime
+    documents_runtime.rebuild()
+
+
+def delete_document_index() -> int:
+    """Delete every stored document passage (tray, bundled mode). Returns how many were removed."""
+    from .documents import runtime as documents_runtime
+    return documents_runtime.delete_index()
+
+
+def stop_document_cloud_sharing() -> None:
+    """Withhold document search from Codex and Claude now (Settings switched sharing off)."""
+    from .documents import runtime as documents_runtime
+    documents_runtime.stop_cloud_sharing()
+
+
+def handle_documents_stdin_line(line: str) -> bool:
+    """Parse a stdin line as a document search request (subprocess mode).
+
+    Returns True when the line was a document search request (even a malformed one), False for anything else.
+    """
+    if not line.startswith(DOCUMENTS_IPC_PREFIX):
+        return False
+    import json
+    try:
+        payload = json.loads(line[len(DOCUMENTS_IPC_PREFIX):])
+        action = payload.get("action") if isinstance(payload, dict) else None
+    except ValueError:
+        action = None
+    handlers = {"rebuild": rebuild_document_index, "delete": delete_document_index,
+                "stop_sharing": stop_document_cloud_sharing}
+    if action not in handlers:
+        debug_log("malformed document search request ignored", "jarvis")
+        return True
+    # Deleting touches the database, so it never runs on the stdin reader.
+    threading.Thread(target=handlers[action], daemon=True, name="documents-request").start()
+    return True
+
+
 def handle_activity_stdin_line(line: str) -> bool:
     """Parse a stdin line as an activity log request (subprocess mode).
 
@@ -1111,6 +1194,7 @@ def handle_ipc_stdin_line(line: str) -> bool:
         handle_wake_stdin_line,
         handle_reply_mode_stdin_line,
         handle_activity_stdin_line,
+        handle_documents_stdin_line,
         handle_chat_new_session_stdin_line,
         handle_chat_rewind_stdin_line,
         handle_chat_restore_stdin_line,
@@ -1366,9 +1450,13 @@ def main(smoke_test: bool = False) -> None:
     configure_windows_tools(cfg)
     configure_reply_mode_tool(cfg)
     configure_activity_log_tool(cfg)
+    configure_document_search_tool(cfg)
     configure_screen_tool(cfg)
     configure_tv_tool(cfg)
+    configure_apple_music_tool(cfg)
     configure_gesture_tool(cfg)
+    configure_calendar_tool(cfg)
+    configure_email_tool(cfg)
     # Local extensions (extensions/extensions.spec.md): after the built-in tools, before the voice engine.
     extensions = load_extensions(cfg)
     extensions.install()
@@ -1415,6 +1503,9 @@ def main(smoke_test: bool = False) -> None:
     # Opt-in activity log: starts nothing unless the user turned it on in Settings.
     from .memory import activity_runtime
     activity_runtime.start(cfg)
+    # Opt-in document search: indexes nothing unless the user turned it on in Settings.
+    from .documents import runtime as documents_runtime
+    documents_runtime.start(cfg)
 
     # Wire the conversation-scoped warm-profile cache to graph mutations.
     # When the User or Directives branch is mutated mid-conversation, the
@@ -1545,6 +1636,16 @@ def main(smoke_test: bool = False) -> None:
     _global_voice_listener = voice_thread
     window_snap_service.set_talk_handler(listen_now)  # a raised hand in gesture control
 
+    # Timers, alarms, reminders and scheduled routines (scheduler/scheduler.spec.md). Missed reminders
+    # are announced once now; a scheduled routine holds the shared query lock while it runs.
+    # The smoke test runs against the user's real database, so it never starts the scheduler: that would mark
+    # reminders missed, fire them into a headless process and run scheduled routines a second time.
+    from .scheduler import runtime as scheduler_runtime
+    if smoke_test:
+        print("⏰ Scheduler not started in the smoke test", flush=True)
+    else:
+        scheduler_runtime.start(cfg, deliver_announcement, db=db, exclusive=query_lock)
+
     # Initialize dictation engine (hold-to-dictate)
     dictation = None
     if bool(getattr(cfg, "dictation_enabled", True)):
@@ -1601,6 +1702,7 @@ def main(smoke_test: bool = False) -> None:
 
         # Clean shutdown: stop engines, close database, tear down MCP runtime.
         # The caller is responsible for printing SMOKE_TEST_PASSED / FAILED.
+        scheduler_runtime.stop()
         if dictation is not None:
             try:
                 dictation.stop()
@@ -1630,6 +1732,7 @@ def main(smoke_test: bool = False) -> None:
 
         reply_modes.stop()
         activity_runtime.stop()
+        documents_runtime.stop()
         window_snap_service.stop_service()
         extensions.stop()
         db.close()
@@ -1723,6 +1826,7 @@ def main(smoke_test: bool = False) -> None:
         # No new phone requests once shutdown has begun, and no new desktop dialogs.
         uninstall_desktop_confirmations()
         remote_runtime.stop()
+        scheduler_runtime.stop()
         web_chat_runtime.stop()
         # Let go of a held window and the camera first.
         window_snap_service.stop_service()
@@ -1785,6 +1889,7 @@ def main(smoke_test: bool = False) -> None:
 
         reply_modes.stop()
         activity_runtime.stop()
+        documents_runtime.stop()
         extensions.stop()
         db.close()
 

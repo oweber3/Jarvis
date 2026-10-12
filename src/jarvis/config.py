@@ -96,6 +96,8 @@ DEFAULT_FAST_MODEL = "qwen3.5:0.8b"
 REMOTE_QUICK_ACTIONS = (
     "Pause the music", "Play the music", "Next song", "Volume up", "Volume down", "What's using the most RAM?",
 )
+# Folders document search indexes until the user lists others (known folder names, as localFiles reads them).
+DOCUMENT_SEARCH_FOLDERS = ("Documents",)
 
 
 def get_supported_model_ids() -> set[str]:
@@ -353,6 +355,11 @@ class Settings:
     windows_fancyzones_enabled: bool = True
     # The TV's address on the home network (a private IP). Empty leaves the tvControl tool unregistered.
     roku_host: str = ""
+    # Play songs, albums, artists and library playlists in the Apple Music app (Windows). Off by default:
+    # catalogue searches send the search text to Apple's public iTunes Search API.
+    apple_music_enabled: bool = False
+    # Two-letter store country for catalogue searches; empty uses the Windows region.
+    apple_music_country: str = ""
     # Play Jarvis's voice on this PC's output device. Independent of any extension's voice output.
     tts_pc_speakers_enabled: bool = True
     fast_commands_enabled: bool = True
@@ -378,6 +385,7 @@ class Settings:
     codex_share_desktop_referents: bool = True
     codex_share_foreground_window: bool = True
     codex_share_long_term_memory: bool = False
+    codex_share_lists_reminders: bool = True
     codex_max_tool_calls: int = 8
     # Optional background Claude reply mode (see src/jarvis/claude_bridge/claude_bridge.spec.md)
     claude_model: str = "haiku"
@@ -390,6 +398,7 @@ class Settings:
     claude_share_desktop_referents: bool = True
     claude_share_foreground_window: bool = True
     claude_share_long_term_memory: bool = False
+    claude_share_lists_reminders: bool = True
     claude_max_tool_calls: int = 8
 
     # Opt-in activity log (see src/jarvis/memory/activity_log.spec.md): foreground application and
@@ -403,6 +412,27 @@ class Settings:
     # Whether Codex and Claude reply modes may use the activityLog tool. Off means activity data never
     # leaves this PC.
     activity_log_share_with_cloud: bool = False
+
+    # Opt-in document search (see src/jarvis/documents/documents.spec.md): a local semantic index of the
+    # listed folders inside the home folder, kept in the local database. Off by default.
+    document_search_enabled: bool = False
+    document_search_folders: list[str] = field(default_factory=lambda: list(DOCUMENT_SEARCH_FOLDERS))
+    # Whether Codex and Claude reply modes may use the documentSearch tool. Off means passages never
+    # leave this PC.
+    document_search_share_with_cloud: bool = False
+    document_search_max_file_mb: int = 20
+    document_search_rescan_minutes: int = 60
+    # Read-only calendar (see src/jarvis/agenda/agenda.spec.md): secret ICS addresses (in the credential
+    # store, never here) and classic Outlook. Off by default; sources are added with python -m jarvis.agenda.
+    calendar_enabled: bool = False
+    calendar_sources: list[Dict[str, Any]] = field(default_factory=list)
+    calendar_cache_minutes: int = 15
+    calendar_share_with_cloud: bool = False
+    # Read-only email (see src/jarvis/mail/mail.spec.md): IMAP, classic Outlook and Microsoft Graph accounts.
+    # Passwords and tokens live in the credential store. Off by default; added with python -m jarvis.mail.
+    email_enabled: bool = False
+    email_accounts: list[Dict[str, Any]] = field(default_factory=list)
+    email_share_with_cloud: bool = False
 
     # Screen awareness (see src/jarvis/tools/builtin/screenshot.spec.md): the screenshot tool looks at the
     # screen only when a request asks about it. Off removes the tool from every reply mode.
@@ -577,6 +607,46 @@ def _bounded_number(value: Any, default: float, minimum: float, cast=float):
         return default
 
 
+# Calendar sources and email accounts: the keys each type may carry besides ``name`` and ``type``.
+# Secrets (addresses, passwords, tokens) are never config keys; they live in the credential store.
+_CALENDAR_SOURCE_FIELDS: Dict[str, tuple] = {"ics": (), "outlook": ()}
+_EMAIL_ACCOUNT_FIELDS: Dict[str, tuple] = {"imap": ("host", "port", "username"), "outlook": (),
+                                           "graph": ("client_id", "tenant")}
+
+
+def _named_entries(value: Any, fields: Dict[str, tuple]) -> list:
+    """Keep entries with a unique non-empty ``name`` and a known ``type``, and only that type's keys."""
+    if not isinstance(value, list):
+        return []
+    kept: list = []
+    seen: set = set()
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name").strip() if isinstance(entry.get("name"), str) else ""
+        kind = entry.get("type")
+        if not name or "#" in name or kind not in fields or name.casefold() in seen:
+            continue
+        clean: Dict[str, Any] = {"name": name, "type": kind}
+        for key in fields[kind]:
+            item = entry.get(key)
+            if key == "port":
+                try:
+                    port = int(item)
+                except (TypeError, ValueError):
+                    continue
+                if 1 <= port <= 65535:
+                    clean[key] = port
+            elif isinstance(item, str) and item.strip():
+                clean[key] = item.strip()
+        seen.add(name.casefold())
+        kept.append(clean)
+    if len(kept) != len(value):
+        from .debug import debug_log
+        debug_log(f"Ignored {len(value) - len(kept)} invalid calendar or email entries.", "config")
+    return kept
+
+
 def _monitor_aliases(value: Any) -> Dict[str, str]:
     """Keep only non-empty text labels that name a display identifier."""
     if not isinstance(value, dict):
@@ -587,6 +657,12 @@ def _monitor_aliases(value: Any) -> Dict[str, str]:
         from .debug import debug_log
         debug_log(f"Ignored {len(value) - len(kept)} invalid display alias entries.", "config")
     return kept
+
+
+def _store_country(value: Any) -> str:
+    """A two-letter store country in upper case, or empty to use the Windows region."""
+    text = value.strip() if isinstance(value, str) else ""
+    return text.upper() if re.fullmatch(r"[A-Za-z]{2}", text) else ""
 
 
 def _path_aliases(value: Any) -> Dict[str, str]:
@@ -911,6 +987,8 @@ def get_default_config() -> Dict[str, Any]:
         "routines": {},
         "windows_fancyzones_enabled": True,
         "roku_host": "",
+        "apple_music_enabled": False,
+        "apple_music_country": "",
         "tts_pc_speakers_enabled": True,
         "fast_commands_enabled": True,
         "fast_commands_locales": ["en"],
@@ -929,6 +1007,7 @@ def get_default_config() -> Dict[str, Any]:
         "codex_share_desktop_referents": True,
         "codex_share_foreground_window": True,
         "codex_share_long_term_memory": False,
+        "codex_share_lists_reminders": True,
         "codex_max_tool_calls": 8,
         "claude_model": "haiku",
         "claude_effort": "low",
@@ -940,6 +1019,7 @@ def get_default_config() -> Dict[str, Any]:
         "claude_share_desktop_referents": True,
         "claude_share_foreground_window": True,
         "claude_share_long_term_memory": False,
+        "claude_share_lists_reminders": True,
         "claude_max_tool_calls": 8,
         "activity_log_enabled": False,
         "activity_log_paused": False,
@@ -948,6 +1028,18 @@ def get_default_config() -> Dict[str, Any]:
         "activity_log_excluded_processes": _activity_defaults()[0],
         "activity_log_private_title_markers": _activity_defaults()[1],
         "activity_log_share_with_cloud": False,
+        "document_search_enabled": False,
+        "document_search_folders": list(DOCUMENT_SEARCH_FOLDERS),
+        "document_search_share_with_cloud": False,
+        "document_search_max_file_mb": 20,
+        "document_search_rescan_minutes": 60,
+        "calendar_enabled": False,
+        "calendar_sources": [],
+        "calendar_cache_minutes": 15,
+        "calendar_share_with_cloud": False,
+        "email_enabled": False,
+        "email_accounts": [],
+        "email_share_with_cloud": False,
         "screen_awareness_enabled": True,
         "file_delete_enabled": False,
         "gesture_snap_enabled": False,
@@ -1405,6 +1497,7 @@ def load_settings() -> Settings:
         claude_share_desktop_referents=bool(merged.get("claude_share_desktop_referents", True)),
         claude_share_foreground_window=bool(merged.get("claude_share_foreground_window", True)),
         claude_share_long_term_memory=bool(merged.get("claude_share_long_term_memory", False)),
+        claude_share_lists_reminders=bool(merged.get("claude_share_lists_reminders", True)),
         claude_max_tool_calls=_bounded_number(merged.get("claude_max_tool_calls", 8), 8, 1, int),
         codex_model=_text(merged.get("codex_model"), defaults["codex_model"]),
         codex_reasoning_effort=_text(merged.get("codex_reasoning_effort"),
@@ -1417,6 +1510,7 @@ def load_settings() -> Settings:
         codex_share_desktop_referents=bool(merged.get("codex_share_desktop_referents", True)),
         codex_share_foreground_window=bool(merged.get("codex_share_foreground_window", True)),
         codex_share_long_term_memory=bool(merged.get("codex_share_long_term_memory", False)),
+        codex_share_lists_reminders=bool(merged.get("codex_share_lists_reminders", True)),
         codex_max_tool_calls=_bounded_number(merged.get("codex_max_tool_calls", 8), 8, 1, int),
         activity_log_enabled=merged.get("activity_log_enabled") is True,
         activity_log_paused=merged.get("activity_log_paused") is True,
@@ -1427,6 +1521,20 @@ def load_settings() -> Settings:
         activity_log_private_title_markers=_string_list(merged.get("activity_log_private_title_markers"),
                                                         defaults["activity_log_private_title_markers"]),
         activity_log_share_with_cloud=merged.get("activity_log_share_with_cloud") is True,
+        document_search_enabled=merged.get("document_search_enabled") is True,
+        document_search_folders=_string_list(merged.get("document_search_folders"),
+                                             defaults["document_search_folders"]),
+        document_search_share_with_cloud=merged.get("document_search_share_with_cloud") is True,
+        document_search_max_file_mb=_bounded_number(merged.get("document_search_max_file_mb", 20), 20, 1, int),
+        document_search_rescan_minutes=_bounded_number(merged.get("document_search_rescan_minutes", 60), 60, 5,
+                                                       int),
+        calendar_enabled=merged.get("calendar_enabled") is True,
+        calendar_sources=_named_entries(merged.get("calendar_sources"), _CALENDAR_SOURCE_FIELDS),
+        calendar_cache_minutes=_bounded_number(merged.get("calendar_cache_minutes", 15), 15, 0, int),
+        calendar_share_with_cloud=merged.get("calendar_share_with_cloud") is True,
+        email_enabled=merged.get("email_enabled") is True,
+        email_accounts=_named_entries(merged.get("email_accounts"), _EMAIL_ACCOUNT_FIELDS),
+        email_share_with_cloud=merged.get("email_share_with_cloud") is True,
         screen_awareness_enabled=merged.get("screen_awareness_enabled", True) is True,
         file_delete_enabled=merged.get("file_delete_enabled") is True,
         **_gesture_snap_settings(merged, defaults),
@@ -1459,6 +1567,8 @@ def load_settings() -> Settings:
         routines=merged.get("routines") if isinstance(merged.get("routines"), dict) else {},
         windows_fancyzones_enabled=bool(merged.get("windows_fancyzones_enabled", True)),
         roku_host=merged.get("roku_host", "").strip() if isinstance(merged.get("roku_host", ""), str) else "",
+        apple_music_enabled=merged.get("apple_music_enabled") is True,
+        apple_music_country=_store_country(merged.get("apple_music_country")),
         tts_pc_speakers_enabled=bool(merged.get("tts_pc_speakers_enabled", True)),
         # Database & Storage
         db_path=db_path,

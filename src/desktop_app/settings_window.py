@@ -475,8 +475,14 @@ def _build_field_metadata() -> List[FieldMeta]:
               "or conversation text. When off, follow-ups need the name of what they are about.",
               "bool", shown_when=allowed)
         cloud("share_long_term_memory", "Your Memories",
-              "Off by default: nothing from your diary, memory graph or meal log is ever disclosed. Turn on to "
-              "let the model use the tools that read them.",
+              "Off by default: nothing from your diary, memory graph or meal log is ever disclosed. Turn on "
+              "to let the model use the tools that read them.",
+              "bool", shown_when=allowed)
+        provider = "OpenAI" if mode == "codex" else "Anthropic"
+        cloud("share_lists_reminders", "Timers, Reminders, Lists and Notes",
+              f"On by default: lets the model set and read your timers, reminders, lists and notes. Reading a "
+              f"list, a note or your reminders sends it to {provider}. When off, the model cannot use them; "
+              f"local mode is unaffected.",
               "bool", shown_when=allowed)
         heading("Limits")
         cloud("timeout_sec", "Answer Time Limit",
@@ -538,6 +544,60 @@ def _build_field_metadata() -> List[FieldMeta]:
       "Time without keyboard or mouse input before time is recorded as idle instead of as the "
       "application you left open.",
       "privacy", "float", min_val=30, max_val=3600, step=30, suffix="s", advanced=True, shown_when=logging)
+    heading("Document search")
+    documents = _on("document_search_enabled")
+    f("document_search_enabled", "Search My Documents",
+      "Off by default. When on, Jarvis reads the .txt, .md, .pdf and .docx files in the folders below and "
+      "builds a search index on this PC with your local embedding model, so you can ask what a document "
+      "says (\"what did my lease say about pets?\"). The index is stored only in Jarvis's database on this "
+      "PC. Hidden folders and files kept only in the cloud (OneDrive online-only files) are never read. "
+      "Indexing runs in the background while Jarvis is idle. Rebuild or delete the index from the tray. "
+      "Takes effect after Jarvis restarts.",
+      "privacy", "bool")
+    f("document_search_folders", "Folders to Index",
+      "Folders inside your home folder: Documents, Desktop, a path such as Documents/University, or a full "
+      "path. Folders outside your home folder are skipped.",
+      "privacy", "list", shown_when=documents)
+    f("document_search_share_with_cloud", "Share With Codex and Claude",
+      "Off by default: document search is available only to the local model, and your documents never leave "
+      "this PC. Turn on to let the Codex and Claude reply modes search them, which sends the passages they "
+      "ask for (with file names and paths) to OpenAI or Anthropic.",
+      "privacy", "bool", shown_when=documents)
+    f("document_search_max_file_mb", "Largest File",
+      "Files bigger than this are not indexed.",
+      "privacy", "int", min_val=1, max_val=500, step=1, suffix="MB", advanced=True, shown_when=documents)
+    f("document_search_rescan_minutes", "Check for Changes Every",
+      "How often the folders are checked for new or changed documents.",
+      "privacy", "int", min_val=5, max_val=1440, step=5, suffix="min", advanced=True, shown_when=documents)
+    heading("Calendar and email")
+    calendar_on = _on("calendar_enabled")
+    email_on = _on("email_enabled")
+    f("calendar_enabled", "Read My Calendar",
+      "Off by default. Let Jarvis read your calendars when you ask (\"what's on today?\", \"when is my next "
+      "meeting?\"). Read only: it never adds or changes events. Add a Google or Outlook.com calendar by its secret "
+      "iCal address, or classic Outlook on this PC, with python -m jarvis.agenda setup. Addresses are kept in "
+      "Windows Credential Manager, never in the settings file. Takes effect after Jarvis restarts.",
+      "privacy", "bool")
+    f("calendar_cache_minutes", "Reuse Calendar For",
+      "Minutes a downloaded calendar is reused before it is fetched again. When offline, Jarvis answers from "
+      "the last copy and says so.",
+      "privacy", "int", min_val=0, max_val=1440, step=5, suffix="min", advanced=True, shown_when=calendar_on)
+    f("calendar_share_with_cloud", "Share Calendar With Codex and Claude",
+      "Off by default: your calendar is available only to the local model and never leaves this PC. Turn on "
+      "to let the Codex and Claude reply modes read it, which sends the events they ask for to OpenAI or "
+      "Anthropic.",
+      "privacy", "bool", shown_when=calendar_on)
+    f("email_enabled", "Read My Email",
+      "Off by default. Let Jarvis check your inbox when you ask (\"any new emails?\", \"read me the latest "
+      "email from Sam\"). Read only: it never sends, deletes or marks anything as read. Add Gmail (with an app "
+      "password), classic Outlook on this PC or an Outlook.com account with python -m jarvis.mail setup. "
+      "Passwords and sign-ins are kept in Windows Credential Manager. Takes effect after Jarvis restarts.",
+      "privacy", "bool")
+    f("email_share_with_cloud", "Share Email With Codex and Claude",
+      "Off by default: your email is available only to the local model and never leaves this PC. Turn on to "
+      "let the Codex and Claude reply modes read it, which sends the messages they ask for to OpenAI or "
+      "Anthropic.",
+      "privacy", "bool", shown_when=email_on)
     heading("Location")
     located = _on("location_enabled")
     f("location_enabled", "Use Location",
@@ -630,6 +690,18 @@ def _build_field_metadata() -> List[FieldMeta]:
       "mobile apps > Network access (Default or Permissive) on the TV. To find the address, run "
       "python -m jarvis.devices.roku --discover. Restart Jarvis after changing it.",
       "extras", "str", nullable=True)
+    heading("Apple Music")
+    f("apple_music_enabled", "Allow Apple Music",
+      "Play songs, albums, artists and your own playlists in the Apple Music app by voice, such as \"play "
+      "Bohemian Rhapsody\". Jarvis opens the item in the app and presses Play for you. To find songs, albums "
+      "and artists, the words you ask for are sent to Apple's public iTunes Search service (no account or "
+      "key); your own playlists are found in the app without sending anything. Needs the Apple Music app "
+      "from the Microsoft Store and an internet connection. Restart Jarvis after changing it.",
+      "extras", "bool")
+    f("apple_music_country", "Apple Music Store Country",
+      "Two-letter country of your Apple Music store, such as GB, used for searches. Empty uses the Windows "
+      "region.",
+      "extras", "str", nullable=True, advanced=True, shown_when=_on("apple_music_enabled"))
     heading("Gesture control")
     gestures = _on("gesture_snap_enabled")
     f("gesture_snap_enabled", "Allow Gesture Control",

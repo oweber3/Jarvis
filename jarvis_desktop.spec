@@ -29,6 +29,7 @@ Plugins = PyQt6/Qt6/plugins
 datas = [
     (str(src_path / 'desktop_app' / 'desktop_assets' / '*.png'), 'desktop_app/desktop_assets'),
     (str(src_path / 'jarvis' / 'fastpath' / 'phrases' / '*.json'), 'jarvis/fastpath/phrases'),
+    (str(src_path / 'jarvis' / 'scheduler' / 'phrases' / '*.json'), 'jarvis/scheduler/phrases'),
     (str(src_path / 'jarvis' / 'platform' / 'windows' / 'zone_labels' / '*.json'), 'jarvis/platform/windows/zone_labels'),
     (str(src_path / 'jarvis' / 'tools' / 'builtin' / 'windows' / 'control_words' / '*.json'), 'jarvis/tools/builtin/windows/control_words'),
     (str(src_path / 'jarvis' / 'platform' / 'windows' / '*.json'), 'jarvis/platform/windows'),

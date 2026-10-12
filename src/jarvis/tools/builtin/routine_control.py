@@ -15,8 +15,8 @@ from ...utils.redact import redact
 from ..base import Tool, ToolContext
 from ..types import ToolExecutionResult
 
-ACTIONS = ("run", "list", "recent", "save", "delete", "rename")
-CHANGES = ("save", "delete", "rename")
+ACTIONS = ("run", "list", "recent", "save", "delete", "rename", "schedule")
+CHANGES = ("save", "delete", "rename", "schedule")
 _MAX_NAME_CHARS = 60
 _UNTRUSTED = ("Routines can only be changed by a direct request. Please ask for this change again on its own, "
               "without reading anything first.")
@@ -88,7 +88,7 @@ class RoutineControlTool(Tool):
     @property
     def description(self) -> str:
         return ("Run one of the user's routines (a saved chain of actions such as \"movie mode\"), list them, or "
-                "save what was just done as a routine; also delete or rename one.")
+                "save what was just done as a routine; also schedule one daily, delete or rename one.")
 
     @property
     def inputSchema(self) -> Dict[str, Any]:
@@ -104,6 +104,15 @@ class RoutineControlTool(Tool):
                           "description": "save only: numbers from recent, in the order to run them. Omit to "
                                          "save everything done in this conversation."},
                 "new_name": {"type": "string", "description": "rename only: the new name."},
+                "report": {"type": "string", "enum": ["actions", "results"],
+                           "description": "save only, optional: results to read out what the steps found "
+                                          "(a briefing such as the weather and news)."},
+                "time": {"type": "string", "description": "schedule only: local time of day, HH:MM (24-hour)."},
+                "days": {"type": "array", "items": {"type": "string", "enum": ["mon", "tue", "wed", "thu", "fri",
+                                                                             "sat", "sun"]},
+                         "description": "schedule only, optional: the days; omit for every day."},
+                "enabled": {"type": "boolean",
+                            "description": "schedule only: false to stop running it on its own."},
             },
             "required": ["action"],
         }
@@ -115,8 +124,9 @@ class RoutineControlTool(Tool):
         from ...fastpath.matcher import FastTarget
         from ...routines import store
         from ...routines.runner import display_name
+        # A briefing is read out by the model from its results, so it never takes the fast path's template.
         return tuple(FastTarget((routine.name, *routine.aliases), routine.name, "", display_name(routine.name))
-                     for routine in store.current(cfg).values())
+                     for routine in store.current(cfg).values() if routine.report != "results")
 
     # --- safety -------------------------------------------------------------------------
 
@@ -200,6 +210,9 @@ class RoutineControlTool(Tool):
             user_print=context.user_print, allowed_tools=call.allowed_tools, request_ref=call.request_ref,
             original_prompt=context.redacted_text, grants=runner.approved_grants(routine, call.approval))
         text = redact(result.text)
+        if routine.report == "results" and result.outputs:
+            # A briefing: what the steps found goes to the model, which reads it out.
+            text += "\n\n" + "\n\n".join(f"{label}:\n{output}" for label, output in result.outputs)
         if result.success:
             return ToolExecutionResult(success=True, reply_text=text)
         if result.question:
@@ -213,9 +226,18 @@ class RoutineControlTool(Tool):
         routines = store.current(cfg)
         if not routines:
             return ToolExecutionResult(success=True, reply_text=_available(routines))
-        listing = {"routines": [{"name": routine.name, "aliases": list(routine.aliases),
-                                 "steps": runner.labels(routine, cfg)} for routine in routines.values()]}
+        listing = {"routines": [self._listed(routine, cfg) for routine in routines.values()]}
         return ToolExecutionResult(success=True, reply_text=redact(json.dumps(listing, ensure_ascii=False)))
+
+    @staticmethod
+    def _listed(routine, cfg) -> dict:
+        from ...routines import runner
+        entry = {"name": routine.name, "aliases": list(routine.aliases), "steps": runner.labels(routine, cfg)}
+        if routine.schedule is not None:
+            entry["schedule"] = routine.schedule.as_config()
+        if routine.report == "results":
+            entry["report"] = "results"
+        return entry
 
     def _recent(self, cfg) -> ToolExecutionResult:
         from ...routines import runner
@@ -258,6 +280,8 @@ class RoutineControlTool(Tool):
         if routine is None:
             raise ValueError(f"Unknown routine. {_available(routines)}")
         fingerprint = definitions.fingerprint(routine)
+        if action == "schedule":
+            return self._schedule(routine, args, fingerprint)
         if action == "delete":
             return _Change(f"delete the routine {routine.name}",
                            {"action": "delete", "name": routine.name, "fingerprint": fingerprint},
@@ -269,6 +293,30 @@ class RoutineControlTool(Tool):
         return _Change(f"rename the routine {routine.name} to {new_name}",
                        {"action": "rename", "name": routine.name, "new_name": new_name, "fingerprint": fingerprint},
                        lambda: store.rename(routine.name, new_name), f"Renamed the routine to {new_name}.")
+
+    def _schedule(self, routine, args, fingerprint) -> _Change:
+        """Run a routine on its own at a time of day, or stop it doing so (keeping its time)."""
+        from ...routines import definitions, store
+        if args.get("enabled") is False:
+            if routine.schedule is None:
+                raise ValueError(f"The routine {routine.name} does not run on its own.")
+            schedule = {**routine.schedule.as_config(), "enabled": False}
+            question = f"stop running the routine {routine.name} on its own"
+            done = f"The routine {routine.name} no longer runs on its own."
+        else:
+            time = definitions.parse_time(args.get("time"))
+            if time is None:
+                raise ValueError("time must be a local time of day as HH:MM, such as 07:00.")
+            try:
+                days = definitions.parse_days(args.get("days"))
+            except ValueError:
+                raise ValueError(f"days must be a list of: {', '.join(definitions.DAY_CODES)}.") from None
+            schedule = definitions.Schedule(time[0], time[1], days, True).as_config()
+            when = "every day" if "days" not in schedule else "on " + _join(schedule["days"])
+            question = f"run the routine {routine.name} on its own at {schedule['time']} {when}"
+            done = f"The routine {routine.name} will run at {schedule['time']} {when}."
+        parameters = {"action": "schedule", "name": routine.name, "schedule": schedule, "fingerprint": fingerprint}
+        return _Change(question, parameters, lambda: store.set_schedule(routine.name, schedule), done)
 
     def _save(self, args, cfg, routines) -> _Change:
         from ..request_scope import current_call
@@ -305,11 +353,21 @@ class RoutineControlTool(Tool):
         labels = runner.labels(draft, cfg)
         count = f"{len(labels)} step{'' if len(labels) == 1 else 's'}"
         question = f"save the routine {name} with {count}: {_steps_text(labels)}"
+        report = args.get("report")
+        if report not in (None, "actions", "results"):
+            raise ValueError("report must be actions or results.")
+        if report == "results":
+            question += " (it will read out what the steps found)"
         if existing is not None:
-            question += f" (it replaces your existing {existing.name})"
+            question += f" (it replaces your existing {existing.name}"
+            if existing.schedule is not None and existing.schedule.enabled:
+                question += f" and keeps running on its own at {existing.schedule.as_config()['time']}"
+            if existing.report == "results" and report != "actions":
+                question += " and keeps reading out what the steps found"
+            question += ")"
         steps = [{"tool": step.tool, "args": dict(step.args)} for step in draft.steps]
         parameters = {"action": "save", "name": name, "steps": [[step["tool"], step["args"]] for step in steps],
-                      "replaces": existing.name if existing is not None else None}
+                      "replaces": existing.name if existing is not None else None, "report": report}
         replaces = existing.name if existing is not None else None
-        return _Change(question, parameters, lambda: store.save(name, steps, replaces=replaces),
+        return _Change(question, parameters, lambda: store.save(name, steps, replaces=replaces, report=report),
                        f"Saved the routine {name} with {count}.")

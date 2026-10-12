@@ -34,7 +34,7 @@ def test_routine_control_is_in_every_bridge_snapshot(mode, share_memory, mock_co
     snapshot = (codex_tool_snapshot if mode == "codex" else claude_tool_snapshot)(mock_config)
     assert "routineControl" in snapshot
     assert set(snapshot["routineControl"]["inputSchema"]["properties"]["action"]["enum"]) == {
-        "run", "list", "recent", "save", "delete", "rename"}
+        "run", "list", "recent", "save", "delete", "rename", "schedule"}
 
 
 def _request(broker, snapshot_names):

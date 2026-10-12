@@ -111,7 +111,8 @@ def test_never_offered_to_a_cloud_model(mock_config):
     from jarvis.tools.registry import BUILTIN_TOOLS
     BUILTIN_TOOLS["gestureControl"] = GestureControlTool()
     for share in (False, True):
-        assert "gestureControl" not in build_tool_snapshot(mock_config, share_long_term_memory=share)
+        assert "gestureControl" not in build_tool_snapshot(mock_config, share_long_term_memory=share,
+                                                           share_lists_reminders=share)
 
 
 def _desk(svc):

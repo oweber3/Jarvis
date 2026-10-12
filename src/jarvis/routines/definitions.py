@@ -28,11 +28,35 @@ class Step:
     label: Optional[str] = None
 
 
+# Language-neutral day codes for schedules, Monday first (``datetime.weekday`` order).
+DAY_CODES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+# What a run reports: ``actions`` (labels and outcomes) or ``results`` (also what the steps found: a briefing).
+REPORTS = ("actions", "results")
+
+
+@dataclass(frozen=True)
+class Schedule:
+    """When a routine runs on its own: a local time of day on some days of the week."""
+    hour: int
+    minute: int
+    days: frozenset  # weekday numbers, Monday 0
+    enabled: bool = True
+
+    def as_config(self) -> dict:
+        value = {"time": f"{self.hour:02d}:{self.minute:02d}"}
+        if self.days != frozenset(range(7)):
+            value["days"] = [DAY_CODES[day] for day in sorted(self.days)]
+        value["enabled"] = self.enabled
+        return value
+
+
 @dataclass(frozen=True)
 class Routine:
     name: str
     aliases: tuple[str, ...]
     steps: tuple[Step, ...]
+    schedule: Optional[Schedule] = None
+    report: str = "actions"
 
 
 def _text(value) -> bool:
@@ -48,14 +72,55 @@ def _load_step(raw) -> Optional[Step]:
     return Step(raw["tool"].strip(), dict(args), label.strip() if label and label.strip() else None)
 
 
+def parse_time(value) -> Optional[tuple[int, int]]:
+    """``HH:MM`` (24-hour) as hour and minute, or ``None``."""
+    if not isinstance(value, str):
+        return None
+    parts = value.strip().split(":")
+    if len(parts) != 2 or not all(part.isdigit() and len(part) == 2 for part in parts):
+        return None
+    hour, minute = int(parts[0]), int(parts[1])
+    return (hour, minute) if hour < 24 and minute < 60 else None
+
+
+def parse_days(value) -> Optional[frozenset]:
+    """A non-empty list of day codes as weekday numbers; ``None`` (omitted) means every day."""
+    if value is None:
+        return frozenset(range(7))
+    if not isinstance(value, list) or not value:
+        raise ValueError("days must be a non-empty list of day codes")
+    days = set()
+    for code in value:
+        key = code.strip().casefold() if isinstance(code, str) else None
+        if key not in DAY_CODES:
+            raise ValueError("unknown day code")
+        days.add(DAY_CODES.index(key))
+    return frozenset(days)
+
+
+def load_schedule(raw) -> Optional[Schedule]:
+    """A routine's ``schedule`` value, or ``None`` when it is absent or malformed."""
+    if not isinstance(raw, dict):
+        return None
+    time = parse_time(raw.get("time"))
+    enabled = raw.get("enabled", True)
+    if time is None or not isinstance(enabled, bool):
+        return None
+    try:
+        days = parse_days(raw.get("days"))
+    except ValueError:
+        return None
+    return Schedule(time[0], time[1], days, enabled)
+
+
 def load_routines(value) -> dict[str, Routine]:
     """Keep only well-formed routines. Names and aliases that two routines claim are not offered.
 
     Dropped entries are counted in the debug log, never named; the user's file is untouched."""
     if not isinstance(value, dict):
         return {}
-    loaded: dict[str, tuple[list[str], tuple[Step, ...]]] = {}
-    dropped = 0
+    loaded: dict[str, tuple] = {}
+    dropped = bad_schedules = 0
     for name, raw in value.items():
         steps = raw.get("steps") if isinstance(raw, dict) else None
         parsed = [_load_step(step) for step in steps] if isinstance(steps, list) else []
@@ -64,12 +129,16 @@ def load_routines(value) -> dict[str, Routine]:
             continue
         aliases = raw.get("aliases")
         aliases = [alias.strip() for alias in aliases if _text(alias)] if isinstance(aliases, list) else []
-        loaded[name.strip()] = (aliases, tuple(parsed))
-    claimed, contested = names.drop_contested({name: aliases for name, (aliases, _) in loaded.items()})
-    if dropped or contested:
+        schedule = load_schedule(raw.get("schedule"))
+        if schedule is None and raw.get("schedule") is not None:
+            bad_schedules += 1
+        report = raw.get("report") if raw.get("report") in REPORTS else "actions"
+        loaded[name.strip()] = (aliases, tuple(parsed), schedule, report)
+    claimed, contested = names.drop_contested({name: entry[0] for name, entry in loaded.items()})
+    if dropped or contested or bad_schedules:
         debug_log(f"routines loaded: {len(claimed)} kept, {dropped} malformed and {contested} contested names "
-                  f"or aliases dropped", "routines")
-    return {name: Routine(name, tuple(aliases), loaded[name][1]) for name, aliases in claimed.items()}
+                  f"or aliases dropped, {bad_schedules} malformed schedules ignored", "routines")
+    return {name: Routine(name, tuple(aliases), *loaded[name][1:]) for name, aliases in claimed.items()}
 
 
 def find(name, routines: Mapping[str, Routine]) -> Optional[Routine]:

@@ -81,8 +81,9 @@ def _error(reason: str) -> BridgeOutcome:
 
 def claude_tool_snapshot(cfg: Any) -> Dict[str, Dict[str, Any]]:
     """Tools Claude may use for one request: name -> description and input schema."""
-    return build_tool_snapshot(cfg, share_long_term_memory=bridge_settings(cfg, "claude").share_long_term_memory,
-                               log_tag="claude")
+    settings = bridge_settings(cfg, "claude")
+    return build_tool_snapshot(cfg, share_long_term_memory=settings.share_long_term_memory,
+                               share_lists_reminders=settings.share_lists_reminders, log_tag="claude")
 
 
 def execute_mcp_tool(tools: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:

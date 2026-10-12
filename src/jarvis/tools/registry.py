@@ -19,9 +19,12 @@ from .builtin.nutrition.delete_meal import DeleteMealTool
 from .builtin.refresh_mcp_tools import RefreshMCPToolsTool
 from .builtin.weather import WeatherTool
 from .builtin.time_tool import TimeTool
+from .builtin.calculator import CalculatorTool
 from .builtin.stop import StopTool
 from .builtin.tool_search import ToolSearchTool
 from .builtin.routine_control import RoutineControlTool
+from .builtin.schedule_control import ScheduleControlTool
+from .builtin.lists_notes import ListControlTool, NoteControlTool
 from .request_scope import CallContext, note_outside_content, request_origin, tool_call
 from .types import ToolExecutionResult
 from ..config import Settings
@@ -55,9 +58,13 @@ BUILTIN_TOOLS = {
     "refreshMCPTools": RefreshMCPToolsTool(),
     "getWeather": WeatherTool(),
     "getTime": TimeTool(),
+    "calculator": CalculatorTool(),
     "stop": StopTool(),
     "toolSearchTool": ToolSearchTool(),
     "routineControl": RoutineControlTool(),
+    "scheduleControl": ScheduleControlTool(),
+    "listControl": ListControlTool(),
+    "noteControl": NoteControlTool(),
 }
 
 
@@ -109,6 +116,30 @@ def configure_activity_log_tool(cfg, *, platform=None):
         BUILTIN_TOOLS['activityLog'] = ActivityLogTool()
 
 
+def configure_document_search_tool(cfg):
+    """Offer ``documentSearch`` only when the user has turned opt-in document search on."""
+    BUILTIN_TOOLS.pop('documentSearch', None)
+    if getattr(cfg, 'document_search_enabled', False) is True:
+        from .builtin.document_search import DocumentSearchTool
+        BUILTIN_TOOLS['documentSearch'] = DocumentSearchTool()
+
+
+def configure_calendar_tool(cfg):
+    """Offer ``calendar`` only when the user has turned the read-only calendar on (agenda/agenda.spec.md)."""
+    BUILTIN_TOOLS.pop('calendar', None)
+    if getattr(cfg, 'calendar_enabled', False) is True:
+        from .builtin.calendar_tool import CalendarTool
+        BUILTIN_TOOLS['calendar'] = CalendarTool()
+
+
+def configure_email_tool(cfg):
+    """Offer ``email`` only when the user has turned the read-only email on (mail/mail.spec.md)."""
+    BUILTIN_TOOLS.pop('email', None)
+    if getattr(cfg, 'email_enabled', False) is True:
+        from .builtin.email_tool import EmailTool
+        BUILTIN_TOOLS['email'] = EmailTool()
+
+
 def configure_gesture_tool(cfg, *, platform=None):
     """Offer ``gestureControl`` (gesture snapping) only on Windows when ``gesture_snap_enabled`` is on.
 
@@ -150,6 +181,17 @@ def configure_tv_tool(cfg, *, warm=True):
     BUILTIN_TOOLS['tvControl'] = TvControlTool()
     if warm:
         threading.Thread(target=device.warm_up, name='roku-warm-up', daemon=True).start()
+
+
+def configure_apple_music_tool(cfg, *, platform=None):
+    """Offer ``playMusic`` only on Windows, with the Windows tools on, when ``apple_music_enabled`` is true."""
+    BUILTIN_TOOLS.pop('playMusic', None)
+    if (platform or sys.platform) != 'win32' or not getattr(cfg, 'windows_tools_enabled', False):
+        return
+    if getattr(cfg, 'apple_music_enabled', False) is not True:
+        return
+    from .builtin.apple_music import AppleMusicTool
+    BUILTIN_TOOLS['playMusic'] = AppleMusicTool()
 
 
 if sys.platform == 'win32':

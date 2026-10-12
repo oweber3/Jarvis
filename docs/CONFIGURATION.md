@@ -290,6 +290,21 @@ A workspace is a named desk set-up that Jarvis opens in one go: "open my study w
 
 Spec: `src/jarvis/devices/roku.spec.md`.
 
+### Apple Music
+
+`playMusic` plays a song, album, artist or one of your own playlists in the Apple Music app for Windows (from the Microsoft Store): "play Bohemian Rhapsody", "put on some Taylor Swift", "play my Road Trip playlist". It is off by default: turn on **Allow Apple Music** in Settings → Extras → Apple Music (`apple_music_enabled`) and restart Jarvis.
+
+```json
+{ "apple_music_enabled": true, "apple_music_country": "GB" }
+```
+
+- To find a song, album or artist, the words you asked for are sent to Apple's public iTunes Search service (no account or key). That is the only thing sent, and only when this setting is on. Your own playlists are found in the Apple Music app and nothing is sent for them.
+- `apple_music_country` is the two-letter country of your Apple Music store. Empty uses the Windows region.
+- Jarvis opens the item in the app, presses its Play button through Windows accessibility (never the mouse or keyboard) and checks the Windows media controls to confirm what is playing. Pause, skip and "what's playing" work as for any player.
+- You need to be signed in to Apple Music in the app. Songs you uploaded yourself and Apple's editorial playlists cannot be searched.
+
+Spec: `src/jarvis/apple_music/apple_music.spec.md`.
+
 ### Gesture snapping
 
 Gesture snapping moves and scrolls windows with your hand through the webcam. It is off by default: turn on **Allow Gesture Control** in Settings → Extras → Gesture control (`gesture_snap_enabled`) and restart Jarvis. That only makes it available; the camera turns on when you say "start gesture control" (or "start gesture controls", "turn on gestures", "enable gesture snapping" and similar) and off when you say "stop gesture control" (or "turn off gestures" and similar).
@@ -652,6 +667,8 @@ A routine is a named chain of things Jarvis can already do, run in one request: 
 - **Create one by doing it once.** Do the steps, then say "save that as movie mode". Jarvis reads every step back and saves nothing until you say yes. To save only some of them, ask what it did recently (`routineControl recent` lists them by number) and name the ones you want, in the order to run them.
 - **Run it** with "start movie mode", "run my movie mode routine" or, after the wake word, just "Jarvis, movie mode". These are recognised without a model when every step is a routine action. A routine with a step that needs confirmation (deleting a file, for example) asks once, naming that step, before anything runs; approving it allows that step for that one run only.
 - **Change it** with "delete my movie mode routine" or "rename movie mode to cinema". Every change asks first, and a change is refused when the same request has just read a web page, a file, the screen or another app (ask again on its own).
+- **Schedule it** with "run my morning briefing every weekday at 7". Jarvis reads the time and days back and changes nothing until you say yes; "stop running the morning briefing on its own" turns it off. Routines never run on their own unless you schedule them. A scheduled routine runs only if every step is a routine action: one with a step that needs confirmation is not run, and Jarvis tells you so instead of approving anything for you. If the computer was asleep or Jarvis was off at the time, the run is skipped rather than done late.
+- **Make a briefing.** Ask for the weather, the time and the news, then say "save that as my morning briefing and read out the results" (the `report` setting below). A briefing reads out what its steps found instead of just saying they were done; on its schedule the local model puts the results into a few spoken sentences. It uses whatever tools its steps name.
 - Steps run in order, each through the same safety checks as when you ask for it alone. A failed step is reported and the next one still runs. One routine runs at a time, for at most two minutes, and a stop (spoken, the chat Stop button or a click on the orb) ends it between steps.
 - In Codex or Claude mode a routine may use only the tools that mode offers, so a step such as switching the reply mode stops the routine before anything runs. Results sent to the model carry step labels and outcomes, never step arguments.
 - Routines live in `config.json` under `routines` and can also be edited there. Each step names a tool and its arguments (at most 20 steps); `label` is optional and is what results and read-backs show. A routine that is not well formed is ignored and left untouched in the file. Changes made through Jarvis take effect at once; restart Jarvis after editing the file by hand.
@@ -666,12 +683,33 @@ A routine is a named chain of things Jarvis can already do, run in one request: 
         {"tool": "systemVolume", "args": {"action": "set", "percent": 30}},
         {"tool": "appControl", "args": {"action": "open", "target": "Apple Music"}}
       ]
+    },
+    "morning briefing": {
+      "report": "results",
+      "schedule": {"time": "07:00", "days": ["mon", "tue", "wed", "thu", "fri"]},
+      "steps": [
+        {"tool": "getTime", "args": {}},
+        {"tool": "getWeather", "args": {}},
+        {"tool": "webSearch", "args": {"search_query": "top news headlines today"}}
+      ]
     }
   }
 }
 ```
 
-Spec: `src/jarvis/routines/routines.spec.md`.
+`schedule` takes a local 24-hour `time` and optional `days` (`mon` to `sun`; every day when left out); `"enabled": false` keeps the time but stops it running on its own. `report` is `results` for a briefing and `actions` (the default) otherwise.
+
+Spec: `src/jarvis/routines/routines.spec.md`; scheduling: `src/jarvis/scheduler/scheduler.spec.md`.
+
+## Timers, alarms and reminders
+
+No setup needed. Say "set a 10 minute pasta timer", "how long left on the pasta timer", "cancel the pasta timer", "remind me at 2:30 to call the dentist", "remind me tomorrow at 9 to email Sam", "wake me at 7" or "what are my reminders". Several timers can run at once. When one is due Jarvis says so out loud (a stop cuts it off like any reply) and shows it in the chat.
+
+- Timer phrasings are recognised without a model; times of day go through the model, which works out the exact time.
+- Alarms and reminders are kept in the local Jarvis database, so they survive a restart. Anything that came due while Jarvis was off is announced once, as missed, when it starts again.
+- In local mode nothing leaves the computer. In Codex or Claude mode the model can set and read timers and reminders while that mode's *Timers, Reminders, Lists and Notes* switch is on (`codex_share_lists_reminders`, `claude_share_lists_reminders`, on by default); reminders it reads are sent to OpenAI or Anthropic. Timer phrasings work in every mode.
+
+Spec: `src/jarvis/scheduler/scheduler.spec.md`.
 
 ## Local extensions
 
@@ -713,7 +751,7 @@ Jarvis answers with the local model unless you allow a cloud mode. `codex_enable
 }
 ```
 
-Switch at runtime by saying "use Claude", "use ChatGPT" or "go local", or from the tray's **Reply Mode** menu; the choice is written back to `reply_mode`. Each mode has its own sharing switches and bounds (`codex_*`, `claude_*`: recent conversation, Jarvis's records of what it acted on (`_share_desktop_referents`), the window you're looking at (`_share_foreground_window`, never sent for phone requests), personal-data tools, deadline, queue and tool calls), all in its column of **Settings → Cloud Modes**. Each column picks the mode's model (`codex_model`, `claude_model`) and effort from a dropdown; a model ID set by hand in `config.json` is shown there and kept. See the README for what each mode sends and how it signs in.
+Switch at runtime by saying "use Claude", "use ChatGPT" or "go local", or from the tray's **Reply Mode** menu; the choice is written back to `reply_mode`. Each mode has its own sharing switches and bounds (`codex_*`, `claude_*`: recent conversation, Jarvis's records of what it acted on (`_share_desktop_referents`), the window you're looking at (`_share_foreground_window`, never sent for phone requests), personal-data tools (`_share_long_term_memory`, off by default), timers, reminders, lists and notes (`_share_lists_reminders`, on by default), deadline, queue and tool calls), all in its column of **Settings → Cloud Modes**. Each column picks the mode's model (`codex_model`, `claude_model`) and effort from a dropdown; a model ID set by hand in `config.json` is shown there and kept. See the README for what each mode sends and how it signs in.
 
 ## Activity log
 
@@ -735,6 +773,72 @@ An opt-in record of the foreground application, a redacted window title and idle
 - Delete the history from the tray (**Delete Activity History…**). Sessions older than `activity_log_retention_days` are pruned once a day.
 
 Details: [`src/jarvis/memory/activity_log.spec.md`](../src/jarvis/memory/activity_log.spec.md).
+
+## Document search
+
+An opt-in local index of your own documents, so you can ask "what did my lease say about pets?". It is off by default; nothing is read or stored until you turn it on and restart Jarvis.
+
+```json
+{
+  "document_search_enabled": true,
+  "document_search_folders": ["Documents", "Desktop/University"],
+  "document_search_share_with_cloud": false,
+  "document_search_max_file_mb": 20,
+  "document_search_rescan_minutes": 60
+}
+```
+
+- `document_search_folders` (default `["Documents"]`) takes the same folder names and paths as the file tools: `Documents`, `Desktop`, `Downloads`, a subfolder such as `Documents/Taxes`, `~/notes`, or a full path. Folders outside your home folder are skipped.
+- `.txt`, `.md`, `.pdf` and `.docx` files are indexed. Hidden and system folders, `node_modules`, Office lock files, OneDrive online-only files and files over `document_search_max_file_mb` are skipped.
+- Indexing uses `embedding_model` (normally `nomic-embed-text` through Ollama), runs in the background only while Jarvis is idle, and checks for new or changed files every `document_search_rescan_minutes`. Changing the embedding model rebuilds the index.
+- `document_search_share_with_cloud` (default `false`) decides whether the Codex and Claude reply modes are offered the `documentSearch` tool. The local model always has it while document search is on.
+- Rebuild or delete the index from the tray (**Rebuild Document Index**, **Delete Document Index…**). To check indexing on a test folder: `PYTHONPATH=src python -m jarvis.documents index --folder <folder> --db <file>`, then `search <words>` or `status` with the same `--db`.
+
+Details: [`src/jarvis/documents/documents.spec.md`](../src/jarvis/documents/documents.spec.md).
+
+## Calendar and email
+
+Read-only access to your calendars ("what's on today?", "when is my next meeting?") and inbox ("any new emails?", "anything from Sam?", "read me the latest email from my professor"). Both are off by default. Jarvis never sends, replies, deletes, accepts or marks anything as read.
+
+Add accounts with the setup commands (run from the Jarvis folder with Jarvis's Python), then restart Jarvis:
+
+```bash
+python -m jarvis.agenda setup        # add a calendar; also: list | test [name] | remove <name>
+python -m jarvis.mail setup          # add a mailbox;  also: list | test [name] | signin <name> | remove <name>
+```
+
+Each command tests the connection before saving, stores the secret in Windows Credential Manager (never in `config.json`) and turns the feature on. What ends up in `config.json` holds no secrets:
+
+```json
+{
+  "calendar_enabled": true,
+  "calendar_sources": [{"name": "Google", "type": "ics"}, {"name": "Outlook", "type": "outlook"}],
+  "calendar_cache_minutes": 15,
+  "calendar_share_with_cloud": false,
+  "email_enabled": true,
+  "email_accounts": [
+    {"name": "Gmail", "type": "imap", "host": "imap.gmail.com", "port": 993, "username": "you@gmail.com"},
+    {"name": "Outlook.com", "type": "graph", "client_id": "<your Azure app ID>", "tenant": "consumers"}
+  ],
+  "email_share_with_cloud": false
+}
+```
+
+| Account | What you need |
+|---------|---------------|
+| Google Calendar (`ics`) | Google Calendar on the web > Settings > your calendar > Integrate calendar > **Secret address in iCal format** |
+| Outlook.com or Microsoft 365 calendar (`ics`) | Outlook on the web > Settings > Calendar > Shared calendars > **Publish a calendar** (Can view all details) > the ICS link |
+| Classic Outlook (`outlook`) | Classic Outlook installed and signed in on this PC. The new Outlook app has no interface Jarvis can read |
+| Gmail (`imap`) | 2-Step Verification on, then an **app password** from myaccount.google.com/apppasswords |
+| Other IMAP (`imap`) | Server, port (993) and password |
+| Outlook.com or Microsoft 365 mail (`graph`) | A free app registration in portal.azure.com (public client flows allowed, delegated `Mail.Read`); the setup command signs in with a code shown in the terminal |
+
+- `calendar_cache_minutes` (default 15) is how long a downloaded calendar is reused. When offline, the last copy answers and Jarvis says when it was saved.
+- `calendar_share_with_cloud` and `email_share_with_cloud` (default `false`) decide whether the Codex and Claude reply modes are offered the `calendar` and `email` tools. The local model always has them while they are on. Replies that quote either are kept out of the diary and the log.
+- Email listings carry sender, subject, time and a short preview; a whole message is read only when asked. Message and event text is fenced as untrusted data.
+- A routine can list `{"tool": "calendar", "args": {}}` for today's agenda.
+
+Details: [`src/jarvis/agenda/agenda.spec.md`](../src/jarvis/agenda/agenda.spec.md), [`src/jarvis/mail/mail.spec.md`](../src/jarvis/mail/mail.spec.md).
 
 ## Phone access
 

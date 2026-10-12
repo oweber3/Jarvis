@@ -246,8 +246,9 @@ def register(api):
 """)
     cfg = settings(folder, "private", mcps={})
     load_extensions(cfg, raw={}).install()
-    assert "extDiary" not in build_tool_snapshot(cfg, share_long_term_memory=False)
-    assert "extDiary" in build_tool_snapshot(cfg, share_long_term_memory=True)
+    for lists in (False, True):
+        assert "extDiary" not in build_tool_snapshot(cfg, share_long_term_memory=False, share_lists_reminders=lists)
+        assert "extDiary" in build_tool_snapshot(cfg, share_long_term_memory=True, share_lists_reminders=lists)
 
 
 # --------------------------------------------------------------------------

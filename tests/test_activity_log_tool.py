@@ -200,13 +200,13 @@ class TestStopSharingAtRuntime:
         configure_activity_log_tool(cfg, platform="win32")
         boundary = TestCloudBoundary()
         shared = boundary.bridge_cfg(cfg, True)
-        assert bridge_settings(shared, "claude").share_activity_log
+        assert bridge_settings(shared, "claude").share_private_turns
         ran = []
         monkeypatch.setattr(daemon.threading, "Thread",
                             lambda target, **kw: SimpleNamespace(start=lambda: ran.append(target())))
         assert daemon.handle_activity_stdin_line(request_line("stop_sharing"))
         assert ran
         for mode in ("codex", "claude"):
-            assert not bridge_settings(shared, mode).share_activity_log, mode
+            assert not bridge_settings(shared, mode).share_private_turns, mode
         for mode, snapshot in boundary.snapshots(shared).items():
             assert "activityLog" not in snapshot, mode

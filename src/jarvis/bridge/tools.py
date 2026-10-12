@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from ..debug import debug_log
+from ..documents import runtime as documents_runtime
 from ..memory import activity_runtime
 
 EXECUTE_TOOL = "jarvis_execute"
@@ -19,8 +20,40 @@ EXECUTE_TOOL = "jarvis_execute"
 # or end a turn without a reply (dismissals are handled locally before a request reaches a bridge).
 ALWAYS_EXCLUDED_TOOLS = frozenset({"toolSearchTool", "refreshMCPTools", "replyMode", "gestureControl", "stop"})
 PERSONAL_DATA_TOOLS = frozenset({"logMeal", "fetchMeals", "deleteMeal"})
-# Offered to a cloud model only while ``activity_runtime.shared_with_cloud`` allows it.
-ACTIVITY_TOOLS = frozenset({"activityLog"})
+# Timers, reminders, lists and notes: offered while the mode's ``share_lists_reminders`` switch is on,
+# independently of long-term memory.
+LISTS_REMINDERS_TOOLS = frozenset({"scheduleControl", "listControl", "noteControl"})
+
+
+def _switch(key: str) -> Callable[[Any], bool]:
+    return lambda cfg: getattr(cfg, key, False) is True
+
+
+@dataclass(frozen=True)
+class CloudGatedSource:
+    """An opt-in personal source. ``shared``: whether Codex and Claude are offered its tool (only a real
+    ``True`` counts). ``set_up``: whether earlier turns may quote it, so that private turns are shared only
+    when it is shared too (``bridge.settings.share_private_turns``)."""
+    set_up: Callable[[Any], bool]
+    shared: Callable[[Any], bool]
+
+
+def _has_accounts(enabled_key: str, accounts_key: str) -> Callable[[Any], bool]:
+    # Turned off with sources still configured counts as set up: earlier turns may quote them.
+    return lambda cfg: getattr(cfg, enabled_key, False) is True or bool(getattr(cfg, accounts_key, None))
+
+
+# Every opt-in personal source, by tool name. Each tool is offered to a cloud model only while its own
+# sharing switch allows it, and a turn that quoted any of them is private.
+CLOUD_GATED_TOOLS: Dict[str, CloudGatedSource] = {
+    "activityLog": CloudGatedSource(set_up=_switch("activity_log_enabled"),
+                                    shared=activity_runtime.shared_with_cloud),
+    "documentSearch": CloudGatedSource(set_up=documents_runtime.enabled, shared=documents_runtime.shared_with_cloud),
+    "calendar": CloudGatedSource(set_up=_has_accounts("calendar_enabled", "calendar_sources"),
+                                 shared=_switch("calendar_share_with_cloud")),
+    "email": CloudGatedSource(set_up=_has_accounts("email_enabled", "email_accounts"),
+                              shared=_switch("email_share_with_cloud")),
+}
 _DESCRIPTION_CHARS = 600
 _REQUEST_ID = {"type": "string", "description": "The request ID from the turn input."}
 _EXECUTE_DESCRIPTION = ("Run one allowed Jarvis tool for this request. Allowed tools (name: description. "
@@ -93,8 +126,8 @@ def execute_tool_description(tools: Dict[str, Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def build_tool_snapshot(cfg: Any, *, share_long_term_memory: bool, log_tag: str = "bridge"
-                        ) -> Dict[str, Dict[str, Any]]:
+def build_tool_snapshot(cfg: Any, *, share_long_term_memory: bool, share_lists_reminders: bool,
+                        log_tag: str = "bridge") -> Dict[str, Dict[str, Any]]:
     """Tools a bridge may use for one request: name -> description and input schema."""
     from ..tools.registry import BUILTIN_TOOLS, get_cached_mcp_tools
 
@@ -103,7 +136,10 @@ def build_tool_snapshot(cfg: Any, *, share_long_term_memory: bool, log_tag: str 
         personal = name in PERSONAL_DATA_TOOLS or getattr(tool, "personal_data", False) is True
         if name in ALWAYS_EXCLUDED_TOOLS or (personal and not share_long_term_memory):
             continue
-        if name in ACTIVITY_TOOLS and not activity_runtime.shared_with_cloud(cfg):
+        if name in LISTS_REMINDERS_TOOLS and not share_lists_reminders:
+            continue
+        gate = CLOUD_GATED_TOOLS.get(name)
+        if gate is not None and not gate.shared(cfg):
             continue
         snapshot[name] = {
             "description": (tool.description or "")[:_DESCRIPTION_CHARS],
@@ -118,6 +154,8 @@ def build_tool_snapshot(cfg: Any, *, share_long_term_memory: bool, log_tag: str 
                 }
         except Exception as exc:
             debug_log(f"MCP tools unavailable for bridge snapshot: {type(exc).__name__}", log_tag)
+    debug_log(f"tool snapshot: {len(snapshot)} tools (memory {share_long_term_memory}, "
+              f"lists and reminders {share_lists_reminders})", log_tag)
     return snapshot
 
 

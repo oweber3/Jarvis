@@ -12,6 +12,7 @@ The engine is platform-neutral core. It runs any registered tool, built-in or MC
 | `routines/runner.py` | Validation of a whole routine against the live tool registry, then running its steps in order through `run_tool_with_retries` |
 | `routines/store.py` | The live set of routines, loaded at start and replaced after every save; writing changes to `config.json` |
 | `routines/journal.py` | The recent-actions record that saving builds from (in memory only) |
+| `scheduler/` | Running a routine at its scheduled time (`scheduler/scheduler.spec.md`) |
 | `tools/builtin/routine_control.py` | The thin `routineControl` tool |
 | `utils/names.py` | Name normalisation and the contested-name rule, shared with `windows_workspaces` |
 
@@ -40,6 +41,8 @@ The engine is platform-neutral core. It runs any registered tool, built-in or MC
 - `steps` is a non-empty list of at most 20 steps. Each step has `tool` (a tool name as the tool catalogue spells it, `server__tool` for MCP tools), `args` (an object, default `{}`) and an optional `label`.
 - A step's display label is its `label` when given. Otherwise it is derived: the tool name, then the `action` value, then the short text and number values of the other arguments in schema order, leaving out any value that looks like a path or a web address (it contains `/`, `\` or `:`, or starts with `~` or `%`). So `appControl open Music` and `systemVolume set 30`, but a path step reads only `openPath open`. Labels are what results, lists and read-backs show; arguments are never shown.
 - Loading drops, with counts only logged, a routine that is not an object, has no usable name, has no steps or more than 20, or has a step that is not an object, has no text `tool`, has `args` that is not an object, or has a `label` that is not text. It is a structural check: whether the tools exist and the arguments fit them is decided when the routine runs, because the catalogue depends on the platform, settings and MCP servers of the moment.
+- `schedule` is optional: `{"time": "07:00", "days": ["mon", "tue", "wed", "thu", "fri"], "enabled": true}`. `time` is a local 24-hour `HH:MM`; `days` is a non-empty list of the language-neutral codes `mon` to `sun` and is omitted for every day; `enabled` defaults to true. A routine with no `schedule`, or with `enabled` false, never runs on its own. A malformed schedule is ignored (counted in the debug log) and the routine is kept for manual runs. How a scheduled routine runs is specified in `scheduler/scheduler.spec.md`, Scheduled routines.
+- `report` is optional: `actions` (the default) or `results`. A `results` routine is a briefing: its report also carries what its steps found (see Result).
 - A routine may not call `routineControl`, and the conversation-control and routing tools (`stop`, `toolSearchTool`, `refreshMCPTools`) are never steps. Such a step fails validation; routines do not nest.
 
 ## Validation before running
@@ -80,7 +83,8 @@ Defining a routine never pre-approves anything. Each run is classified as a whol
 - All steps done: `success`, "Movie mode: all 3 steps done."
 - Otherwise `success: false` with the counts and one line per step that was not done: "Movie mode: 2 of 3 steps done. Step 3 (appControl open Music) failed: Application not found."
 - Each step is `done`, `failed` (with the tool's error, redacted and with paths and web addresses replaced by `[path]` and `[address]`, or `needs confirmation`) or `skipped` (with its reason).
-- The results of information steps (the weather, the time) are not part of the report: a routine is a chain of actions. The report contains labels, positions, statuses and reasons, never argument values.
+- In an `actions` routine the results of information steps (the weather, the time) are not part of the report: a routine is a chain of actions. The report contains labels, positions, statuses and reasons, never argument values, and the step results are not kept.
+- In a `results` routine (a briefing) the report is followed by each done step's label and its result, redacted and at most 2,000 characters per step, for the reply model to read out. Results that come from outside content are already fenced by the tool that produced them. Run on schedule, the results are put into words by the local model instead (`scheduler/scheduler.spec.md`, Briefings).
 
 ## Recent actions (the journal)
 
@@ -98,8 +102,10 @@ All changes go through `routineControl`, by voice or chat, in any reply mode.
 - `save` with `name` builds a draft from the journal: the entries numbered in `steps`, in that order, or, without `steps`, every entry of this conversation, oldest first. An unknown or expired number, a repeated number or an empty journal fails with nothing changed ("I have not done anything in this conversation to save yet.").
 - The draft is validated as a run would be (tools present, arguments valid, nothing `DENY`), so a routine that could not run is never saved.
 - Saving under a name that is a different routine's alias fails. Saving under an existing routine's name replaces that routine, and the question says so.
+- `save` with `report` `results` makes the routine a briefing (the read-back says it will read out what the steps found); a save that replaces a routine keeps its aliases, schedule and other keys, and the read-back says when it keeps running on its own or reading out results.
 - `delete` with `name` removes a routine. `rename` with `name` and `new_name` renames it, keeping its aliases and steps; a `new_name` already claimed by another routine fails.
-- `save`, `delete` and `rename` are persistent changes, so they always confirm (`CONFIRM_VOICE`, through the existing store). The question reads the draft back step by step: "save the routine movie mode with 3 steps: 1. TV to the console; 2. systemVolume set 30; 3. appControl open Music (it replaces your existing movie mode). Say yes or no." The confirmation is bound to the exact resolved steps, so if the journal changes before the answer the draft no longer matches and a fresh question is asked. Nothing is written until the user says yes.
+- `schedule` with `name`, `time` and optional `days` makes the routine run on its own ("run the routine morning briefing on its own at 07:00 on mon, tue, wed, thu and fri"); with `enabled` false it stops doing so and keeps its time. An invalid time or day code fails with nothing asked. Writing changes only the routine's `schedule` value.
+- `save`, `delete`, `rename` and `schedule` are persistent changes, so they always confirm (`CONFIRM_VOICE`, through the existing store). The question reads the draft back step by step: "save the routine movie mode with 3 steps: 1. TV to the console; 2. systemVolume set 30; 3. appControl open Music (it replaces your existing movie mode). Say yes or no." The confirmation is bound to the exact resolved steps, so if the journal changes before the answer the draft no longer matches and a fresh question is asked. Nothing is written until the user says yes.
 - Writing re-reads the `routines` value from `config.json`, changes only the named routine (removing any entry whose name normalises to the same key), and writes through `config.update_config_values` (atomic, unknown keys kept). Routines in the file that failed the structural check are kept untouched. The live set (`routines/store.py`) is then reloaded from the file, so the change takes effect on the next request with no restart, for the fast path, the tool and the model alike.
 
 ### Prompt-injection boundary
@@ -107,7 +113,7 @@ All changes go through `routineControl`, by voice or chat, in any reply mode.
 Only a direct request from the user may create or change a routine. Three rules hold this, none of which depends on language:
 
 1. Steps come only from the journal: calls Jarvis executed, each having passed central safety when it ran. A model can choose which recorded calls to save and the name, nothing else.
-2. A change is refused (`DENY`, with a message asking the user to say it again on its own) when, earlier in the same request, a tool that returns outside content has run: any MCP tool, and the built-in calls that return outside content (web search and page fetches, file reads and searches, screen text, UI Automation reads, PDF text, the activity log, the clipboard, window titles and what is playing). A tool declares this with `returns_outside_content`, or, when only some of its actions return outside content, per call through `returns_outside_content_for(args)`: `inputControl` for `clipboard_read`, `appControl` and `windowControl` for `list`, `mediaControl` for `now_playing`. `appControl open` with a placement also counts when it answers with candidate windows, whose titles it returns. The request scope is a context variable set by `run_reply_engine` for each request; an approved confirmation, which runs later on its own, is not in any request and is judged by rules 1 and 3.
+2. A change is refused (`DENY`, with a message asking the user to say it again on its own) when, earlier in the same request, a tool that returns outside content has run: any MCP tool, and the built-in calls that return outside content (web search and page fetches, file reads and searches, screen text, UI Automation reads, PDF text, the activity log, calendar events, email, the clipboard, window titles and what is playing). A tool declares this with `returns_outside_content`, or, when only some of its actions return outside content, per call through `returns_outside_content_for(args)`: `inputControl` for `clipboard_read`, `appControl` and `windowControl` for `list`, `mediaControl` for `now_playing`. `appControl open` with a placement also counts when it answers with candidate windows, whose titles it returns. The request scope is a context variable set by `run_reply_engine` for each request; an approved confirmation, which runs later on its own, is not in any request and is judged by rules 1 and 3.
 3. Every change confirms with the full read-back, and only the user's own answer approves it (`reply.spec.md`, Action Safety).
 
 Content seen in an earlier request can still lead a model to propose a change; rule 3 means it then only asks.
@@ -118,13 +124,15 @@ Content seen in an earlier request can still lead a model to propose a change; r
 
 | Argument | Meaning |
 |----------|---------|
-| `action` | `run`, `list`, `recent`, `save`, `delete` or `rename` |
+| `action` | `run`, `list`, `recent`, `save`, `delete`, `rename` or `schedule` |
 | `name` | The routine name or alias (`run`, `delete`, `rename`), or the new routine's name (`save`) |
 | `steps` | `save` only: journal entry numbers, in the order to run them. Omitted means everything done in this conversation |
 | `new_name` | `rename` only |
+| `report` | `save` only, optional: `results` for a briefing |
+| `time`, `days`, `enabled` | `schedule` only: a local `HH:MM`, optional day codes (every day when omitted), and `enabled` false to stop |
 
-- `run`, `list` and `recent` are `SAFE` when the routine's steps are (see Confirmation); `save`, `delete` and `rename` are `CONFIRM_VOICE`.
-- An unknown routine fails and lists the available names. `list` returns each routine's name, aliases and step labels, nothing else.
+- `run`, `list` and `recent` are `SAFE` when the routine's steps are (see Confirmation); `save`, `delete`, `rename` and `schedule` are `CONFIRM_VOICE`.
+- An unknown routine fails and lists the available names. `list` returns each routine's name, aliases and step labels, its `schedule` when it has one and `report` when it is a briefing, nothing else.
 - Results pass through the usual redaction before any model reads them.
 
 ## Fast path
@@ -134,15 +142,16 @@ Routine names are user data, so running one by name is a deterministic fast comm
 - The verb phrases live in `fastpath/phrases/<language>.json` ("start {routine}", "run {routine}", "run my {routine} routine", "start the {routine} routine"), plus the bare name ("{routine}" alone, "Jarvis, movie mode"), which is marked `needs_wake_word` so an overheard name in a hot-window follow-up never runs one. There is no English in code.
 - "Start {routine}" and "start {app}" are both templates; when one utterance resolves to both, the matcher's single-match rule makes it fall through to the model. A routine named like a fixed phrase ("pause") does the same, so it never silently replaces that command.
 - Only a routine whose run is `SAFE` is eligible, because the dispatcher offers only `SAFE` calls. A routine with a confirming step falls through to the model, which runs it and gets the confirmation question.
+- A briefing (`report` `results`) is never offered: its results must be read out by the model, which a fixed template cannot do.
 - A name containing a locale compound word ("and", "then") never fast-matches; the model path still runs it.
 - Success uses the locale template ("{routine} done."); any other outcome returns the tool's report unchanged.
-- Saving, deleting and renaming are never fast commands: they confirm, and they need the model to read the request.
+- Saving, deleting, renaming and scheduling are never fast commands: they confirm, and they need the model to read the request.
 
 ## Reply bridges
 
 `routineControl` is in the allowed-tool snapshot of every bridge (`bridge/bridge.spec.md`), with all its actions, so a user in Codex or Claude mode can run, save and manage routines the same way.
 
-- A routine run through `jarvis_execute` may use only tools in that request's snapshot. The bridge's execution path passes the snapshot to `run_tool_with_retries`, which makes it available to the tool for the duration of the call; a step outside it fails validation as unavailable. A routine therefore never widens a cloud model's catalogue: a `replyMode` step, a memory tool without long-term-memory sharing, or `activityLog` without its cloud switch is unavailable there.
+- A routine run through `jarvis_execute` may use only tools in that request's snapshot. The bridge's execution path passes the snapshot to `run_tool_with_retries`, which makes it available to the tool for the duration of the call; a step outside it fails validation as unavailable. A routine therefore never widens a cloud model's catalogue: a `replyMode` step, a memory tool without long-term-memory sharing, or `activityLog` or `documentSearch` without its cloud switch is unavailable there.
 - The routine's steps run on the query thread inside that one `jarvis_execute` call and count as one call against `<mode>_max_tool_calls`. A routine that outlasts the bridge deadline is not interrupted; the bridge records the call as uncertain and never replays it.
 - What reaches the provider is what any tool result carries: labels, positions, statuses and reasons. Step arguments stay in `config.json` and the in-memory journal; the save question carries labels only.
 
@@ -163,7 +172,7 @@ Stages that build on this contract and must not need it changed:
 
 - A Settings editor for routines (and workspaces) uses `routines/store.py` to read, validate and write, and each tool's `inputSchema` to generate argument fields.
 - Export writes one routine's definition as JSON; import validates it with the same structural check and run validation, previews every step with its label and arguments, and saves through the same confirmed path.
-- Other triggers (a timer, a time of day) run a routine through `runner.run_routine`, under the same validation, confirmation and reporting.
+- Other triggers run a routine through `runner.run_routine`, under the same validation, confirmation and reporting, as the time-of-day trigger in `scheduler/` does.
 
 ## Verification contract
 
@@ -176,4 +185,5 @@ Behaviours that automated tests assert with inert fake tools and a temporary con
 - Results contain labels and outcomes but no argument values, paths or URLs. A step that starts to ask mid-run adds its own question, naming the real target, for the user only: the report stays scrubbed and a bridge's provider never receives the question.
 - Journal: successful calls on each route are recorded with schema keys only; failures, refusals and pending confirmations are not; entries expire with the dialogue window.
 - Saving: the draft comes only from journal entries; the question reads every step back; nothing is written before approval; the saved routine is live for the fast path and the tool at once; a change after untrusted content in the same request is refused.
-- Fast path: name, alias and spelling tolerance; the bare name needs the wake word; ambiguity with an application falls through; a routine with a confirming step falls through.
+- Fast path: name, alias and spelling tolerance; the bare name needs the wake word; ambiguity with an application falls through; a routine with a confirming step falls through; a briefing is not offered.
+- Schedules and briefings: a schedule loads with every day by default and a malformed one is ignored with the routine kept; scheduling reads back and writes only after yes; turning it off keeps its time; `list` shows it; a briefing run by hand returns its step results while an action routine's report never carries them; saving with `report` `results` writes it. The scheduled run itself is in `scheduler/scheduler.spec.md`.

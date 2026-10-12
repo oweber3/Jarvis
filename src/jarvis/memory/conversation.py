@@ -732,7 +732,7 @@ class DialogueMemory:
         """
         self._messages: List[Tuple[float, str, str]] = []  # (timestamp, role, content)
         # Timestamps of messages that stay in the hot window but are never summarised into the
-        # diary (replies quoting the opt-in activity log).
+        # diary (replies quoting the opt-in activity log or document search).
         self._diary_excluded: set = set()
         # Whitespace-normalised text of messages kept out of the diary. A restored chat session
         # arrives as plain role and content pairs, so privacy is matched on content (in memory only).
@@ -744,7 +744,8 @@ class DialogueMemory:
         # tool-related messages. Excluded from `get_pending_chunks` so raw tool
         # payloads never reach the diary summariser.
         self._tool_turns: List[Tuple[float, List[dict]]] = []
-        # Timestamps of tool turns recorded by a private turn (one that read the activity log).
+        # Timestamps of tool turns recorded by a private turn (one that read the activity log, documents,
+        # a calendar or email).
         self._private_tool_turns: set = set()
         # Conversation-scoped scratch cache: per-key (timestamp, value)
         # entries that survive for the lifetime of the active conversation.
@@ -857,7 +858,7 @@ class DialogueMemory:
         formatted for LLM API.
 
         ``include_private=False`` leaves out messages added with ``diary=False`` (they quote
-        the activity log), for contexts that leave the PC. ``flag_private=True`` adds a
+        a private source: the activity log, documents, a calendar or email), for contexts that leave the PC. ``flag_private=True`` adds a
         ``private`` key to each message saying whether it is one of those.
 
         Returns:
@@ -1014,7 +1015,8 @@ class DialogueMemory:
     def record_tool_turn(self, tool_msgs: List[dict], private: bool = False) -> None:
         """Store in-loop tool-call/tool-role messages from a just-finished reply.
 
-        ``private`` marks a turn that read the activity log, so follow-ups that reuse it stay private.
+        ``private`` marks a turn that read a private source (the activity log, documents, a calendar or email),
+        so follow-ups that reuse it stay private.
 
         Called once per reply with the tool-related messages extracted from the
         engine's messages array. These interleave with text messages on
