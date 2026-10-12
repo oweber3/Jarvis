@@ -11,6 +11,7 @@ export type Chat = {
   updated_at: number
   last_mode: string
   last_model: string
+  pinned: boolean
 }
 
 export type ChatMessage = {
@@ -20,6 +21,8 @@ export type ChatMessage = {
   ts: number
   source: "typed" | "voice" | "confirmed"
 }
+
+export type SearchHit = { chat_id: string; message_id: number; snippet: string; ts: number }
 
 export type Notice = { id: number; kind: string; text: string; request: string | null; ts: number }
 
@@ -104,6 +107,9 @@ export const api = {
   renameChat: (id: string, title: string) => request<unknown>("PATCH", `/api/chats/${id}`, { title }),
   moveChat: (id: string, projectId: string | null) =>
     request<unknown>("PATCH", `/api/chats/${id}`, { project_id: projectId }),
+  pinChat: (id: string, pinned: boolean) => request<unknown>("PATCH", `/api/chats/${id}`, { pinned }),
+  search: (query: string, signal?: AbortSignal) =>
+    request<{ results: SearchHit[] }>("GET", `/api/search?q=${encodeURIComponent(query)}`, undefined, signal),
   deleteChat: (id: string) => request<unknown>("DELETE", `/api/chats/${id}`),
   createProject: (name: string) => request<Project>("POST", "/api/projects", { name }),
   renameProject: (id: string, name: string) => request<unknown>("PATCH", `/api/projects/${id}`, { name }),
@@ -120,6 +126,8 @@ export const api = {
 export function describeError(error: unknown): string {
   if (!(error instanceof ApiError)) return "Jarvis could not be reached."
   switch (error.code) {
+    case "bad_query":
+      return "That search isn't valid."
     case "busy":
       return "Jarvis is busy with another request. Try again in a moment."
     case "unavailable":

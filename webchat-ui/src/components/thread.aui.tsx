@@ -1,6 +1,7 @@
 "use client";
 
 import { MarkdownText } from "@/components/markdown-text";
+import { DayDivider, MessageTime } from "@/components/MessageTime";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -29,9 +30,12 @@ import {
 import {
   createContext,
   useContext,
+  useEffect,
   type ComponentType,
   type FC,
 } from "react";
+import { messageSelector, scrollTarget, useScrollTarget } from "@/scrollTarget";
+import { dayDividerLabel, startsNewDay } from "@/time";
 
 /**
  * Optional component overrides for the thread. `AssistantMessage` and
@@ -123,6 +127,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
         data-slot="aui_thread-viewport"
         className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll"
       >
+        <ScrollToSearchHit />
         <div
           className={cn(
             "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4",
@@ -168,10 +173,74 @@ const ThreadMessage: FC = () => {
   const isSpoken = useAuiState((s) => s.message.metadata.modality === "voice");
   const isNotice = useAuiState((s) => s.message.metadata.custom?.["notice"] === true);
 
-  if (isNotice) return <NoticeLine />;
-  if (isSpoken) return <SpokenMessage />;
-  if (role === "user") return <UserMessage />;
-  return <AssistantMessageComponent />;
+  return (
+    <>
+      <DayStart />
+      {isNotice ? (
+        <NoticeLine />
+      ) : isSpoken ? (
+        <SpokenMessage />
+      ) : role === "user" ? (
+        <UserMessage />
+      ) : (
+        <AssistantMessageComponent />
+      )}
+    </>
+  );
+};
+
+const dayOf = (date: Date | undefined) => (date ? date.getTime() / 1000 : undefined);
+
+// A divider above the first message of each day. A pending message, which has no stored time yet, counts as now.
+const DayStart: FC = () => {
+  const label = useAuiState((s) => {
+    const own = dayOf(s.message.createdAt);
+    if (own === undefined) return null;
+    const previous = dayOf(s.thread.messages[s.message.index - 1]?.createdAt);
+    return startsNewDay(previous, own) ? dayDividerLabel(own) : null;
+  });
+  return label ? <DayDivider label={label} /> : null;
+};
+
+// Opening a search result scrolls to the message it found and marks it for a moment.
+const ScrollToSearchHit: FC = () => {
+  const target = useScrollTarget();
+
+  useEffect(() => {
+    if (target === null) return;
+    let cancelled = false;
+    let element: Element | null = null;
+    const timers: number[] = [];
+    const started = performance.now();
+    const show = () => element?.scrollIntoView({ block: "center" });
+    const look = () => {
+      if (cancelled) return;
+      element = document.querySelector(messageSelector(target));
+      if (!element) {
+        if (performance.now() - started < 4000) timers.push(window.setTimeout(look, 80));
+        else scrollTarget.set(null);
+        return;
+      }
+      element.setAttribute("data-search-hit", "");
+      show();
+      // The thread settles to the bottom while a chat loads; look again once it has.
+      timers.push(window.setTimeout(show, 250), window.setTimeout(show, 700));
+      timers.push(
+        window.setTimeout(() => {
+          element?.removeAttribute("data-search-hit");
+          scrollTarget.set(null);
+        }, 2500),
+      );
+    };
+    look();
+    return () => {
+      cancelled = true;
+      timers.forEach((t) => window.clearTimeout(t));
+      element?.removeAttribute("data-search-hit");
+    };
+  }, [target]);
+
+  return null;
 };
 
 // A local line from Jarvis (busy, stopped, could not answer). It is shown here but never stored.
@@ -195,10 +264,17 @@ type VoiceRunPosition = "single" | "start" | "middle" | "end";
 
 const useVoiceRunPosition = (): VoiceRunPosition =>
   useAuiState((s) => {
+    const own = dayOf(s.message.createdAt);
+    const sameDay = (other: Date | undefined) =>
+      own !== undefined &&
+      dayOf(other) !== undefined &&
+      !startsNewDay(own, dayOf(other)!);
+    const previous = s.thread.messages[s.message.index - 1];
+    const next = s.thread.messages[s.message.index + 1];
     const before =
-      s.thread.messages[s.message.index - 1]?.metadata.modality === "voice";
+      previous?.metadata.modality === "voice" && sameDay(previous.createdAt);
     const after =
-      s.thread.messages[s.message.index + 1]?.metadata.modality === "voice";
+      next?.metadata.modality === "voice" && sameDay(next.createdAt);
     if (before) return after ? "middle" : "end";
     return after ? "start" : "single";
   });
@@ -251,6 +327,7 @@ const SpokenMessage: FC = () => {
         <div className="min-w-0 flex-1 wrap-break-word">
           <MessagePrimitive.Parts components={{ Text: SpokenText }} />
         </div>
+        <MessageTime className="mt-0.5" />
         <SpokenActionBar />
       </div>
     </MessagePrimitive.Root>
@@ -421,6 +498,7 @@ const AssistantMessage: FC = () => {
         className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
       >
         <AssistantActionBar />
+        <MessageTime className="ms-2" />
       </div>
     </MessagePrimitive.Root>
   );
@@ -458,6 +536,7 @@ const UserMessage: FC = () => {
         <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
           <MessagePrimitive.Parts />
         </div>
+        <MessageTime className="mt-1 block text-end" />
       </div>
     </MessagePrimitive.Root>
   );

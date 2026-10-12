@@ -1,6 +1,6 @@
 import { ThreadListPrimitive, useAuiState } from "@assistant-ui/react"
-import { ChevronDownIcon, ChevronRightIcon, FolderPlusIcon, PencilIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react"
-import { useEffect, useMemo, useRef, useState, type FC } from "react"
+import { ChevronDownIcon, ChevronRightIcon, FolderPlusIcon, PencilIcon, PinIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react"
+import { useEffect, useMemo, useRef, useState, type FC, type ReactNode } from "react"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { ThreadListItem, ThreadListNew } from "@/components/thread-list.aui"
 import { TooltipIconButton } from "@/components/tooltip-icon-button"
@@ -8,8 +8,12 @@ import { Input } from "@/components/ui/input"
 import { CONFIRM_WORD } from "@/confirm"
 import { cn } from "@/lib/utils"
 import { chatTitle } from "@/conversion"
+import { MIN_SEARCH_CHARS, useMessageSearch } from "@/hooks/use-message-search"
+import { highlightParts, searchRows, type SearchRow } from "@/search"
+import { scrollTarget } from "@/scrollTarget"
+import { arrangeChats } from "@/sidebar"
 import { useJarvis } from "@/useJarvis"
-import type { Project } from "@/api"
+import type { Chat, Project } from "@/api"
 
 // Chats grouped by project. assistant-ui lists threads flat; this groups the same threads (by index into
 // the runtime's list) under the owner's projects, with the unfiled ones below.
@@ -51,11 +55,10 @@ export const ProjectsSidebar: FC = () => {
 
   const indexById = useMemo(() => new Map(threadIds.map((id, index) => [id, index])), [threadIds])
   const needle = query.trim().toLowerCase()
-  const visible = useMemo(
-    () => library.chats.filter((c) => !needle || chatTitle(c).toLowerCase().includes(needle)),
-    [library.chats, needle],
-  )
-  const unfiled = visible.filter((c) => c.project_id === null)
+  const { hits, searching } = useMessageSearch(query)
+  const rows = useMemo(() => searchRows(library.chats, query, hits), [library.chats, query, hits])
+  const pinned = useMemo(() => library.chats.filter((c) => c.pinned), [library.chats])
+  const unfiled = useMemo(() => library.chats.filter((c) => c.project_id === null), [library.chats])
 
   return (
     <nav aria-label="Chats and projects" className="flex h-full min-h-0 flex-col gap-2 p-2">
@@ -67,42 +70,61 @@ export const ProjectsSidebar: FC = () => {
         <SearchIcon className="text-muted-foreground pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2" />
         <Input
           type="search"
+          data-chat-search
           value={query}
           onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return
+            // Esc clears the search, and leaves the box when it is already empty.
+            event.preventDefault()
+            if (query) setQuery("")
+            else event.currentTarget.blur()
+          }}
           aria-label="Search chats"
-          placeholder="Search chats"
+          placeholder="Search chats and messages"
+          title="Search chats and messages (Ctrl+K)"
           className="h-8 ps-8 text-sm"
         />
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pe-1">
-        {library.projects.map((project) => {
-          const chats = visible.filter((c) => c.project_id === project.id)
-          if (needle && chats.length === 0) return null
-          const isCollapsed = collapsed.has(project.id) && !needle
-          return (
-            <section key={project.id} aria-label={project.name} className="flex flex-col gap-0.5">
-              <ProjectHeader project={project} count={chats.length} collapsed={isCollapsed} onToggle={() => toggle(project.id)} />
-              {!isCollapsed &&
-                chats.map((chat) => <ChatRow key={chat.id} index={indexById.get(chat.id)} />)}
-              {!isCollapsed && chats.length === 0 && (
-                <p className="text-muted-foreground px-6 py-1 text-xs">No chats yet</p>
-              )}
-            </section>
-          )
-        })}
-
-        {(unfiled.length > 0 || library.projects.length === 0) && (
-          <section aria-label="Chats without a project" className="flex flex-col gap-0.5">
-            {library.projects.length > 0 && (
-              <h3 className="text-muted-foreground px-2.5 pt-3 pb-1 text-xs font-medium">No project</h3>
+        {needle ? (
+          <SearchResults rows={rows} query={query} searching={searching} />
+        ) : (
+          <>
+            {pinned.length > 0 && (
+              <section aria-label="Pinned chats" className="flex flex-col gap-0.5">
+                <GroupHeading icon={<PinIcon className="size-3" aria-hidden />}>Pinned</GroupHeading>
+                {pinned.map((chat) => (
+                  <ChatRow key={chat.id} index={indexById.get(chat.id)} />
+                ))}
+              </section>
             )}
-            {unfiled.map((chat) => (
-              <ChatRow key={chat.id} index={indexById.get(chat.id)} />
-            ))}
-          </section>
+
+            {library.projects.map((project) => {
+              const all = library.chats.filter((c) => c.project_id === project.id)
+              const isCollapsed = collapsed.has(project.id)
+              return (
+                <section key={project.id} aria-label={project.name} className="flex flex-col gap-0.5">
+                  <ProjectHeader project={project} count={all.length} collapsed={isCollapsed} onToggle={() => toggle(project.id)} />
+                  {!isCollapsed && <AgeGroups chats={all} indexById={indexById} />}
+                  {!isCollapsed && all.length === 0 && (
+                    <p className="text-muted-foreground px-6 py-1 text-xs">No chats yet</p>
+                  )}
+                </section>
+              )
+            })}
+
+            {(unfiled.some((c) => !c.pinned) || library.projects.length === 0) && (
+              <section aria-label="Chats without a project" className="flex flex-col gap-0.5">
+                {library.projects.length > 0 && (
+                  <h3 className="text-muted-foreground px-2.5 pt-3 pb-1 text-xs font-medium">No project</h3>
+                )}
+                <AgeGroups chats={unfiled} indexById={indexById} />
+              </section>
+            )}
+          </>
         )}
-        {needle && visible.length === 0 && <p className="text-muted-foreground px-2.5 py-4 text-sm">No chats found</p>}
       </div>
 
       <div className="border-t pt-2">
@@ -168,6 +190,74 @@ const DeleteEverything: FC = () => {
         onConfirm={() => actions.clearHistory()}
       />
     </>
+  )
+}
+
+// A group's small heading: "Pinned", "Today", "Yesterday" ...
+const GroupHeading: FC<{ children: string; icon?: ReactNode }> = ({ children, icon }) => (
+  <h4 className="text-muted-foreground flex items-center gap-1.5 px-2.5 pt-2 pb-0.5 text-[11px] font-medium">
+    {icon}
+    {children}
+  </h4>
+)
+
+// The non-pinned chats of one place, under Today / Yesterday / Previous 7 days / Previous 30 days / Older.
+const AgeGroups: FC<{ chats: Chat[]; indexById: Map<string, number> }> = ({ chats, indexById }) => {
+  const { groups } = arrangeChats(chats)
+  return (
+    <>
+      {groups.map((group) => (
+        <div key={group.group} role="group" aria-label={group.label} className="flex flex-col gap-0.5">
+          <GroupHeading>{group.label}</GroupHeading>
+          {group.items.map((chat) => (
+            <ChatRow key={chat.id} index={indexById.get(chat.id)} />
+          ))}
+        </div>
+      ))}
+    </>
+  )
+}
+
+// Chats found by title or by what was said in them. Opening one scrolls to the message that matched.
+const SearchResults: FC<{ rows: SearchRow[]; query: string; searching: boolean }> = ({ rows, query, searching }) => {
+  const { actions } = useJarvis()
+  if (rows.length === 0) {
+    return (
+      <p role="status" className="text-muted-foreground px-2.5 py-4 text-sm">
+        {searching ? "Searching" : query.trim().length < MIN_SEARCH_CHARS ? "No chat titles match" : "No chats found"}
+      </p>
+    )
+  }
+  return (
+    <ul aria-label="Search results" className="flex flex-col gap-0.5">
+      {rows.map(({ chat, messageId, snippet }) => (
+        <li key={chat.id}>
+          <button
+            type="button"
+            onClick={() => {
+              void actions.openChat(chat.id)
+              scrollTarget.set(messageId)
+            }}
+            className="hover:bg-muted focus-visible:bg-muted flex w-full flex-col items-start gap-0.5 rounded-md px-2.5 py-1.5 text-start outline-none"
+          >
+            <span className="w-full truncate text-sm">{chatTitle(chat)}</span>
+            {snippet && (
+              <span className="text-muted-foreground line-clamp-2 w-full text-xs wrap-break-word">
+                {highlightParts(snippet, query).map((part, i) =>
+                  part.match ? (
+                    <mark key={i} className="bg-primary/20 text-foreground rounded-sm">
+                      {part.text}
+                    </mark>
+                  ) : (
+                    <span key={i}>{part.text}</span>
+                  ),
+                )}
+              </span>
+            )}
+          </button>
+        </li>
+      ))}
+    </ul>
   )
 }
 

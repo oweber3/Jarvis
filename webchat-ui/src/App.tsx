@@ -1,5 +1,8 @@
-import { MicIcon, MoonIcon, PanelLeftIcon, SunIcon, XIcon } from "lucide-react"
+import { useAui, useAuiState } from "@assistant-ui/react"
+import { KeyboardIcon, MicIcon, MoonIcon, PanelLeftIcon, SunIcon, XIcon } from "lucide-react"
 import { useEffect, useState, type FC } from "react"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { fieldOf, resolveShortcut, SHORTCUTS } from "@/shortcuts"
 import { useNarrow } from "@/layout"
 import { ModelPicker } from "@/components/ModelPicker"
 import { ProjectsSidebar } from "@/components/ProjectsSidebar"
@@ -29,6 +32,39 @@ const Shell: FC = () => {
     setSidebarOpen(!narrow)
   }
   const overlay = narrow && sidebarOpen
+  const [helpOpen, setHelpOpen] = useState(false)
+  const running = useAuiState((s) => s.thread.isRunning)
+  const aui = useAui()
+
+  // Keyboard shortcuts (shortcuts.ts decides; this performs). Never a plain letter, so typing is safe.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const action = resolveShortcut(event, {
+        running,
+        overlayOpen: overlay,
+        dialogOpen: document.querySelector("[role='dialog'], [role='menu'], [role='listbox']") !== null,
+        field: fieldOf(document.activeElement),
+      })
+      if (!action) return
+      event.preventDefault()
+      if (action === "focus-search") {
+        setSidebarOpen(true)
+        window.requestAnimationFrame(() => {
+          const box = document.querySelector<HTMLInputElement>("[data-chat-search]")
+          box?.focus()
+          box?.select()
+        })
+      } else if (action === "new-chat") {
+        void actions.newChat(null)
+      } else if (action === "stop") {
+        aui.composer().cancel()
+      } else {
+        setHelpOpen(true)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [actions, aui, overlay, running])
 
   // An overlay closes with Esc, and once a chat has been chosen.
   useEffect(() => {
@@ -61,13 +97,14 @@ const Shell: FC = () => {
         <ProjectsSidebar />
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
-        <Header onToggleSidebar={() => setSidebarOpen((open) => !open)} />
+        <Header onToggleSidebar={() => setSidebarOpen((open) => !open)} onShowShortcuts={() => setHelpOpen(true)} />
         <StatusBanner reachable={reachable} ready={ready} />
         <ModelReminder />
         <div className="min-h-0 flex-1">
           <Thread components={{ ComposerLeading: ModelPicker }} />
         </div>
       </main>
+      <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />
       {toast && (
         <div role="alert" className="bg-popover text-popover-foreground border-border absolute bottom-24 left-1/2 z-40 flex max-w-md -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-2 text-sm shadow-lg">
           <span>{toast}</span>
@@ -80,7 +117,7 @@ const Shell: FC = () => {
   )
 }
 
-const Header: FC<{ onToggleSidebar: () => void }> = ({ onToggleSidebar }) => {
+const Header: FC<{ onToggleSidebar: () => void; onShowShortcuts: () => void }> = ({ onToggleSidebar, onShowShortcuts }) => {
   const { chat } = useJarvis()
   return (
     <header className="border-border flex h-12 shrink-0 items-center gap-3 border-b px-3">
@@ -100,10 +137,45 @@ const Header: FC<{ onToggleSidebar: () => void }> = ({ onToggleSidebar }) => {
         <MicIcon className="text-primary size-3.5" aria-hidden />
         <span className="max-sm:sr-only">Voice joins this chat</span>
       </span>
+      <button
+        type="button"
+        onClick={onShowShortcuts}
+        aria-label="Keyboard shortcuts"
+        title="Keyboard shortcuts (?)"
+        className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-8 shrink-0 items-center justify-center rounded-md"
+      >
+        <KeyboardIcon className="size-4" />
+      </button>
       <ThemeSwitch />
     </header>
   )
 }
+
+// What the keyboard can do. Opened with the header button or "?".
+const ShortcutsDialog: FC<{ open: boolean; onOpenChange: (open: boolean) => void }> = ({ open, onOpenChange }) => (
+  <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent className="sm:max-w-sm">
+      <DialogHeader>
+        <DialogTitle>Keyboard shortcuts</DialogTitle>
+        <DialogDescription>On a Mac, use Cmd in place of Ctrl.</DialogDescription>
+      </DialogHeader>
+      <ul className="flex flex-col gap-2 text-sm">
+        {SHORTCUTS.map((shortcut) => (
+          <li key={shortcut.action} className="flex items-center justify-between gap-4">
+            <span>{shortcut.label}</span>
+            <span className="flex gap-1">
+              {shortcut.keys.map((name) => (
+                <kbd key={name} className="bg-muted text-muted-foreground rounded border px-1.5 py-0.5 font-mono text-xs">
+                  {name}
+                </kbd>
+              ))}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </DialogContent>
+  </Dialog>
+)
 
 // Light or dark, remembered in the browser. Dark is the Jarvis look.
 const ThemeSwitch: FC = () => {

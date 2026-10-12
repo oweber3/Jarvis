@@ -19,6 +19,8 @@ import {
   Loader2Icon,
   MoreHorizontalIcon,
   PencilIcon,
+  PinIcon,
+  PinOffIcon,
   PlusIcon,
   SearchIcon,
   TrashIcon,
@@ -463,6 +465,25 @@ const MoveToProject: FC = () => {
   );
 };
 
+// Pinned chats sit in a group at the top of the list.
+const PinToggle: FC = () => {
+  const { library, actions } = useJarvis();
+  const chatId = useAuiState((s) => s.threadListItem.id);
+  const pinned = library.chats.find((c) => c.id === chatId)?.pinned ?? false;
+  const Icon = pinned ? PinOffIcon : PinIcon;
+
+  return (
+    <ThreadListItemMorePrimitive.Item
+      data-slot="aui_thread-list-item-more-item"
+      className="hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
+      onSelect={() => void actions.pinChat(chatId, !pinned)}
+    >
+      <Icon className="size-4" />
+      {pinned ? "Unpin" : "Pin"}
+    </ThreadListItemMorePrimitive.Item>
+  );
+};
+
 const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
   const aui = useAui();
   const title = useAuiState((s) => s.threadListItem.title);
@@ -510,6 +531,7 @@ const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
           <PencilIcon className="size-4" />
           Rename
         </ThreadListItemMorePrimitive.Item>
+        <PinToggle />
         <MoveToProject />
         <ThreadListItemMorePrimitive.Item
           data-slot="aui_thread-list-item-more-item"

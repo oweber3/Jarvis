@@ -30,6 +30,7 @@ const chat = (id: string): Chat => ({
   updated_at: 1,
   last_mode: "",
   last_model: "",
+  pinned: false,
 })
 const message = (id: number, role: "user" | "assistant", text = "t"): ChatMessage => ({
   id,
