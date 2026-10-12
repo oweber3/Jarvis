@@ -9,6 +9,7 @@ import {
   ApiError,
   api,
   describeError,
+  type AttachmentSupport,
   type Chat,
   type ChatMessage,
   type CloudModel,
@@ -20,6 +21,7 @@ import {
   type ReplyModes,
   type Snapshot,
 } from "@/api"
+import { JarvisAttachmentAdapter } from "@/attachmentAdapter"
 import { buildThreadMessages, chatTitle, type Pending } from "@/conversion"
 import { ChatSync } from "@/sync"
 
@@ -51,6 +53,8 @@ export type JarvisView = {
   models: LocalModel[]
   cloud: CloudState | null
   cloudModels: CloudModel[]
+  /** What attaching can do for the route that answers now; null until the server has said. */
+  attachmentSupport: AttachmentSupport | null
   toast: string | null
   actions: JarvisActions
 }
@@ -92,6 +96,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   })
   const [models, setModels] = useState<LocalModel[]>([])
   const [cloudModels, setCloudModels] = useState<CloudModel[]>([])
+  const [attachmentSupport, setAttachmentSupport] = useState<AttachmentSupport | null>(null)
   const [reachable, setReachable] = useState(true)
   const [loadingChat, setLoadingChat] = useState(true)
   const [toast, setToast] = useState<string | null>(null)
@@ -128,6 +133,27 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
 
   const fail = useCallback((error: unknown) => setToast(describeError(error)), [])
 
+  // What the owner attaches is held by the server until the message goes; the adapter keeps the page's chips
+  // and the server's ids apart. It reads the limits the server last reported.
+  const supportRef = useRef<AttachmentSupport | null>(null)
+  supportRef.current = attachmentSupport
+  const [attachmentAdapter] = useState(
+    () =>
+      new JarvisAttachmentAdapter(
+        { upload: api.uploadAttachment, screenshot: api.captureScreenshot, discard: api.discardAttachment },
+        () => supportRef.current?.limits ?? null,
+        setToast,
+      ),
+  )
+
+  const refreshAttachmentSupport = useCallback(async () => {
+    try {
+      setAttachmentSupport(await api.attachmentSupport())
+    } catch {
+      /* the composer keeps what it knew; the server still refuses what cannot go */
+    }
+  }, [])
+
   useEffect(() => {
     const abort = new AbortController()
     void sync.run(abort.signal)
@@ -139,7 +165,8 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   const cloudKey = meta.cloud ? `${meta.cloud.mode}|${meta.cloud.model}|${meta.cloud.effort}|${meta.cloud.ready}` : ""
   useEffect(() => {
     void refreshModels()
-  }, [mode, current, cloudKey, refreshModels])
+    void refreshAttachmentSupport()
+  }, [mode, current, cloudKey, refreshModels, refreshAttachmentSupport])
 
   const actions = useMemo<JarvisActions>(() => {
     const guarded = (work: () => Promise<unknown>) => async () => {
@@ -229,13 +256,16 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
     isDisabled: !meta.ready || !reachable,
     onNew: async (message) => {
       const text = textOf(message)
-      if (!text) return
-      sync.beginSend(text)
+      const attached = attachmentAdapter.take((message.attachments ?? []).map((a) => a.id))
+      const forget = () => attached.forEach((a) => void api.discardAttachment(a.serverId).catch(() => undefined))
+      if (!text) return forget()
+      sync.beginSend(text, attached.map(({ kind, size }) => ({ kind, size })))
       try {
-        await api.send(text)
+        await api.send(text, attached.map((a) => a.serverId))
         sync.sendAccepted()
       } catch (error) {
         sync.sendFailed()
+        forget()
         if (!toldByNotice(error)) fail(error)
       }
     },
@@ -247,6 +277,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       }
     },
     adapters: {
+      attachments: attachmentAdapter,
       threadList: {
         threadId: library.active_chat_id ?? chat?.id ?? "",
         threads: library.chats.map((c) => ({ id: c.id, status: "regular" as const, title: chatTitle(c) })),
@@ -283,10 +314,24 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       models,
       cloud: meta.cloud,
       cloudModels,
+      attachmentSupport,
       toast,
       actions,
     }),
-    [actions, chat, cloudModels, library, meta.cloud, meta.mode, meta.model, meta.ready, models, reachable, toast],
+    [
+      actions,
+      attachmentSupport,
+      chat,
+      cloudModels,
+      library,
+      meta.cloud,
+      meta.mode,
+      meta.model,
+      meta.ready,
+      models,
+      reachable,
+      toast,
+    ],
   )
 
   return (

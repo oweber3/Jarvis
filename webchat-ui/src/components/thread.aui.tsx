@@ -1,5 +1,13 @@
 "use client";
 
+import {
+  AttachmentNotice,
+  ComposerAddAttachment,
+  ComposerAttachments,
+  ComposerScreenshot,
+  UserMessageAttachments,
+  useAttachmentGate,
+} from "@/components/attachment.aui";
 import { MarkdownText } from "@/components/markdown-text";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
@@ -96,7 +104,10 @@ export const Thread: FC<ThreadProps> = ({
 
   return (
     <ThreadComponentsContext.Provider value={components}>
-      <ThreadRoot isEmpty={isEmpty} autoFocus={autoFocus} />
+      {/* A file dropped anywhere on the thread is attached to the next message. */}
+      <ComposerPrimitive.AttachmentDropzone className="aui-dropzone data-[dragging=true]:ring-primary/50 h-full rounded-lg data-[dragging=true]:ring-2 data-[dragging=true]:ring-inset">
+        <ThreadRoot isEmpty={isEmpty} autoFocus={autoFocus} />
+      </ComposerPrimitive.AttachmentDropzone>
     </ThreadComponentsContext.Provider>
   );
 };
@@ -303,12 +314,14 @@ const ThreadWelcome: FC = () => {
 };
 
 const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
+  const gate = useAttachmentGate();
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <div
         data-slot="aui_composer-shell"
         className="border-foreground/10 focus-within:border-foreground/25 flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color]"
       >
+        <ComposerAttachments />
         <ComposerPrimitive.Input
           placeholder="Send a message..."
           className="aui-composer-input caret-primary placeholder:text-muted-foreground/60 max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
@@ -317,18 +330,21 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
           enterKeyHint="send"
           aria-label="Message input"
         />
-        <ComposerAction />
+        <AttachmentNotice gate={gate} />
+        <ComposerAction blocked={gate.blocked} />
       </div>
     </ComposerPrimitive.Root>
   );
 };
 
-const ComposerAction: FC = () => {
+const ComposerAction: FC<{ blocked: boolean }> = ({ blocked }) => {
   const { ComposerLeading } = useContext(ThreadComponentsContext);
 
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
       <div className="flex min-w-0 items-center gap-1.5">
+        <ComposerAddAttachment />
+        <ComposerScreenshot />
         {ComposerLeading ? <ComposerLeading /> : null}
       </div>
       <div className="flex items-center gap-1.5">
@@ -340,6 +356,7 @@ const ComposerAction: FC = () => {
               type="button"
               variant="default"
               size="icon"
+              disabled={blocked}
               className="aui-composer-send size-7 rounded-full"
               aria-label="Send message"
             >
@@ -454,6 +471,7 @@ const UserMessage: FC = () => {
       className="fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2"
       data-role="user"
     >
+      <UserMessageAttachments />
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
         <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
           <MessagePrimitive.Parts />

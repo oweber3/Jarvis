@@ -1,4 +1,4 @@
-import type { Chat, ChatMessage, Library, Notice, Snapshot } from "@/api"
+import type { AttachmentMarker, Chat, ChatMessage, Library, Notice, Snapshot } from "@/api"
 import { lastMessageId, mergeMessages, pendingDone, type Pending } from "@/conversion"
 
 // Keeps the page in step with the server while the owner acts at the same time. The server owns the
@@ -175,8 +175,14 @@ export class ChatSync {
     }
   }
 
-  beginSend(text: string): void {
-    this.setPending({ text, accepted: false, afterId: lastMessageId(this.shown), acceptedAt: 0 })
+  beginSend(text: string, attachments: readonly AttachmentMarker[] = []): void {
+    this.setPending({
+      text,
+      accepted: false,
+      afterId: lastMessageId(this.shown),
+      acceptedAt: 0,
+      ...(attachments.length ? { attachments: [...attachments] } : {}),
+    })
   }
 
   sendAccepted(): void {
