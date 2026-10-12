@@ -2114,6 +2114,9 @@ class VoiceListener(threading.Thread):
                 return
             try:
                 self._transcribe_job(job)
+            except Exception as exc:
+                # One bad job costs that utterance, never the worker: later speech is still transcribed.
+                debug_log(f"transcription job failed ({type(exc).__name__}); worker continues", "voice")
             finally:
                 # A job stays pending until its result is queued for the listener.
                 self._transcription_jobs_q.task_done()
@@ -2148,7 +2151,7 @@ class VoiceListener(threading.Thread):
                 captured_during_tts=job.captured_during_tts,
                 captured_tts_start_time=job.captured_tts_start_time,
                 speaker_verdict=speaker_verdict,
-                voice_onset_time=job.voice_onset_time,
+                voice_onset_time=getattr(job, "voice_onset_time", 0.0) or 0.0,
             )
         )
 
