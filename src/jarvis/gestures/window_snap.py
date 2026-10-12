@@ -201,6 +201,7 @@ class WindowSnap:
         self._fy = OneEuroFilter(settings.min_cutoff, settings.beta)
         self._state = _IDLE
         self._drift: Tuple[float, float] = (0.0, 0.0)
+        self._box: Optional[Tuple[float, float]] = None  # the camera position the comfort box is centred on
         self._last_t: Optional[float] = None
         self._side: Optional[str] = None
         self._tip: Optional[Tuple[float, float]] = None
@@ -243,11 +244,15 @@ class WindowSnap:
                 self._check_lost(arrived)
                 return
             self._last_hand = arrived
-            # Absolute: the comfort box, centred in the camera's view, spans the desktop's bounding rectangle.
+            # Absolute: the comfort box, centred where the palm was when the hand started driving, spans the
+            # desktop's bounding rectangle.
             px, py = palm_centre(chosen)
+            if self._box is None:
+                self._box = (px, py)
+                debug_log("gesture snapping: comfort box centred on the hand", "gestures")
             gain = self._desktop_width / (self._s.comfort_box * max(frame.width, 1))
-            position = (self._fx(self._centre[0] + (px - 0.5) * frame.width * gain, frame.time),
-                        self._fy(self._centre[1] + (py - 0.5) * frame.height * gain, frame.time))
+            position = (self._fx(self._centre[0] + (px - self._box[0]) * frame.width * gain, frame.time),
+                        self._fy(self._centre[1] + (py - self._box[1]) * frame.height * gain, frame.time))
             self._step(position, self._shape(chosen), frame.time, frame.height * gain)
 
     def tick(self) -> None:
@@ -311,6 +316,7 @@ class WindowSnap:
         self._window = None
         self._state = _IDLE
         self._gesture = self._candidate = None
+        self._box = None
         self._raised.clear()
         self._side = None
         self._tip = None

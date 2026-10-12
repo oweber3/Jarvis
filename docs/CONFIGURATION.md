@@ -296,7 +296,7 @@ Gesture snapping moves and scrolls windows with your hand through the webcam. It
 
 Gestures are recognised by counting your raised fingers (index, middle, ring and little), with your palm towards the camera. A gesture must hold briefly (the debounce) to count.
 
-- **Raise one finger** (your index) to aim the pointer. The pointer follows the middle of your palm, absolutely: a box in the middle of the camera's view (the comfort box, half the camera's width by default) is your whole desktop, every monitor included, so the middle of the box is the middle of the desktop and every edge is always within reach. Nothing is ever clicked.
+- **Raise one finger** (your index) to aim the pointer. The pointer follows the middle of your palm, absolutely: a box around where you first raise your hand (the comfort box, half the camera's width by default) is your whole desktop, every monitor included, so raising your hand puts the pointer in the middle of the desktop and every edge is always within reach. To re-centre, take your hand out of view and raise it again. Nothing is ever clicked.
 - **Make a fist** (all four fingers down) to grab the window under the pointer. It comes to the front and follows your hand.
 - **Raise a finger again** (or open your hand) to drop the window and snap it into the zone under the pointer. The zones are the FancyZones layouts you set up in Microsoft PowerToys (only while **FancyZones Zones** is on in Settings → Windows Control); on a monitor without zones the window stays where you drop it.
 - **Raise two fingers** (index and middle) and move your hand up or down to scroll the window under the pointer, like a two-finger scroll on a trackpad. Moving up moves the content up; the pointer stays still while you scroll.

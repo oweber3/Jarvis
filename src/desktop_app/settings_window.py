@@ -470,9 +470,9 @@ def _build_field_metadata() -> List[FieldMeta]:
       "Which hand aims. Any: whichever hand is in view, and the one already in use keeps control.",
       "gesture_snap", "choice", choices=[("any", "Any hand"), ("right", "Right hand"), ("left", "Left hand")])
     f("gesture_snap_comfort_box", "Comfort Box",
-      "The part of the camera's view, centred, that stands for your whole desktop (all monitors), as a share of "
-      "the camera's width. Your palm at its middle puts the pointer in the middle of the desktop. Smaller means "
-      "less arm movement but a more sensitive pointer.",
+      "The part of the camera's view that stands for your whole desktop (all monitors), as a share of the "
+      "camera's width. It is centred where you raise your hand, so the pointer starts in the middle of the "
+      "desktop. Smaller means less arm movement but a more sensitive pointer.",
       "gesture_snap", "float", min_val=0.15, max_val=1.0, step=0.05)
     f("gesture_snap_finger_up", "Finger Up",
       "How straight a finger must be to count as raised (its fingertip's distance from the wrist compared with "

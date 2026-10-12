@@ -115,15 +115,27 @@ def test_an_unknown_finger_combination_holds_the_pointer_still():
 THREE = [(-1920, 0, 0, 1080), (0, 0, 2560, 1440), (2560, 0, 4480, 1080)]  # desktop centre (1280, 720)
 
 
-def test_the_palm_in_the_middle_of_the_camera_puts_the_pointer_in_the_middle_of_the_desktop():
-    rig = Rig(FakeDesktop(THREE, at=(-1500, 100)))
+def test_raising_the_hand_anywhere_puts_the_pointer_in_the_middle_of_the_desktop():
+    for place in ((0.5, 0.5), (0.3, 0.65)):
+        rig = Rig(FakeDesktop(THREE, at=(-1500, 100)))
+        rig.start(*place)
+        assert rig.desk.at == (1280, 720)
+
+
+def test_taking_the_hand_out_of_view_and_raising_it_elsewhere_re_centres():
+    rig = Rig(FakeDesktop([(0, 0, 1920, 1080)]))
     rig.start(0.5, 0.5)
-    assert rig.desk.at == (1280, 720)
+    rig.glide((0.5, 0.5), (0.6, 0.5))
+    assert rig.desk.at[0] > 960
+    rig.show(frames=15)
+    rig.start(0.3, 0.5)
+    assert rig.desk.at == (960, 540)
 
 
 def test_the_comfort_box_edges_are_the_desktop_edges_across_several_monitors():
     rig = Rig(FakeDesktop(THREE), comfort_box=0.5)
-    rig.start(0.25, 0.5)  # the left edge of a box half the camera's width, centred
+    rig.start(0.5, 0.5)
+    rig.glide((0.5, 0.5), (0.25, 0.5), frames=10)  # the left edge of a box half the camera's width
     assert rig.desk.at[0] == -1920
     rig.glide((0.25, 0.5), (0.75, 0.5), frames=20)
     assert rig.desk.at[0] == pytest.approx(4479, abs=2)
@@ -131,7 +143,8 @@ def test_the_comfort_box_edges_are_the_desktop_edges_across_several_monitors():
 
 def test_a_palm_outside_the_comfort_box_holds_the_pointer_at_the_edge():
     rig = Rig(FakeDesktop([(0, 0, 1920, 1080)]))
-    rig.start(0.05, 0.5)
+    rig.start(0.5, 0.5)
+    rig.glide((0.5, 0.5), (0.05, 0.5), frames=10)
     assert rig.desk.at[0] == 0
     rig.glide((0.05, 0.5), (0.95, 0.5), frames=20)
     assert rig.desk.at[0] == 1919
@@ -203,14 +216,13 @@ def test_an_open_hand_holds_the_pointer_still_and_one_finger_brings_it_to_the_ha
     assert rig.desk.at[0] < held[0]
 
 
-def test_a_hand_out_of_view_holds_the_pointer_and_its_return_goes_to_the_hand():
+def test_a_hand_out_of_view_holds_the_pointer_still():
     rig = Rig(FakeDesktop([(0, 0, 1920, 1080)]))
     rig.start()
+    rig.glide((0.5, 0.5), (0.55, 0.5))
     held = rig.desk.at
     rig.show(frames=15)
     assert rig.desk.at == held
-    rig.start(0.6, 0.5)
-    assert rig.desk.at[0] > held[0]
 
 
 # --- grabbing, moving and snapping -----------------------------------------------------------------
@@ -516,7 +528,7 @@ def test_smoothing_still_follows_a_deliberate_movement():
     rig.start(0.4, 0.5)
     rig.glide((0.4, 0.5), (0.5, 0.5), frames=6)
     rig.show(hand(0.5, 0.5), frames=30)
-    assert rig.desk.at[0] == pytest.approx(960, abs=10)
+    assert rig.desk.at[0] == pytest.approx(960 + 0.1 * 640 * 1920 / 320, abs=10)
 
 
 # --- state and settings ----------------------------------------------------------------------------
