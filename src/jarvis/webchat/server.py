@@ -47,6 +47,8 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
+    # Jarvis records, never the page, so the browser has nothing to ask permission for.
+    "Permissions-Policy": "microphone=(), camera=(), geolocation=()",
 }
 
 _PROJECT_PATH = re.compile(r"^/api/projects/([0-9a-f]+)$")

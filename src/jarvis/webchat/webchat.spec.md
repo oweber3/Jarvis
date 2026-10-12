@@ -21,6 +21,7 @@ The server runs in the daemon process, like Phone Access (`remote/remote.spec.md
 | `jarvis/utils/local_guard.py` | `refusal(host, origin)`: the Host and Origin checks shared with the Memory Viewer |
 | `jarvis/webchat/backend.py` | `DaemonBackend`: the only module that touches `jarvis.daemon`, `bridge.modes` and the LLM backend. Tests replace it with a fake |
 | `jarvis/webchat/hub.py` | `ChatHub`: the open chat, mirroring of the dialogue memory into it, query tracking, notices, change notification for long polls |
+| `jarvis/webchat/mic.py` | `MicSessions`: the page's one microphone recording, its session id, heartbeat watch and release. Records through the dictation engine |
 | `jarvis/webchat/server.py` | Threaded HTTP server (standard library), routing, guards, static files |
 | `jarvis/webchat/identity.py` | The server's per-run identity token and the HMAC proof the desktop window checks |
 | `jarvis/webchat/runtime.py` | `start(cfg)` / `stop()`: called by the daemon; starts nothing when disabled |
@@ -50,7 +51,7 @@ Applied to every request before routing:
 
 On Windows the socket is bound with `SO_EXCLUSIVEADDRUSE`, so no other program can bind the same port while Jarvis serves it.
 
-Responses carry `Content-Security-Policy: default-src 'self'` (images may also be `data:` and styles inline), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, and `Cache-Control: no-store` for the API. Static files are served only from the built `index.html` and the `assets/` folder; nothing else on disk is reachable.
+Responses carry `Content-Security-Policy: default-src 'self'` (images may also be `data:` and styles inline), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `Permissions-Policy: microphone=(), camera=(), geolocation=()` (see **Voice input**), and `Cache-Control: no-store` for the API. Static files are served only from the built `index.html` and the `assets/` folder; nothing else on disk is reachable.
 
 ## Data
 
@@ -119,8 +120,15 @@ All JSON. Errors are `{"error": "<code>"}`.
 | `POST /api/stop` | | `cancel_active_chat_query` |
 | `POST /api/model` | `{"kind": "mode"\|"local"\|"cloud", "value", "effort"?}` | Switch a reply mode, a local model, or the active cloud mode's model (and optionally its effort); `409` with the reason (`not_enabled`, `busy`, `not_installed`, `not_ready`, `not_offered`, `effort_unsupported`, ...), `400` malformed |
 | `POST /api/clear` | `{"confirm": true}` | Delete every project, chat and message and empty the conversation |
+| `GET /api/mic` | | `available`, `reason` (`null`, or one of the refusals under **Voice input**) and `max_seconds` |
+| `POST /api/mic/start` | | `{"session", "max_seconds"}`; `409 busy`, or `503` with the reason (`disabled`, `unavailable`, `not_ready`, `microphone`) |
+| `POST /api/mic/heartbeat` | `{"session"}` | `{"state"}`: `recording`, or `full` once the length cap is reached; `404 unknown` when the recording is gone |
+| `POST /api/mic/stop` | `{"session"}` | `{"text"}` after the audio is transcribed (empty when nothing was heard); `404 unknown` |
+| `POST /api/mic/cancel` | `{"session"}` | `{"ok"}`; releases the microphone, safe to repeat |
 | `GET /api/poll?rev=<rev>&after=<id>` | | Long poll (25 s): the changed snapshot |
 | `GET /api/identity?nonce=<hex>` | | `{"proof"}`: HMAC-SHA256 of the nonce (32 to 128 lowercase hex characters, `400` otherwise) keyed with the server's identity token |
+
+A `session` is the 32-character lowercase hex id `start` returned (`400 bad_session` otherwise).
 
 The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`; never the private flag), `notices` (the ones not yet overtaken by a newer stored turn, each with its `ts`), `mode`, `model` and `cloud`.
 
@@ -148,6 +156,30 @@ The page follows the server. An assistant-ui `ExternalStoreRuntime` holds the op
 
 Desktop confirmations still appear as the desktop dialog, as in the Qt chat, whether the daemon is bundled in the desktop app or runs as its subprocess (`desktop_app.spec.md`, Action Confirmation Dialog). A daemon the desktop app did not start has no dialog and refuses those actions. The reply reads "Please confirm on your desktop" and the outcome arrives as a normal assistant message.
 
+## Voice input
+
+A microphone button beside Send in the message box. One click starts recording, another click (or Esc) stops it, and the words are added after what is already typed, for the owner to read, edit and send. They are never sent on their own. While recording the button turns into a stop button and shows the elapsed time against the cap (`1:05 / 2:00`); while the audio is being written out it shows a spinner.
+
+**Jarvis records, not the page.** The recording and the speech recognition run in the daemon, with the dictation engine and the Whisper model Jarvis already loaded (`dictation/dictation.spec.md`, Capture for a caller). The page never calls `getUserMedia` or a browser speech API and never asks for a permission, and every response carries `Permissions-Policy: microphone=(), camera=(), geolocation=()`, so neither a browser nor the desktop window's embedded Chromium has anything to ask. `tests/test_webchat_mic_page.py` fails if the page source names a browser audio or speech API.
+
+**As hold-to-dictate does.** While recording, the voice listener is paused and the face shows dictation, the start and stop beeps play, the orb follows the microphone's loudness, and the custom dictionary and filler removal settings apply. Nothing is pasted into another program and nothing is added to the dictation history.
+
+**One recording at a time, owned by its page.** `start` returns a random session id that the page must present to heartbeat, stop and cancel; another page, tab or program cannot end or read the recording. The page sends a heartbeat every 2 seconds. With none for 6 seconds (the page closed, crashed or lost the connection) the daemon cancels the recording and releases the microphone without transcribing anything; a page that is closing cancels at once. The length is capped at 120 seconds: the engine then releases the microphone and keeps the audio, the next heartbeat reads `full`, and the page stops the recording, adds the words and says it reached the longest recording. Stopping the web chat or the daemon releases the microphone too.
+
+**Refusals.** The page says why in plain words and starts nothing:
+
+| Reason | When |
+|--------|------|
+| `busy` | A request is running, Jarvis is listening for one or speaking, or another dictation or recording is open |
+| `disabled` | `dictation_enabled` is off in Settings |
+| `unavailable` | There is no dictation engine (no audio backend or hotkey library) |
+| `not_ready` | The speech model is still loading |
+| `microphone` | The input device could not be opened |
+
+`disabled` and `unavailable` are shown before the first click, as a disabled button with the reason; the others are said when the button is used.
+
+**Privacy.** The transcript is returned in the response to the `stop` request of the page that holds the session and goes nowhere else: it is not stored in a chat, not in any poll snapshot, not in the dictation history and not in a log. Debug logs record that a recording started, stopped (with its length in seconds), was cancelled or was refused (with the reason), never text. The audio stays in memory until it is transcribed or discarded.
+
 ## Desktop window
 
 `WebChatWindow` is a themed `QMainWindow` (`desktop_app.spec.md`, Theme System) with a `QWebEngineView` on `http://127.0.0.1:<web_chat_port>/`. While the daemon is starting, stopping, stopped or crashed it shows a status page instead of the chat, and when the daemon is up but the page is not served yet it says so and retries every two seconds until it loads.
@@ -156,14 +188,14 @@ Desktop confirmations still appear as the desktop dialog, as in the Qt chat, whe
 
 ## Privacy and logging
 
-- Stored text is already redacted. No message text, title, project name or path appears in logs or issue reports; `webchat` debug logs record start, stop, bind failures, refused requests and counts.
+- Stored text is already redacted. No message text, title, project name or path appears in logs or issue reports; `webchat` debug logs record start, stop, bind failures, refused requests and counts. A microphone transcript is never stored or logged (see **Voice input**).
 - The chat history and the diary are separate stores; deleting a chat does not edit the diary.
 
 ## Not in version 1
 
 - **Rewind** (re-asking a message from the past), which the Qt chat has, until the owner decides the web chat should replace it.
 - Streaming: the engine returns whole replies.
-- File or image attachments, voice input in the page, sharing and search inside message text.
+- File or image attachments, sharing and search inside message text.
 - Phone access: the phone app keeps its own conversation view. A request from a paired phone joins the open chat like any other turn and shows as a spoken one, because the dialogue memory does not record where a turn came from.
 
 ## Known limits

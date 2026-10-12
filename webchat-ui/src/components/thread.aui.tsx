@@ -42,6 +42,7 @@ export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
   Welcome?: ComponentType | undefined;
   ComposerLeading?: ComponentType | undefined;
+  ComposerTrailing?: ComponentType | undefined;
 };
 
 export type ThreadProps = {
@@ -324,7 +325,7 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
 };
 
 const ComposerAction: FC = () => {
-  const { ComposerLeading } = useContext(ThreadComponentsContext);
+  const { ComposerLeading, ComposerTrailing } = useContext(ThreadComponentsContext);
 
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
@@ -332,6 +333,7 @@ const ComposerAction: FC = () => {
         {ComposerLeading ? <ComposerLeading /> : null}
       </div>
       <div className="flex items-center gap-1.5">
+        {ComposerTrailing ? <ComposerTrailing /> : null}
         <AuiIf condition={(s) => !s.composer.canCancel}>
           <ComposerPrimitive.Send asChild>
             <TooltipIconButton

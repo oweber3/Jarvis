@@ -75,6 +75,34 @@ until it has been transcribed and pasted, or given up.
    (the microphone fails to open or start), hands-free mode ends with it:
    the next press is an ordinary hold-to-dictate.
 
+### Capture for a Caller
+
+A caller that shows the text itself (the web chat's microphone button,
+`webchat/webchat.spec.md`, Voice input) records through the engine without
+the hotkey: `start_capture(max_seconds)` returns a token, then
+`stop_capture(token)` returns the transcript, or `cancel_capture(token)`
+discards the audio. `capture_blocker()` says why a capture could not start
+now (`unavailable`, `not_ready`, `busy`), and `start_capture` raises
+`CaptureRefused` with that reason, or `microphone` when the input device
+cannot be opened.
+
+- A capture is a dictation session: the same start, processing and end
+  notices pause and resume the listener and move the face, the same beeps
+  play, and the same input device, resampling and loudness levels apply.
+- At most one capture is open, and never beside a hotkey recording or an
+  earlier dictation still being transcribed (`busy`). A hotkey press during a
+  capture starts nothing.
+- The stream opens on the calling thread, which must not be the `pynput`
+  hook thread.
+- After `max_seconds` the microphone is released and the audio is kept for
+  `stop_capture`. Cancelling, stopping and `DictationEngine.stop()` release
+  the microphone and give the end notice.
+- The transcript goes only to the caller: it is not pasted, not added to the
+  history, not passed to `on_dictation_result` and never logged, including
+  by filler removal. The custom dictionary and filler removal apply as in the
+  post-processing pipeline. Audio shorter than 0.3 s or empty gives an empty
+  transcript without calling Whisper.
+
 ## Post-Processing Pipeline
 
 After transcription, text passes through these stages in order:
@@ -142,7 +170,7 @@ After transcription, text passes through these stages in order:
 | Case                      | Behaviour                                         |
 |---------------------------|----------------------------------------------------|
 | Whisper not yet loaded    | Play "not ready" beep (on the worker, never the hook thread), skip; no start notice, nothing recorded |
-| Max recording duration    | No cap — the user controls when to stop by releasing the hotkey. A cap would paste prematurely mid-dictation and restart recording |
+| Max recording duration    | Hold-to-dictate: no cap — the user controls when to stop by releasing the hotkey. A cap would paste prematurely mid-dictation and restart recording. A capture for a caller is capped at the caller's `max_seconds` |
 | Empty transcription       | No paste occurs                                    |
 | Concurrent with assistant | Dictation works independently; pauses listener     |
 | macOS permissions         | `pynput` requires Accessibility permissions        |

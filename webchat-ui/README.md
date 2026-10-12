@@ -52,6 +52,7 @@ copy, and apply the differences to ours.
 | `components/markdown-text.tsx`, `model-selector.tsx`, `model-selector.aui.tsx`, `tooltip-icon-button.tsx`, `hooks/use-copy-to-clipboard.ts` | assistant-ui, unchanged |
 | `components/ui/*` | shadcn primitives from the same registry; `cn` imported from `@/lib/utils` |
 | `api.ts`, `conversion.ts`, `sync.ts`, `confirm.ts`, `layout.ts`, `models.ts`, `theme.ts`, `useJarvis.tsx`, `App.tsx`, `components/ModelPicker.tsx`, `components/ProjectsSidebar.tsx`, `components/ConfirmDialog.tsx` | written for Jarvis: the API client, the poll and ordering logic (`sync.ts`, free of React so it can be tested), the runtime wiring, the model and effort pickers (the model menu is assistant-ui's `ModelSelector`; the effort menu is ours), the light and dark switch, the projects sidebar and the delete confirmations |
+| `mic.ts`, `components/MicButton.tsx` | written for Jarvis: the microphone button. `mic.ts` (free of React so it can be tested) drives the daemon's recording through `/api/mic/*`; the page never uses the browser's microphone or speech APIs |
 | `index.css` | maps assistant-ui's colour tokens onto the Jarvis HUD palettes, dark and light (`generated/theme.css`) |
 
 ## Offline
