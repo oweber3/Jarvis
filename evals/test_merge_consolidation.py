@@ -25,7 +25,7 @@ from typing import List
 import pytest
 
 from conftest import requires_judge_llm
-from helpers import JUDGE_MODEL, JUDGE_BASE_URL
+from helpers import JUDGE_MODEL, make_eval_llm_config
 
 from jarvis.memory.graph_ops import merge_node_data
 
@@ -360,8 +360,8 @@ class TestNearDuplicateDedupe:
             store=graph_store,
             node_id=node.id,
             new_facts=case.new_facts,
-            ollama_base_url=JUDGE_BASE_URL,
-            ollama_chat_model=JUDGE_MODEL,
+            cfg=make_eval_llm_config(),
+            chat_model=JUDGE_MODEL,
             timeout_sec=30.0,
         )
 
@@ -407,8 +407,8 @@ class TestPatternConsolidation:
             store=graph_store,
             node_id=node.id,
             new_facts=case.new_facts,
-            ollama_base_url=JUDGE_BASE_URL,
-            ollama_chat_model=JUDGE_MODEL,
+            cfg=make_eval_llm_config(),
+            chat_model=JUDGE_MODEL,
             timeout_sec=30.0,
         )
 
@@ -455,8 +455,8 @@ class TestPatternBoundary:
             store=graph_store,
             node_id=node.id,
             new_facts=case.new_facts,
-            ollama_base_url=JUDGE_BASE_URL,
-            ollama_chat_model=JUDGE_MODEL,
+            cfg=make_eval_llm_config(),
+            chat_model=JUDGE_MODEL,
             timeout_sec=30.0,
         )
 
@@ -496,8 +496,8 @@ class TestIndependenceOfUnrelatedFacts:
             store=graph_store,
             node_id=node.id,
             new_facts=case.new_facts,
-            ollama_base_url=JUDGE_BASE_URL,
-            ollama_chat_model=JUDGE_MODEL,
+            cfg=make_eval_llm_config(),
+            chat_model=JUDGE_MODEL,
             timeout_sec=30.0,
         )
 
@@ -543,8 +543,8 @@ class TestMetaNarrativePruning:
             store=graph_store,
             node_id=node.id,
             new_facts=case.new_facts,
-            ollama_base_url=JUDGE_BASE_URL,
-            ollama_chat_model=JUDGE_MODEL,
+            cfg=make_eval_llm_config(),
+            chat_model=JUDGE_MODEL,
             timeout_sec=30.0,
         )
 
@@ -601,8 +601,8 @@ class TestBatchedMerge:
             store=graph_store,
             node_id=node.id,
             new_facts=case.new_facts,
-            ollama_base_url=JUDGE_BASE_URL,
-            ollama_chat_model=JUDGE_MODEL,
+            cfg=make_eval_llm_config(),
+            chat_model=JUDGE_MODEL,
             timeout_sec=30.0,
         )
 

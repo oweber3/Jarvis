@@ -2,7 +2,7 @@
 Integration evals for the listener + intent judge coupling.
 
 These tests exercise VoiceListener._process_transcript with a REAL intent judge
-(gemma4 via Ollama), real StateManager, real EchoDetector, and real TranscriptBuffer.
+(the fast-tier model via Ollama), real StateManager, real EchoDetector, and real TranscriptBuffer.
 
 This fills the gap between:
 - Unit tests (mock the judge → can't catch LLM integration bugs)
@@ -13,7 +13,7 @@ These integration evals verify the COUPLING:
 2. Does the listener correctly interpret the judge's output?
 3. Do safety nets (wake word validation, echo reasoning distrust) work end-to-end?
 
-Requires: Ollama running with gemma4 model available.
+Requires: Ollama running with the fast-tier model (EVAL_FAST_MODEL, default the product fast model).
 """
 
 import time
@@ -26,23 +26,29 @@ import pytest
 # Availability check
 # ---------------------------------------------------------------------------
 
-def _is_gemma4_available() -> bool:
-    """Check if gemma4 model is available via Ollama."""
+from helpers import eval_fast_model
+
+# The intent judge runs on the fast tier (``llm.spec.md``, Model tiers).
+FAST_MODEL = eval_fast_model()
+
+
+def _is_fast_model_available() -> bool:
+    """Check if the fast-tier model is available via Ollama."""
     try:
         import requests
         resp = requests.get("http://127.0.0.1:11434/api/tags", timeout=2)
         if resp.status_code != 200:
             return False
-        models = [m.get("name", "") for m in resp.json().get("models", [])]
-        return any("gemma4" in m for m in models)
+        models = {m.get("name", "") for m in resp.json().get("models", [])}
+        return FAST_MODEL in models or f"{FAST_MODEL}:latest" in models
     except Exception:
         return False
 
 
-_GEMMA4_AVAILABLE = _is_gemma4_available()
-requires_gemma4 = pytest.mark.skipif(
-    not _GEMMA4_AVAILABLE,
-    reason="gemma4 model not available via Ollama"
+_FAST_MODEL_AVAILABLE = _is_fast_model_available()
+requires_fast_model = pytest.mark.skipif(
+    not _FAST_MODEL_AVAILABLE,
+    reason=f"fast-tier model {FAST_MODEL} not available via Ollama"
 )
 
 
@@ -56,7 +62,18 @@ def _create_listener(**kwargs):
     Unlike the unit test helper, this uses create_intent_judge to build
     a real intent judge that calls Ollama. Only audio I/O is mocked.
     """
+    from jarvis.config import get_default_config
+
     mock_cfg = MagicMock()
+    # Every setting starts at its real default (LLM request shape, provider,
+    # listener switches), so nothing the code reads is a MagicMock stand-in.
+    for key, value in get_default_config().items():
+        setattr(mock_cfg, key, value)
+    # These evals cover the listener's coupling with the intent judge. Whole
+    # commands such as "what time is it" take the deterministic fast path,
+    # which skips the judge by design (fastpath.spec.md) and runs the real
+    # tool; it has its own evals (test_fast_commands.py).
+    mock_cfg.fast_commands_enabled = False
     mock_cfg.whisper_model = "small"
     mock_cfg.whisper_device = "auto"
     mock_cfg.whisper_compute_type = "int8"
@@ -80,7 +97,7 @@ def _create_listener(**kwargs):
     mock_cfg.tts_rate = 200
     mock_cfg.transcript_buffer_duration_sec = 120.0
     # Real intent judge config
-    mock_cfg.fast_model = "gemma4:e2b"
+    mock_cfg.fast_model = FAST_MODEL
     mock_cfg.ollama_base_url = "http://127.0.0.1:11434"
     mock_cfg.intent_judge_timeout_sec = 10.0
     mock_db = MagicMock()
@@ -137,6 +154,29 @@ def _add_buffer_segment(listener, text, start_time, end_time=None,
     )
 
 
+def _process_transcript(listener, text, *, utterance_energy=0.0, utterance_start_time=0.0,
+                        utterance_end_time=0.0):
+    """Hand a transcript to the listener with the TTS context the audio
+    capture path records for an utterance with these timings."""
+    echo = listener.echo_detector
+    captured_during_tts = (
+        echo._tts_start_time > 0
+        and utterance_end_time >= echo._tts_start_time
+        and (
+            (listener.tts is not None and listener.tts.is_speaking())
+            or utterance_start_time < echo._last_tts_finish_time + echo.echo_tolerance
+        )
+    )
+    listener._process_transcript(
+        text,
+        utterance_energy=utterance_energy,
+        utterance_start_time=utterance_start_time,
+        utterance_end_time=utterance_end_time,
+        captured_during_tts=captured_during_tts,
+        captured_tts_start_time=echo._tts_start_time,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Gap 1: Wake word validation catches judge hallucination
 # ---------------------------------------------------------------------------
@@ -149,7 +189,7 @@ class TestWakeWordValidationSafetyNet:
     aren't present. The listener's safety net prevents false activations.
     """
 
-    @requires_gemma4
+    @requires_fast_model
     @patch("builtins.print")
     def test_no_wake_word_rejected_despite_judge(self, _print):
         """Speech without wake word is rejected even if judge says directed.
@@ -163,7 +203,7 @@ class TestWakeWordValidationSafetyNet:
         # Add to buffer — no wake word, no hot window, no TTS
         _add_buffer_segment(listener, "How are you doing today", now - 1.0, now)
 
-        listener._process_transcript(
+        _process_transcript(listener,
             "How are you doing today",
             utterance_energy=0.01,
             utterance_start_time=now - 1.0,
@@ -177,7 +217,7 @@ class TestWakeWordValidationSafetyNet:
         )
         listener.state_manager.stop()
 
-    @requires_gemma4
+    @requires_fast_model
     @patch("builtins.print")
     def test_casual_statement_without_wake_word_rejected(self, _print):
         """A casual statement with no wake word should never be accepted."""
@@ -186,7 +226,7 @@ class TestWakeWordValidationSafetyNet:
         now = time.time()
         _add_buffer_segment(listener, "I think the weather is nice today", now - 1.0, now)
 
-        listener._process_transcript(
+        _process_transcript(listener,
             "I think the weather is nice today",
             utterance_energy=0.01,
             utterance_start_time=now - 1.0,
@@ -209,7 +249,7 @@ class TestEchoReasoningDistrust:
     the listener has a surgical override. These tests verify it works end-to-end.
     """
 
-    @requires_gemma4
+    @requires_fast_model
     @patch("builtins.print")
     def test_judge_echo_claim_overridden_in_hot_window(self, _print):
         """If judge claims echo but we're in hot window, input should still be accepted.
@@ -230,7 +270,7 @@ class TestEchoReasoningDistrust:
         user_text = "What about tomorrow?"
         _add_buffer_segment(listener, user_text, now - 0.5, now)
 
-        listener._process_transcript(
+        _process_transcript(listener,
             user_text,
             utterance_energy=0.01,
             utterance_start_time=now - 0.5,
@@ -245,7 +285,7 @@ class TestEchoReasoningDistrust:
         )
         listener.state_manager.stop()
 
-    @requires_gemma4
+    @requires_fast_model
     @patch("builtins.print")
     def test_user_query_not_confused_with_echo_after_tts(self, _print):
         """User asks about a completely different topic after TTS — not echo.
@@ -265,7 +305,7 @@ class TestEchoReasoningDistrust:
         user_text = "Jarvis set a timer for 5 minutes"
         _add_buffer_segment(listener, user_text, now - 0.5, now)
 
-        listener._process_transcript(
+        _process_transcript(listener,
             user_text,
             utterance_energy=0.01,
             utterance_start_time=now - 0.5,
@@ -292,7 +332,7 @@ class TestHotWindowHeuristicAccuracy:
     receives the right mode for different timing scenarios.
     """
 
-    @requires_gemma4
+    @requires_fast_model
     @patch("builtins.print")
     def test_active_hot_window_follow_up_accepted(self, _print):
         """Follow-up during active hot window is accepted without wake word.
@@ -310,7 +350,7 @@ class TestHotWindowHeuristicAccuracy:
         user_text = "What about the sunset?"
         _add_buffer_segment(listener, user_text, now - 0.5, now)
 
-        listener._process_transcript(
+        _process_transcript(listener,
             user_text,
             utterance_energy=0.01,
             utterance_start_time=now - 0.5,
@@ -323,7 +363,7 @@ class TestHotWindowHeuristicAccuracy:
         )
         listener.state_manager.stop()
 
-    @requires_gemma4
+    @requires_fast_model
     @patch("builtins.print")
     def test_speech_long_after_tts_requires_wake_word(self, _print):
         """Speech 30+ seconds after TTS should NOT be treated as hot window.
@@ -342,7 +382,7 @@ class TestHotWindowHeuristicAccuracy:
         user_text = "I wonder what the weather is like"
         _add_buffer_segment(listener, user_text, now - 1.0, now)
 
-        listener._process_transcript(
+        _process_transcript(listener,
             user_text,
             utterance_energy=0.01,
             utterance_start_time=now - 1.0,
@@ -356,7 +396,7 @@ class TestHotWindowHeuristicAccuracy:
         )
         listener.state_manager.stop()
 
-    @requires_gemma4
+    @requires_fast_model
     @patch("builtins.print")
     def test_utterance_started_during_tts_treated_as_hot_window(self, _print):
         """Utterance that started before TTS finished triggers hot window mode.
@@ -379,7 +419,7 @@ class TestHotWindowHeuristicAccuracy:
         user_text = "Tell me more about that"
         _add_buffer_segment(listener, user_text, utterance_start, utterance_end)
 
-        listener._process_transcript(
+        _process_transcript(listener,
             user_text,
             utterance_energy=0.01,
             utterance_start_time=utterance_start,
@@ -405,7 +445,7 @@ class TestProcessedSegmentFilteringIntegration:
     only tested in isolation (evals). This tests the full pipeline.
     """
 
-    @requires_gemma4
+    @requires_fast_model
     @patch("builtins.print")
     def test_old_query_not_re_extracted(self, _print):
         """After processing 'what's the weather', a new 'tell me a joke' query
@@ -426,7 +466,7 @@ class TestProcessedSegmentFilteringIntegration:
         user_text = "Jarvis tell me a joke"
         _add_buffer_segment(listener, user_text, now - 1.0, now)
 
-        listener._process_transcript(
+        _process_transcript(listener,
             user_text,
             utterance_energy=0.01,
             utterance_start_time=now - 1.0,
@@ -457,7 +497,7 @@ class TestHotWindowPrefersJudgeQuery:
     salvage leakage where echo fragments ride through on the raw transcript.
     """
 
-    @requires_gemma4
+    @requires_fast_model
     @patch("builtins.print")
     def test_hot_window_query_is_directed_and_non_empty(self, _print):
         """Directed follow-up in hot window produces a non-empty accepted query."""
@@ -471,7 +511,7 @@ class TestHotWindowPrefersJudgeQuery:
         user_text = "yes tell me more about the history"
         _add_buffer_segment(listener, user_text, now - 0.5, now)
 
-        listener._process_transcript(
+        _process_transcript(listener,
             user_text,
             utterance_energy=0.01,
             utterance_start_time=now - 0.5,
@@ -486,7 +526,7 @@ class TestHotWindowPrefersJudgeQuery:
             )
         listener.state_manager.stop()
 
-    @requires_gemma4
+    @requires_fast_model
     @patch("builtins.print")
     def test_wake_word_query_uses_judge_extraction(self, _print):
         """In wake word mode (not hot window), the judge's extraction IS used.
@@ -500,7 +540,7 @@ class TestHotWindowPrefersJudgeQuery:
         user_text = "Jarvis what time is it"
         _add_buffer_segment(listener, user_text, now - 0.5, now)
 
-        listener._process_transcript(
+        _process_transcript(listener,
             user_text,
             utterance_energy=0.01,
             utterance_start_time=now - 0.5,
@@ -526,7 +566,7 @@ class TestMultiSegmentBufferIntegration:
     correctly passed to the judge and the right query is extracted.
     """
 
-    @requires_gemma4
+    @requires_fast_model
     @patch("builtins.print")
     def test_tts_echo_segments_skipped_user_query_extracted(self, _print):
         """Buffer has TTS echo segments + user query. Judge should extract
@@ -553,7 +593,7 @@ class TestMultiSegmentBufferIntegration:
         user_text = "Should I bring an umbrella?"
         _add_buffer_segment(listener, user_text, now - 0.5, now)
 
-        listener._process_transcript(
+        _process_transcript(listener,
             user_text,
             utterance_energy=0.01,
             utterance_start_time=now - 0.5,
@@ -571,7 +611,7 @@ class TestMultiSegmentBufferIntegration:
             )
         listener.state_manager.stop()
 
-    @requires_gemma4
+    @requires_fast_model
     @patch("builtins.print")
     def test_wake_word_query_after_echo_segments(self, _print):
         """User retries with wake word after echo. Judge should extract
@@ -594,7 +634,7 @@ class TestMultiSegmentBufferIntegration:
         user_text = "Jarvis what about new movies this weekend"
         _add_buffer_segment(listener, user_text, now - 0.5, now)
 
-        listener._process_transcript(
+        _process_transcript(listener,
             user_text,
             utterance_energy=0.01,
             utterance_start_time=now - 0.5,
@@ -626,10 +666,15 @@ class TestStopCommandBypassesJudge:
         from tests.test_hot_window_input import _create_listener as _create_unit_listener
         listener, mock_tts = _create_unit_listener(tts_speaking=True)
         mock_tts.is_speaking.return_value = True
+        # Jarvis is mid-reply: the echo detector has seen the reply start.
+        listener.echo_detector.track_tts_start("Here is a long answer about the weather.")
 
-        listener._process_transcript(
+        now = time.time()
+        _process_transcript(listener,
             "stop",
             utterance_energy=0.01,
+            utterance_start_time=now,
+            utterance_end_time=now + 0.4,
         )
 
         mock_tts.interrupt.assert_called_once()

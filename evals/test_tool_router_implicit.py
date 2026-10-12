@@ -30,11 +30,12 @@ Run:
 import pytest
 
 from conftest import requires_judge_llm
-from helpers import JUDGE_BASE_URL, JUDGE_MODEL
+from helpers import JUDGE_MODEL, make_eval_llm_config
 
 
 def _route(query: str, context_hint=None):
     """Invoke the real LLM router with the full builtin tool catalogue."""
+    from jarvis.llm import get_llm_backend
     from jarvis.tools.registry import BUILTIN_TOOLS
     from jarvis.tools.selection import select_tools, ToolSelectionStrategy
 
@@ -43,7 +44,7 @@ def _route(query: str, context_hint=None):
         builtin_tools=BUILTIN_TOOLS,
         mcp_tools={},
         strategy=ToolSelectionStrategy.LLM,
-        llm_base_url=JUDGE_BASE_URL,
+        llm_backend=get_llm_backend(make_eval_llm_config()),
         llm_model=JUDGE_MODEL,
         llm_timeout_sec=30.0,
         context_hint=context_hint,

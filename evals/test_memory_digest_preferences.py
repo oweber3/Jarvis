@@ -26,7 +26,7 @@ Run: EVAL_JUDGE_MODEL=gemma4:e2b pytest evals/test_memory_digest_preferences.py 
 import pytest
 
 from conftest import requires_judge_llm
-from helpers import JUDGE_BASE_URL, JUDGE_MODEL
+from helpers import JUDGE_MODEL, make_eval_llm_config
 
 
 @pytest.mark.eval
@@ -40,8 +40,8 @@ class TestMemoryDigestSurfacesPreferenceSignals:
             query=query,
             diary_entries=diary_entries,
             graph_parts=[],
-            ollama_base_url=JUDGE_BASE_URL,
-            ollama_chat_model=JUDGE_MODEL,
+            cfg=make_eval_llm_config(),
+            chat_model=JUDGE_MODEL,
             timeout_sec=60.0,
         )
 
