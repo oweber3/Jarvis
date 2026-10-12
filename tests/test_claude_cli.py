@@ -148,6 +148,18 @@ class TestProtocol:
             session.close()
         assert not session.alive
 
+    def test_a_user_message_carries_its_images_as_base64_image_blocks(self, tmp_path):
+        from jarvis.tools.types import ToolImage
+        session = make(tmp_path, "answer")
+        written = []
+        session._write = written.append
+        session.send_user_text("look", [ToolImage("image/jpeg", "QUJD")])
+        session.send_user_text("plain")
+        assert written[0]["message"]["content"] == [
+            {"type": "text", "text": "look"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "QUJD"}}]
+        assert written[1]["message"]["content"] == [{"type": "text", "text": "plain"}]
+
     @pytest.mark.parametrize("mode, reason", [("oversized", "oversized"), ("malformed", "malformed"),
                                               ("exit_now", "exited")])
     def test_bad_output_or_exit_closes_the_session(self, tmp_path, mode, reason):

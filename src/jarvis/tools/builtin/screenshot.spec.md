@@ -45,4 +45,6 @@ Jarvis can look at the user's screen when they ask about it ("what's on my scree
 - **Codex:** the `jarvis_execute` result is text only and says the image follows; the image is then added to the running turn with `turn/steer`, labelled as reference data (`codex_bridge.spec.md`).
 - **Claude:** an MCP `image` content block after the text block of the `jarvis_execute` result.
 
+The web chat's **Screenshot** button (`webchat/webchat.spec.md`, Attachments) takes the same capture, scaling and OCR as a call with the default arguments, behind the same `screen_awareness_enabled` switch, and attaches the image and the fenced text to the owner's next message. It runs only when the owner presses it, and the result is held in memory for that one message like the tool's.
+
 Images are never added to dialogue memory, the diary, the graph, the tool carry-over of the hot window, the recent-actions journal or issue reports, and a repeated call answered from the broker's stored result carries no image. The text result is carried over like any tool result (secrets scrubbed), so a follow-up such as "and the second question?" can use it without looking again.

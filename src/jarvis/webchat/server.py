@@ -22,6 +22,7 @@ from ..utils.local_guard import refusal
 from . import identity
 from .hub import chat_dict, message_dict
 from .mic import MAX_RECORDING_SEC
+from .uploads import MAX_UPLOAD_BYTES, UploadRefused
 
 MAX_BODY_BYTES = 64 * 1024
 DRAIN_LIMIT_BYTES = 1024 * 1024
@@ -56,6 +57,8 @@ _PROJECT_PATH = re.compile(r"^/api/projects/([0-9a-f]+)$")
 _CHAT_PATH = re.compile(r"^/api/chats/([0-9a-f]+)$")
 _CHAT_OPEN_PATH = re.compile(r"^/api/chats/([0-9a-f]+)/open$")
 _SESSION = re.compile(r"^[0-9a-f]{32}$")
+_UPLOAD_PATH = re.compile(r"^/api/attachments/([0-9a-f]+)$")
+_UPLOAD_ROUTE = ("POST", "/api/attachments")
 
 
 @dataclass(frozen=True)
@@ -135,6 +138,8 @@ def _make_handler(server: WebChatServer):
     class Handler(BaseHTTPRequestHandler):
         server_version = "Jarvis"
         sys_version = ""
+        # A client that stalls mid-request (an upload can be large) frees its thread and buffer after this.
+        timeout = 60
 
         def log_message(self, format, *args) -> None:  # noqa: A002 - request lines never reach the console
             return
@@ -167,9 +172,11 @@ def _make_handler(server: WebChatServer):
                 self._body_error = _Refused(400, "bad_length")
                 self.close_connection = True
                 return
-            if length > MAX_BODY_BYTES:
+            # Only an upload may be large; everything else is a small JSON body.
+            limit = MAX_UPLOAD_BYTES if self._is_upload(urlsplit(self.path).path) else MAX_BODY_BYTES
+            if length > limit:
                 self._body_error = _Refused(413, "too_large")
-                remaining = min(length, DRAIN_LIMIT_BYTES)
+                remaining = min(length, limit + DRAIN_LIMIT_BYTES)
                 while remaining > 0:
                     chunk = self.rfile.read(min(65536, remaining))
                     if not chunk:
@@ -179,6 +186,18 @@ def _make_handler(server: WebChatServer):
                 return
             if length > 0:
                 self._raw_body = self.rfile.read(length)
+
+        def _is_upload(self, path: str) -> bool:
+            return (self.command, path) == _UPLOAD_ROUTE
+
+        def _upload_body(self) -> dict:
+            """The raw bytes of an upload. What they are is decided from their content, never from a declared
+            type or name, and no name or path is read from the request."""
+            if self._body_error is not None:
+                raise self._body_error
+            if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/octet-stream":
+                raise _Refused(415, "octet_stream_required")
+            return {"bytes": self._raw_body}
 
         def _body(self) -> dict:
             if self._body_error is not None:
@@ -213,7 +232,8 @@ def _make_handler(server: WebChatServer):
                 return
             if not path.startswith("/api/"):
                 raise _Refused(404, "not_found")
-            body = self._body()  # parsed first so a bad body is refused whatever the route
+            # Parsed first so a bad body is refused whatever the route.
+            body = self._upload_body() if self._is_upload(path) else self._body()
             handler = self._route(path)
             handler(body)
 
@@ -222,7 +242,7 @@ def _make_handler(server: WebChatServer):
             if (method, path) in self._FIXED:
                 return getattr(self, self._FIXED[(method, path)])
             for pattern, table in ((_PROJECT_PATH, self._PROJECT), (_CHAT_PATH, self._CHAT),
-                                   (_CHAT_OPEN_PATH, self._OPEN)):
+                                   (_CHAT_OPEN_PATH, self._OPEN), (_UPLOAD_PATH, self._UPLOAD)):
                 found = pattern.match(path)
                 if found and method in table:
                     identifier = found.group(1)
@@ -241,6 +261,9 @@ def _make_handler(server: WebChatServer):
             ("POST", "/api/projects"): "_create_project",
             ("POST", "/api/chats"): "_create_chat",
             ("POST", "/api/chat"): "_chat",
+            ("GET", "/api/attachments/support"): "_attachment_support",
+            ("POST", "/api/attachments"): "_upload",
+            ("POST", "/api/attachments/screenshot"): "_screenshot",
             ("POST", "/api/stop"): "_stop",
             ("POST", "/api/model"): "_model",
             ("POST", "/api/clear"): "_clear",
@@ -253,6 +276,7 @@ def _make_handler(server: WebChatServer):
         _PROJECT = {"PATCH": "_rename_project", "DELETE": "_delete_project"}
         _CHAT = {"GET": "_get_chat", "PATCH": "_patch_chat", "DELETE": "_delete_chat"}
         _OPEN = {"POST": "_open_chat"}
+        _UPLOAD = {"DELETE": "_discard_upload"}
 
         def _run(self) -> None:
             try:
@@ -418,10 +442,39 @@ def _make_handler(server: WebChatServer):
             text = body.get("text")
             if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
                 raise _Refused(400, "bad_text")
-            result = hub.submit(text)
+            ids = body.get("attachments", [])
+            if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
+                raise _Refused(400, "bad_attachments")
+            try:
+                result = hub.submit(text, ids)
+            except UploadRefused as refused:
+                raise _Refused(refused.status, refused.code)
             if result.status != "accepted":
                 raise _Refused({"busy": 409}.get(result.status, 503), result.status)
             self._json(202, {"query_id": result.query_id, "status": result.status})
+
+        # -- endpoints: attachments -------------------------------------------------------
+
+        def _upload(self, body) -> None:
+            try:
+                info = hub.add_upload(body["bytes"])
+            except UploadRefused as refused:
+                raise _Refused(refused.status, refused.code)
+            self._json(201, info)
+
+        def _screenshot(self, _body) -> None:
+            try:
+                info = hub.capture_screenshot()
+            except UploadRefused as refused:
+                raise _Refused(refused.status, refused.code)
+            self._json(201, info)
+
+        def _discard_upload(self, upload_id, _body) -> None:
+            hub.discard_upload(upload_id)
+            self._json(200, {"ok": True})
+
+        def _attachment_support(self, _body) -> None:
+            self._json(200, hub.attachment_support())
 
         def _stop(self, _body) -> None:
             hub.cancel()

@@ -44,6 +44,8 @@ Configuration version 5 migrates the earlier visible-chat mode: `reply_mode = co
 
 ## Tool calls and delivery
 
+- Attachments (`bridge/bridge.spec.md`, Reply path) ride `turn/start`: the request JSON gains `attachments` (redacted, fenced file text) and the turn's `input` gains one `{"type": "image", "url": "data:<mime>;base64,..."}` item per attached image after the text item. The service reports `accepts_images`.
+
 - `item/tool/call` requests are answered with `contentItems` (one JSON text item) and `success`. A result with tool images says so in its text (`image`), and right after the response Jarvis adds the images to the running turn with `turn/steer` (`expectedTurnId` the request's turn): one text input labelling them as reference data from the screen, not instructions, then one `image` input per image as a `data:` URL. Measured on codex-cli 0.159 (gpt-6-luna): an `inputImage` item in a dynamic tool result reaches the model only as text inside its code-mode `exec` output, so it cannot see the pixels, while steered images it reads. A steer that fails (the turn already ended) is logged by reason and the turn continues on the text. Every other server request (approvals, user input, elicitation and so on) is answered with an error.
 - Only `agentMessage` items of the owning thread and turn count; the last one that is not marked `commentary` is the answer (Codex does not always set the phase).
 - The answer is delivered only when the owning turn ends with `turn/completed` and `status: completed`. Turn errors map to `usage_limit`, `signed_out`, `service_unavailable` or `turn_failed`.

@@ -20,6 +20,11 @@ class FakeWebChatBackend:
         self.busy = False
         self.cancelled = 0
         self.submitted: List[str] = []
+        # What came with each typed request (a tuple of ``RequestAttachment``), and what attaching can do now.
+        self.attachments_received: List[tuple] = []
+        self.support = {"images": {"ok": True, "reason": None}, "screenshot": {"ok": True, "reason": None}}
+        self.screenshot_result = None
+        self.screenshot_error: Optional[str] = None
         self.reply_mode = {"mode": "local", "enabled": ["local", "claude"]}
         self.local_model = {"current": "gemma4:12b", "switchable": True}
         self.models = [{"id": "gemma4:12b", "name": "Gemma 4 12B", "installed": True},
@@ -52,8 +57,9 @@ class FakeWebChatBackend:
     def is_ready(self) -> bool:
         return self.memory is not None
 
-    def submit(self, text: str, *, on_start, on_complete, on_busy) -> None:
+    def submit(self, text: str, *, on_start, on_complete, on_busy, attachments: tuple = ()) -> None:
         self.submitted.append(text)
+        self.attachments_received.append(tuple(attachments))
         if self.mode == "busy":
             on_busy()
             return
@@ -68,6 +74,15 @@ class FakeWebChatBackend:
             self._held = (text, on_complete)
             return
         self._answer(text, on_complete)
+
+    def attachment_support(self) -> dict:
+        return self.support
+
+    def capture_screenshot(self):
+        from jarvis.webchat.uploads import UploadRefused
+        if self.screenshot_error:
+            raise UploadRefused(self.screenshot_error)
+        return self.screenshot_result
 
     def cancel(self) -> None:
         self.cancelled += 1

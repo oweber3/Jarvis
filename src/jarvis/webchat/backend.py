@@ -1,11 +1,14 @@
 """The only bridge between the web chat and the rest of Jarvis: the daemon, reply modes and local models."""
 from __future__ import annotations
 
+import sys
 import time
 from typing import Callable, List, Optional, Tuple
 
 from .. import assistant_state
 from ..debug import debug_log
+from ..reply.attachments import KIND_SCREENSHOT, RequestAttachment
+from .uploads import UploadRefused
 
 INSTALLED_CACHE_SEC = 30.0
 # The settings keys of each cloud reply mode: (model, effort).
@@ -26,8 +29,9 @@ def suggestion_sources(cfg) -> dict:
 class DaemonBackend:
     """What the web chat needs from the running daemon. Every call returns quickly except a mode switch."""
 
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic, screenshot_tool=None) -> None:
         self._clock = clock
+        self._screenshot_tool = screenshot_tool
         self._installed: Optional[set] = None
         self._installed_at = 0.0
 
@@ -37,9 +41,10 @@ class DaemonBackend:
         from .. import daemon
         return daemon.get_dialogue_memory() is not None and daemon.get_settings() is not None
 
-    def submit(self, text: str, *, on_start, on_complete, on_busy) -> None:
+    def submit(self, text: str, *, on_start, on_complete, on_busy, attachments: tuple = ()) -> None:
         from .. import daemon
-        daemon.submit_text_query(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy, origin="chat")
+        daemon.submit_text_query(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy, origin="chat",
+                                 attachments=attachments)
 
     def cancel(self) -> None:
         from .. import daemon
@@ -117,6 +122,65 @@ class DaemonBackend:
     def _engine():
         from .. import daemon
         return daemon.get_dictation_engine()
+
+    # -- attachments -------------------------------------------------------------
+
+    def attachment_support(self) -> dict:
+        """What attaching can do now: whether the route that answers can see images, and whether the Screenshot
+        button works. Each is ``{"ok", "reason"}``."""
+        return {"images": self._image_support(), "screenshot": self._screenshot_support()}
+
+    def _image_support(self) -> dict:
+        from .. import daemon
+        from ..bridge import modes, runtime
+        if modes.active_mode() in CLOUD_KEYS:
+            service = runtime.get_service()
+            if service is None:
+                return {"ok": False, "reason": "cloud_not_ready"}
+            sees = getattr(service, "accepts_images", False) is True
+            return {"ok": sees, "reason": None if sees else "cloud_no_images"}
+        cfg = daemon.get_settings()
+        try:
+            from .. import llm
+            sees = cfg is not None and bool(llm.get_llm_backend(cfg).supports_images(str(cfg.llm_chat_model)))
+        except Exception as exc:
+            debug_log(f"webchat: could not tell whether the local model sees images: {type(exc).__name__}",
+                      "webchat")
+            sees = False
+        return {"ok": sees, "reason": None if sees else "no_vision"}
+
+    @staticmethod
+    def _screenshot_support() -> dict:
+        from .. import daemon
+        cfg = daemon.get_settings()
+        if cfg is None:
+            return {"ok": False, "reason": "screenshot_unavailable"}
+        if getattr(cfg, "screen_awareness_enabled", True) is not True:
+            return {"ok": False, "reason": "screen_awareness_off"}
+        if sys.platform != "win32" or not getattr(cfg, "windows_tools_enabled", False):
+            return {"ok": False, "reason": "screenshot_unavailable"}
+        return {"ok": True, "reason": None}
+
+    def capture_screenshot(self) -> RequestAttachment:
+        """Capture the screen with the screenshot tool (the same capture, scaling and OCR as when the model asks
+        for it) and return it as an attachment. Raises ``UploadRefused`` when it cannot."""
+        from .. import daemon
+        from ..tools.base import ToolContext
+        support = self._screenshot_support()
+        if not support["ok"]:
+            raise UploadRefused(support["reason"])
+        tool = self._screenshot_tool
+        if tool is None:
+            from ..tools.builtin.screenshot import ScreenshotTool
+            tool = self._screenshot_tool = ScreenshotTool()
+        context = ToolContext(None, daemon.get_settings(), "", "", "", 1, lambda _text: None)
+        result = tool.run({}, context)
+        if not result.success or not result.images:
+            debug_log("webchat: the screenshot could not be captured", "webchat")
+            raise UploadRefused("screenshot_unavailable")
+        image = result.images[0]
+        return RequestAttachment(KIND_SCREENSHOT, len(image.data) * 3 // 4, image=image,
+                                 text=result.reply_text or "")
 
     # -- state -------------------------------------------------------------------
 

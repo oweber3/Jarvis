@@ -20,6 +20,7 @@ NAME_MAX_CHARS = 80
 TITLE_MAX_CHARS = 60
 ROLES = ("user", "assistant")
 SOURCES = ("typed", "voice", "confirmed")
+ATTACHMENT_KINDS = ("image", "text", "screenshot")
 
 # ``list_chats`` filters: every chat, or the chats that belong to no project.
 ANY_PROJECT = object()
@@ -59,7 +60,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   ts      REAL NOT NULL,
   source  TEXT NOT NULL DEFAULT 'typed',
   private INTEGER NOT NULL DEFAULT 0,
-  steps   TEXT NOT NULL DEFAULT ''
+  steps   TEXT NOT NULL DEFAULT '',
+  attachments TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_chat ON chat_messages(chat_id, id);
 CREATE TABLE IF NOT EXISTS chat_state (
@@ -109,6 +111,8 @@ class Message:
     private: bool = False
     # The tool steps taken for this reply, each ``{"tool", "status", "label", "summary"}`` (tools/step_log.py).
     steps: Tuple[Dict[str, Any], ...] = ()
+    # Kind and size of what was attached to the message, never its content.
+    attachments: Tuple[Dict[str, object], ...] = ()
 
 
 def _new_id() -> str:
@@ -142,6 +146,27 @@ def _snippet(content: str, query: str) -> str:
     return ("…" if start > 0 else "") + flat[start:end] + ("…" if end < len(flat) else "")
 
 
+def _attachment_markers(attachments: Sequence[Dict[str, object]]) -> str:
+    """The stored form of a message's attachments: kind and size only, whatever else was passed."""
+    markers = []
+    for item in attachments:
+        kind, size = item.get("kind"), item.get("size")
+        if kind not in ATTACHMENT_KINDS or not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise ValueError("unknown attachment")
+        markers.append({"kind": kind, "size": size})
+    return json.dumps(markers) if markers else ""
+
+
+def _parse_markers(stored: str) -> Tuple[Dict[str, object], ...]:
+    try:
+        parsed = json.loads(stored) if stored else []
+    except ValueError:
+        return ()
+    return tuple({"kind": item["kind"], "size": item["size"]} for item in parsed
+                 if isinstance(item, dict) and item.get("kind") in ATTACHMENT_KINDS
+                 and isinstance(item.get("size"), int))
+
+
 class ChatStore:
     """Projects, chats and messages. Thread-safe: one connection guarded by a re-entrant lock."""
 
@@ -168,6 +193,8 @@ class ChatStore:
         message_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(chat_messages)")}
         if "steps" not in message_columns:
             self.conn.execute("ALTER TABLE chat_messages ADD COLUMN steps TEXT NOT NULL DEFAULT ''")
+        if "attachments" not in message_columns:
+            self.conn.execute("ALTER TABLE chat_messages ADD COLUMN attachments TEXT NOT NULL DEFAULT ''")
 
     def close(self) -> None:
         with self._lock:
@@ -295,33 +322,38 @@ class ChatStore:
     # -- messages ----------------------------------------------------------------------------
 
     def append_message(self, chat_id: str, role: str, content: str, *, ts: float, source: str = "typed",
-                       private: bool = False, steps: Optional[Sequence[Dict[str, Any]]] = None) -> Message:
+                       private: bool = False, steps: Optional[Sequence[Dict[str, Any]]] = None,
+                       attachments: Sequence[Dict[str, object]] = ()) -> Message:
         """Add a message. The first user message titles a chat that has no title yet.
 
         ``private`` marks a turn that quotes the activity log: it stays out of the diary and of any
         context that leaves the PC, also when the chat is opened again. ``steps`` are the tool steps taken
-        for an assistant reply.
+        for an assistant reply. ``attachments`` are recorded as kind
+        and size only.
         """
         if role not in ROLES:
             raise ValueError("unknown role")
         if source not in SOURCES:
             raise ValueError("unknown source")
+        markers = _attachment_markers(attachments)
         with self._lock:
             chat = self.get_chat(chat_id)
             if chat is None:
                 raise ValueError("unknown chat")
             kept = tuple(dict(step) for step in (steps or ()))
             cur = self.conn.execute(
-                "INSERT INTO chat_messages(chat_id, role, content, ts, source, private, steps) VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO chat_messages(chat_id, role, content, ts, source, private, steps, attachments) "
+                "VALUES (?,?,?,?,?,?,?,?)",
                 (chat_id, role, content, ts, source, 1 if private else 0,
-                 json.dumps(kept, ensure_ascii=False) if kept else ""))
+                 json.dumps(kept, ensure_ascii=False) if kept else "", markers))
             title = chat.title or (_title_from(content) if role == "user" else "")
             self.conn.execute("UPDATE chats SET updated_at = ?, title = ? WHERE id = ?",
                               (max(ts, time.time()), title, chat_id))
             self.conn.commit()
-            return Message(int(cur.lastrowid), chat_id, role, content, ts, source, private, kept)
+            return Message(int(cur.lastrowid), chat_id, role, content, ts, source, private, kept,
+                           _parse_markers(markers))
 
-    _MESSAGE_COLUMNS = "id, chat_id, role, content, ts, source, private, steps"
+    _MESSAGE_COLUMNS = "id, chat_id, role, content, ts, source, private, steps, attachments"
 
     @staticmethod
     def _steps(raw: str) -> Tuple[Dict[str, Any], ...]:
@@ -333,7 +365,7 @@ class ChatStore:
 
     @classmethod
     def _message(cls, row) -> Message:
-        return Message(row[0], row[1], row[2], row[3], row[4], row[5], bool(row[6]), cls._steps(row[7]))
+        return Message(row[0], row[1], row[2], row[3], row[4], row[5], bool(row[6]), cls._steps(row[7]), _parse_markers(row[8]))
 
     def messages(self, chat_id: str, after_id: int = 0) -> List[Message]:
         with self._lock:

@@ -27,6 +27,7 @@ from ..bridge.tools import (
     parse_answer,
 )
 from ..debug import debug_log
+from ..reply.attachments import request_images, request_note
 from ..tools.schema_validation import validate_arguments
 from ..tools.types import ToolImage
 from ..utils.redact import redact
@@ -124,6 +125,8 @@ class _Live:
 
 class ClaudeBridgeService:
     mode = "claude"
+    # Images attached to a request go to the model as image blocks of the user message.
+    accepts_images = True
 
     def __init__(
         self,
@@ -203,9 +206,11 @@ class ClaudeBridgeService:
 
     def run_request(self, utterance: str, context: List[Dict[str, Any]], origin: str,
                     language: Optional[str], db: Any, quiet: bool,
-                    desktop: Optional[Mapping[str, Any]] = None) -> BridgeOutcome:
+                    desktop: Optional[Mapping[str, Any]] = None, attachments: tuple = ()) -> BridgeOutcome:
         """Run one request. ``desktop`` is the request's desktop context
-        (``bridge.adapter.build_desktop_context``), already redacted, bounded and gated by its switches."""
+        (``bridge.adapter.build_desktop_context``), already redacted, bounded and gated by its switches.
+        ``attachments`` (``reply.attachments``) travel with the turn only: their text, redacted, in the
+        request and their images as image blocks. The broker never holds them."""
         if self._closed:
             # The user switched away after the engine picked this service: send nothing.
             debug_log("request for a closed bridge service; not sent", "claude")
@@ -247,7 +252,7 @@ class ClaudeBridgeService:
             if failure is not None:
                 self.broker.fail(rid, failure)
                 return _error(failure)
-            return self._run_session(rid, db, language, quiet)
+            return self._run_session(rid, db, language, quiet, attachments)
         finally:
             with self._lock:
                 self._active_rid, self._live = None, None
@@ -429,7 +434,8 @@ class ClaudeBridgeService:
             self._stop(live)
             raise
 
-    def _run_session(self, rid: str, db: Any, language: Optional[str], quiet: bool) -> BridgeOutcome:
+    def _run_session(self, rid: str, db: Any, language: Optional[str], quiet: bool,
+                     attachments: tuple = ()) -> BridgeOutcome:
         req = self.broker.request_of(rid)
         if req is None:
             return _error("turn_failed")
@@ -448,8 +454,12 @@ class ClaudeBridgeService:
                 return self._outcome_from_state(rid, live)
             live.turn_id = uuid.uuid4().hex
             try:
-                live.session.send_user_text("Jarvis request " + json.dumps(self._payload(req, rid),
-                                                                             ensure_ascii=False))
+                payload = self._payload(req, rid)
+                note = redact(request_note(attachments))
+                if note:
+                    payload["attachments"] = note
+                live.session.send_user_text("Jarvis request " + json.dumps(payload, ensure_ascii=False),
+                                            request_images(attachments))
             except ClaudeCliError:
                 self.broker.fail(rid, "process_exited")
                 return _error("process_exited")

@@ -1,13 +1,28 @@
 import type { ThreadMessageLike } from "@assistant-ui/react"
+import type { AttachmentMarker, Chat, ChatMessage, Notice } from "@/api"
+import { chipType, markerLabel } from "@/attachments"
 type ThreadMessageLikePart = Exclude<ThreadMessageLike["content"], string>[number]
-import type { Chat, ChatMessage, Notice } from "@/api"
 
 // Turns what the server stores into messages the thread renders. Pure functions, covered by tests.
 
 // A message being sent: shown at once with a thinking placeholder. ``afterId`` is the newest stored message
 // when it was sent, so a reply stored since then can be told from older turns. ``acceptedAt`` is how many
 // polls had been made when the server accepted it (0 until then): only a later poll can know about it.
-export type Pending = { text: string; accepted: boolean; afterId: number; acceptedAt: number }
+export type Pending = { text: string; accepted: boolean; afterId: number; acceptedAt: number; attachments?: AttachmentMarker[] }
+
+// The chips under a message that carried attachments: kind and size, which is all the server keeps.
+function attachmentChips(markers: readonly AttachmentMarker[] | undefined, prefix: string) {
+  if (!markers || markers.length === 0) return {}
+  return {
+    attachments: markers.map((marker, index) => ({
+      id: `${prefix}-a${index}`,
+      type: chipType(marker.kind),
+      name: markerLabel(marker),
+      status: { type: "complete" as const },
+      content: [],
+    })),
+  }
+}
 
 // A reply's steps are tool-call parts ahead of its text. Each already finished (a step is only stored once the
 // call has ended), so every part carries a result and the thread never shows a call still running; how it
@@ -30,6 +45,7 @@ export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
     role: message.role,
     content: [...stepParts(message), { type: "text", text: message.text }],
     createdAt: new Date(message.ts * 1000),
+    ...(message.role === "user" ? attachmentChips(message.attachments, `m${message.id}`) : {}),
     ...(message.role === "assistant" ? { status: { type: "complete", reason: "stop" } as const } : {}),
     metadata: {
       ...(message.source === "voice" ? { modality: "voice" as const } : {}),
@@ -79,7 +95,13 @@ export function buildThreadMessages(
   while (next < placed.length) out.push(...noticeMessages(placed[next++]!))
   if (pending) {
     const createdAt = now()
-    out.push({ id: "pending-user", role: "user", content: [{ type: "text", text: pending.text }], createdAt })
+    out.push({
+      id: "pending-user",
+      role: "user",
+      content: [{ type: "text", text: pending.text }],
+      createdAt,
+      ...attachmentChips(pending.attachments, "pending"),
+    })
     out.push({
       id: "pending-reply",
       role: "assistant",

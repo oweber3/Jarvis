@@ -21,9 +21,11 @@ The server runs in the daemon process, like Phone Access (`remote/remote.spec.md
 | `jarvis/utils/local_guard.py` | `refusal(host, origin)`: the Host and Origin checks shared with the Memory Viewer |
 | `jarvis/tools/step_log.py` | `StepLog`: the in-memory record of tool steps that `run_tool_with_retries` fills and the hub reads (see **Tool steps**) |
 | `jarvis/webchat/backend.py` | `DaemonBackend`: the only module that touches `jarvis.daemon`, `bridge.modes` and the LLM backend. Tests replace it with a fake |
-| `jarvis/webchat/hub.py` | `ChatHub`: the open chat, mirroring of the dialogue memory into it, query tracking, notices, change notification for long polls |
+| `jarvis/webchat/hub.py` | `ChatHub`: the open chat, mirroring of the dialogue memory into it, query tracking, notices, change notification for long polls, the uploads waiting for a request |
 | `jarvis/webchat/suggestions.py` | The start screen's cards: `build_cards`, the generic examples, the card wording read from the fast path's locale file. Pure |
 | `jarvis/webchat/mic.py` | `MicSessions`: the page's one microphone recording, its session id, heartbeat watch and release. Records through the dictation engine |
+| `jarvis/webchat/uploads.py` | Attachments: telling an upload apart by its content, preparing it for a model, `UploadStore` (in memory only) |
+| `jarvis/reply/attachments.py` | `RequestAttachment`: what a request carries, the fence around file text, the note a model reads, the kind-and-size summary that is stored |
 | `jarvis/webchat/server.py` | Threaded HTTP server (standard library), routing, guards, static files |
 | `jarvis/webchat/identity.py` | The server's per-run identity token and the HMAC proof the desktop window checks |
 | `jarvis/webchat/runtime.py` | `start(cfg)` / `stop()`: called by the daemon; starts nothing when disabled |
@@ -49,7 +51,7 @@ Applied to every request before routing:
 
 1. `Host` must be a loopback name (`localhost`, `127.0.0.1`, `::1`), or the request gets `403` (stops DNS rebinding).
 2. A request carrying `Origin` is served only when that origin is the server itself, and a request marked `Sec-Fetch-Site: cross-site` is refused (stops cross-site requests).
-3. A request with a body must be `application/json` (`415` otherwise) and at most 64 KiB (`413`).
+3. A request with a body must be `application/json` (`415` otherwise) and at most 64 KiB (`413`). The one exception is the upload endpoint, which takes `application/octet-stream` up to 10 MiB (**Attachments**) and is checked by exactly the same Host, Origin and fetch-site rules first.
 
 On Windows the socket is bound with `SO_EXCLUSIVEADDRUSE`, so no other program can bind the same port while Jarvis serves it.
 
@@ -61,7 +63,7 @@ Tables in the Jarvis database file (`db_path`), created with `CREATE TABLE IF NO
 
 - `chat_projects(id, name, position, created_at)`
 - `chats(id, project_id NULL, title, created_at, updated_at, last_mode, last_model, pinned)` where `pinned` is `0` or `1`; a database written before pinning gains the column when `ChatStore` opens it (`ALTER TABLE ... ADD COLUMN`, default `0`), keeping every chat
-- `chat_messages(id, chat_id, role, content, ts, source, private, steps)` where `source` is `typed`, `voice` or `confirmed`, `private` marks a turn that quotes the activity log and `steps` holds the reply's tool steps (see **Tool steps**)
+- `chat_messages(id, chat_id, role, content, ts, source, private, steps, attachments)` where `source` is `typed`, `voice` or `confirmed`, `private` marks a turn that quotes the activity log, `steps` holds the reply's tool steps (see **Tool steps**) and `attachments` is a JSON list of `{"kind", "size"}` for what the message carried (kind `image`, `text` or `screenshot`, size in bytes), never a name, a path or any content. A database from before this column gains it when `ChatStore` opens it
 - `chat_state(key, value)`: holds `active_chat_id`
 
 Pinning a chat is not activity: it never changes `updated_at`, so the chat keeps its place in the age groups. A chat with no project is unfiled. Deleting a project keeps its chats and unfiles them. Deleting a chat deletes its messages. A chat's title is the first 60 characters of its first message until the owner renames it (no model call, so `docs/llm_contexts.md` is unaffected). A turn marked `private` keeps its flag, so reopening the chat keeps it out of the diary and out of any context sent off the PC. Identifiers are random hex strings.
@@ -120,7 +122,11 @@ All JSON. Errors are `{"error": "<code>"}`.
 | `PATCH /api/chats/<id>` | `{"title"?, "project_id"?, "pinned"?}` | Rename, move (`null` unfiles), pin or unpin (`pinned` must be a boolean, `400` otherwise); `404` unknown chat or project |
 | `DELETE /api/chats/<id>` | | Delete; `409` when it is the open chat and Jarvis is busy |
 | `POST /api/chats/<id>/open` | | `{"chat"}`; `404` unknown, `409` busy |
-| `POST /api/chat` | `{"text"}` | Send to the open chat (starting one when none is open): `202 {"query_id"}`, `409` busy, `503` not ready, `400` empty or over 4000 characters |
+| `POST /api/chat` | `{"text", "attachments"?}` | Send to the open chat (starting one when none is open): `202 {"query_id"}`, `409` busy, `503` not ready, `400` empty or over 4000 characters or `bad_attachments`; attachment refusals are listed under **Attachments** |
+| `POST /api/attachments` | raw bytes, `application/octet-stream` | Check and hold an upload for the next message: `201 {"id", "kind", "size"}` (never the content) or a refusal |
+| `POST /api/attachments/screenshot` | `{}` | Capture the screen through the screenshot tool and hold it the same way |
+| `DELETE /api/attachments/<id>` | | Drop a waiting upload (always `200`) |
+| `GET /api/attachments/support` | | What attaching can do now: `images` and `screenshot` (each `{"ok", "reason"}`) and the `limits` |
 | `POST /api/stop` | | `cancel_active_chat_query` |
 | `POST /api/model` | `{"kind": "mode"\|"local"\|"cloud", "value", "effort"?}` | Switch a reply mode, a local model, or the active cloud mode's model (and optionally its effort); `409` with the reason (`not_enabled`, `busy`, `not_installed`, `not_ready`, `not_offered`, `effort_unsupported`, ...), `400` malformed |
 | `POST /api/clear` | `{"confirm": true}` | Delete every project, chat and message and empty the conversation |
@@ -134,7 +140,7 @@ All JSON. Errors are `{"error": "<code>"}`.
 
 A `session` is the 32-character lowercase hex id `start` returned (`400 bad_session` otherwise).
 
-The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`; never the private flag), `notices` (the ones not yet overtaken by a newer stored turn, each with its `ts`), `mode`, `model` and `cloud`.
+The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`, `steps`, `attachments`; never the private flag), `notices` (the ones not yet overtaken by a newer stored turn, each with its `ts`), `mode`, `model` and `cloud`.
 
 ## The page
 
@@ -146,7 +152,7 @@ The page follows the server. An assistant-ui `ExternalStoreRuntime` holds the op
 - The library revision is recorded only after the library was fetched, so a failed fetch is retried and the sidebar cannot stay stale.
 - The thinking placeholder is cleared on "not busy" only from a poll made after the send was confirmed, or when a reply newer than the message is stored, so a snapshot taken before the server had the request cannot make the owner's message vanish. A poll that cannot be trusted is replaced by a fresh one.
 
-**Source of the chat components.** The thread, composer, thread list, Markdown text and model selector are assistant-ui's own source, copied into `webchat-ui/src/components` with the `assistant-ui` CLI **0.0.121** (`add thread thread-list markdown-text model-selector`) against `@assistant-ui/react` **0.15.25** and `@assistant-ui/react-markdown` **0.14.19**, then edited: trimmed of attachments, tool and reasoning groups (a tool call is drawn as a single `ToolStepRow`), feedback, editing and branching, restyled with the HUD palette, with a notice line, a slot for the picker and a "Move to project" menu item. The pristine copy is the git commit `a1b2540`; `git diff a1b2540 -- webchat-ui/src/components` is the local change set to compare with upstream when pulling improvements. Written for Jarvis: the API client, the sync logic, the tool step row and its wording (`steps.ts`, `components/ToolSteps.tsx`), the runtime wiring, the projects sidebar, the confirmation dialog and the model picker. `webchat-ui/README.md` lists every file's origin and the update steps.
+**Source of the chat components.** The thread, composer, thread list, Markdown text and model selector are assistant-ui's own source, copied into `webchat-ui/src/components` with the `assistant-ui` CLI **0.0.121** (`add thread thread-list markdown-text model-selector`) against `@assistant-ui/react` **0.15.25** and `@assistant-ui/react-markdown` **0.14.19**, then edited: trimmed of tool and reasoning groups (a tool call is drawn as a single `ToolStepRow`; the attachment chips are assistant-ui's, trimmed and restyled, and the Screenshot button is ours), feedback, editing and branching, restyled with the HUD palette, with a notice line, a slot for the picker and a "Move to project" menu item. The pristine copy is the git commit `a1b2540`; `git diff a1b2540 -- webchat-ui/src/components` is the local change set to compare with upstream when pulling improvements. Written for Jarvis: the API client, the sync logic, the tool step row and its wording (`steps.ts`, `components/ToolSteps.tsx`), the runtime wiring, the projects sidebar, the confirmation dialog and the model picker. `webchat-ui/README.md` lists every file's origin and the update steps.
 
 **Projects.** A sidebar groups the chats under projects (collapsible, remembered in the browser's storage when it allows) with the unfiled chats below. Projects are created, renamed (inline) and deleted (a second tap confirms; chats stay) from the sidebar; deleting a chat from its menu opens a dialog that names the chat and says its messages are removed for good, and "Delete everything" at the foot of the sidebar opens a dialog that says how many chats and projects go, that the diary is kept, and enables its button only once the owner has typed the confirmation word (`POST /api/clear`); Esc, Cancel and the close button leave without deleting; a chat moves with its menu ("Move to ..."); each project has a button for a new chat inside it. A search box filters chats by title.
 
@@ -235,6 +241,32 @@ A microphone button beside Send in the message box. One click starts recording, 
 
 **Privacy.** The transcript is returned in the response to the `stop` request of the page that holds the session and goes nowhere else: it is not stored in a chat, not in any poll snapshot, not in the dictation history and not in a log. Debug logs record that a recording started, stopped (with its length in seconds), was cancelled or was refused (with the reason), never text. The audio stays in memory until it is transcribed or discarded.
 
+## Attachments
+
+A message can carry attachments: **drag and drop** onto the page, **paste** from the clipboard, the **paperclip** button, and the **Screenshot** button. At most 4 per message, at most 3 of them with an image.
+
+| Kind | Accepted | What the model gets |
+|------|----------|---------------------|
+| `image` | PNG, JPEG, GIF (first frame) and WebP, up to 10 MiB and 50 million pixels | One JPEG scaled down (never up) to the screenshot tool's longest edge (`MAX_IMAGE_EDGE`). Re-encoding drops embedded metadata such as location, and transparent areas are flattened onto white |
+| `text` | Text in UTF-8, UTF-16 (with a byte order mark) or the Windows code page (plain text, Markdown, code, CSV, JSON and the like), up to 1 MiB; PDF up to 10 MiB, its text read locally with `pypdf` (first 100 pages, 6 seconds) | The text, capped at 20,000 characters (a cut is marked) and fenced as untrusted file data |
+| `screenshot` | The screenshot tool's own capture of the monitor the owner is looking at (`screenshot.spec.md`) | That tool's image and its fenced OCR text |
+
+**Upload.** The page sends the bytes of the file to `POST /api/attachments`; no name, path or declared type is read from the request, and the answer carries only an `id`, the kind and the size. What a file is comes from its content: image signatures, then `%PDF-`, then text that decodes cleanly with almost no control characters. A file renamed to look like something else is judged by what it is, and a binary of any kind is refused. Refusals carry a reason the page words: `empty` (400), `too_large` (413, also for a body over the 10 MiB upload limit), `unsupported` (415, not an image, PDF or text), `unreadable` (422, damaged), `no_text` (422, a PDF with no text layer), `encrypted` (422), `too_many` (409, more waiting or on one message than allowed), `unknown_attachment` (404, expired or already used). The page also checks the size before sending.
+
+**Held in memory only.** An upload waits in the hub's `UploadStore` (at most 8, unclaimed ones forgotten after 15 minutes), is handed over once, to the request that names its id, and is forgotten when its chip is removed or the history is cleared. It is never written to disk and never logged: debug logs record only counts and sizes. A request naming an unknown id is refused whole (`404 unknown_attachment`) and takes nothing.
+
+**What is stored.** The user message in the open chat records `attachments` as kind and size, so reopening the chat still shows that something was attached. Neither the content nor the name is kept: the dialogue memory, the diary, the graph, tool carry-over and this chat's history hold only the words the owner typed.
+
+**What the model reads** (`reply/reply.spec.md`, Attachments). The request goes through `submit_text_query` with its attachments, and a request that carries any is never taken by a deterministic fast command, because its words are about what is attached. Attached content counts as outside content, as a tool result does, so routine changes are refused after it (`routines/routines.spec.md`).
+
+- **Local:** a note ("The user attached ...") and the fenced text follow the request in the message the model reads, for that reply only; images are sent as that message's `images` to a model that can see them. When the chat model reports no vision, an **image** is refused with `409 no_vision` and the page says so; a **screenshot** still goes, as its OCR text alone, because the text answers the question without sight. Nothing is silently dropped.
+- **Claude and Codex:** the redacted text goes in the request JSON (`attachments`), and images go as image blocks of the user message (Claude) or image inputs of the turn (Codex), exactly as a tool's image reaches them (`bridge/bridge.spec.md`). A mode whose bridge reports no image support refuses a request with an image (`409 cloud_no_images`, nothing is sent), and one still starting says so (`503 cloud_not_ready`). Attaching to a cloud mode sends it to that provider, which the chip says ("Will be sent to Claude"). No per-mode sharing switch gates it, because the owner attaches it deliberately to one message; the switches govern what Jarvis volunteers.
+- **Screenshot button:** needs screen awareness on (`screen_awareness_enabled`, else `409 screen_awareness_off`) and the Windows tools; anything else is `503 screenshot_unavailable`. The capture, scaling and OCR are the tool's own (`tools/builtin/screenshot.spec.md`).
+
+A refused send (`no_vision`, `cloud_no_images`, `cloud_not_ready`) keeps the uploads, so changing model and sending again works. The page reads `GET /api/attachments/support` (and again when the mode or model changes) and disables Send, with the reason shown, rather than losing the message.
+
+**The page.** Chips for the waiting attachments sit above the text box: a thumbnail for an image, an icon for a file, the name the owner knows it by, the size, a spinner while it uploads, a remove button. The sent message shows chips with the kind and size only, also after a reload. Dropping a file anywhere on the thread highlights the target.
+
 ## Desktop window
 
 `WebChatWindow` is a themed `QMainWindow` (`desktop_app.spec.md`, Theme System) with a `QWebEngineView` on `http://127.0.0.1:<web_chat_port>/`. While the daemon is starting, stopping, stopped or crashed it shows a status page instead of the chat, and when the daemon is up but the page is not served yet it says so and retries every two seconds until it loads.
@@ -251,7 +283,8 @@ A microphone button beside Send in the message box. One click starts recording, 
 
 - **Rewind** (re-asking a message from the past), which the Qt chat has, until the owner decides the web chat should replace it.
 - Streaming: the engine returns whole replies.
-- File or image attachments and sharing.
+- Sharing.
+- Attachments that outlast their message: a file or image belongs to the one message that carried it, so a follow-up that needs it attaches it again (**Attachments**).
 - Phone access: the phone app keeps its own conversation view. A request from a paired phone joins the open chat like any other turn and shows as a spoken one, because the dialogue memory does not record where a turn came from.
 
 ## Known limits
