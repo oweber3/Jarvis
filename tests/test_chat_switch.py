@@ -82,8 +82,14 @@ class TestSwitchChatConversation:
     def test_replaces_the_conversation_with_the_chosen_chats_turns(self, memory, diary):
         memory.add_message("user", "about cooking")
         assert daemon.switch_chat_conversation([
-            {"role": "user", "content": "about trains"}, {"role": "assistant", "content": "ok"}]) is True
+            {"role": "user", "content": "about trains"}, {"role": "assistant", "content": "ok"}]) is not None
         assert contents(memory) == [("user", "about trains"), ("assistant", "ok")]
+
+    def test_returns_the_cursor_after_which_every_turn_belongs_to_the_new_chat(self, memory, diary):
+        cursor = daemon.switch_chat_conversation([{"role": "user", "content": "about trains"}])
+        memory.add_message("assistant", "a confirmed outcome landing right after the swap")
+        assert [t.content for t in memory.messages_after(cursor)] == [
+            "a confirmed outcome landing right after the swap"]
 
     def test_the_outgoing_conversation_reaches_the_diary_once(self, memory, diary):
         memory.add_message("user", "about cooking")
@@ -124,14 +130,14 @@ class TestSwitchChatConversation:
         memory.add_message("user", "keep me")
         daemon._chat_query_lock.acquire()
         try:
-            assert daemon.switch_chat_conversation([]) is False
+            assert daemon.switch_chat_conversation([]) is None
         finally:
             daemon._chat_query_lock.release()
         assert contents(memory) == [("user", "keep me")]
 
     def test_refused_before_the_daemon_has_booted(self, monkeypatch):
         monkeypatch.setattr(daemon, "_global_dialogue_memory", None)
-        assert daemon.switch_chat_conversation([]) is False
+        assert daemon.switch_chat_conversation([]) is None
 
     def test_the_lock_is_free_afterwards(self, memory, diary):
         daemon.switch_chat_conversation([])

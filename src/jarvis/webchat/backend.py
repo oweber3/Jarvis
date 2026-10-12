@@ -42,9 +42,10 @@ class DaemonBackend:
         from .. import daemon
         return daemon.get_dialogue_memory()
 
-    def switch_conversation(self, messages: list) -> bool:
+    def switch_conversation(self, messages: list) -> Optional[float]:
+        """Swap the conversation for ``messages``: the mirror cursor after the swap, or None when refused."""
         from .. import daemon
-        return bool(daemon.switch_chat_conversation(messages))
+        return daemon.switch_chat_conversation(messages)
 
     # -- state -------------------------------------------------------------------
 

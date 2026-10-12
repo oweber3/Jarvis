@@ -61,9 +61,10 @@ def test_stop_cancels_the_chat_query(world, monkeypatch):
 
 
 def test_the_conversation_swap_is_the_daemons(world, monkeypatch):
-    monkeypatch.setattr(daemon, "switch_chat_conversation", lambda messages: messages == [{"role": "user", "content": "x"}])
-    assert DaemonBackend().switch_conversation([{"role": "user", "content": "x"}]) is True
-    assert DaemonBackend().switch_conversation([]) is False
+    monkeypatch.setattr(daemon, "switch_chat_conversation",
+                        lambda messages: 12.5 if messages == [{"role": "user", "content": "x"}] else None)
+    assert DaemonBackend().switch_conversation([{"role": "user", "content": "x"}]) == 12.5
+    assert DaemonBackend().switch_conversation([]) is None
 
 
 class TestReplyModes:

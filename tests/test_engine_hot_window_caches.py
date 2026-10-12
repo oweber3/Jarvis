@@ -309,3 +309,41 @@ def test_new_conversation_clears_cache_and_carryover(
     # tool turns recorded later in this turn would only come from THIS
     # reply (mock chat returns a final reply with no tool calls).
     assert dm._tool_turns == []
+
+
+@pytest.mark.unit
+@patch("src.jarvis.memory.graph_ops.format_warm_profile_block", return_value="")
+@patch("src.jarvis.memory.graph_ops.build_warm_profile", return_value={"user": "", "directives": ""})
+@patch("src.jarvis.memory.graph.GraphMemoryStore")
+@patch("src.jarvis.reply.engine.select_tools", return_value=[])
+@patch("src.jarvis.reply.engine.plan_query", return_value=[])
+@patch("src.jarvis.reply.engine.extract_search_params_for_memory", return_value={})
+@patch("src.jarvis.reply.engine.extract_text_from_response")
+@patch("src.jarvis.reply.engine.chat_with_messages")
+def test_a_kept_thread_after_an_idle_window_drops_stale_tool_results(
+    mock_chat, mock_extract, _mock_extractor, _mock_plan, mock_select,
+    _mock_graph, _mock_warm, _mock_fmt, monkeypatch,
+):
+    """The web chat keeps the open chat's turns in context however old (``keep_last_turns``), but a
+    request after an idle window is still a new conversation: yesterday's tool result is not reused."""
+    import dialogue_clock
+    from src.jarvis.memory import conversation
+
+    clock = dialogue_clock.DialogueClock()
+    monkeypatch.setattr(conversation, "time", clock)  # this file's DialogueMemory comes from ``src.jarvis``
+    mock_chat.side_effect = [{"message": {"content": "fresh"}}]
+    mock_extract.side_effect = ["fresh"]
+    dm = DialogueMemory()
+    dm.keep_last_turns(20)
+    dm.add_message("user", "what is the weather in Leeds")
+    dm.record_tool_turn([{"role": "tool", "tool_call_id": "c1", "content": "ancient forecast"}])
+    dm.add_message("assistant", "Rain all evening.")
+    dm.hot_cache_put("router:old", ["webSearch"])
+    clock.advance(dm.RECENT_WINDOW_SEC + 60)
+
+    run_reply_engine(db=Mock(), cfg=_mock_cfg(), tts=None, text="and tomorrow", dialogue_memory=dm)
+
+    sent = str(mock_chat.call_args)
+    assert "what is the weather in Leeds" in sent and "Rain all evening." in sent  # the thread is kept
+    assert "ancient forecast" not in sent
+    assert dm.hot_cache_get("router:old") is None

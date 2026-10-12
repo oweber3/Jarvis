@@ -68,9 +68,11 @@ Opening another chat, or creating one, calls `jarvis.daemon.switch_chat_conversa
 
 1. The outgoing turns the diary has not seen get a diary pass of their own on a worker thread, so nothing is lost, nothing is summarised twice and the switch does not wait for the summary.
 2. The memory is replaced by the chosen chat's last 20 turns, redacted again and marked as already summarised. Caches and tool carryover are cleared.
-3. `active_chat_id` is stored and the hub's mirror cursor moves to the new memory.
+3. `active_chat_id` is stored and the hub mirrors from the cursor the swap returns, so a turn that lands right after the swap (a confirmed action's outcome, say) still reaches the new chat.
 
 At start-up an empty memory gets the open chat's recent turns back the same way, so the model keeps the thread across a restart.
+
+**The model keeps the thread.** While the web chat runs, the open chat's latest 20 turns stay in the reply context however old they are (`DialogueMemory.keep_last_turns`), on the local path and in what the Claude and Codex modes are sent (still within their own `*_recent_dialogue_messages` cap). Opening yesterday's chat, reading it for ten minutes and asking a follow-up therefore reaches the model with the thread the page shows. Turns inside the dialogue window (`dialogue_memory_timeout`) are always in context too, and the kept turns stay in memory after a diary pass. Only the text thread is kept: a private turn (one that quotes the activity log) follows the dialogue window as before, so one private reply does not make the rest of the chat private, and after an idle window a request still starts a new conversation (no tool carryover, fresh caches, `reply/reply.spec.md`). Voice shares the open chat, so a spoken request sees the same thread. When the web chat is off, or stops, the dialogue window alone applies.
 
 The hub mirrors every turn the memory gains into the open chat (`DialogueMemory.messages_after`), exactly as Phone Access does. Typed replies, voice turns and the outcome of a confirmed action therefore all land the same way, once. A turn mirrored while a typed request is in flight is `typed`; a lone assistant turn after an assistant turn is `confirmed`; otherwise a turn is `voice` unless it follows a user turn, whose source it shares. Local notices (busy, no reply, stopped, not ready) are shown but never stored, and are dropped when another chat opens.
 
@@ -154,4 +156,3 @@ Desktop confirmations still appear as the desktop dialog, as in the Qt chat, and
 
 - The server has no sign-in. Anything else running as the same user on this PC can read and send chats, as with the Memory Viewer; the Host, Origin and fetch-site checks stop web pages, not local programs.
 - A chat switch during the periodic diary pass can summarise the turns of that pass a second time, because the pass saves its progress only when its summary is done.
-- A confirmed action's outcome that lands in the instant a chat is switched can miss the new chat's history.

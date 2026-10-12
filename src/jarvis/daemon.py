@@ -166,7 +166,7 @@ def get_pending_diary_chunks() -> list:
 
 
 def get_hot_window_messages() -> list:
-    """Return the current hot-window turns (last ``RECENT_WINDOW_SEC``) as
+    """Return the turns in context (the hot window and any kept turns) as
     ``[{"role": "user"|"assistant", "content": str}, ...]``.
 
     The chat window seeds its transcript from this on first open so a user who
@@ -250,21 +250,22 @@ def set_chat_messages(messages: list) -> bool:
         _chat_query_lock.release()
 
 
-def switch_chat_conversation(messages: list) -> bool:
+def switch_chat_conversation(messages: list) -> Optional[float]:
     """Replace the shared conversation with a web chat's history (opening or starting a chat).
 
     The outgoing turns the diary has not seen get a diary pass of their own on a worker
     thread, so nothing is lost and the switch does not wait for the summary. The incoming
     turns are redacted and count as already summarised. Turns flagged ``"diary": False``
-    stay private. Returns False, changing nothing, when a query is running or the daemon
-    has not booted.
+    stay private. Returns the cursor for ``DialogueMemory.messages_after`` (every turn stored
+    after the swap is newer than it), or None, changing nothing, when a query is running or
+    the daemon has not booted.
     """
     dm = _global_dialogue_memory
     if dm is None:
-        return False
+        return None
     if not _chat_query_lock.acquire(blocking=False):
         debug_log("chat switch rejected: a query is in flight", "chat")
-        return False
+        return None
     try:
         from .utils.redact import redact
 
@@ -276,12 +277,12 @@ def switch_chat_conversation(messages: list) -> bool:
                 if m.get("diary") is False:
                     turn["diary"] = False
                 incoming.append(turn)
-        dm.set_messages(incoming, saved=True)
+        cursor = dm.set_messages(incoming, saved=True)
     finally:
         _chat_query_lock.release()
     if outgoing.has_pending_chunks():
         _flush_detached_conversation(outgoing)
-    return True
+    return cursor
 
 
 @dataclasses.dataclass(frozen=True)
@@ -727,7 +728,8 @@ def regenerate_chat_reply(
 
 
 def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc: bool, origin: str) -> None:
-    """Run one text query on a worker thread. The caller holds ``_chat_query_lock``; the worker releases it."""
+    """Run one text query on a worker thread. The caller holds ``_chat_query_lock``; the worker releases it
+    before ``complete`` is delivered, so a caller can send its next query from that callback."""
     # Per-query cancellation flag. The Stop button sets this; the reply engine ends the request at its
     # next step and drops the model call in flight, and the worker drops any reply that still arrives.
     global _chat_cancel_event
@@ -735,6 +737,7 @@ def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc
     _chat_cancel_event = cancel_event
 
     def _worker() -> None:
+        reply = None
         try:
             # Snapshot the redacted query for the start event. ``run_reply_engine``
             # redacts internally too; we mirror that here so the IPC stream and
@@ -764,18 +767,18 @@ def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc
             if cancel_event.is_set():
                 debug_log("chat query cancelled, dropping reply", "chat")
                 reply = None
-            _notify_chat("complete", reply, callbacks=callbacks, use_ipc=use_ipc)
         except Exception as exc:
             debug_log(f"chat query worker error: {exc}", "chat")
-            try:
-                _notify_chat("complete", None, callbacks=callbacks, use_ipc=use_ipc)
-            except Exception:
-                pass
+            reply = None
         finally:
             global _chat_cancel_event
             if _chat_cancel_event is cancel_event:
                 _chat_cancel_event = None
             _chat_query_lock.release()
+        try:
+            _notify_chat("complete", reply, callbacks=callbacks, use_ipc=use_ipc)
+        except Exception as exc:
+            debug_log(f"chat query complete callback failed: {type(exc).__name__}", "chat")
 
     try:
         threading.Thread(target=_worker, name="jarvis-chat-query", daemon=True).start()
