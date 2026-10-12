@@ -91,7 +91,7 @@ A separate tool rather than a `uiControl` action group: page and chapter request
 
 - The viewer is the foreground PDF viewer (PDFgear, process `pdfeditor`, ProgId `PdfGear.App.1`; or Google Chrome or Microsoft Edge showing a PDF from this PC), chosen like `uiControl`'s window.
 - A browser window counts only while its active tab shows a local PDF. Edge's title shows the file name, so a `.pdf` in the title is enough. Chrome's title shows the document's own title instead, so its address bar is read through UIA: a `file:` URL or local path ending in `.pdf`. A browser window the user is working in that shows no PDF is skipped rather than refused, unless it was named. The remaining windows are searched topmost first, reading the address bar of at most four Chrome windows.
-- Chrome and Edge: the file comes from the address bar's `file:` URL or local path, read through UIA.
+- Chrome and Edge: the file comes from the address bar's `file:` URL or local path, read through UIA. Chrome shows a local file without the `file:` scheme as a forward-slash path that keeps the URL's percent escapes, so such a path is decoded.
 - PDFgear and others: the file name comes from the window title. It is resolved through the user's Recent items (`%APPDATA%\Microsoft\Windows\Recent`, shortcut targets) and the Desktop, Documents and Downloads folders (two levels deep, bounded). Exactly one existing file is used; several are returned as candidates with their paths and the user is asked; none is a failure asking for the path. Nothing is guessed.
 
 ### Navigation
