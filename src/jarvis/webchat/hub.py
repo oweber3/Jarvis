@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ..debug import debug_log
 from ..memory.chat_store import ANY_PROJECT, Chat, ChatStore
+from . import suggestions
 
 DEFAULT_CHAT_TITLE = "Voice and quick questions"
 RESTORE_TURNS = 20
@@ -415,6 +416,16 @@ class ChatHub:
         return {"mode": self._backend.reply_mode_state(), "current": state.get("current"),
                 "switchable": bool(state.get("switchable")), "models": self._backend.local_models(),
                 "cloud": {**cloud, "models": self._backend.cloud_models()} if cloud else None}
+
+    def suggestions(self) -> Dict[str, Any]:
+        """The start screen's cards. Never fails: a backend that cannot say gives the generic examples."""
+        try:
+            sources = self._backend.suggestion_sources()
+            templates = suggestions.load_templates(self._backend.suggestion_languages())
+        except Exception as exc:
+            debug_log(f"webchat: start screen sources unavailable: {type(exc).__name__}", "webchat")
+            sources, templates = {}, {}
+        return {"cards": suggestions.build_cards(sources, templates)}
 
     def library(self) -> Dict[str, Any]:
         if self._backend.is_ready():

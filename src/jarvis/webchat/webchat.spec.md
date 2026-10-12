@@ -21,6 +21,7 @@ The server runs in the daemon process, like Phone Access (`remote/remote.spec.md
 | `jarvis/utils/local_guard.py` | `refusal(host, origin)`: the Host and Origin checks shared with the Memory Viewer |
 | `jarvis/webchat/backend.py` | `DaemonBackend`: the only module that touches `jarvis.daemon`, `bridge.modes` and the LLM backend. Tests replace it with a fake |
 | `jarvis/webchat/hub.py` | `ChatHub`: the open chat, mirroring of the dialogue memory into it, query tracking, notices, change notification for long polls |
+| `jarvis/webchat/suggestions.py` | The start screen's cards: `build_cards`, the generic examples, the card wording read from the fast path's locale file. Pure |
 | `jarvis/webchat/server.py` | Threaded HTTP server (standard library), routing, guards, static files |
 | `jarvis/webchat/identity.py` | The server's per-run identity token and the HMAC proof the desktop window checks |
 | `jarvis/webchat/runtime.py` | `start(cfg)` / `stop()`: called by the daemon; starts nothing when disabled |
@@ -107,6 +108,7 @@ All JSON. Errors are `{"error": "<code>"}`.
 |-----------------|------|--------|
 | `GET /api/state` | | `ready`, `state`, `busy`, `active_chat_id`, `mode`, `model`, `cloud` |
 | `GET /api/models` | | `mode`, `current`, `switchable`, `models`, and `cloud` (the active cloud mode's model, effort, `ready` and `models` with their `efforts`, or `null` in local mode) |
+| `GET /api/suggestions` | | `cards`: at most 6 of `{kind, text, action}` for the start screen (see Start screen); never fails, a backend that cannot say gives the generic examples |
 | `GET /api/library` | | `projects`, `chats` (newest first) and `active_chat_id` |
 | `POST /api/projects` | `{"name"}` | `201` the project; `400` for an empty name |
 | `PATCH /api/projects/<id>` / `DELETE` | `{"name"}` | Rename / delete (chats are unfiled); `404` unknown |
@@ -147,6 +149,20 @@ The page follows the server. An assistant-ui `ExternalStoreRuntime` holds the op
 **No outside calls.** The page calls only its own origin. `tests/test_webchat_bundle.py` fails if the build or the copied source names an outside address, a hosted service (assistant-ui Cloud included) or any analytics, beacon, socket or event-stream use.
 
 Desktop confirmations still appear as the desktop dialog, as in the Qt chat, whether the daemon is bundled in the desktop app or runs as its subprocess (`desktop_app.spec.md`, Action Confirmation Dialog). A daemon the desktop app did not start has no dialog and refuses those actions. The reply reads "Please confirm on your desktop" and the outcome arrives as a normal assistant message.
+
+## Start screen
+
+An empty chat shows a greeting for the time of day (the browser's local hour: morning, afternoon, evening) above a grid of up to six cards, in one column on a narrow window. The cards come from `GET /api/suggestions`, built by `suggestions.build_cards` with no model call, in this order:
+
+1. **Routines** (`routines`, the live set in `routines/store.py`), at most three, by name.
+2. **Workspaces** (`windows_workspaces`), by name, up to four owner cards in all; offered only while `windows_tools_enabled` is on, as the fast path is.
+3. **Generic examples** (what is using the most RAM, set the volume, search the web, ...), filling the remaining places up to six, so there is always room for them.
+
+**Behaviour.** A routine or workspace card **sends** its text at once, because it is a complete command. An example card **fills the composer** and focuses it, because it may need a detail and a click should never change a setting unseen. A card never sends while Jarvis is busy or unreachable. Both go through the normal text path, so redaction, central safety and any confirmation apply to a card exactly as to typing.
+
+**Wording.** An owner card's text is a template from the `suggestions` block of the fast path's locale file (`fastpath/phrases/<language>.json`, `{name}` filled with the name as the owner wrote it, so the fast path runs it as a whole-utterance command and a test checks that it does). The language is the first of `fast_commands_locales` that has the block, else English. The generic examples and the greeting are interface text in the page and `suggestions.py`; nothing in the code matches language patterns.
+
+**What reaches the page.** Names only. Steps, arguments, paths, URLs, aliases and labels never leave `backend.suggestion_sources`, a name over 60 characters, empty or not printable is dropped, and names are not logged (`webchat` debug logs record card counts).
 
 ## Desktop window
 

@@ -322,3 +322,29 @@ class TestPolling:
 
     def test_non_numeric_parameters_are_ignored(self, parts):
         assert call(parts, "GET", "/api/poll?rev=abc&after=xyz")[0] == 200
+
+
+class TestSuggestionsEndpoint:
+    def test_returns_cards_built_from_the_backend_sources(self, parts):
+        parts.backend.suggestion_data = {"routines": ["morning"], "workspaces": ["study"], "workspaces_available": True}
+        status, data, response = call(parts, "GET", "/api/suggestions")
+        assert status == 200 and response.getheader("Cache-Control") == "no-store"
+        assert [c["kind"] for c in data["cards"]][:2] == ["routine", "workspace"]
+        assert data["cards"][0]["action"] == "send" and "morning" in data["cards"][0]["text"]
+
+    def test_nothing_configured_still_offers_examples(self, parts):
+        status, data, _ = call(parts, "GET", "/api/suggestions")
+        assert status == 200 and data["cards"] and {c["kind"] for c in data["cards"]} == {"example"}
+
+    def test_a_foreign_host_is_refused(self, parts):
+        status, _, _ = call(parts, "GET", "/api/suggestions", headers={"Host": "evil.example"})
+        assert status == 403
+
+    def test_only_get_is_allowed(self, parts):
+        status, _, _ = call(parts, "POST", "/api/suggestions", body={})
+        assert status == 404
+
+    def test_a_failing_backend_gives_examples_not_an_error(self, parts):
+        parts.backend.suggestion_data = RuntimeError("boom")
+        status, data, _ = call(parts, "GET", "/api/suggestions")
+        assert status == 200 and {c["kind"] for c in data["cards"]} == {"example"}

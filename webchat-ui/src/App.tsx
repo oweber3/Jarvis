@@ -4,6 +4,7 @@ import { useNarrow } from "@/layout"
 import { ModelPicker } from "@/components/ModelPicker"
 import { ProjectsSidebar } from "@/components/ProjectsSidebar"
 import { Thread } from "@/components/thread.aui"
+import { StartScreen } from "@/components/StartScreen"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { chatTitle } from "@/conversion"
 import { chatValue, currentValue, describeValue } from "@/models"
@@ -65,7 +66,7 @@ const Shell: FC = () => {
         <StatusBanner reachable={reachable} ready={ready} />
         <ModelReminder />
         <div className="min-h-0 flex-1">
-          <Thread components={{ ComposerLeading: ModelPicker }} />
+          <Thread components={{ ComposerLeading: ModelPicker, Welcome: StartScreen }} />
         </div>
       </main>
       {toast && (
