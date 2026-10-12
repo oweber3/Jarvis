@@ -453,10 +453,11 @@ def _apply_custom_dictionary(text: str, dictionary: list) -> str:
     return text
 
 
-def _llm_clean_dictation(text: str, cfg, *, thinking: bool = False) -> str:
+def _llm_clean_dictation(text: str, cfg, *, thinking: bool = False, log_text: bool = True) -> str:
     """Use the configured chat backend to remove filler words and tidy
     dictation output, on the background tier. Falls back to the original
-    text if the LLM is unreachable, slow, or returns nothing usable."""
+    text if the LLM is unreachable, slow, or returns nothing usable.
+    ``log_text`` is False for a capture, whose text must never reach the log."""
     if cfg is None:
         return text
 
@@ -483,7 +484,10 @@ def _llm_clean_dictation(text: str, cfg, *, thinking: bool = False) -> str:
         )
         if cleaned and cleaned.strip():
             cleaned = cleaned.strip()
-            debug_log(f"LLM filler removal: {text!r} → {cleaned!r}", "dictation")
+            if log_text:
+                debug_log(f"LLM filler removal: {text!r} → {cleaned!r}", "dictation")
+            else:
+                debug_log("LLM filler removal applied", "dictation")
             return cleaned
     except Exception as exc:
         debug_log(f"LLM filler removal failed (using raw text): {exc}", "dictation")
@@ -590,6 +594,34 @@ def _close_stream(stream: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Capture for a caller
+# ---------------------------------------------------------------------------
+
+class CaptureRefused(Exception):
+    """A capture could not start. ``reason`` is ``unavailable`` (no audio backend), ``not_ready``
+    (Whisper is not loaded), ``busy`` (a dictation or another capture is open) or ``microphone``
+    (the input device could not be opened)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class _Capture:
+    """One capture in progress: its audio, its stream and its length cap."""
+
+    def __init__(self, token: int, stream_rate: int) -> None:
+        self.token = token
+        self.stream_rate = stream_rate
+        self.frames: list = []
+        self.stream: Optional[Any] = None
+        self.timer: Optional[threading.Timer] = None
+        self.closed = False
+        self.full = False
+        self.started_at = time.time()
+
+
+# ---------------------------------------------------------------------------
 # Main engine
 # ---------------------------------------------------------------------------
 
@@ -689,6 +721,8 @@ class DictationEngine:
         # listener is resumed even if that newer press finishes silently.
         self._open_sessions: set = set()
         self._end_owed = False
+        # A capture for a caller (``start_capture``): at most one, and never beside a hotkey recording.
+        self._capture: Optional[_Capture] = None
 
         # Double-tap detection for hands-free mode
         self._last_hotkey_release_time: float = 0.0
@@ -749,6 +783,7 @@ class DictationEngine:
         """Stop the dictation engine and clean up."""
         if self._recording:
             self._stop_recording(discard=True)
+        self._cancel_any_capture()
         if self._listener is not None:
             self._listener.stop()
             self._listener = None
@@ -762,6 +797,180 @@ class DictationEngine:
     def set_on_dictation_result(self, callback: Optional[Callable]) -> None:
         """Set the callback invoked after a successful dictation."""
         self._on_dictation_result = callback
+
+    # ------------------------------------------------------------------
+    # Capture for a caller
+    # ------------------------------------------------------------------
+
+    def start_capture(self, max_seconds: float) -> int:
+        """Record from the microphone until ``stop_capture`` or ``cancel_capture``; returns the capture's token.
+
+        Used by callers that show the text themselves (the web chat's microphone button). The listener
+        is paused and the face shows dictation exactly as for the hotkey, and a hotkey press during the
+        capture starts nothing. After ``max_seconds`` the microphone is released and the audio is kept
+        for ``stop_capture``. Raises ``CaptureRefused``. Opens the stream on the calling thread, so the
+        caller must not be the pynput hook thread.
+        """
+        if sd is None or np is None:
+            raise CaptureRefused("unavailable")
+        if self._whisper_model_ref() is None and self._whisper_backend_ref() != "mlx":
+            raise CaptureRefused("not_ready")
+        with self._lock:
+            if self._capture is not None or self._recording or self._open_sessions:
+                raise CaptureRefused("busy")
+            self._session += 1
+            token = self._session
+            self._open_sessions.add(token)
+            capture = _Capture(token, self._target_sample_rate)
+            self._capture = capture
+
+        if self._on_dictation_start:
+            try:
+                self._on_dictation_start()
+            except Exception as exc:
+                debug_log(f"on_dictation_start callback error: {exc}", "dictation")
+        try:
+            capture.stream, capture.stream_rate = self._open_capture_stream(capture)
+        except Exception as exc:
+            debug_log(f"dictation capture could not open the microphone: {type(exc).__name__}", "dictation")
+            with self._lock:
+                self._capture = None
+            self._finish_session(token)
+            raise CaptureRefused("microphone")
+        capture.started_at = time.time()
+        capture.timer = threading.Timer(max_seconds, self._capture_full, args=(capture,))
+        capture.timer.daemon = True
+        capture.timer.start()
+        _play_beep(_get_start_beep())
+        debug_log("dictation capture started", "dictation")
+        return token
+
+    def capture_state(self, token: int) -> Optional[str]:
+        """``recording``, ``full`` (the length cap was reached), or ``None`` for an unknown capture."""
+        with self._lock:
+            capture = self._capture
+            if capture is None or capture.token != token:
+                return None
+            return "full" if capture.full else "recording"
+
+    def stop_capture(self, token: int) -> Optional[str]:
+        """End the capture and return its transcript (empty when nothing was heard); ``None`` when
+        ``token`` is not the open capture. The text is returned to the caller and goes nowhere else."""
+        capture = self._take_capture(token)
+        if capture is None:
+            return None
+        text = ""
+        try:
+            self._release_capture_stream(capture)
+            _play_beep(_get_stop_beep())
+            duration = time.time() - capture.started_at
+            debug_log(f"dictation capture stopped ({duration:.1f}s)", "dictation")
+            if self._on_dictation_processing_start and self._is_newest_open(token):
+                try:
+                    self._on_dictation_processing_start()
+                except Exception as exc:
+                    debug_log(f"on_dictation_processing_start callback error: {exc}", "dictation")
+            text = self._capture_transcript(capture)
+        except Exception as exc:
+            debug_log(f"dictation capture error: {type(exc).__name__}", "dictation")
+        finally:
+            self._finish_session(token)
+        return text
+
+    def cancel_capture(self, token: int) -> bool:
+        """Drop the capture and release the microphone without transcribing. False for an unknown token."""
+        capture = self._take_capture(token)
+        if capture is None:
+            return False
+        self._release_capture_stream(capture)
+        self._finish_session(token)
+        debug_log("dictation capture cancelled", "dictation")
+        return True
+
+    def _cancel_any_capture(self) -> None:
+        with self._lock:
+            capture = self._capture
+        if capture is not None:
+            self.cancel_capture(capture.token)
+
+    def _take_capture(self, token: int) -> Optional[_Capture]:
+        with self._lock:
+            capture = self._capture
+            if capture is None or capture.token != token:
+                return None
+            self._capture = None
+        if capture.timer is not None:
+            capture.timer.cancel()
+        return capture
+
+    def _release_capture_stream(self, capture: _Capture) -> None:
+        capture.closed = True
+        stream, capture.stream = capture.stream, None
+        _close_stream(stream)
+
+    def _capture_full(self, capture: _Capture) -> None:
+        """The length cap: release the microphone, keep the audio for ``stop_capture``."""
+        with self._lock:
+            if self._capture is not capture:
+                return
+            capture.full = True
+        self._release_capture_stream(capture)
+        debug_log("dictation capture reached its length cap", "dictation")
+
+    def _open_capture_stream(self, capture: _Capture):
+        """Open and start an input stream feeding ``capture``; returns ``(stream, rate)``."""
+        stream_kwargs = resolve_input_device(sd, self._voice_device)
+        try:
+            with portaudio_lock:
+                if "device" in stream_kwargs:
+                    dev_info = sd.query_devices(stream_kwargs["device"])
+                else:
+                    dev_info = sd.query_devices(kind="input")
+            native_rate = int(dev_info.get("default_samplerate", self._target_sample_rate))
+        except Exception:
+            native_rate = self._target_sample_rate
+
+        def callback(indata, frames, time_info, status) -> None:
+            if capture.closed:
+                return
+            frame = mono_capture(indata).copy()
+            capture.frames.append(frame)
+            if frame.size:
+                rms = math.sqrt(float((frame.astype("float32") ** 2).mean()))
+                voice_levels.publish(voice_levels.Voice.MICROPHONE, voice_levels.level_from_rms(rms))
+
+        with _suppress_stderr():
+            stream, rate, _channels = open_input_stream(
+                sd, native_rate, 100, stream_kwargs,
+                callback=callback, log_category='dictation',
+                fallback_rate=self._target_sample_rate,
+            )
+        stream_opened(stream)
+        try:
+            with portaudio_lock:
+                stream.start()
+        except Exception:
+            _close_stream(stream)
+            raise
+        return stream, rate
+
+    def _capture_transcript(self, capture: _Capture) -> str:
+        """Transcribe a capture's audio and apply the dictionary and filler removal. Never logs the text."""
+        if not capture.frames:
+            debug_log("dictation capture heard nothing", "dictation")
+            return ""
+        audio = np.concatenate(capture.frames)
+        if capture.stream_rate != self._target_sample_rate:
+            audio = _resample(audio, capture.stream_rate, self._target_sample_rate)
+        if len(audio) < self._target_sample_rate * 0.3:
+            debug_log("dictation capture too short for transcription", "dictation")
+            return ""
+        text = self._transcribe(audio)
+        if text and self._custom_dictionary:
+            text = _apply_custom_dictionary(text, self._custom_dictionary)
+        if text and self._filler_removal:
+            text = _llm_clean_dictation(text, self._cfg, thinking=self._thinking, log_text=False)
+        return text or ""
 
     # ------------------------------------------------------------------
     # Key event handlers
@@ -825,7 +1034,7 @@ class DictationEngine:
                 return
 
         # Check activation condition
-        if not self._recording and not self._paste_in_progress:
+        if not self._recording and not self._paste_in_progress and self._capture is None:
             mods_held = self._all_modifiers_held()
 
             if self._trigger is not None:
