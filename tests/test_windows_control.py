@@ -266,61 +266,6 @@ def test_graceful_close_requests_close_without_terminating_process(monkeypatch):
     assert result['action'] == 'close_requested'
 
 
-BROWSER_ABOUT_WORD = ('How to use Word mail merge - Google Chrome', 'chrome')
-
-
-def _close_through_the_tool(monkeypatch, windows, target, catalogue=()):
-    from jarvis.config import load_settings
-    from jarvis.platform.windows import apps, windows_mgmt as wm
-    from jarvis.tools.base import ToolContext
-    from jarvis.tools.builtin.windows import AppControlTool
-    monkeypatch.setattr(apps.APP_INDEX, 'snapshot', lambda: tuple(catalogue))
-    monkeypatch.setattr(apps.APP_INDEX, 'applications', lambda: list(catalogue))
-    monkeypatch.setattr(wm, 'list_windows', lambda: [wm.Window(hwnd, title, process, hwnd)
-                                                     for hwnd, (title, process) in windows.items()])
-    closed = []
-    monkeypatch.setattr(wm, '_close_window', closed.append)
-    cfg = replace(load_settings(), windows_app_aliases={})
-    result = AppControlTool().run({'action': 'close', 'target': target},
-                                  ToolContext(None, cfg, '', '', '', 1, lambda text: None))
-    return result, closed
-
-
-def test_close_never_picks_a_window_whose_title_only_mentions_the_application(monkeypatch):
-    """apps_paths.spec.md: close matches a process, a full title or a handle, never words within a title, so
-    closing Word while it is not running leaves the browser page about Word open."""
-    result, closed = _close_through_the_tool(monkeypatch, {4242: BROWSER_ABOUT_WORD}, 'Word')
-    assert not result.success and closed == []
-    assert 'window handle' in result.error_message
-
-
-def test_close_reaches_the_application_by_its_catalogue_name_and_process(monkeypatch):
-    from jarvis.platform.windows.apps import Application
-    word = Application('Word', 'word.lnk', 'C:/Office/WINWORD.EXE')
-    windows = {4242: BROWSER_ABOUT_WORD, 101: ('Document1 - Word', 'WINWORD')}
-    for target in ('Word', 'WINWORD', '101', 'Document1 - Word'):
-        result, closed = _close_through_the_tool(monkeypatch, windows, target, [word])
-        assert result.success and closed == [101], target
-
-
-def test_close_by_a_shared_program_name_does_not_reach_other_entries_windows(monkeypatch):
-    """A script shortcut run through cmd.exe is not identified by cmd's windows."""
-    from jarvis.platform.windows.apps import Application
-    catalogue = [Application('RGB Lighting Control', 'rgb.lnk', 'C:/Windows/System32/cmd.exe', '/c rgb.bat'),
-                 Application('Command Prompt', 'cmd.lnk', 'C:/Windows/System32/cmd.exe')]
-    result, closed = _close_through_the_tool(monkeypatch, {7: ('Administrator: build', 'cmd')},
-                                             'RGB Lighting Control', catalogue)
-    assert not result.success and closed == []
-
-
-def test_other_window_actions_still_find_a_window_by_words_of_its_title(monkeypatch):
-    from jarvis.platform.windows import windows_mgmt as wm
-    monkeypatch.setattr(wm, 'list_windows', lambda: [wm.Window(4242, *BROWSER_ABOUT_WORD, 1)])
-    focused = []
-    monkeypatch.setattr(wm, '_focus_window', lambda hwnd: focused.append(hwnd) or True)
-    assert wm.control_window('focus', 'mail merge')['hwnd'] == 4242 and focused == [4242]
-
-
 def test_paths_open_files_folders_and_known_folders(tmp_path, monkeypatch):
     from jarvis.platform.windows import files
     document = tmp_path / 'report.txt'

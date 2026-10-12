@@ -236,34 +236,13 @@ def _window_target(target, cfg):
     return PureWindowsPath(app.executable).stem
 
 
-def _owned_process(target, cfg):
-    """For a window action that matches only exactly (``close``): an application name from the ready catalogue
-    becomes the executable stem that application alone runs, so "close Word" reaches Word's own windows and
-    never a window whose title merely mentions Word. Anything else passes through unchanged."""
-    from ....platform.windows.apps import APP_INDEX, launch_identity, launcher_stem, resolve_application
-    apps = APP_INDEX.snapshot()
-    if apps is None or target.strip().isdigit():
-        return target
-    try:
-        app = resolve_application(target, list(apps), cfg.windows_app_aliases)
-    except ValueError:
-        return target
-    stem = launcher_stem(app)
-    if not stem:
-        return target
-    # A program other entries run differently (a script through cmd.exe) does not identify this application.
-    identities = {launch_identity(other) for other in apps
-                  if other.executable and PureWindowsPath(other.executable).stem.casefold() == stem.casefold()}
-    return stem if len(identities) == 1 else target
-
-
 # ``_catalogue_entry`` could not read the catalogue, so it cannot tell whether a launch removes software.
 _CATALOGUE_UNAVAILABLE = object()
 
 
 def _catalogue_entry(target, cfg):
-    """The catalogue entry a launch would use, ``None`` when the name launches nothing (unknown or ambiguous),
-    or ``_CATALOGUE_UNAVAILABLE`` when the catalogue cannot be read.
+    """The catalogue entry a launch would use, ``None`` when the name launches nothing (unknown or ambiguous, or
+    discovery failed so no launch can run), or ``_CATALOGUE_UNAVAILABLE`` while discovery is still loading.
 
     Uses the ready catalogue; otherwise it starts or waits for discovery as the launch itself would."""
     from ....platform.windows.apps import APP_INDEX, resolve_application
@@ -272,7 +251,7 @@ def _catalogue_entry(target, cfg):
         try:
             apps = APP_INDEX.applications()
         except OSError:
-            return _CATALOGUE_UNAVAILABLE
+            return None if APP_INDEX.failed else _CATALOGUE_UNAVAILABLE
     try:
         return resolve_application(target, list(apps), getattr(cfg, 'windows_app_aliases', {}))
     except ValueError:
@@ -430,11 +409,9 @@ class AppControlTool(WindowsTool):
                 process, resolve = '', None
             return _Launched(open_application(target, cfg.windows_app_aliases,
                                               allow_uninstaller=uninstaller_approved), process, resolve)
-        from ....platform.windows.windows_mgmt import DESTRUCTIVE_WINDOW_ACTIONS, control_window
+        from ....platform.windows.windows_mgmt import control_window
         if action != 'list':
             target = _window_target(target, cfg)
-            if action in DESTRUCTIVE_WINDOW_ACTIONS and not process_only:
-                target = _owned_process(target, cfg)
         return control_window(action, target, process_only=process_only)
 
 

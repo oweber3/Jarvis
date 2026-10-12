@@ -1,6 +1,7 @@
-"""Screen OCR reads the full-resolution capture (``tools/builtin/screenshot.spec.md``, Result): an image larger
-than Windows' OCR engine accepts is read in overlapping tiles and the lines are joined in reading order, each
-once. The OCR engine is a fake that reads a synthetic page; nothing captures the real screen."""
+"""Screen OCR reads the full-resolution capture (``tools/builtin/screenshot.spec.md``, Result). An image larger than
+the OCR engine accepts (its ``max_image_dimension``, read from the engine) is read in equal tiles, row by row,
+each tile's lines in the engine's own order and each word once. The engine is a fake that reads a synthetic page
+with a small limit; nothing captures the real screen."""
 
 import numpy as np
 import pytest
@@ -9,8 +10,6 @@ from PIL import Image
 from jarvis.platform.windows import screen
 
 pytestmark = pytest.mark.unit
-
-LIMIT = 2600  # Windows' OcrEngine.MaxImageDimension
 
 
 def _page_image(width, height):
@@ -26,62 +25,88 @@ def _origin(image, x, y):
     return r + (g << 8), b + ((a - 1) << 8)
 
 
-class FakeOcr:
-    """Reads ``page`` (lines of ``(text, left, top, right, bottom)`` words) the way the real engine would: whole
-    words inside the tile, and the visible part of a word the tile edge cuts."""
+def fake_engine(limit):
+    class FakeOcr:
+        """Reads ``page`` (lines of ``(text, left, top, right, bottom)`` words, in the engine's order) as the real
+        engine would: whole words inside the tile, and the visible part of a word the tile edge cuts."""
 
-    max_image_dimension = LIMIT
+        max_image_dimension = limit
 
-    def __init__(self, page):
-        self.page, self.tiles = page, []
+        def __init__(self, page):
+            self.page, self.tiles = page, []
 
-    async def recognise(self, _engine, tile):
-        width, height = tile.size
-        assert max(width, height) <= LIMIT
-        left, top = _origin(tile, 0, 0)
-        assert _origin(tile, width - 1, height - 1) == (left + width - 1, top + height - 1), "tile was scaled"
-        self.tiles.append((left, top, width, height))
-        lines = []
-        for words in self.page:
-            seen = []
-            for text, l, t, r, b in words:
-                cl, cr = max(l, left), min(r, left + width)
-                if cr <= cl or t < top or b > top + height:
-                    continue
-                shown = text[:max(1, round(len(text) * (cr - cl) / (r - l)))]
-                seen.append(screen.OcrWord(shown, cl - left, t - top, cr - left, b - top))
-            if seen:
-                lines.append(screen.OcrLine(" ".join(w.text for w in seen), tuple(seen)))
-        return lines
+        async def recognise(self, _engine, tile):
+            width, height = tile.size
+            assert max(width, height) <= self.max_image_dimension  # what the real engine enforces
+            left, top = _origin(tile, 0, 0)
+            assert _origin(tile, width - 1, height - 1) == (left + width - 1, top + height - 1), "tile was scaled"
+            self.tiles.append((left, top, width, height))
+            lines = []
+            for words in self.page:
+                seen = []
+                for text, l, t, r, b in words:
+                    cl, cr = max(l, left), min(r, left + width)
+                    if cr <= cl or t < top or b > top + height:
+                        continue
+                    shown = text[:max(1, round(len(text) * (cr - cl) / (r - l)))]
+                    seen.append(screen.OcrWord(shown, cl - left, t - top, cr - left, b - top))
+                if seen:
+                    lines.append(screen.OcrLine(" ".join(w.text for w in seen), tuple(seen)))
+            return lines
+
+    return FakeOcr
 
 
-def _read(monkeypatch, page, size):
-    fake = FakeOcr(page)
-    monkeypatch.setattr(screen, "_ocr_engine", lambda: (FakeOcr, object()))
+def _read(monkeypatch, engine_type, page, size):
+    fake = engine_type(page)
+    monkeypatch.setattr(screen, "_ocr_engine", lambda: (engine_type, object()))
     monkeypatch.setattr(screen, "_recognise", fake.recognise)
     return screen.read_text(_page_image(*size)), fake
 
 
-def test_a_4k_capture_is_read_at_full_resolution_in_reading_order_without_duplicates(monkeypatch):
-    long_line = [(f"w{i}", 20 + 150 * i, 100, 140 + 150 * i, 130) for i in range(25)]  # crosses every tile edge
-    middle = [("middle", 1900, 400, 2000, 430)]  # inside the overlap: seen whole by both tiles
-    status = [("status", 10, 2100, 80, 2130)]
-    tiny = [("tiny", 3700, 2100, 3760, 2130)]  # small text far right, which a downscale would blur
-    lines, fake = _read(monkeypatch, [long_line, middle, status, tiny], (3840, 2160))
-
-    assert len(fake.tiles) > 1
-    assert lines == [" ".join(f"w{i}" for i in range(25)), "middle", "status", "tiny"]
-
-
-def test_a_tall_capture_is_tiled_vertically_too(monkeypatch):
-    page = [[("top", 50, 40, 150, 70)], [("cut", 50, 2560, 150, 2590)], [("bottom", 50, 3800, 200, 3830)]]
-    lines, fake = _read(monkeypatch, page, (1200, 3900))
-    assert len({top for _l, top, _w, _h in fake.tiles}) > 1
-    assert lines == ["top", "cut", "bottom"]
-
-
-def test_a_capture_the_engine_accepts_is_read_once_in_the_engines_order(monkeypatch):
+def test_an_image_the_engine_accepts_is_read_once_in_the_engines_order(monkeypatch):
+    engine = fake_engine(1000)
     page = [[("second", 10, 300, 100, 330)], [("first", 10, 100, 100, 130)]]
-    lines, fake = _read(monkeypatch, page, (1920, 1080))
-    assert fake.tiles == [(0, 0, 1920, 1080)]
+    lines, fake = _read(monkeypatch, engine, page, (engine.max_image_dimension, 600))
+    assert fake.tiles == [(0, 0, engine.max_image_dimension, 600)]
     assert lines == ["second", "first"]
+
+
+def test_a_wider_image_is_read_in_equal_unscaled_tiles_each_word_once(monkeypatch):
+    engine = fake_engine(1000)
+    width = engine.max_image_dimension * 2 + 300
+    left_tile = [("left", 20, 100, 120, 130)]
+    right_tile = [("right", width - 150, 100, width - 20, 130)]
+    lines, fake = _read(monkeypatch, engine, [left_tile, right_tile], (width, 500))
+    sizes = {(w, h) for _l, _t, w, h in fake.tiles}
+    assert len(fake.tiles) == 3 and len(sizes) == 1, "tiles should be equal"
+    assert fake.tiles[0][0] == 0 and fake.tiles[-1][0] + fake.tiles[-1][2] == width
+    assert lines == ["left", "right"]
+
+    # A word in the overlap of two tiles is seen whole by both and kept once.
+    first, second = fake.tiles[0], fake.tiles[1]
+    overlap_left, overlap_right = second[0], first[0] + first[2]
+    middle = (overlap_left + overlap_right) // 2
+    straddling = [("edge", middle - 30, 300, middle + 30, 330)]
+    lines, _ = _read(monkeypatch, engine, [straddling], (width, 500))
+    assert lines == ["edge"]
+
+
+def test_each_tile_keeps_the_engines_line_order(monkeypatch):
+    """Tiles are read row by row, left to right, and their lines are not re-ordered across tiles."""
+    engine = fake_engine(1000)
+    width = engine.max_image_dimension * 2 - 200
+    page = [[("lower-left", 20, 400, 200, 430)], [("upper-left", 20, 100, 200, 130)],
+            [("right", width - 200, 50, width - 20, 80)]]
+    lines, fake = _read(monkeypatch, engine, page, (width, 500))
+    assert len(fake.tiles) == 2
+    assert lines == ["lower-left", "upper-left", "right"]
+
+
+def test_a_tall_image_is_tiled_vertically_too(monkeypatch):
+    engine = fake_engine(1000)
+    height = engine.max_image_dimension + 500
+    page = [[("top", 50, 40, 150, 70)], [("bottom", 50, height - 60, 200, height - 30)]]
+    lines, fake = _read(monkeypatch, engine, page, (800, height))
+    assert len({top for _l, top, _w, _h in fake.tiles}) == 2
+    assert lines == ["top", "bottom"]

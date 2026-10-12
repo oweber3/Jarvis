@@ -124,7 +124,6 @@ def test_loading_again_from_the_same_folder_keeps_the_module(folder):
     ("raises", "def register(api):\n    raise ValueError('boom')\n"),
     ("exits_on_import", "import sys\nsys.exit(1)\n"),
     ("exits_in_register", "def register(api):\n    raise SystemExit(2)\n"),
-    ("interrupts_register", "def register(api):\n    raise KeyboardInterrupt\n"),
 ])
 def test_a_broken_extension_warns_once_and_others_still_load(folder, capsys, name, body):
     if body is not None:
@@ -138,6 +137,18 @@ def test_a_broken_extension_warns_once_and_others_still_load(folder, capsys, nam
     warnings = warnings_in(capsys)
     assert len(warnings) == 1 and name in warnings[0]
     assert loaded.names == ["fine"] and cfg.calls == ["fine"]
+
+
+@pytest.mark.parametrize("body", [
+    "raise KeyboardInterrupt\n",
+    "def register(api):\n    raise KeyboardInterrupt\n",
+    "def register(api):\n    api.on_start(_stop)\n\ndef _stop():\n    raise KeyboardInterrupt\n",
+])
+def test_a_stop_request_during_extension_start_up_is_never_swallowed(folder, body):
+    """The daemon's stop signal handlers raise KeyboardInterrupt; it must still stop start-up."""
+    folder("interrupted", body)
+    with pytest.raises(KeyboardInterrupt):
+        load_extensions(settings(folder, "interrupted"), raw={}).start()
 
 
 def test_a_failing_register_leaves_nothing_behind(folder, capsys):

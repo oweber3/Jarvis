@@ -50,6 +50,22 @@ _FAKE_SERVER = textwrap.dedent(
         """Return the text."""
         return text
 
+    @mcp.tool()
+    async def slow_effect() -> str:
+        """Act later from a thread that keeps this process alive after its
+        stdin closes (as a server finishing work in the background would)."""
+        import threading, time
+
+        def act():
+            while not (work / "go").exists():
+                time.sleep(0.05)
+            with open(work / "actions.log", "a", encoding="utf-8") as fh:
+                fh.write("slow\\n")
+
+        threading.Thread(target=act).start()
+        while True:
+            await asyncio.sleep(0.05)
+
     mcp.run()
     '''
 )
@@ -108,6 +124,7 @@ def runtime_cleanup(tmp_path):
     from jarvis.tools.external.mcp_runtime import shutdown_runtime
 
     (tmp_path / "release").write_text("x")
+    (tmp_path / "go").write_text("x")
     shutdown_runtime()
     for pid in _spawned_pids(tmp_path):
         try:
@@ -183,6 +200,109 @@ def test_call_queued_behind_a_hung_call_runs_once_on_a_fresh_session(tmp_path, r
     assert waiting.result(timeout=20).content[0].text == "recorded once"
     assert _logged(tmp_path) == ["once"]
     assert len(_spawned_pids(tmp_path)) == 2
+
+
+def _timed_out_server_then_next_call(tmp_path, cfg):
+    """A call times out while its server keeps running; return the old
+    server's pid, whether it was still alive when the next call answered,
+    and that answer."""
+    from jarvis.tools.external.mcp_runtime import get_runtime
+
+    runtime = get_runtime()
+    with pytest.raises(concurrent.futures.TimeoutError):
+        runtime.invoke("fake", cfg, "slow_effect", {}, timeout=1)
+    (old_pid,) = _spawned_pids(tmp_path)
+    answer = runtime.invoke("fake", cfg, "record", {"text": "fast"}, timeout=30)
+    return old_pid, _alive(old_pid), answer
+
+
+def test_a_timed_out_call_never_acts_alongside_or_after_the_next_call(tmp_path, runtime_cleanup):
+    """The replacement session starts only once the stuck one has ended, so
+    the timed-out call's side effect can never land after the next call's."""
+    cfg = _server_cfg(tmp_path, _FAKE_SERVER)
+    old_pid, old_alive, answer = _timed_out_server_then_next_call(tmp_path, cfg)
+
+    assert answer.content[0].text == "recorded fast"
+    assert not old_alive, "the old server was still running when the next call ran"
+    (tmp_path / "go").write_text("x")  # the old server's background work would act now
+    time.sleep(1.0)
+    assert _logged(tmp_path) == ["fast"]
+
+
+def test_a_session_that_will_not_stop_is_killed_before_its_replacement_starts(
+    tmp_path, monkeypatch, runtime_cleanup
+):
+    """If the old session does not end within the stop window, its process
+    tree is killed rather than left running beside the replacement."""
+    import mcp.client.stdio as stdio
+
+    from jarvis.tools.external import mcp_runtime
+
+    monkeypatch.setattr(stdio, "PROCESS_TERMINATION_TIMEOUT", 60.0)
+    monkeypatch.setattr(mcp_runtime, "_STOP_WAIT_SEC", 1.0)
+    cfg = _server_cfg(tmp_path, _FAKE_SERVER)
+    started = time.monotonic()
+    old_pid, old_alive, answer = _timed_out_server_then_next_call(tmp_path, cfg)
+
+    assert answer.content[0].text == "recorded fast"
+    assert not old_alive and time.monotonic() - started < 30
+
+
+def test_a_caller_cancelling_during_the_drain_never_stops_it(monkeypatch, runtime_cleanup):
+    """The worker resolves queued requests when its session ends; a caller
+    giving up at that same moment must not stop the others being resolved."""
+    import asyncio
+
+    from jarvis.tools.external import mcp_runtime
+
+    in_flight = threading.Event()
+
+    class Conn:
+        async def __aenter__(self):
+            return object(), object()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class Session:
+        def __init__(self, read, write):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def initialize(self):
+            return None
+
+        async def call_tool(self, name, arguments):
+            in_flight.set()
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr("jarvis.tools.external.mcp_client._resolve_command", lambda c: c)
+    monkeypatch.setattr("jarvis.tools.external.mcp_client.stdio_client", lambda params, **kw: Conn())
+    monkeypatch.setattr("jarvis.tools.external.mcp_client.ClientSession", Session)
+
+    class CancelledMeanwhile(concurrent.futures.Future):
+        """Its caller cancels it just after the worker saw it was not done."""
+
+        def set_exception(self, exception):
+            self.cancel()
+            return super().set_exception(exception)
+
+    runtime = mcp_runtime.get_runtime()
+    worker = runtime._get_worker("blocking", {"command": "fake"})
+    _in_background(lambda: worker.invoke("block", {}, 30))
+    assert in_flight.wait(5)
+    racing, waiting = CancelledMeanwhile(), concurrent.futures.Future()
+    for fut in (racing, waiting):
+        worker._loop.call_soon_threadsafe(worker._queue.put_nowait, ("call", ("x", {}), fut))
+
+    worker.shutdown()
+
+    assert isinstance(waiting.exception(timeout=5), mcp_runtime._WorkerDeadError)
 
 
 def test_setup_timeout_does_not_leave_server_processes(tmp_path, monkeypatch, runtime_cleanup):
