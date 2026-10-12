@@ -456,10 +456,10 @@ def _build_field_metadata() -> List[FieldMeta]:
 
     # --- Gesture snapping (gestures/gestures.spec.md, Gesture snapping) ---
     f("gesture_snap_enabled", "Allow Gesture Snapping",
-      "Move and scroll windows with your hand through the webcam: point with your index finger to aim the "
+      "Move and scroll windows with your hand through the webcam: raise one finger to aim the "
       "pointer, make a fist to grab the window under it, move your hand and open it to snap the window into the "
-      "FancyZones zone under the pointer. Pinch and move up or down to scroll. Open your hand to pause, or to "
-      "cancel a move. It never clicks. This only makes it available: say \"start gesture control\" to turn the "
+      "FancyZones zone under the pointer. Pinch and move up or down to scroll. Open your hand flat to pause. It "
+      "never clicks. This only makes it available: say \"start gesture control\" to turn the "
       "camera on and \"stop gesture control\" to turn it off. Everything stays on this PC. Takes effect after "
       "Jarvis restarts.",
       "gesture_snap", "bool")
@@ -478,8 +478,8 @@ def _build_field_metadata() -> List[FieldMeta]:
       "tighter fist.",
       "gesture_snap", "float", min_val=0.3, max_val=1.2, step=0.01)
     f("gesture_snap_fist_release", "Fist Release",
-      "How straight your index finger must be to open the fist. Must be above Fist Start. A pinch only counts "
-      "with the index finger at least this straight.",
+      "How straight your index finger must be to open the fist. Must be above Fist Start. A pinch counts "
+      "whenever the hand is not a fist.",
       "gesture_snap", "float", min_val=0.4, max_val=1.5, step=0.01)
     f("gesture_snap_pinch_start", "Pinch Start",
       "How close your thumb and index fingertips must come for a pinch, as a share of your hand's size as the "

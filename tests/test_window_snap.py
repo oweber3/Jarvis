@@ -24,8 +24,8 @@ class Clock:
 
 def settings(**overrides):
     """Default thresholds, with smoothing effectively off so geometry is exact unless a test turns it on."""
-    values = dict(hand="any", comfort_box=0.5, pinch_start=0.25, pinch_release=0.35, fist_start=0.85,
-                  fist_release=1.0, debounce=0.05, scroll_speed=5.0, min_cutoff=1e6, beta=0.0)
+    values = dict(hand="any", comfort_box=0.5, pinch_start=0.25, pinch_release=0.35, fist_start=0.82,
+                  fist_release=0.92, debounce=0.05, scroll_speed=5.0, min_cutoff=1e6, beta=0.0)
     values.update(overrides)
     return WindowSnapSettings(**values)
 
@@ -272,15 +272,15 @@ def test_a_fist_over_no_window_holds_the_aim_still_and_drops_nothing():
     assert rig.desk.of("window") == [] and rig.desk.of("drop") == []
 
 
-def test_an_open_palm_while_holding_puts_the_window_back():
+def test_opening_the_hand_flat_snaps_the_window_too():
     win = window((600, 300, 1200, 800))
     rig = Rig(FakeDesktop(at=(700, 400), windows=[win]))
     rig.show(hand(0.5, 0.5))
     rig.grab_at(0.5, 0.5)
     rig.glide((0.51, 0.51), (0.61, 0.51), fist=True)
-    rig.show(hand(0.61, 0.51, palm=True), frames=3)
-    assert win.rect == (600, 300, 1200, 800)
-    assert rig.desk.of("drop") == []
+    held_at = rig.desk.at
+    rig.show(hand(0.63, 0.53, palm=True), frames=3)
+    assert rig.desk.of("drop") == [("drop", win, *held_at)]
 
 
 def test_a_window_that_refuses_to_move_is_let_go_and_tracking_continues():
@@ -334,6 +334,31 @@ def test_slow_movement_scrolls_in_small_steps_not_a_flood_of_events():
     rig.glide((0.51, 0.51), (0.51, 0.49), pinch=PINCHED, frames=30)
     steps = [e[1] for e in rig.desk.of("scroll")]
     assert steps and all(abs(step) >= 30 for step in steps) and len(steps) < 30
+
+
+def test_a_pinch_with_the_index_slightly_bent_still_scrolls():
+    """Measured on a real webcam: a natural pinch bends the index to a curl of 0.93 to 1.0."""
+    rig = Rig(FakeDesktop(at=(700, 400)))
+    rig.show(hand(0.5, 0.5))
+    rig.show(hand(0.5, 0.5, pinch=0.1, curl=0.95), frames=4)
+    assert rig.snap.state == "scrolling"
+
+
+def test_a_brief_dip_towards_a_fist_does_not_end_a_scroll():
+    rig = Rig(FakeDesktop(at=(700, 400)))
+    rig.show(hand(0.5, 0.5))
+    rig.pinch_at(0.5, 0.5)
+    rig.show(hand(0.51, 0.51, pinch=PINCHED, curl=0.78))
+    rig.show(hand(0.51, 0.51, pinch=PINCHED, curl=0.95), frames=3)
+    assert rig.snap.state == "scrolling"
+
+
+def test_a_pinch_that_closes_into_a_fist_grabs():
+    rig = Rig(FakeDesktop(at=(700, 400), windows=[window((0, 0, 1920, 1080))]))
+    rig.show(hand(0.5, 0.5))
+    rig.pinch_at(0.5, 0.5)
+    rig.show(hand(0.51, 0.51, fist=True), frames=5)
+    assert rig.snap.state == "holding"
 
 
 def test_sideways_movement_does_not_scroll():
@@ -396,7 +421,7 @@ def test_losing_the_hand_while_holding_leaves_the_window_where_it_is():
     moved = win.rect
     rig.show(frames=10)
     rig.show(hand(0.4, 0.4), frames=3)
-    assert win.rect == moved and rig.desk.of("drop") == [] and rig.desk.of("put_back") == []
+    assert win.rect == moved and rig.desk.of("drop") == []
     assert rig.snap.state != "holding"
 
 
@@ -478,7 +503,7 @@ def test_another_hand_never_takes_over_during_a_dropout():
     rig.grab_at(0.5, 0.5)
     rig.show(hand(0.2, 0.2, palm=True, side="left"))  # the right hand missed for one frame
     rig.show(hand(0.51, 0.51, fist=True, side="right"), hand(0.2, 0.2, palm=True, side="left"), frames=5)
-    assert rig.snap.state == "holding" and rig.desk.of("put_back") == []
+    assert rig.snap.state == "holding" and rig.desk.of("drop") == []
 
 
 def test_two_hands_with_the_same_label_do_not_make_the_pointer_jump():

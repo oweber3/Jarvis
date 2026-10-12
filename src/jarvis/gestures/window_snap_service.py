@@ -13,9 +13,9 @@ from ..debug import debug_log
 from .hand_tracking import HandTracker
 from .window_snap import WATCHDOG_SEC, WindowSnap, WindowSnapSettings
 
-GESTURE_GUIDE = ("Point with your index finger to aim, make a fist to grab the window under the pointer, move "
+GESTURE_GUIDE = ("Raise one finger to aim, make a fist to grab the window under the pointer, move "
                  "your hand and open it to snap the window into a zone; pinch and move up or down to scroll; "
-                 "open your hand flat to pause or to cancel a move.")
+                 "open your hand flat to pause.")
 
 
 class WindowSnapUnavailable(Exception):
@@ -94,10 +94,10 @@ class WindowSnapService:
             watchdog.start()
         debug_log(f"gesture snapping started on camera {camera}", "gestures")
         _say("🖐️ Gesture snapping on\n"
-             "   👉 Point with your index finger to aim the pointer\n"
+             "   ☝️ Raise one finger to aim the pointer\n"
              "   ✊ Make a fist to grab the window under it, open it to snap into a zone\n"
              "   🤏 Pinch and move up or down to scroll\n"
-             "   ✋ Open your hand flat to pause, or to cancel a move\n"
+             "   ✋ Open your hand flat to pause\n"
              "   🗣️ Say \"stop gesture control\" to turn it off")
         return "started"
 

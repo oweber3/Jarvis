@@ -22,20 +22,24 @@ def _finger(base, extended: bool):
 
 
 def hand(x: float = 0.5, y: float = 0.5, *, pinch: float = 1.0, palm: bool = False, side: str = "right",
-         score: float = 0.9, depth_error: float = 0.0, fist: bool = False) -> Hand:
+         score: float = 0.9, depth_error: float = 0.0, fist: bool = False, curl: Optional[float] = None) -> Hand:
     """A hand with its index fingertip at image position ``(x, y)``.
 
     ``pinch`` is the thumb-to-index distance as a fraction of the hand size, as the camera sees it.
     ``palm`` extends all four fingers (an open palm); ``fist`` curls the index finger too; otherwise only the
     index finger is out (pointing).
     ``depth_error`` (metres) puts the thumb tip that far off in the tracker's depth estimate only, as
-    happens when the hand is side-on to the camera."""
+    happens when the hand is side-on to the camera. ``curl`` sets the index curl exactly (the tip on the line
+    from the wrist through the index middle joint, at that multiple of the joint's distance)."""
     world: List[Optional[Point]] = [None] * 21
     world[Landmark.WRIST] = Point(0.0, 0.0, 0.0)
     for name, base in _BASES.items():
         extended = palm or (name == "INDEX" and not fist)
         for offset, point in enumerate(_finger(base, extended)):
             world[getattr(Landmark, f"{name}_MCP") + offset] = point
+    if curl is not None:
+        pip = world[Landmark.INDEX_PIP]
+        world[Landmark.INDEX_TIP] = Point(pip.x * curl, pip.y * curl, pip.z * curl)
     tip = world[Landmark.INDEX_TIP]
     thumb_tip = Point(tip.x - pinch * HAND_SIZE, tip.y, tip.z)
     world[Landmark.THUMB_CMC] = Point(-0.03, -0.02, 0.0)
@@ -121,10 +125,6 @@ class FakeDesktop:
 
     def drop(self, window, x: int, y: int) -> None:
         self.events.append(("drop", window, x, y))
-
-    def put_back(self, window) -> None:
-        window.rect, window.maximised = window.original
-        self.events.append(("put_back", window))
 
     def of(self, kind: str) -> List[tuple]:
         return [e for e in self.events if e[0] == kind]

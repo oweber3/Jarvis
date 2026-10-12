@@ -426,8 +426,8 @@ class Settings:
     gesture_snap_comfort_box: float = 0.5
     gesture_snap_pinch_start: float = 0.25
     gesture_snap_pinch_release: float = 0.35
-    gesture_snap_fist_start: float = 0.85
-    gesture_snap_fist_release: float = 1.0
+    gesture_snap_fist_start: float = 0.82
+    gesture_snap_fist_release: float = 0.92
     gesture_snap_debounce_ms: int = 50
     gesture_snap_scroll_speed: float = 5.0
     gesture_snap_smoothing: float = 1.0
@@ -960,8 +960,8 @@ def get_default_config() -> Dict[str, Any]:
         "gesture_snap_comfort_box": 0.5,
         "gesture_snap_pinch_start": 0.25,
         "gesture_snap_pinch_release": 0.35,
-        "gesture_snap_fist_start": 0.85,
-        "gesture_snap_fist_release": 1.0,
+        "gesture_snap_fist_start": 0.82,
+        "gesture_snap_fist_release": 0.92,
         "gesture_snap_debounce_ms": 50,
         "gesture_snap_scroll_speed": 5.0,
         "gesture_snap_smoothing": 1.0,

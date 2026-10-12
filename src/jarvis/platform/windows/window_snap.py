@@ -3,15 +3,15 @@
 Used only by gesture snapping (``gestures/gestures.spec.md``), which relays the user's own hand movements;
 nothing here is a tool action and nothing here clicks or sends keys (it scrolls the wheel only). Coordinates are physical pixels in the virtual desktop.
 Grabbing and moving post to windows without waiting (``ShowWindowAsync``, ``SWP_ASYNCWINDOWPOS``), so a hung
-application never holds up tracking; the final snap and putting a window back run on worker threads, the snap
-through the shared, verified ``place_window``.
+application never holds up tracking; the final snap runs on a worker thread through the shared, verified
+``place_window``.
 """
 from __future__ import annotations
 
 import ctypes
 import threading
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from ...debug import debug_log
 
@@ -58,16 +58,14 @@ def restored_rect(x: int, y: int, maximised_outer: Rectangle, normal_width: int,
 
 @dataclass
 class Grabbed:
-    """A grabbed window: its handle, its outer frame now (``rect``, which moves are offset from) and its
-    ``WINDOWPLACEMENT`` when grabbed (``placement``), which putting it back restores."""
+    """A grabbed window: its handle and its outer frame now (``rect``, which moves are offset from)."""
 
     hwnd: int
     rect: Rectangle
-    placement: Any = None
 
 
 class _InFlight:
-    """The windows a worker is still snapping or putting back; they cannot be grabbed until it finishes."""
+    """The windows a worker is still snapping; they cannot be grabbed until it finishes."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -113,7 +111,6 @@ def _user32():
         "SetCursorPos": ([ctypes.c_int, ctypes.c_int], wintypes.BOOL),
         "IsZoomed": ([wintypes.HWND], wintypes.BOOL),
         "GetWindowPlacement": ([wintypes.HWND, ctypes.POINTER(_WindowPlacement)], wintypes.BOOL),
-        "SetWindowPlacement": ([wintypes.HWND, ctypes.POINTER(_WindowPlacement)], wintypes.BOOL),
         "ShowWindowAsync": ([wintypes.HWND, ctypes.c_int], wintypes.BOOL),
     }
     for name, (args, result) in signatures.items():
@@ -175,7 +172,7 @@ class WindowsSnapOutput:
     def grab(self, x: int, y: int) -> Optional[Grabbed]:
         """The top-level window under the point, brought to the front without the keyboard focus, or None. A
         maximised window is restored and placed so the point keeps its share of the width. Nothing here waits for
-        the application, and a window a worker is still snapping or putting back is not grabbed."""
+        the application, and a window a worker is still snapping is not grabbed."""
         from .displays import per_monitor_dpi
         with per_monitor_dpi():
             hwnd = _window_at(int(x), int(y))
@@ -201,11 +198,6 @@ class WindowsSnapOutput:
         use_fancyzones, languages = self._use_fancyzones, self._languages
         self._on_worker(hwnd, lambda: _snap(hwnd, px, py, use_fancyzones=use_fancyzones, languages=languages),
                         "gesture-snap")
-
-    def put_back(self, window: Grabbed) -> None:
-        """Restore the window's placement from when it was grabbed, on a worker thread."""
-        hwnd, placement = window.hwnd, window.placement
-        self._on_worker(hwnd, lambda: _restore_placement(hwnd, placement), "gesture-put-back")
 
     def _on_worker(self, hwnd: int, work: Callable[[], None], name: str) -> None:
         """Run ``work`` on a daemon thread with the window marked in flight until it finishes, however it ends."""
@@ -243,7 +235,7 @@ def _window_at(x: int, y: int) -> Optional[int]:
 
 
 def _take(hwnd: int, x: int, y: int) -> Grabbed:
-    """Record the window's placement, restore it under the point if maximised and raise it, all posted without
+    """Restore the window under the point at its normal size if maximised and raise it, all posted without
     waiting for the application (call inside ``per_monitor_dpi``)."""
     from . import windows_mgmt
     user = _user32()
@@ -261,19 +253,7 @@ def _take(hwnd: int, x: int, y: int) -> Grabbed:
                           _SWP_NOZORDER | _SWP_NOACTIVATE | _SWP_ASYNCWINDOWPOS)
     user.SetWindowPos(hwnd, _HWND_TOP, 0, 0, 0, 0,
                       _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOACTIVATE | _SWP_ASYNCWINDOWPOS)
-    return Grabbed(hwnd, rect, placement)
-
-
-def _restore_placement(hwnd: int, placement: Any) -> None:
-    """Put the window back as ``GetWindowPlacement`` found it: maximised windows are maximised again with their
-    restored size intact, others return to their frame."""
-    from .displays import per_monitor_dpi
-    if placement is None:
-        return
-    with per_monitor_dpi():
-        if not _user32().SetWindowPlacement(hwnd, ctypes.byref(placement)):
-            raise OSError("Windows did not put the window back.")
-    debug_log("gesture snapping: window put back", "gestures")
+    return Grabbed(hwnd, rect)
 
 
 def _snap(hwnd: int, x: int, y: int, *, use_fancyzones: bool, languages: Sequence[str]) -> None:

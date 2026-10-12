@@ -2,7 +2,7 @@
 the hand and opening it snaps the window into a zone; a pinch scrolls the window under the pointer.
 
 Pure gesture logic on ``HandFrame``s. The desktop is an output object (``desktop``, ``position``, ``move_to``,
-``grab``, ``move_window``, ``drop``, ``put_back``, ``scroll``) supplied by the caller, so this module knows
+``grab``, ``move_window``, ``drop``, ``scroll``) supplied by the caller, so this module knows
 nothing of Windows or FancyZones. It never clicks. It is the only code that moves the pointer or windows this way, and
 only from the user's own hand movements. See ``gestures.spec.md``, Gesture snapping.
 """
@@ -46,8 +46,8 @@ class WindowSnapSettings:
     comfort_box: float = 0.5
     pinch_start: float = 0.25
     pinch_release: float = 0.35
-    fist_start: float = 0.85
-    fist_release: float = 1.0
+    fist_start: float = 0.82
+    fist_release: float = 0.92
     debounce: float = 0.05
     scroll_speed: float = 5.0
     min_cutoff: float = 1.0
@@ -327,25 +327,26 @@ class WindowSnap:
             if palm:
                 self._end_scroll()
                 self._state = _IDLE
-            elif curl < s.fist_start:  # the hand is becoming a fist: the scroll ends at once
-                self._end_scroll()
-                self._state = _CLOSING
-                self._anchor = self._cursor
-                self._fist_since, self._pinch_since = t, None
+            elif curl < s.fist_start:  # becoming a fist: once it lasts, the scroll ends and the fist grabs
                 self._ref = p
+                if self._fist_since is None:
+                    self._fist_since = t
+                if t - self._fist_since >= s.debounce:
+                    self._end_scroll()
+                    self._grab()
             elif ratio > s.pinch_release:
+                self._fist_since = None
                 self._ref = p
                 if self._release_confirmed(t):
                     self._end_scroll()
                     self._state = _AIMING
             else:
-                self._above_since = None
+                self._fist_since = self._above_since = None
                 self._scroll_by(p, scale)
             return
-        # Holding a window, or a fist over nothing.
+        # Holding a window, or a fist over nothing. Opening the hand flat drops at once, like opening the fist.
         if palm:
-            if self._window is not None:
-                self._put_back()
+            self._drop()
             self._state = _IDLE
             return
         if curl > s.fist_release:
@@ -370,7 +371,7 @@ class WindowSnap:
                 self._fist_since = t
             if t - self._fist_since >= s.debounce:
                 self._grab()
-        elif ratio < s.pinch_start and curl > s.fist_release:
+        elif ratio < s.pinch_start:
             self._fist_since = None
             if self._pinch_since is None:
                 self._pinch_since = t
@@ -498,16 +499,6 @@ class WindowSnap:
             return
         self._failing.discard("snap the window")
         debug_log("gesture snapping: window dropped", "gestures")
-
-    def _put_back(self) -> None:
-        window, self._window = self._window, None
-        try:
-            self._out.put_back(window)
-        except Exception as exc:  # noqa: BLE001
-            self._output_failed("put the window back", exc)
-            return
-        self._failing.discard("put the window back")
-        debug_log("gesture snapping: cancelled, window put back", "gestures")
 
     def _output_failed(self, what: str, exc: Exception) -> None:
         """Logged and printed once per kind of failure until it next succeeds, so retries stay quiet."""

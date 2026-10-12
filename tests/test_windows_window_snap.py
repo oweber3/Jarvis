@@ -1,5 +1,5 @@
 """The Windows output for gesture snapping: which zone a drop lands in, which windows can be grabbed, and (by
-hand, with -m interactive) grabbing, moving and putting back a throwaway test window. Default runs never touch
+hand, with -m interactive) grabbing and moving a throwaway test window. Default runs never touch
 real windows or the pointer."""
 import sys
 import threading
@@ -85,7 +85,7 @@ def test_a_restored_window_grabbed_at_the_left_edge_starts_at_the_point():
 
 
 class _Hold:
-    """A stand-in for a slow snap or put back: it runs until released."""
+    """A stand-in for a slow snap: it runs until released."""
 
     def __init__(self):
         self.started, self.release, self.calls = threading.Event(), threading.Event(), []
@@ -124,24 +124,13 @@ def test_a_window_being_snapped_cannot_be_grabbed_until_the_snap_finishes(monkey
     assert _settle(desk)
 
 
-def test_a_window_being_put_back_cannot_be_grabbed_until_it_is_back(monkeypatch, window_under_point):
-    hold = _Hold()
-    monkeypatch.setattr(output, "_restore_placement", hold)
-    desk = output.WindowsSnapOutput()
-    desk.put_back(window_under_point)
-    assert hold.started.wait(5)
-    assert desk.grab(10, 10) is None
-    hold.release.set()
-    assert _settle(desk)
-
-
 def test_a_failed_snap_still_frees_the_window(monkeypatch, window_under_point):
     def explode(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(output, "_restore_placement", explode)
+    monkeypatch.setattr(output, "_snap", explode)
     desk = output.WindowsSnapOutput()
-    desk.put_back(window_under_point)
+    desk.drop(window_under_point, 10, 10)
     assert _settle(desk)
 
 
@@ -225,7 +214,7 @@ def test_the_daemon_builds_the_output_from_the_fancyzones_setting(monkeypatch, w
 
 @pytest.mark.interactive
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
-def test_a_real_test_window_is_grabbed_moved_and_put_back():
+def test_a_real_test_window_is_grabbed_and_moved():
     import tkinter
     root = tkinter.Tk()
     root.title("gesture snapping test")
@@ -245,11 +234,7 @@ def test_a_real_test_window_is_grabbed_moved_and_put_back():
             root.update()
             time.sleep(0.02)
         assert abs(root.winfo_rootx() - (x - 200 + 120)) <= 10
-        desk.put_back(grabbed)
-        for _ in range(20):
-            root.update()
-            time.sleep(0.02)
-        assert abs(root.winfo_rootx() - (x - 200)) <= 10
+        assert abs(root.winfo_rooty() - (y - 150 + 80)) <= 10
     finally:
         root.destroy()
 
@@ -262,7 +247,7 @@ def _pump(root, seconds=0.6):
 
 @pytest.mark.interactive
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
-def test_a_maximised_test_window_is_restored_under_the_hand_and_put_back_maximised_with_its_size_intact():
+def test_a_maximised_test_window_is_restored_under_the_hand_at_its_normal_size_and_moves():
     import tkinter
     root = tkinter.Tk()
     root.title("gesture snapping maximised test")
@@ -278,14 +263,16 @@ def test_a_maximised_test_window_is_restored_under_the_hand_and_put_back_maximis
         assert grabbed is not None
         _pump(root)
         assert root.state() == "normal"
-        assert abs(root.winfo_width() - 400) <= 10
+        assert abs(root.winfo_width() - 400) <= 10 and abs(root.winfo_height() - 300) <= 10
         left, top, right, bottom = grabbed.rect
         assert left < x < right and top < y < bottom
-        desk.put_back(grabbed)
+        desk.move_window(grabbed, left + 100, top + 60)
         _pump(root)
-        assert root.state() == "zoomed"
-        root.state("normal")
-        _pump(root, 0.4)
+        assert grabbed.rect == (left + 100, top + 60, right + 100, bottom + 60)
+        # The client area sits inside the moved outer frame (borders and title bar).
+        assert left + 100 <= root.winfo_rootx() <= left + 100 + 16
+        assert top + 60 <= root.winfo_rooty() <= top + 60 + 60
+        assert root.state() == "normal"
         assert abs(root.winfo_width() - 400) <= 10 and abs(root.winfo_height() - 300) <= 10
     finally:
         root.destroy()
