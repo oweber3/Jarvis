@@ -35,6 +35,8 @@ class FastMatch:
     # Offered even to speech nobody addressed to Jarvis (no wake word, no hot window), while the tool's
     # ``fast_available`` holds: the spoken clicks of gesture snapping.
     ambient: bool = False
+    # Says nothing when it works (no speech, no reply, nothing recorded); a failure is still reported.
+    silent: bool = False
 
 
 def normalise(text: str) -> str:
@@ -448,6 +450,7 @@ def match(text: str, language: str | None = 'en', *, targets: tuple[FastTarget, 
             slots[name] = display
         else:
             result = FastMatch(rule['id'], rule['family'], rule['tool'], args, rule['reply'], slots,
-                               bool(rule.get('needs_wake_word')), bool(rule.get('ambient')))
+                               bool(rule.get('needs_wake_word')), bool(rule.get('ambient')),
+                               bool(rule.get('silent')))
             matches[(result.tool_name, json.dumps(result.args, sort_keys=True))] = result
     return next(iter(matches.values())) if len(matches) == 1 else None

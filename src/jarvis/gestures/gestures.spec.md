@@ -232,7 +232,7 @@ The mode keeps the camera and the detector busy for as long as it is on, so it s
 | `start` | Starts gesture snapping. Reports success with a one-line reminder of the gestures, or that it was already on, or why it could not start (hand tracking unavailable, displays unreadable, a request from a phone) |
 | `stop` | Stops it, letting go of a held window and releasing the camera. Reports that it is off (also when it was already off) |
 | `status` | Whether gesture snapping is on |
-| `click`, `double_click`, `right_click` | Clicks at the pointer (Clicking by voice). Reports "Clicked.", or why not: gesture snapping off, a window held or a scroll or zoom running, a phone request, or Windows blocking it |
+| `click`, `double_click`, `right_click` | Clicks at the pointer (Clicking by voice). Its result is "Clicked." (said only when the model path made the call; the fast path is silent), or why not: gesture snapping off, a window held or a scroll or zoom running, a phone request, or Windows blocking it |
 
 Console output: `🖐️ Gesture snapping on` with the gestures indented below, and `🖐️ Gesture snapping off`.
 
@@ -240,7 +240,7 @@ Console output: `🖐️ Gesture snapping on` with the gestures indented below, 
 
 The `gesture_control` family in `fastpath/phrases/<language>.json` maps whole utterances such as "start gesture control", "start gesture controls", "turn on gestures", "stop gesture control" and "turn off the gesture controls" to `gestureControl` `start` and `stop` (`fastpath/fastpath.spec.md`). Every phrase pairs a start or stop verb phrase with a name for the feature (in English: gesture control or controls, gestures, hand gestures, gesture snapping or gesture mode); a bare name or a question about the feature falls through to the model. It is available only while the tool is registered.
 
-The `gesture_click` family maps "click", "double click", "right click" and a few variants ("click it", "click here", "click there", "left click", with or without a hyphen) to the click actions. Its rules are marked `ambient`, the only rules offered to speech nobody addressed to Jarvis (`fastpath/fastpath.spec.md`). These routes are available only while gesture snapping is running (the tool's `fast_available`), so with the mode off the words fall through to the model.
+The `gesture_click` family maps "click", "double click", "right click" and a few variants ("click it", "click here", "click there", "left click", with or without a hyphen) to the click actions. Its rules are marked `ambient`, the only rules offered to speech nobody addressed to Jarvis, and `silent`, so a click that works says nothing (`fastpath/fastpath.spec.md`); a refused click still says why. These routes are available only while gesture snapping is running (the tool's `fast_available`), so with the mode off the words fall through to the model.
 
 ### Privacy and logs
 
