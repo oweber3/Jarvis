@@ -9,6 +9,21 @@ from src.jarvis.tools.base import ToolContext
 from src.jarvis.tools.types import ToolExecutionResult
 
 
+@pytest.fixture(autouse=True)
+def _no_real_dns(monkeypatch):
+    """Named hosts resolve to a public address; nothing here may query a real DNS server."""
+    import socket
+    real = socket.getaddrinfo
+
+    def fake(host, port, family=0, type=0, proto=0, flags=0):
+        try:
+            return real(host, port, family, type, proto, flags | socket.AI_NUMERICHOST)
+        except socket.gaierror:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port or 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake)
+
+
 class TestWebSearchTool:
     """Test web search tool functionality."""
 

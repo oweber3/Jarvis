@@ -122,7 +122,7 @@ Every distinct LLM call in Jarvis, what feeds it, what consumes it, and how it i
 - **File**: [src/jarvis/reply/enrichment.py](src/jarvis/reply/enrichment.py) — `digest_tool_result_for_query()` + `_distil_tool_batch()`.
 - **Trigger**: after each tool result in the loop, if `tool_result_digest_enabled` (default `null` = auto-ON for SMALL ≤7.5B, OFF for LARGE). Primary motivation on small models: prevents `fetch_web_page`'s 50k-char payloads from filling the 8192 num_ctx window. Skipped if raw < 400 chars (`_TOOL_DIGEST_MIN_CHARS`); batched if > 2500 (`_TOOL_DIGEST_BATCH_MAX_CHARS`).
 - **Model / gating**: `cfg.llm_chat_model` via `get_llm_backend(cfg)`. Gated by `tool_result_digest_enabled` — auto-on for SMALL via `detect_model_size(cfg.llm_chat_model)`.
-- **Inputs**: user query, tool name, raw tool result (e.g. webSearch payload inside UNTRUSTED WEB EXTRACT fence).
+- **Inputs**: user query, tool name, raw tool result (e.g. webSearch and fetchWebPage payloads, whose page text sits inside the UNTRUSTED WEB EXTRACT fence with any marker lookalikes in it defanged; [web_search spec](../src/jarvis/tools/builtin/web_search.spec.md)).
 - **System prompt**: `_TOOL_DIGEST_SYSTEM_PROMPT`. Teaches attributed fact extraction, `NONE` sentinel, no inference.
 - **Output**: ≤600 chars per batch (`_TOOL_DIGEST_MAX_CHARS`) replacing the raw payload in the messages stream. Falls back to raw on `NONE`.
 - **Limits**: `llm_digest_timeout_sec` (8s, shared). `max_tokens: 300`.
@@ -217,7 +217,7 @@ Every distinct LLM call in Jarvis, what feeds it, what consumes it, and how it i
 - **File**: [src/jarvis/reply/planner.py](src/jarvis/reply/planner.py) — `resolve_next_tool_call()`.
 - **Trigger**: top of each agentic-loop iteration when `use_text_tools` is True, the plan from #12 still has unexecuted tool steps, AND the plan is not under-specified (`plan_has_unresolved_tool_steps` returns False — steps that paraphrase tools without naming them skip direct-exec so the resolver doesn't guess arguments). Runs instead of the chat model for that turn. **Fast path skips the LLM entirely** when the step is fully concrete (tool name + `key='value'` args, no `<placeholder>`); the LLM call only fires when entity substitution or key remapping is needed.
 - **Model**: same chain as #12.
-- **Inputs**: next planned step text, prior tool calls (name + args + result excerpt), per-turn tool schema.
+- **Inputs**: next planned step text, prior tool calls (name + args + result excerpt, the excerpt of a `webSearch` or `fetchWebPage` result prefixed with an untrusted-web-data label chosen by tool name), per-turn tool schema.
 - **System prompt**: `_STEP_RESOLVER_SYSTEM` at [planner.py:300](src/jarvis/reply/planner.py:300). Teaches one-JSON-object output, placeholder substitution from prior results, `null` for synthesis steps.
 - **Output**: `(tool_name, arguments)` tuple or `None`. Unknown tool names are rejected via the allow-list guard.
 - **Limits**: `planner_timeout_sec` (3s). `max_tokens: 100`. Fail-open → `None` (engine falls back to the chat-model turn).

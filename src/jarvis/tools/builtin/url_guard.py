@@ -2,7 +2,8 @@
 
 A URL is public only when its scheme is http(s), the standard library and the
 parser requests uses (urllib3) agree on its host, and every address the host
-resolves to is globally routable. ``fetch_public`` resolves each hop once,
+resolves to is globally routable and not one of this PC's own interface
+addresses. ``fetch_public`` resolves each hop once,
 checks every address, and connects to the checked address itself, so a second
 DNS answer can never move the connection somewhere else. TLS still sends and
 verifies the original host name. Redirects are walked one hop at a time so
@@ -11,8 +12,10 @@ each hop is checked too.
 
 import ipaddress
 import socket
+import threading
+import time
 from dataclasses import dataclass
-from typing import Dict, Optional, Union
+from typing import Dict, FrozenSet, List, Optional, Tuple, Union
 from urllib.parse import urljoin, urlsplit
 
 import requests
@@ -27,33 +30,91 @@ MAX_REDIRECTS = 3
 MAX_FETCH_BYTES = 512 * 1024
 
 _IPV4_COMPATIBLE = ipaddress.ip_network("::/96")
+_IPV4_TRANSLATED = ipaddress.ip_network("::ffff:0:0:0/96")
 _NAT64 = ipaddress.ip_network("64:ff9b::/96")
+# How long the list of this PC's own interface addresses is reused before it is read again.
+_LOCAL_ADDRESS_TTL_SEC = 30.0
 
 IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+
+_local_lock = threading.Lock()
+_local_cache: Tuple[float, FrozenSet[IPAddress]] = (float("-inf"), frozenset())
 
 
 class NonPublicUrlError(ValueError):
     """The URL, or a redirect it led to, is not a public http(s) address."""
 
 
+def _embedded_ipv4(ip: IPAddress) -> List[ipaddress.IPv4Address]:
+    """The IPv4 addresses an IPv6 address carries (mapped, NAT64, 6to4, Teredo)."""
+    if ip.version != 6:
+        return []
+    embedded = [ip.ipv4_mapped, ip.sixtofour]
+    if ip.teredo:
+        embedded.extend(ip.teredo)
+    if ip in _NAT64:
+        embedded.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+    return [inner for inner in embedded if inner is not None]
+
+
 def is_public_address(ip: IPAddress) -> bool:
     """True only for a globally routable unicast address.
 
     IPv6 forms that carry an IPv4 address (mapped, NAT64, 6to4, Teredo) are
-    judged by that address too, and the deprecated IPv4-compatible and
-    site-local ranges are never public.
+    judged by that address too, and the deprecated IPv4-compatible,
+    IPv4-translated and site-local ranges are never public.
     """
     if ip.version == 6:
-        if ip in _IPV4_COMPATIBLE or ip.is_site_local:
+        if ip in _IPV4_COMPATIBLE or ip in _IPV4_TRANSLATED or ip.is_site_local:
             return False
-        embedded = [ip.ipv4_mapped, ip.sixtofour]
-        if ip.teredo:
-            embedded.extend(ip.teredo)
-        if ip in _NAT64:
-            embedded.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
-        if any(inner is not None and not is_public_address(inner) for inner in embedded):
+        if any(not is_public_address(inner) for inner in _embedded_ipv4(ip)):
             return False
     return ip.is_global and not ip.is_multicast
+
+
+def _interface_addresses() -> FrozenSet[IPAddress]:
+    """Every address this PC's network interfaces have, read locally."""
+    found = set()
+    try:
+        import psutil
+        raw = [entry.address for entries in psutil.net_if_addrs().values() for entry in entries
+               if entry.family in (socket.AF_INET, socket.AF_INET6)]
+    except Exception as e:
+        debug_log(f"Interface list unavailable ({type(e).__name__}); using this PC's host name", "web")
+        try:
+            raw = [info[4][0] for info in socket.getaddrinfo(socket.gethostname(), None)]
+        except OSError:
+            raw = []
+    for address in raw:
+        try:
+            found.add(ipaddress.ip_address(str(address).split("%", 1)[0]))
+        except ValueError:
+            continue
+    return frozenset(found)
+
+
+def _local_addresses() -> FrozenSet[IPAddress]:
+    """This PC's own addresses, read again once they are older than ``_LOCAL_ADDRESS_TTL_SEC``."""
+    global _local_cache
+    with _local_lock:
+        stamp, addresses = _local_cache
+        now = time.monotonic()
+        if now - stamp >= _LOCAL_ADDRESS_TTL_SEC:
+            addresses = _interface_addresses()
+            _local_cache = (now, addresses)
+        return addresses
+
+
+def _is_allowed(ip: IPAddress) -> bool:
+    """A public address that is not one of this PC's own (a global IPv6 or public IPv4 on an interface
+    reaches services listening on every address)."""
+    if not is_public_address(ip):
+        return False
+    local = _local_addresses()
+    if ip in local or any(inner in local for inner in _embedded_ipv4(ip)):
+        debug_log("Refusing a fetch target that is one of this PC's own addresses", "web")
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -97,7 +158,7 @@ def _agreed_host(url: str) -> Optional[str]:
 def _resolve_public(host: str, port: int) -> Optional[str]:
     """The address to connect to when every address ``host`` has is public, else ``None``."""
     try:
-        return host if is_public_address(ipaddress.ip_address(host)) else None
+        return host if _is_allowed(ipaddress.ip_address(host)) else None
     except ValueError:
         pass
     # Hostname: resolve all addresses and reject if any is non-public. This
@@ -114,7 +175,7 @@ def _resolve_public(host: str, port: int) -> Optional[str]:
             ip = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
         except (ValueError, IndexError, TypeError):
             return None
-        if not is_public_address(ip):
+        if not _is_allowed(ip):
             debug_log("Refusing a fetch target that resolves to a non-public address", "web")
             return None
         addresses.append(str(ip))

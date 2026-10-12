@@ -322,9 +322,52 @@ def test_https_refuses_a_certificate_for_another_name(tls_site):
     "64:ff9b::7f00:1", "64:ff9b::c0a8:101", "64:ff9b::6464:6464",  # NAT64
     "2002:7f00:1::1", "2002:c0a8:101::1", "2002:6464:6464::1",  # 6to4
     "2001:0:4136:e378:8000:63bf:3fff:fdd2",  # Teredo
+    "::ffff:0:7f00:1", "::ffff:0:808:808",  # IPv4-translated
 ])
 def test_non_public_addresses_and_embedded_forms_are_refused(address):
     assert is_public_address(ipaddress.ip_address(address)) is False
+
+
+# This PC's own addresses as a fake interface list reports them (a public IPv4 and a global IPv6).
+OWN_IPV4 = "81.2.69.160"
+OWN_IPV6 = "2a02:8010:6000::1"
+
+
+@pytest.fixture
+def own_interfaces(monkeypatch):
+    import types
+
+    import psutil
+    entry = lambda family, address: types.SimpleNamespace(family=family, address=address)  # noqa: E731
+    monkeypatch.setattr(psutil, "net_if_addrs", lambda: {
+        "Ethernet": [entry(socket.AF_INET, OWN_IPV4), entry(socket.AF_INET6, f"{OWN_IPV6}%7"),
+                     entry(getattr(psutil, "AF_LINK", -1), "00-11-22-33-44-55")],
+        "Loopback": [entry(socket.AF_INET, "127.0.0.1"), entry(socket.AF_INET6, "::1")],
+    })
+    monkeypatch.setattr(url_guard, "_local_cache", (float("-inf"), frozenset()))
+
+
+@pytest.mark.parametrize("url", [
+    f"http://{OWN_IPV4}/", f"http://{OWN_IPV4}:8080/admin", f"http://[{OWN_IPV6}]/",
+    f"http://[::ffff:{OWN_IPV4}]/", "http://own.invalid/", "http://own6.invalid:11434/api/tags",
+])
+def test_this_pcs_own_addresses_are_refused(url, own_interfaces, dns, monkeypatch):
+    """A global IPv6 or public IPv4 on one of this PC's interfaces reaches services listening on every
+    address, so it is never a public website."""
+    dns.table["own.invalid"] = [OWN_IPV4]
+    dns.table["own6.invalid"] = [OWN_IPV6]
+    sent = Mock(side_effect=AssertionError("a request was sent"))
+    monkeypatch.setattr(requests.Session, "get", sent)
+
+    assert is_public_url(url) is False
+    assert FetchWebPageTool().run({"url": url}, _context()).success is False
+    assert not sent.called
+
+
+def test_other_public_addresses_stay_public_next_to_own_interfaces(own_interfaces, dns):
+    dns.table["elsewhere.invalid"] = ["81.2.69.161"]
+    assert is_public_url("http://81.2.69.161/") is True
+    assert is_public_url("http://elsewhere.invalid/") is True
 
 
 @pytest.mark.parametrize("address", ["8.8.8.8", "93.184.216.34", "2606:4700:4700::1111", "64:ff9b::808:808"])
