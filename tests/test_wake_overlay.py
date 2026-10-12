@@ -986,6 +986,10 @@ class TestStateWatch:
     def _file_overlay(self, states, path, **kwargs):
         return _overlay(states, state_file=str(path), watch_interval_ms=5000, **kwargs)
 
+    def _arm(self, qapp):
+        """Qt starts watching a file on a helper thread: give it a moment, as the real app has had."""
+        self._wait_for(qapp, lambda: False, seconds=0.3)
+
     def _wait_for(self, qapp, condition, seconds=3.0):
         import time
 
@@ -1003,6 +1007,7 @@ class TestStateWatch:
         overlay.start()
         states.state = OrbState.IDLE
         overlay.poll()
+        self._arm(qapp)
         states.state = OrbState.LISTENING
         path.write_text("listening")
         assert self._wait_for(qapp, lambda: overlay.windows())
@@ -1020,8 +1025,10 @@ class TestStateWatch:
             return states.state
 
         overlay = _overlay(reader, state_file=str(path), watch_interval_ms=5000)
+        overlay.MAX_EMPTY_READS = 1000            # a writer that stays slow for the whole wait
         overlay.start()
         overlay.poll()
+        self._arm(qapp)
         reads.clear()
         path.write_text("")                       # the truncation is reported on its own
         self._wait_for(qapp, lambda: False, seconds=0.25)
