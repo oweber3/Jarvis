@@ -498,6 +498,10 @@ def _build_field_metadata() -> List[FieldMeta]:
       "How quickly smoothing gives way when you move fast. Higher keeps up with quick movements better but "
       "lets more shake through.",
       "gesture_snap", "float", min_val=0.0, max_val=0.1, step=0.001)
+    f("gesture_snap_pointer_ring", "Pointer Ring",
+      "Show a small glowing ring round the mouse pointer while gesture control is on, so the pointer is easy to "
+      "follow. Clicks pass through it and it never takes focus. Applies as soon as Settings are saved.",
+      "gesture_snap", "bool")
 
     # --- Reply mode: who answers, and which cloud modes may be switched to ---
     f("reply_mode", "Reply Mode",

@@ -2003,6 +2003,12 @@ class JarvisSystemTray:
         self.wake_overlay = WakeOverlay(enabled=configured_enabled())
         self.wake_overlay.start()
 
+        # Pointer ring: a glowing ring round the mouse pointer while gesture snapping is on
+        # (see pointer_ring.spec.md).
+        from desktop_app import pointer_ring
+        self.pointer_ring = pointer_ring.PointerRing(enabled=pointer_ring.configured_enabled())
+        self.pointer_ring.start()
+
         # Create dictation history window (hidden by default)
         from desktop_app.dictation_history import DictationHistoryWindow
         from jarvis.dictation.history import DictationHistory
@@ -2164,6 +2170,9 @@ class JarvisSystemTray:
         overlay = getattr(self, "wake_overlay", None)
         if overlay is not None:
             overlay.shutdown()
+        ring = getattr(self, "pointer_ring", None)
+        if ring is not None:
+            ring.shutdown()
         if self.is_listening:
             self.stop_daemon()
         # Stop memory viewer server
@@ -2407,11 +2416,16 @@ class JarvisSystemTray:
         if result == QDialog.DialogCode.Accepted and self.is_listening:
             self._apply_settings_now(dialog.changed_values)
 
-        # The wake screen effect lives in the desktop app, so its switch applies without a restart.
+        # The wake screen effect and the pointer ring live in the desktop app, so their switches apply
+        # without a restart.
         overlay = getattr(self, "wake_overlay", None)
         if result == QDialog.DialogCode.Accepted and overlay is not None:
             from desktop_app.wake_overlay import configured_enabled
             overlay.set_enabled(configured_enabled())
+        ring = getattr(self, "pointer_ring", None)
+        if result == QDialog.DialogCode.Accepted and ring is not None:
+            from desktop_app import pointer_ring
+            ring.set_enabled(pointer_ring.configured_enabled())
 
         # If settings were saved and daemon is running, offer to restart
         if result == QDialog.DialogCode.Accepted and self.is_listening:

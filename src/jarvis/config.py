@@ -431,6 +431,7 @@ class Settings:
     gesture_snap_scroll_speed: float = 15.0
     gesture_snap_smoothing: float = 1.0
     gesture_snap_speed_response: float = 0.005
+    gesture_snap_pointer_ring: bool = True
 
     # File deletion (see src/jarvis/tools/builtin/local_files.spec.md): off means no request can delete a
     # file, on any route. On, a delete still needs the user's confirmation.
@@ -555,6 +556,7 @@ def _gesture_snap_settings(merged: Dict[str, Any], defaults: Dict[str, Any]) -> 
     finger_up = get("gesture_snap_finger_up", 0.8, 2.0)
     finger_down = get("gesture_snap_finger_down", 0.5, 1.5)
     hand = merged.get("gesture_snap_hand")
+    ring = merged.get("gesture_snap_pointer_ring")
     return {
         "gesture_snap_enabled": merged.get("gesture_snap_enabled") is True,
         "gesture_snap_camera": get("gesture_snap_camera", 0, 16, int),
@@ -566,6 +568,7 @@ def _gesture_snap_settings(merged: Dict[str, Any], defaults: Dict[str, Any]) -> 
         "gesture_snap_scroll_speed": get("gesture_snap_scroll_speed", 0.5, 60.0),
         "gesture_snap_smoothing": get("gesture_snap_smoothing", 0.05, 10.0),
         "gesture_snap_speed_response": get("gesture_snap_speed_response", 0.0, 0.1),
+        "gesture_snap_pointer_ring": ring if isinstance(ring, bool) else defaults["gesture_snap_pointer_ring"],
     }
 
 
@@ -959,6 +962,8 @@ def get_default_config() -> Dict[str, Any]:
         "gesture_snap_scroll_speed": 15.0,
         "gesture_snap_smoothing": 1.0,
         "gesture_snap_speed_response": 0.005,
+        # Desktop app: a glowing ring round the pointer while gesture snapping is on (desktop_app.pointer_ring)
+        "gesture_snap_pointer_ring": True,
         "remote_access_enabled": False,
         "remote_access_host": "0.0.0.0",
         "remote_access_port": 8765,

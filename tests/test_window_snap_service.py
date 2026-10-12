@@ -141,3 +141,16 @@ def test_it_can_be_started_again_after_stopping(mock_config, desk):
     svc.stop()
     assert svc.start() == "started" and FakeTracker.instances[-1].running
     svc.stop()
+
+
+def test_the_shared_flag_is_on_while_running_and_off_after_stopping(mock_config, desk, monkeypatch, tmp_path):
+    from jarvis.gestures import snap_state
+    monkeypatch.setattr(snap_state, "_channel", snap_state.SnapStateChannel(str(tmp_path / "flag")))
+    svc = service(mock_config, desk)
+    assert not snap_state.is_on()
+    svc.start()
+    assert snap_state.is_on()
+    time.sleep(1.3)  # the watchdog keeps the heartbeat fresh
+    assert snap_state.is_on()
+    svc.stop()
+    assert not snap_state.is_on()

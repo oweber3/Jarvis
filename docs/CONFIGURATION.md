@@ -311,6 +311,7 @@ Gestures are recognised by counting your raised fingers (index, middle, ring and
 | `gesture_snap_debounce_ms` | `100` | How long a gesture must hold to count |
 | `gesture_snap_scroll_speed` | `15` | Wheel notches a second for each tenth of the camera's height your hand is held beyond neutral |
 | `gesture_snap_smoothing` / `gesture_snap_speed_response` | `1.0` / `0.005` | Steadiness when still, and how fast smoothing gives way when you move quickly |
+| `gesture_snap_pointer_ring` | `true` | Show a glowing ring round the mouse pointer while gesture control is on (**Pointer Ring**); applies as soon as Settings are saved |
 
 To check the camera and tune the thresholds, `python -m jarvis.gestures --snap --preview` runs gesture snapping with a window showing what the camera sees, your hand's landmarks and the live finger curl values. Hand tracking runs on this PC with MediaPipe; frames are never stored and nothing is sent anywhere. Codex and Claude modes cannot turn the camera on. Spec: `src/jarvis/gestures/gestures.spec.md`.
 

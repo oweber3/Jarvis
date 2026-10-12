@@ -19,6 +19,7 @@ Webcam hand tracking that turns camera frames into hand landmarks for gesture co
 | `gestures/__main__.py` | `python -m jarvis.gestures`: the diagnostic command |
 | `gestures/window_snap.py` | The pure gesture model: finger curl and the raised-finger count, the One Euro filter, desktop clamping and `WindowSnap`, which turns `HandFrame`s into pointer moves, grabs, window moves and snaps |
 | `gestures/window_snap_service.py` | `WindowSnapService`: one `HandTracker`, one `WindowSnap` and a watchdog, started and stopped together |
+| `gestures/snap_state.py` | The shared on flag (with heartbeat) the desktop app's pointer ring reads |
 | `gestures/preview.py` | The diagnostic preview window and its drawing |
 | `tools/builtin/gesture_control.py` | The `gestureControl` tool: start, stop and status, wiring the service to the Windows output |
 | `platform/windows/window_snap.py` | The Windows output: monitor rectangles, the pointer, grabbing, moving and snapping windows (see `platform/windows/windows.spec.md`) |
@@ -173,6 +174,14 @@ Scrolling works like a joystick (or a browser's middle-click autoscroll), becaus
 - **`WindowSnapService(cfg, output_factory, tracker_factory=HandTracker)`** owns one tracker, one `WindowSnap` and the watchdog thread. `start()` reads the monitors, starts the tracker on `gesture_snap_camera` (default 0) and subscribes the model; it returns `"started"`, or `"already"` when it was on, and raises `WindowSnapUnavailable` with a plain reason (the displays could not be read, or hand tracking could not load) when it cannot start, in which case nothing is left running. A camera that is busy or unplugged does not stop it from starting: the tracker retries it in the background and says so on the console. `stop()` is described above. `running` says whether the mode is on. A failure from the output is reported once on the console and logged once until that kind of call works again.
 - One service exists per daemon (`window_snap_service.get_service`).
 
+### Shared on flag for the desktop app
+
+`gestures/snap_state.py` tells other processes whether gesture snapping is running, so the desktop app can show its pointer ring (`desktop_app/pointer_ring.spec.md`) even when the daemon runs as a separate process. It follows the voice levels channel (`jarvis/voice_levels.py`): a small memory-mapped file in the temp folder (`jarvis_gesture_snap`), guarded by a sequence number so a reader never sees half a write. It holds one flag and the wall-clock time it was written, nothing else.
+
+- `publish(on, now=None)` writes the flag. The service publishes on when it starts, again from the watchdog every 50 ms while it runs (the heartbeat), and off when it stops.
+- `is_on(now=None)` is true only when the flag is on and was written within `MAX_AGE_S` (1 second), so a daemon that crashes or is killed without stopping reads as off within a second.
+- Neither call raises: a file that cannot be opened is reported once in the debug log and reads as off.
+
 ### The `gestureControl` tool
 
 | Action | Behaviour |
@@ -205,8 +214,9 @@ Gesture snapping adds nothing that leaves the machine and nothing written to dis
 | `gesture_snap_scroll_speed` | `15` | Wheel notches a second for each tenth of the camera's height the hand is held beyond neutral (0.5 to 60) |
 | `gesture_snap_smoothing` | `1.0` | One Euro minimum cutoff in hertz (0.05 to 10) |
 | `gesture_snap_speed_response` | `0.005` | One Euro speed coefficient (0 to 0.1) |
+| `gesture_snap_pointer_ring` | `true` | Show the desktop app's glowing ring around the pointer while gesture snapping runs (`desktop_app/pointer_ring.spec.md`) |
 
-Values outside the range are clamped on load; values of the wrong type use the default. All are shown in Settings > Gesture Snapping. Changes take effect after Jarvis restarts.
+Values outside the range are clamped on load; values of the wrong type use the default. All are shown in Settings > Gesture Snapping. Changes take effect after Jarvis restarts, except `gesture_snap_pointer_ring`, which applies as soon as Settings are saved.
 
 ## Dependencies
 

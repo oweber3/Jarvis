@@ -10,6 +10,7 @@ import threading
 from typing import Any, Callable, Optional
 
 from ..debug import debug_log
+from . import snap_state
 from .hand_tracking import HandTracker
 from .window_snap import WATCHDOG_SEC, WindowSnap, WindowSnapSettings
 
@@ -92,6 +93,7 @@ class WindowSnapService:
                 atexit.register(self.stop)
                 self._exit_hook = True
             watchdog.start()
+        snap_state.publish(True)
         debug_log(f"gesture snapping started on camera {camera}", "gestures")
         _say("🖐️ Gesture snapping on\n"
              "   ☝️ Raise one finger to aim the pointer\n"
@@ -121,6 +123,7 @@ class WindowSnapService:
             debug_log(f"gesture snapping: hand tracker did not stop cleanly ({type(exc).__name__})", "gestures")
         if watchdog is not None and watchdog is not threading.current_thread():
             watchdog.join(timeout=1.0)
+        snap_state.publish(False)  # after the watchdog, so its heartbeat cannot turn the flag back on
         debug_log("gesture snapping stopped", "gestures")
         _say("🖐️ Gesture snapping off")
         return True
@@ -128,6 +131,7 @@ class WindowSnapService:
     @staticmethod
     def _watch(snap: WindowSnap, stop: threading.Event) -> None:
         while not stop.wait(WATCHDOG_SEC):
+            snap_state.publish(True)  # the heartbeat the desktop app's pointer ring reads
             try:
                 snap.tick()
             except Exception as exc:  # noqa: BLE001 - the watchdog must keep running

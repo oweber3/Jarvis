@@ -226,6 +226,16 @@ def _voice_levels_sandbox(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_gesture_snap_state(_voice_levels_sandbox, request, monkeypatch):
+    """Keep tests from showing the pointer ring of a Jarvis running on this machine: each test gets its own flag."""
+    import zlib
+    from jarvis.gestures import snap_state
+
+    sandbox = str(_voice_levels_sandbox / f"snap-{zlib.crc32(request.node.nodeid.encode()):08x}")
+    monkeypatch.setattr(snap_state, "_channel", snap_state.SnapStateChannel(sandbox))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_voice_levels(_voice_levels_sandbox, request, monkeypatch):
     """Keep tests from moving the orb of a Jarvis running on this machine: each test gets its own levels file."""
     import importlib
