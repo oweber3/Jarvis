@@ -84,7 +84,7 @@ class TestClaudeModels:
     def test_models_use_the_value_and_the_display_name(self):
         models = claude_models(self.RECORDS)
         assert ids(models) == ["default", "haiku", "opus"]
-        assert models[0].name == "Default (recommended)" and models[2].name == "opus"
+        assert models[0].name == "Claude Code's choice" and models[2].name == "opus"
 
     def test_a_model_that_lists_no_effort_levels_gets_no_effort_control(self):
         assert claude_models(self.RECORDS)[1].efforts == ()
@@ -112,8 +112,9 @@ class TestClaudeModels:
         names = {m.id: m.name for m in claude_models(self.REAL)}
         assert names["sonnet"] == "Sonnet 5.5" and names["haiku"] == "Haiku 4.5"
 
-    def test_a_default_alias_shows_the_model_it_points_at(self):
-        assert claude_models(self.REAL)[0].name == "Default (recommended) · Opus 5.5"
+    def test_claude_codes_own_default_is_not_presented_as_a_recommendation(self):
+        # Jarvis has its own default (``claude_model``), so Claude Code's "recommended" label would mislead.
+        assert claude_models(self.REAL)[0].name == "Claude Code's choice · Opus 5.5"
 
     def test_the_rest_of_the_description_is_kept_for_the_picker(self):
         by_id = {m.id: m for m in claude_models(self.REAL)}

@@ -664,7 +664,7 @@ Jarvis answers with the local model unless you allow a cloud mode. `codex_enable
 {
   "claude_enabled": true,
   "reply_mode": "claude",
-  "claude_model": "sonnet",
+  "claude_model": "haiku",
   "claude_effort": "low"
 }
 ```

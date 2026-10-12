@@ -18,6 +18,10 @@ MAX_EFFORTS = 12
 MAX_NAME_CHARS = 120
 MAX_DESCRIPTION_CHARS = 200
 _DESCRIPTION_SEPARATOR = " · "
+# Claude Code's own default alias. Its "recommended" label would read as Jarvis's default, which is
+# ``claude_model``, so it is named as Claude Code's choice.
+_CLAUDE_CODE_DEFAULT = "default"
+_CLAUDE_CODE_DEFAULT_NAME = "Claude Code's choice"
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-\[\]/]{0,199}$")
 
 
@@ -108,7 +112,10 @@ def claude_models(raw: Any) -> List[CloudModel]:
                 level_id = _safe_id(level)
                 if level_id is not None and all(e.id != level_id for e in efforts) and len(efforts) < MAX_EFFORTS:
                     efforts.append(Effort(level_id))
-        name, description = _claude_name(_clean_text(record.get("displayName"), MAX_NAME_CHARS) or model_id,
+        display = _clean_text(record.get("displayName"), MAX_NAME_CHARS) or model_id
+        if model_id == _CLAUDE_CODE_DEFAULT:
+            display = _CLAUDE_CODE_DEFAULT_NAME
+        name, description = _claude_name(display,
                                          _clean_text(record.get("description"), MAX_DESCRIPTION_CHARS))
         models[model_id] = CloudModel(model_id, name, tuple(efforts), description=description)
         if len(models) >= MAX_MODELS:

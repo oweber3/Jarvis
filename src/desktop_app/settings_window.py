@@ -109,11 +109,11 @@ CODEX_MODEL_CHOICES = [
     ("gpt-5.6-terra", "GPT-5.6-Terra"),
 ]
 CLAUDE_MODEL_CHOICES = [
+    ("haiku", "Haiku (fastest)"),
     ("sonnet", "Sonnet"),
-    ("haiku", "Haiku (fastest, no effort levels)"),
     ("opus", "Opus"),
     ("claude-fable-5-1[1m]", "Fable"),
-    ("default", "Claude Code default"),
+    ("default", "Claude Code's choice"),
 ]
 
 
