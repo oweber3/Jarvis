@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from ..bridge.broker import TERMINAL, Broker, BrokerLimits, BusyError, PayloadTooLargeError, State, TurnOutcome
 from ..bridge.execution import ToolCallRunner
-from ..bridge.model_catalog import CloudModel, claude_models
+from ..bridge.model_catalog import CloudModel, claude_models, save_reported_models
 from ..bridge.settings import bridge_settings
 from ..bridge.tools import (
     ANSWER_SCHEMA,
@@ -311,6 +311,7 @@ class ClaudeBridgeService:
             return self._start_failure(exc)
         self._stop(probe)
         self._models = claude_models(init.get("models") or [])
+        save_reported_models("claude", self._models)
         failure, effort = self._check_model(init.get("models") or [])
         if failure is not None:
             debug_log(f"claude preflight refused ({failure})", "claude")

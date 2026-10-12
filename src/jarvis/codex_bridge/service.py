@@ -23,7 +23,7 @@ from ..bridge.broker import (
     TurnOutcome,
 )
 from ..bridge.execution import ToolCallRunner
-from ..bridge.model_catalog import CloudModel, codex_models
+from ..bridge.model_catalog import CloudModel, codex_models, save_reported_models
 from ..bridge.settings import bridge_settings
 from ..bridge.tools import (
     ANSWER_SCHEMA,
@@ -322,6 +322,7 @@ class BridgeService:
             debug_log(f"app-server preflight failed ({exc.reason})", "codex")
             return "unsupported" if exc.reason == "rpc_error" else "start_failed"
         self._models = codex_models(models)
+        save_reported_models("codex", self._models)
         failure = account_failure(account) or self._check_model(models)
         if failure is not None:
             debug_log(f"app-server preflight refused ({failure})", "codex")

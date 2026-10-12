@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -96,9 +96,9 @@ CONFIG_ONLY_WINDOWS_SPECS = (
     "src/jarvis/platform/windows/apps_paths.spec.md",
 )
 
-# Models the Codex and Claude runtimes list for a subscription sign-in, as their model-list calls name them.
-# The bridge preflight checks the chosen one against the live list, and an unlisted value set by hand is
-# shown as an extra entry, so these lists only need to cover the usual picks.
+# Models offered before Codex or Claude has ever reported its list. Once a bridge has checked in, the menu
+# lists what that runtime reported instead (``_reported_model_choices``). The bridge preflight checks the
+# chosen one against the live list, and an unlisted value set by hand is shown as an extra entry.
 CODEX_MODEL_CHOICES = [
     ("gpt-6-luna", "GPT-6-Luna"),
     ("gpt-6-sol", "GPT-6-Sol"),
@@ -115,6 +115,22 @@ CLAUDE_MODEL_CHOICES = [
     ("claude-fable-5-1[1m]", "Fable"),
     ("default", "Claude Code default"),
 ]
+
+
+_CLOUD_MODEL_FIELDS = {"claude_model": "claude", "codex_model": "codex"}
+
+
+def _reported_model_choices(fields: List["FieldMeta"], config_dir: Path) -> List["FieldMeta"]:
+    """``fields`` with the Claude and Codex model menus listing what each runtime last reported, named with
+    their versions ("Sonnet 5.5"). A mode that never reported keeps its built-in choices."""
+    from jarvis.bridge.model_catalog import REPORTED_MODELS_FILE, load_reported_models
+    path = config_dir / REPORTED_MODELS_FILE
+    result = []
+    for fm in fields:
+        mode = _CLOUD_MODEL_FIELDS.get(fm.key)
+        models = load_reported_models(mode, path) if mode else []
+        result.append(replace(fm, choices=[(m.id, m.name) for m in models]) if models else fm)
+    return result
 
 
 def _is_default_value(val: Any, default_val: Any) -> bool:
@@ -815,7 +831,8 @@ class SettingsWindow(QDialog):
         self._defaults = get_default_config()
         extension_fields, extension_pages, extension_defaults = _extension_settings(
             {**self._defaults, **self._current_config})
-        self._fields: List[FieldMeta] = FIELD_METADATA + extension_fields
+        fields = _reported_model_choices(FIELD_METADATA, self._config_path.parent)
+        self._fields: List[FieldMeta] = fields + extension_fields
         self._categories = CATEGORIES + extension_pages
         self._defaults = {**extension_defaults, **self._defaults}
         self._merged = {**self._defaults, **self._current_config}

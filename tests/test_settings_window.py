@@ -642,3 +642,54 @@ class TestSettingsWindowLook:
         lines = windows_status_lines(True, True, "win32")
         assert lines[0] == "Quick commands: On"
         assert all(line.strip().replace("  ", " ")[0].isalpha() for line in lines)
+
+
+class TestCloudModelChoices:
+    """The Claude and Codex model menus offer what each runtime last reported, named with versions."""
+
+    def open(self, tmp_path, monkeypatch, config):
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps(config))
+        monkeypatch.setattr("desktop_app.settings_window.default_config_path", lambda: cfg)
+        from desktop_app.settings_window import SettingsWindow
+        return SettingsWindow()
+
+    @staticmethod
+    def entries(win, key):
+        combo = win._widgets[key]
+        return [(combo.itemData(i), combo.itemText(i)) for i in range(combo.count())]
+
+    def report(self, tmp_path):
+        from jarvis.bridge.model_catalog import REPORTED_MODELS_FILE, claude_models, save_reported_models
+        models = claude_models([
+            {"value": "default", "displayName": "Default (recommended)", "description": "Opus 5.5 · Most capable"},
+            {"value": "sonnet", "displayName": "Sonnet", "description": "Sonnet 5.5 · Efficient"},
+        ])
+        save_reported_models("claude", models, tmp_path / REPORTED_MODELS_FILE)
+        return models
+
+    def test_the_reported_models_are_offered_by_their_versioned_names(self, qapp, tmp_path, monkeypatch):
+        models = self.report(tmp_path)
+        win = self.open(tmp_path, monkeypatch, {"claude_model": "sonnet"})
+        assert self.entries(win, "claude_model") == [(m.id, m.name) for m in models]
+        assert win._widgets["claude_model"].currentData() == "sonnet"
+        win.close()
+
+    def test_before_any_report_the_usual_choices_are_offered(self, qapp, tmp_path, monkeypatch):
+        from desktop_app.settings_window import CLAUDE_MODEL_CHOICES
+        win = self.open(tmp_path, monkeypatch, {})
+        assert self.entries(win, "claude_model") == CLAUDE_MODEL_CHOICES
+        win.close()
+
+    def test_a_saved_model_the_report_lacks_is_still_shown_and_kept(self, qapp, tmp_path, monkeypatch):
+        self.report(tmp_path)
+        win = self.open(tmp_path, monkeypatch, {"claude_model": "claude-fable-5-1[1m]"})
+        assert win._widgets["claude_model"].currentData() == "claude-fable-5-1[1m]"
+        win.close()
+
+    def test_the_other_modes_menu_is_untouched(self, qapp, tmp_path, monkeypatch):
+        from desktop_app.settings_window import CODEX_MODEL_CHOICES
+        self.report(tmp_path)
+        win = self.open(tmp_path, monkeypatch, {})
+        assert self.entries(win, "codex_model") == CODEX_MODEL_CHOICES
+        win.close()

@@ -152,6 +152,8 @@ default, like every other metadata-managed field.
 
 ## Hardware Device Selection
 
+The Claude Model and Codex Model dropdowns list the models that runtime last reported (`cloud_models.json`, `bridge/bridge.spec.md`, Cloud models), named with their versions such as "Sonnet 5.5", read when the window opens. Before a mode has ever been checked they offer a built-in list. A saved model missing from the list is shown and kept.
+
 The Voice Input tab includes a device dropdown populated at window open time via `sounddevice.query_devices()`. It lists all input-capable devices with their index and name. The stored value is the device index as a string, or empty string for system default.
 
 ## Save Behaviour
