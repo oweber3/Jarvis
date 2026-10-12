@@ -94,3 +94,19 @@ class TestGestureSnapping:
 
         assert cli.main(["--snap", "--seconds", "0.2"], make_tracker=broken, make_output=FakeDesktop) == 1
         assert "could not start" in capsys.readouterr().out
+
+
+    def test_without_an_injected_tracker_it_runs_on_the_gesture_snapping_tracker(self, monkeypatch):
+        from tests.synthetic_hands import FakeDesktop, FakeWindow
+        from jarvis.gestures import window_snap_service as service
+
+        made = []
+
+        def snap_tracker(cfg, camera, **kwargs):
+            made.append(camera)
+            return _fist_tracker(camera)
+
+        monkeypatch.setattr(service, "snap_tracker", snap_tracker)
+        desk = FakeDesktop(windows=[FakeWindow((0, 0, 1920, 1080))])
+        assert cli.main(["--snap", "--camera", "2", "--seconds", "0.5"], make_output=lambda: desk) == 0
+        assert made == [2]
