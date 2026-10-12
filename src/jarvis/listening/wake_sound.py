@@ -21,6 +21,7 @@ from typing import Callable, Optional
 import numpy as np
 
 from ..debug import debug_log
+from ..utils.onnx_privacy import disable_onnxruntime_telemetry
 from ..utils.model_files import ModelUnavailable, ensure_verified_file
 
 SAMPLE_RATE = 16000
@@ -58,6 +59,7 @@ DEFAULT_PHRASE_MODEL = "hey_jarvis"
 
 
 def _session(path: Path):
+    disable_onnxruntime_telemetry()
     import onnxruntime as ort
 
     options = ort.SessionOptions()
@@ -84,6 +86,9 @@ class WakeSoundDetector:
         self.threshold = float(threshold)
         self._cooldown = float(cooldown_sec)
         self._clock = clock
+        # Seed for the feature history: low-level noise, so the phrase model has a full window from the start.
+        noise = np.random.default_rng(0).integers(-1000, 1000, SAMPLE_RATE * 4).astype(np.int16)
+        self._seed_features = self._embed_clip(noise)
         self.reset()
 
     def reset(self) -> None:
@@ -91,9 +96,7 @@ class WakeSoundDetector:
         self._raw = np.zeros(0, dtype=np.int16)
         self._pending = 0
         self._mel = np.ones((_MEL_WINDOW, _MEL_BINS), dtype=np.float32)
-        # Seed the feature history with low-level noise so the phrase model has a full window from the start.
-        noise = np.random.default_rng(0).integers(-1000, 1000, SAMPLE_RATE * 4).astype(np.int16)
-        self._features = self._embed_clip(noise)
+        self._features = self._seed_features.copy()
         self._scores_seen = 0
         self._above = False
         self._last_detection = float("-inf")

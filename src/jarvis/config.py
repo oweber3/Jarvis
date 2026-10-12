@@ -1288,7 +1288,7 @@ def load_settings() -> Settings:
     wake_word = str(merged.get("wake_word", "jarvis")).strip().lower()
     wake_aliases = [a.strip().lower() for a in _ensure_list(merged.get("wake_aliases")) if a.strip()]
     wake_fuzzy_ratio = float(merged.get("wake_fuzzy_ratio", 0.78))
-    wake_sound_enabled = merged.get("wake_sound_enabled") is True
+    wake_sound_enabled = bool(merged.get("wake_sound_enabled", True))
     wake_sound_model = str(merged.get("wake_sound_model") or "").strip() or defaults["wake_sound_model"]
     try:
         wake_sound_threshold = min(0.95, max(0.05, float(merged.get("wake_sound_threshold"))))

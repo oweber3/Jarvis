@@ -309,3 +309,63 @@ def test_cleared_audio_also_clears_what_the_detector_heard(face_states):
     listener._clear_audio_buffers()
     assert detector.resets == 1
     listener.state_manager.stop()
+
+
+def _result(listener, text, start, end):
+    from jarvis.listening.listener import _TranscriptionResult
+    return _TranscriptionResult(text=text, language="en", low_confidence_events=(), start_time=start,
+                                end_time=end, speech_end_time=end, energy=0.01,
+                                dictation_generation=listener._dictation_generation,
+                                captured_during_tts=False, captured_tts_start_time=0.0)
+
+
+def test_continuing_speech_does_not_keep_the_face_lit_after_its_transcript(face_states):
+    listener, _ = _listening_listener(_ScriptedDetector(hits=(0,)))
+    listener._process_audio_block(_quiet_frame())
+    heard_at = listener._wake_sound_at
+    listener.is_speech_active = True  # the room keeps talking
+
+    listener._apply_transcription_result(_result(listener, "Travis went to the store.", heard_at - 1.0, heard_at + 0.5))
+
+    assert assistant_state.current() is AssistantState.IDLE
+    listener.state_manager.stop()
+
+
+def test_an_earlier_utterance_transcribed_later_does_not_settle_the_detection(face_states):
+    listener, _ = _listening_listener(_ScriptedDetector(hits=(0,)))
+    listener._process_audio_block(_quiet_frame())
+    heard_at = listener._wake_sound_at
+    listener.is_speech_active = True
+
+    listener._apply_transcription_result(_result(listener, "something said before", heard_at - 3.0, heard_at - 1.0))
+
+    assert assistant_state.current() is AssistantState.LISTENING
+    listener.state_manager.stop()
+
+
+def test_a_detection_whose_audio_never_reached_a_transcript_settles_eventually(face_states):
+    listener, _ = _listening_listener(_ScriptedDetector(hits=(0,)))
+    listener._process_audio_block(_quiet_frame())
+    listener.is_speech_active = True  # speech never stops, and that utterance never comes back
+
+    listener._settle_wake_sound(now=time.time() + 2.0)
+    assert assistant_state.current() is AssistantState.LISTENING
+    listener._settle_wake_sound(now=time.time() + 60.0)
+    assert assistant_state.current() is AssistantState.IDLE
+    listener.state_manager.stop()
+
+
+def test_the_wake_word_sound_during_the_hot_window_changes_nothing(face_states):
+    listener, _ = _listening_listener(_ScriptedDetector(hits=(0,)))
+    listener.state_manager.schedule_hot_window_activation()
+    deadline = time.time() + 2.0
+    while not listener.state_manager.is_hot_window_active() and time.time() < deadline:
+        time.sleep(0.02)
+    assert assistant_state.current() is AssistantState.LISTENING
+
+    listener._process_audio_block(_quiet_frame())
+    listener._settle_wake_sound(now=time.time() + 60.0)
+
+    assert assistant_state.current() is AssistantState.LISTENING
+    assert listener._wake_sound_at is None
+    listener.state_manager.stop()

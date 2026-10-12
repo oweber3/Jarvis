@@ -78,3 +78,18 @@ class TestAssistantState:
     def test_every_state_has_a_desktop_face_equivalent(self):
         from desktop_app.face_widget import JarvisState
         assert {s.value for s in AssistantState} == {s.value for s in JarvisState}
+
+
+@pytest.mark.unit
+def test_replace_state_changes_only_from_the_expected_state():
+    assistant_state.reset()
+    seen = []
+    assistant_state.subscribe(seen.append)
+    assistant_state.set_state(AssistantState.IDLE)
+
+    assert assistant_state.replace_state(AssistantState.IDLE, AssistantState.LISTENING) is True
+    assert assistant_state.replace_state(AssistantState.IDLE, AssistantState.THINKING) is False
+
+    assert assistant_state.current() is AssistantState.LISTENING
+    assert seen == [AssistantState.IDLE, AssistantState.LISTENING]
+    assistant_state.reset()

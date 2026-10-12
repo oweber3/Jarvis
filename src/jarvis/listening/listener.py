@@ -36,7 +36,7 @@ from .intent_judge import (
     create_intent_judge,
     warm_up_chat_model,
 )
-from ..assistant_state import AssistantState, set_state, current as current_assistant_state
+from ..assistant_state import AssistantState, set_state, replace_state
 from .. import voice_levels
 from ..bridge import modes as reply_modes
 from ..debug import debug_log
@@ -450,6 +450,7 @@ class VoiceListener(threading.Thread):
     _wake_sound: Optional[Any] = None  # WakeSoundDetector once its models load (listener thread only)
     _wake_sound_at: Optional[float] = None  # Capture time of a wake word sound the transcript has not settled
     _WAKE_SOUND_SETTLE_SEC = 1.0  # a sound with no speech or transcript after it this long was not the wake word
+    _WAKE_SOUND_MAX_WAIT_MARGIN_SEC = 5.0  # beyond the longest utterance, for a sound whose utterance was dropped
     _barge_in_fired = False  # TTS was ducked for the reply being spoken
     _barge_in_deadline = 0.0
     _barge_in_voiced_frames = 0
@@ -1933,27 +1934,35 @@ class VoiceListener(threading.Thread):
             return
         if not heard or self._dictation_active or self._is_engaged():
             return
-        if current_assistant_state() is not AssistantState.IDLE:
-            return
-        self._wake_sound_at = captured_at
-        debug_log("wake word heard by sound; waiting for the transcript to confirm it", "voice")
-        set_state(AssistantState.LISTENING)
+        if replace_state(AssistantState.IDLE, AssistantState.LISTENING):
+            self._wake_sound_at = captured_at
+            debug_log("wake word heard by sound; waiting for the transcript to confirm it", "voice")
 
-    def _settle_wake_sound(self, now: Optional[float] = None) -> None:
-        """Return the face to idle when speech after a wake word sound did not turn out to address Jarvis."""
+    def _settle_wake_sound(self, now: Optional[float] = None, transcribed_until: Optional[float] = None) -> None:
+        """Return the face to idle when the speech after a wake word sound did not address Jarvis.
+
+        A detection is settled once the transcript of the utterance it was
+        heard in has been processed (``transcribed_until``, that utterance's
+        end, reaches the detection), so speech carrying on around it never
+        keeps the face lit. Without such a transcript it settles after a
+        quiet second, or when even the longest utterance would have been
+        transcribed by now (its audio was too short or dropped).
+        """
         heard_at = self._wake_sound_at
         if heard_at is None:
             return
         now = time.time() if now is None else now
-        if self._speech_pending() or now - heard_at < self._WAKE_SOUND_SETTLE_SEC:
-            return
+        if transcribed_until is None or transcribed_until < heard_at:
+            quiet = not self._speech_pending() and now - heard_at >= self._WAKE_SOUND_SETTLE_SEC
+            max_wait = int(getattr(self, "_normal_max_utt_frames", 0)) * getattr(self, "_frame_ms", 20) / 1000.0
+            if not quiet and now - heard_at < max_wait + self._WAKE_SOUND_MAX_WAIT_MARGIN_SEC:
+                return
         self._wake_sound_at = None
         if (self._is_engaged() or self.state_manager.is_collecting()
                 or self.state_manager.is_hot_window_active()):
             return
-        if current_assistant_state() is AssistantState.LISTENING:
+        if replace_state(AssistantState.LISTENING, AssistantState.IDLE):
             debug_log("wake word sound not confirmed by the transcript; back to idle", "voice")
-            set_state(AssistantState.IDLE)
 
     def _reset_audio_health(self, now=None):
         now = time.monotonic() if now is None else now
@@ -2216,6 +2225,12 @@ class VoiceListener(threading.Thread):
             self._barge_in_resume()
 
     def _apply_transcription_result(self, result: _TranscriptionResult) -> None:
+        try:
+            self._apply_transcript(result)
+        finally:
+            self._settle_wake_sound(transcribed_until=result.end_time)
+
+    def _apply_transcript(self, result: _TranscriptionResult) -> None:
         if not self._transcription_is_current(result.dictation_generation):
             return
         for event in result.low_confidence_events:

@@ -1,7 +1,7 @@
 """Keep onnxruntime from emitting its own telemetry.
 
 Official onnxruntime builds have telemetry events on by default. Every place
-Jarvis creates an onnxruntime session (Piper voices, speaker verification)
+Jarvis creates an onnxruntime session (Piper voices, speaker verification, the wake word sound detector)
 calls this first, so nothing about Jarvis's sessions is reported anywhere.
 """
 

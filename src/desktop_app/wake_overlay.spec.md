@@ -15,7 +15,7 @@ When the user wakes Jarvis, the edges of every screen fill with soft holographic
 
 ## When it shows
 
-- **Engages on wake only**: a change from idle to listening, which is what saying the wake word (or clicking the orb) does. A conversation already listening when the app starts, a typed chat request (idle to thinking) and dictation never engage it.
+- **Engages on wake only**: a change from idle to listening, which is what saying the wake word (or clicking the orb) does. With the wake word sound detector on, this happens as soon as the wake word is heard, and a sound-alike that the transcript does not confirm returns to idle, which fades it (`listening/listening.spec.md`, Wake word sound). A conversation already listening when the app starts, a typed chat request (idle to thinking) and dictation never engage it.
 - **Follows the conversation**: once engaged it stays through listening, thinking and speaking, including the follow-up listening window after a reply.
 - **Disengages** when the state leaves the conversation (idle, asleep, dictating, or anything unknown) and fades out in under a second. As a safety net it also fades out when the state has not changed for `MAX_UNCHANGED_S` (two minutes); the next wake engages it again.
 - **Off switch**: `wake_overlay_enabled` (default on, Settings → Features → Wake Screen Effect). Saving Settings applies it at once; turning it off removes any light on screen.

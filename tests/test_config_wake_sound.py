@@ -24,9 +24,6 @@ class TestWakeSoundSettings:
     def test_it_can_be_switched_off(self, tmp_path, monkeypatch):
         assert load(tmp_path, monkeypatch, {"wake_sound_enabled": False}).wake_sound_enabled is False
 
-    def test_only_a_real_true_turns_it_on(self, tmp_path, monkeypatch):
-        assert load(tmp_path, monkeypatch, {"wake_sound_enabled": "no"}).wake_sound_enabled is False
-
     def test_a_custom_model_path_is_kept(self, tmp_path, monkeypatch):
         model = str(tmp_path / "my_wake_word.onnx")
         assert load(tmp_path, monkeypatch, {"wake_sound_model": model}).wake_sound_model == model

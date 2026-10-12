@@ -371,7 +371,7 @@ Barge-in works best when you speak louder than Jarvis's voice reaches the microp
 
 ## Reacting to the sound of the wake word
 
-Jarvis reacts as soon as it hears "Jarvis", while you are still talking: the orb and the wake screen effect light up straight away instead of after your sentence has been transcribed. A small local model (openWakeWord, about 4 MB, downloaded once on first start) listens for the sound of the name on the CPU, using about 2% of one core and no GPU. It only changes how soon Jarvis shows it is listening: whether you were talking to Jarvis is still decided from what you said, so a sound-alike word just makes the orb flicker and settle back.
+Jarvis reacts as soon as it hears "Jarvis", while you are still talking: the orb and the wake screen effect light up straight away instead of after your sentence has been transcribed. A small local model (openWakeWord, about 4 MB, downloaded once on first start) listens for the sound of the name on the CPU, using about 2% of one core and no GPU. It only changes how soon Jarvis shows it is listening: whether you were talking to Jarvis is still decided from what you said. A sound-alike word (from you, another person or the TV) lights the orb and the wake screen effect until that speech has been transcribed, then they settle back without Jarvis doing anything. Changes to these settings take effect after Jarvis restarts.
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
