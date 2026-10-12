@@ -154,3 +154,26 @@ def test_the_shared_flag_is_on_while_running_and_off_after_stopping(mock_config,
     assert snap_state.is_on()
     svc.stop()
     assert not snap_state.is_on()
+
+def test_no_thread_of_the_mode_is_left_running_once_it_is_off(mock_config, desk):
+    import threading
+
+    from jarvis.gestures.window_snap_service import snap_tracker
+    from tests.test_hand_tracking import FakeCamera, FakeHands
+
+    names = ("hand-capture", "hand-detect", "gesture-snap-watchdog")
+
+    def alive():
+        return [t.name for t in threading.enumerate() if t.name in names]
+
+    svc = WindowSnapService(mock_config, output_factory=lambda: desk,
+                            tracker_factory=lambda camera: snap_tracker(
+                                mock_config, camera, hands_factory=lambda: FakeHands(),
+                                camera_factory=lambda index: FakeCamera()))
+    assert svc.start() == "started"
+    deadline = time.perf_counter() + 2.0
+    while len(alive()) < 3 and time.perf_counter() < deadline:
+        time.sleep(0.01)
+    assert sorted(alive()) == sorted(names), "the camera, the detector and the watchdog run while it is on"
+    svc.stop()
+    assert alive() == [], "nothing keeps polling once it is off"

@@ -305,13 +305,15 @@ Gestures are recognised by counting your raised fingers (index, middle, ring and
 | Setting | Default | What it does |
 |---|---|---|
 | `gesture_snap_camera` | `0` | Webcam index |
-| `gesture_snap_hand` | `any` | `any`, `right` or `left` |
+| `gesture_snap_hand` | `any` | `any`, `right` or `left`. `any` follows one hand and is the lightest on the CPU; `right` and `left` look for both hands so they can pick the side |
 | `gesture_snap_comfort_box` | `0.5` | Share of the camera's width that spans the whole desktop; smaller is more sensitive |
 | `gesture_snap_finger_up` / `gesture_snap_finger_down` | `1.1` / `0.95` | Finger curl (wrist-to-tip distance over wrist-to-middle-joint distance) above which a finger counts as raised and below which it counts as lowered; in between it keeps its last state. Down is always kept below up |
 | `gesture_snap_debounce_ms` | `100` | How long a gesture must hold to count |
 | `gesture_snap_scroll_speed` | `15` | Wheel notches a second for each tenth of the camera's height your hand is held beyond neutral |
 | `gesture_snap_smoothing` / `gesture_snap_speed_response` | `1.0` / `0.005` | Steadiness when still, and how fast smoothing gives way when you move quickly |
 | `gesture_snap_pointer_ring` | `true` | Show a glowing ring round the mouse pointer while gesture control is on (**Pointer Ring**); applies as soon as Settings are saved |
+
+While no hand has been in view for a few seconds, Jarvis checks the camera only a few times a second to save power, and goes back to full speed the moment a hand appears.
 
 To check the camera and tune the thresholds, `python -m jarvis.gestures --snap --preview` runs gesture snapping with a window showing what the camera sees, your hand's landmarks and the live finger curl values. Hand tracking runs on this PC with MediaPipe; frames are never stored and nothing is sent anywhere. Codex and Claude modes cannot turn the camera on. Spec: `src/jarvis/gestures/gestures.spec.md`.
 

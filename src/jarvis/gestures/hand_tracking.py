@@ -26,6 +26,9 @@ HAND_MODEL_SHA256 = "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf360
 CAPTURE_WIDTH = 640
 CAPTURE_HEIGHT = 480
 DEFAULT_MAX_FPS = 30.0
+# Gesture snapping searches at most this many frames a second once no hand has been in view for IDLE_AFTER_SEC.
+IDLE_FPS = 6.0
+IDLE_AFTER_SEC = 3.0
 
 _BACKOFF_FIRST_SEC = 1.0
 _BACKOFF_MAX_SEC = 5.0
@@ -143,10 +146,34 @@ class MediaPipeHands:
         self._landmarker.close()
 
 
-def _load_mediapipe_hands() -> MediaPipeHands:
+def _load_mediapipe_hands(max_hands: int = 2) -> MediaPipeHands:
     import mediapipe  # noqa: F401  (fail on a missing install before fetching the model)
 
-    return MediaPipeHands(str(ensure_hand_model()))
+    return MediaPipeHands(str(ensure_hand_model()), max_hands=max_hands)
+
+
+class IdleGate:
+    """Decides which frames are searched for hands: all of them, until no hand has been seen for ``idle_after``
+    seconds, then at most ``idle_fps`` a second until a hand is found. Times are on the caller's clock."""
+
+    def __init__(self, idle_fps: float, idle_after: float):
+        self._period = 1.0 / idle_fps
+        self._after = idle_after
+        self._quiet_since: Optional[float] = None
+        self._last_search = float("-inf")
+        self.idle = False
+
+    def should_search(self, now: float) -> bool:
+        if self._quiet_since is None:
+            self._quiet_since = now
+        self.idle = now - self._quiet_since >= self._after
+        return not self.idle or now - self._last_search >= self._period
+
+    def searched(self, now: float, found: bool) -> None:
+        self._last_search = now
+        if found:
+            self._quiet_since = now
+            self.idle = False
 
 
 # --------------------------------------------------------------------------------------------------
@@ -201,17 +228,26 @@ class HandTracker:
     ``start`` returns whether tracking is running. Without MediaPipe or the model it says why once on the
     console and returns ``False`` without opening the camera. ``hands_factory`` (no arguments, returns a
     callable taking a BGR frame and its capture time) and ``camera_factory`` (takes the index, returns an
-    object with ``open``, ``read`` and ``close``) replace MediaPipe and OpenCV."""
+    object with ``open``, ``read`` and ``close``) replace MediaPipe and OpenCV. ``max_hands`` is how many hands
+    the default detector looks for. With ``idle_fps`` set, frames are searched at most that often once no hand
+    has been in view for ``idle_after`` seconds (see ``IdleGate``)."""
 
     def __init__(self, camera: int = 0, *,
                  hands_factory: Optional[Callable[[], Callable[[Any, float], Tuple[Hand, ...]]]] = None,
                  camera_factory: Optional[Callable[[int], Any]] = None,
                  max_fps: float = DEFAULT_MAX_FPS,
+                 max_hands: int = 2,
+                 idle_fps: Optional[float] = None,
+                 idle_after: float = IDLE_AFTER_SEC,
                  clock: Callable[[], float] = time.perf_counter):
         self._index = camera
-        self._hands_factory = hands_factory or _load_mediapipe_hands
+        self._max_hands = max_hands
+        self._hands_factory = hands_factory or (lambda: _load_mediapipe_hands(max_hands))
         self._camera_factory = camera_factory or OpenCVCamera
         self._period = 1.0 / max_fps
+        self._idle_fps = idle_fps
+        self._idle_after = idle_after
+        self._gate: Optional[IdleGate] = None
         self._clock = clock
         self._lock = threading.Lock()
         self._frame_ready = threading.Condition(self._lock)
@@ -227,6 +263,19 @@ class HandTracker:
     def running(self) -> bool:
         with self._lock:
             return bool(self._threads)
+
+    @property
+    def max_hands(self) -> int:
+        return self._max_hands
+
+    @property
+    def idle_fps(self) -> Optional[float]:
+        return self._idle_fps
+
+    @property
+    def idle(self) -> bool:
+        """Whether frames are being searched at the idle rate (no hand in view for a while)."""
+        return self._gate is not None and self._gate.idle
 
     def subscribe(self, callback: Callable[[HandFrame], None]) -> Callable[[], None]:
         """Deliver every ``HandFrame`` to ``callback`` (on the detection thread); returns the unsubscribe."""
@@ -249,6 +298,7 @@ class HandTracker:
         if self._hands is None and not self._load_hands():
             return False
         self._stop.clear()
+        self._gate = IdleGate(self._idle_fps, self._idle_after) if self._idle_fps else None
         camera = self._camera_factory(self._index)
         threads = [threading.Thread(target=self._capture_loop, args=(camera,), name="hand-capture", daemon=True),
                    threading.Thread(target=self._detect_loop, name="hand-detect", daemon=True)]
@@ -376,22 +426,35 @@ class HandTracker:
             return item
 
     def _detect_loop(self) -> None:
-        hands_of = self._hands
+        hands_of, gate = self._hands, self._gate
+        was_idle = False
         while not self._stop.is_set():
             item = self._next_frame()
             if item is None or self._stop.is_set():
                 continue
             captured, frame = item
             del item
+            if gate is not None:
+                search = gate.should_search(captured)
+                if gate.idle != was_idle:
+                    was_idle = gate.idle
+                    debug_log("hand tracking idling: no hand in view" if was_idle else "hand tracking awake", "gestures")
+                if not search:
+                    del frame
+                    continue
             height, width = frame.shape[:2]
             try:
                 hands = tuple(hands_of(frame, captured))
             except Exception as exc:
                 debug_log(f"hand detection failed on a frame ({type(exc).__name__})", "gestures")
                 self._say("frame_unreadable", "✋ Hand tracking could not read a camera frame")
+                if gate is not None:
+                    gate.searched(captured, False)
                 continue
             finally:
                 del frame
+            if gate is not None:
+                gate.searched(captured, bool(hands))
             self._note_sides(hands)
             self._deliver(HandFrame(captured, int(width), int(height), hands))
 

@@ -188,6 +188,26 @@ class TestPointerRingController:
             assert (g.center().x(), g.center().y()) == pytest.approx(pos, abs=1)
         ring.shutdown()
 
+    def test_it_repaints_far_less_often_than_it_follows_the_pointer(self, qapp):
+        from desktop_app.pointer_ring import PAINT_INTERVAL_S
+
+        ring = _ring(_Flag(True))
+        ring.start()
+        ring.poll()
+        _settle(ring, 0.5)
+        repaints = []
+        ring.window().update = lambda *a: repaints.append(1)
+        cursor = ring._cursor
+        moves = 0
+        for i in range(120):  # two seconds at 60 ticks a second
+            cursor.pos = (100 + i, 100)
+            ring.tick(1.0 / 60)
+            g = ring.window().geometry()
+            moves += abs(g.center().x() - (100 + i)) <= 1
+        assert moves == 120, "the window is moved on every tick"
+        assert 2.0 / PAINT_INTERVAL_S * 0.8 <= len(repaints) <= 2.0 / PAINT_INTERVAL_S * 1.2
+        ring.shutdown()
+
     def test_window_passes_clicks_through_and_never_takes_focus(self, qapp):
         from PyQt6.QtCore import Qt
 

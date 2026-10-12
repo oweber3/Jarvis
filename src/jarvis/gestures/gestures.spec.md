@@ -57,6 +57,8 @@ The Hand Landmarker model (`hand_landmarker.task`, float16, version 1, Apache 2.
 `MediaPipeHands(model_path, max_hands=2)` wraps the Hand Landmarker in video mode:
 
 - It is called with a BGR frame (as OpenCV delivers it) and a capture time, and returns a tuple of `Hand`s.
+- `max_hands` is the most hands it looks for. With one, MediaPipe follows that hand from frame to frame and does not search the rest of every frame for a second one, which more than halves the cost of a frame with a hand in view. The landmarks of a hand are the same either way; the only difference is which hand is reported when two are in view.
+- It runs on the CPU. MediaPipe's GPU delegate is not used: on Windows `mediapipe` 0.10.31 accepts the option but still runs the model on the CPU, at the same speed.
 - It flips the frame, converts it to RGB and runs detection with MediaPipe's default confidence thresholds (0.5).
 - Video mode needs strictly increasing timestamps, so it never passes one that is not later than the last.
 - MediaPipe is imported only when the adapter is created. Without it, creating the adapter raises `ImportError`.
@@ -65,18 +67,21 @@ The Hand Landmarker model (`hand_landmarker.task`, float16, version 1, Apache 2.
 
 `OpenCVCamera(index)` opens the webcam at that index with OpenCV, asking for 640 x 480 at 30 frames per second to keep detection cheap. On Windows it tries Media Foundation first and then DirectShow, because some webcams open only through one of them; the automatic choice is never used, as it also probes depth-camera drivers. A backend counts as working only when it opens the camera and delivers a frame. `open()` returns whether the camera opened, `read()` returns a BGR frame or `None`, and `close()` releases it.
 
+The size and rate are requests. A webcam delivers what its driver allows: in dim light many lower their frame rate to expose longer (measured: 16.7 frames a second on a webcam asked for 30, with every size and format that was tried), so the rate the pipeline sees is the camera's, not the detector's. The capture size does not change the cost of detection, because MediaPipe scales every frame down to its own input size, so 640 x 480 stays.
+
 ## `HandTracker`
 
-`HandTracker(camera=0, *, hands_factory=None, camera_factory=None, max_fps=30, clock=time.perf_counter)` runs the pipeline. `camera` is the webcam index; the factories replace the MediaPipe adapter and the OpenCV camera in tests.
+`HandTracker(camera=0, *, hands_factory=None, camera_factory=None, max_fps=30, max_hands=2, idle_fps=None, idle_after=3.0, clock=time.perf_counter)` runs the pipeline. `camera` is the webcam index; the factories replace the MediaPipe adapter and the OpenCV camera in tests. `max_hands` is passed to the default MediaPipe adapter.
 
 - **`start()`** loads the model and the adapter, then starts two threads and returns `True`. If MediaPipe is not installed, or the model or adapter cannot be loaded, it says why once on the console (`✋ Hand tracking is off: ...`, with a hint where one helps) and returns `False`; nothing is started and the camera is never opened. Calling `start()` while running returns `True` and changes nothing.
 - **The capture thread** opens the camera and keeps only the newest frame, replacing any frame detection has not reached yet, so detection always works on the latest image and never falls behind. Frames are read no faster than `max_fps`. If the camera cannot be opened or stops delivering frames, it is closed and retried with back-off (1 second, doubling to at most 5 seconds) until it works or the tracker stops. The first failure prints `✋ Hand tracking cannot use camera N` once, with the hint that another app may be using it; recovery prints once.
 - **The detection thread** takes the newest frame, runs detection, drops the frame and delivers a `HandFrame` stamped with the frame's capture time to every subscriber, in subscription order. A subscriber that raises is logged and skipped; the others still receive the frame. A frame that fails detection is skipped and reported once.
+- **Idle rate.** With `idle_fps` set, the tracker searches less often while there are no hands. Once no hand has been seen for `idle_after` seconds (counted from the start, then from the last frame with a hand) it runs detection on at most `idle_fps` frames a second and drops the frames in between without searching them; the camera is still read at its own rate. The first frame with a hand ends idling at once: every frame is searched again from then on. Dropped frames are not delivered, which costs a subscriber nothing: it has already been told for seconds that no hand is in view. `idle` is true while the tracker is in this mode. Without `idle_fps` (the default) every frame is searched, as the diagnostic command does.
 - **`subscribe(callback)`** registers a callback taking a `HandFrame` and returns a function that unsubscribes it. Callbacks run on the detection thread and should return quickly.
 - **`stop()`** stops both threads, releases the camera and drops any pending frame. It is safe to call when not running and returns once the threads have finished (each joined with a 2 second limit).
 - **`running`** is true between a successful `start()` and `stop()`.
 
-Debug logs (category `gestures`) mark start, stop, the camera opening, failing and recovering, and hands appearing and disappearing, never every frame and never coordinates.
+Debug logs (category `gestures`) mark start, stop, the camera opening, failing and recovering, hands appearing and disappearing, and the tracker going idle and waking, never every frame and never coordinates.
 
 ## Recordings
 
@@ -167,11 +172,19 @@ Scrolling works like a joystick (or a browser's middle-click autoscroll), becaus
 - A frame without the driving hand stops the pointer. If the hand stays out of view for 0.25 s (timed by when frames arrive, not when they were captured, so slow detection never drops a held window) the mode pauses: a gesture in progress is cancelled, a scroll ends, a held window is left where it is and the finger states are forgotten.
 - A watchdog thread checks every 50 ms, so this also happens when frames stop arriving altogether (a camera that stops, unplugs or freezes).
 
+### Keeping the cost low
+
+The mode keeps the camera and the detector busy for as long as it is on, so it spends effort only where gestures need it. `snap_tracker(cfg, camera, **kwargs)` (in `window_snap_service.py`) builds the hand tracker the mode and `--snap` use:
+
+- **One hand.** With `gesture_snap_hand` at `any` (the default) the tracker looks for one hand (`max_hands=1`), because only one hand ever drives. `left` and `right` look for two, since the side named may be the second hand found.
+- **Idle rate.** The tracker idles at 6 frames a second at most (`IDLE_FPS`; every third frame of a 15 frames a second webcam) once no hand has been in view for 3 seconds (`IDLE_AFTER_SEC`) and wakes on the first frame that shows one (see `HandTracker`). A hand raised after a long absence is therefore noticed up to about 0.2 s later than at the full rate, once; by then the mode has been paused for seconds, so nothing is held, scrolling or aimed.
+- **Nothing runs while off.** `stop()` ends the capture, detection and watchdog threads and releases the camera; the service holds no timer. The watchdog wakes every 50 ms, which costs too little to measure.
+
 ### `WindowSnap` and `WindowSnapService`
 
 - **`WindowSnap(output, settings, clock)`** is the gesture model. `output` is the platform output: `desktop()` returning monitor rectangles `(left, top, right, bottom)` with exclusive right and bottom edges, `move_to(x, y)` for the pointer, `grab(x, y)` returning a grabbed window (an object with the window's outer frame as `rect`) or `None`, `move_window(window, left, top)`, `drop(window, x, y)` to snap it, and `scroll(delta)` for wheel units. Tests use a fake. `on_frame(frame)` handles one `HandFrame`, `tick()` runs the watchdog check, and `close()` lets go of a held window. It is thread safe: frames arrive on the detection thread, ticks on the watchdog thread and `close` on whichever thread stops the mode.
 - **`WindowSnap.state`** names the current state for display: `paused`, `aiming`, `hand changing`, `holding`, `holding nothing` (a fist over the desktop) or `scrolling`. `WindowSnapService.state` is that, or `off`.
-- **`WindowSnapService(cfg, output_factory, tracker_factory=HandTracker)`** owns one tracker, one `WindowSnap` and the watchdog thread. `start()` reads the monitors, starts the tracker on `gesture_snap_camera` (default 0) and subscribes the model; it returns `"started"`, or `"already"` when it was on, and raises `WindowSnapUnavailable` with a plain reason (the displays could not be read, or hand tracking could not load) when it cannot start, in which case nothing is left running. A camera that is busy or unplugged does not stop it from starting: the tracker retries it in the background and says so on the console. `stop()` is described above. `running` says whether the mode is on. A failure from the output is reported once on the console and logged once until that kind of call works again.
+- **`WindowSnapService(cfg, output_factory, tracker_factory=None)`** owns one tracker (made by `tracker_factory(camera)`, by default `snap_tracker`), one `WindowSnap` and the watchdog thread. `start()` reads the monitors, starts the tracker on `gesture_snap_camera` (default 0) and subscribes the model; it returns `"started"`, or `"already"` when it was on, and raises `WindowSnapUnavailable` with a plain reason (the displays could not be read, or hand tracking could not load) when it cannot start, in which case nothing is left running. A camera that is busy or unplugged does not stop it from starting: the tracker retries it in the background and says so on the console. `stop()` is described above. `running` says whether the mode is on. A failure from the output is reported once on the console and logged once until that kind of call works again.
 - One service exists per daemon (`window_snap_service.get_service`).
 
 ### Shared on flag for the desktop app
@@ -206,7 +219,7 @@ Gesture snapping adds nothing that leaves the machine and nothing written to dis
 |---|---|---|
 | `gesture_snap_enabled` | `false` | Offer gesture snapping (the camera still starts only when asked) |
 | `gesture_snap_camera` | `0` | Webcam index |
-| `gesture_snap_hand` | `any` | `any`, `right` or `left` |
+| `gesture_snap_hand` | `any` | `any`, `right` or `left` (`any` looks for one hand, a side for both: see Keeping the cost low) |
 | `gesture_snap_comfort_box` | `0.5` | Fraction of the camera's width that spans the whole desktop (0.15 to 1.0) |
 | `gesture_snap_finger_up` | `1.1` | Finger curl above which a finger counts as raised (0.8 to 2.0) |
 | `gesture_snap_finger_down` | `0.95` | Finger curl below which a finger counts as folded (0.5 to 1.5, below the raised threshold) |
@@ -224,6 +237,6 @@ Values outside the range are clamped on load; values of the wrong type use the d
 
 ## Tests
 
-- **Unit** (`tests/test_hand_tracking.py`, `tests/test_hand_recording.py`, `tests/test_model_files.py`): the pipeline against a fake camera and a fake detector (delivery order, newest-frame-only, failing subscribers, camera failure and recovery, start-up failures, stop releasing the camera), recordings round-tripping, and the model file helper.
+- **Unit** (`tests/test_hand_tracking.py`, `tests/test_hand_recording.py`, `tests/test_model_files.py`): the pipeline against a fake camera and a fake detector (delivery order, newest-frame-only, failing subscribers, camera failure and recovery, start-up failures, stop releasing the camera, the idle rate and waking from it), recordings round-tripping, and the model file helper.
 - **Gesture snapping** (`tests/test_window_snap.py`, `tests/test_window_snap_service.py`, `tests/test_gesture_control_tool.py`, `tests/test_windows_window_snap.py`, `tests/test_gesture_preview.py`): the gesture model on synthetic `HandFrame`s against a fake output (finger up and down thresholds with hysteresis, debounce, the frozen aim, grab, move, snap, two-finger scrolling, pausing, a held window let go on hand loss and by the watchdog, the absolute comfort-box mapping and bounds across several monitors), zone choice, the service and tool against a fake tracker, and the preview drawing. The finger thresholds come from a calibration on a real webcam (see Recognising fingers); the synthetic hands set each finger's curl exactly.
 - **Integration** (`tests/test_hand_tracking_mediapipe.py`): the real model on photos of hands from MediaPipe's test assets in `tests/fixtures/hands/`. Skipped when MediaPipe or the cached model is missing; tests never download.

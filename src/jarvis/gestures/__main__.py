@@ -130,10 +130,10 @@ class _FingerReadout:
             return self.frames, self.latest
 
 
-def _snap(args: argparse.Namespace, make_tracker: Callable[[int], HandTracker],
+def _snap(args: argparse.Namespace, make_tracker: Optional[Callable[[int], HandTracker]],
           make_output: Optional[Callable[[], Any]]) -> int:
     from ..config import load_settings
-    from .window_snap_service import WindowSnapService, WindowSnapUnavailable
+    from .window_snap_service import WindowSnapService, WindowSnapUnavailable, snap_tracker
 
     if make_output is None and sys.platform != "win32":
         print("🖐️ Gesture snapping needs Windows", flush=True)
@@ -152,7 +152,10 @@ def _snap(args: argparse.Namespace, make_tracker: Callable[[int], HandTracker],
     tap = _tap(camera) if args.preview else None
 
     def tracker_for(_index: int) -> HandTracker:
-        tracker = make_tracker(camera) if tap is None else HandTracker(camera, camera_factory=lambda i: tap)
+        if tap is not None:
+            tracker = snap_tracker(cfg, camera, camera_factory=lambda i: tap)
+        else:
+            tracker = make_tracker(camera) if make_tracker is not None else snap_tracker(cfg, camera)
         tracker.subscribe(readout)
         if recorder is not None:
             tracker.subscribe(recorder)
@@ -262,12 +265,11 @@ def main(argv: Optional[List[str]] = None, *,
     args = parser.parse_args(argv)
     if args.image:
         return _photo(args.image)
-    make_tracker = make_tracker or (lambda index: HandTracker(index))
     if args.snap:
         return _snap(args, make_tracker, make_output)
     if args.camera is None:
         args.camera = 0
-    return _live(args, make_tracker)
+    return _live(args, make_tracker or (lambda index: HandTracker(index)))
 
 
 if __name__ == "__main__":

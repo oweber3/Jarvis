@@ -11,7 +11,7 @@ from typing import Any, Callable, Optional
 
 from ..debug import debug_log
 from . import snap_state
-from .hand_tracking import HandTracker
+from .hand_tracking import IDLE_FPS, HandTracker
 from .window_snap import WATCHDOG_SEC, WindowSnap, WindowSnapSettings
 
 GESTURE_GUIDE = ("Raise one finger to aim, make a fist to grab the window under the pointer and move it, "
@@ -23,15 +23,22 @@ class WindowSnapUnavailable(Exception):
     """Gesture snapping could not start; the message says why in plain words."""
 
 
+def snap_tracker(cfg: Any, camera: int, **kwargs: Any) -> HandTracker:
+    """The hand tracker gesture snapping runs on: one hand unless a named side needs both in view, and the idle
+    rate while no hand is in view. ``kwargs`` (test doubles) go to ``HandTracker``."""
+    hand = WindowSnapSettings.from_config(cfg).hand
+    return HandTracker(camera, max_hands=1 if hand == "any" else 2, idle_fps=IDLE_FPS, **kwargs)
+
+
 class WindowSnapService:
     """Starts and stops gesture snapping. ``output_factory`` makes the desktop output; ``tracker_factory`` takes
-    the camera index and makes the hand tracker."""
+    the camera index and makes the hand tracker (``snap_tracker`` by default)."""
 
     def __init__(self, cfg: Any, output_factory: Callable[[], Any],
-                 tracker_factory: Callable[[int], Any] = HandTracker):
+                 tracker_factory: Optional[Callable[[int], Any]] = None):
         self._cfg = cfg
         self._output_factory = output_factory
-        self._tracker_factory = tracker_factory
+        self._tracker_factory = tracker_factory or (lambda camera: snap_tracker(cfg, camera))
         self._lock = threading.Lock()
         self._tracker: Any = None
         self._snap: Optional[WindowSnap] = None

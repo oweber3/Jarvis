@@ -39,6 +39,7 @@ CONFIG_KEY = "gesture_snap_pointer_ring"
 RING_SIZE = 64            # logical pixels; Qt scales logical pixels to each screen's DPI
 FADE_S = 0.2              # fade in and fade out
 BREATH_PERIOD_S = 2.4     # one gentle breath
+PAINT_INTERVAL_S = 1 / 24  # the glow changes slowly, so it is repainted far less often than the window follows
 _MAX_DT = 0.1
 _HOLLOW = 0.36            # share of the radius left clear around the pointer's tip
 _RING_AT = 0.62           # where the thin bright ring sits, as a share of the radius
@@ -199,6 +200,7 @@ class PointerRing(QObject):
         self._window: Optional[_RingWindow] = None
         self._flag_error_logged = False
         self._last_frame = _time.monotonic()
+        self._since_paint = 0.0
 
         self._poll = QTimer(self)
         self._poll.setInterval(self.POLL_INTERVAL_MS)
@@ -284,7 +286,10 @@ class PointerRing(QObject):
             self._hide()
             return
         self._follow()
-        self._window.update()
+        self._since_paint += dt
+        if self._since_paint >= PAINT_INTERVAL_S:
+            self._since_paint = 0.0
+            self._window.update()
 
     # -- internals ----------------------------------------------------------
 
