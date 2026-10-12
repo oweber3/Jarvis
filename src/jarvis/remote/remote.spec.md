@@ -7,6 +7,11 @@ Jarvis can be reached from the user's phone through a small web app served by th
 - **Off by default.** `remote_access_enabled` is `false`. When it is off, no socket is opened and nothing in this package runs.
 - **Local and self-hosted.** The daemon serves everything itself with the Python standard library. The page loads no remote fonts, scripts or images, and the server contacts nothing. No telemetry.
 - **Private networks only.** A request is answered only when the client address is loopback, a private IPv4 range (`10/8`, `172.16/12`, `192.168/16`), link-local, the shared address space VPNs such as Tailscale use (`100.64.0.0/10`), or an IPv6 unique-local address (`fc00::/7`, which covers Tailscale's IPv6). Anything else gets `403` before authentication is looked at, so an accidental port forward exposes nothing.
+- **Only the phone app, not other web pages.** A browser on the network may also be showing someone else's page, which could try to reach phone access by address or through a DNS name rebound to the PC. Every request passes the shared checks in `jarvis.utils.local_guard` after the client address check, and any refusal is `403`:
+  - The `Host` must be one the app is opened by (`networks.is_own_host`): `localhost`, a loopback or private-network address (the client allowlist below), or this PC's host name bare, under a local DNS suffix (`.local`, `.lan`, `.home`, `.home.arpa`, `.internal`, `.localdomain`) or as a Tailscale MagicDNS name (`<pc name>.<tailnet>.ts.net`). Any other name is refused.
+  - An `Origin`, when sent, must match the `Host`.
+  - API requests (`/api/...`) with `Sec-Fetch-Site: cross-site` are refused. The app's own pages are still served to a link from another site.
+  - A `POST` that carries a body, and every `POST /api/pair`, must declare `Content-Type: application/json`, which another site cannot send without a CORS preflight the server never answers; anything else gets `415` before the route runs, so a refused pairing never spends an attempt.
 - **Paired devices only.** Every API call except pairing needs a device token. Tokens are random, issued once at pairing and stored on the PC only as SHA-256 hashes. A revoked device stops working on its next request.
 - **One conversation.** The phone is another view of the daemon's single dialogue memory, like the chat window (`src/desktop_app/chat_window.spec.md`). Voice turns, desktop chat turns and phone turns all appear in it, and a phone request becomes part of the same conversation and diary.
 - **Same safety path.** Phone requests run through `jarvis.daemon.submit_text_query`, so redaction, the fast path, the reply mode, the one-query-at-a-time lock and central tool safety all apply unchanged. The phone never runs tools itself. Phone requests carry the origin `phone`, so the window in front of the PC is never taken as what the request is about (`memory/desktop_referents.spec.md`, Foreground window), and the webcam is never turned on for gesture snapping (`gestures/gestures.spec.md`, Turning it on and off; stopping it works).
@@ -16,7 +21,7 @@ Jarvis can be reached from the user's phone through a small web app served by th
 
 | Module | Responsibility |
 |--------|----------------|
-| `remote/networks.py` | `is_allowed_client(address)`: the private-network allowlist above |
+| `remote/networks.py` | `is_allowed_client(address)`: the private-network allowlist above; `is_own_host(name, pc_name)`: the `Host` names the app is opened by |
 | `remote/pairing.py` | `DeviceStore`: pairing codes, device tokens (hashed), revocation, last-seen |
 | `remote/hub.py` | `RemoteHub`: in-memory transcript mirrored from the dialogue memory, phone query tracking, assistant state, pending confirmation, change notification for long polls |
 | `remote/backend.py` | `DaemonBackend`: the only module that touches `jarvis.daemon`, the confirmation store, reply modes and system statistics. Tests replace it with a fake |
@@ -65,7 +70,7 @@ Static files (`/`, `/app.js`, `/app.css`, `/manifest.webmanifest`, `/icon.svg`) 
 
 | Method and path | Auth | Body | Result |
 |-----------------|------|------|--------|
-| `POST /api/pair` | none | `{"code", "name"}` | `200 {"token", "device_id"}`, `403` for a wrong or expired code |
+| `POST /api/pair` | none | `{"code", "name"}` (JSON) | `200 {"token", "device_id"}`, `403` for a wrong or expired code, `415` without a JSON body |
 | `GET /api/poll?after=<entry id>&rev=<rev>` | token | | Long poll, below |
 | `POST /api/chat` | token | `{"text"}` | `202 {"query_id"}`, `409` when Jarvis is busy, `503` when the daemon is not ready, `400` for empty or over-long text (4000 characters) |
 | `POST /api/stop` | token | | Cancels the query in flight (`jarvis.daemon.cancel_active_chat_query`) |

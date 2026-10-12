@@ -18,7 +18,7 @@ The server runs in the daemon process, like Phone Access (`remote/remote.spec.md
 | Module | Responsibility |
 |--------|----------------|
 | `jarvis/memory/chat_store.py` | `ChatStore`: projects, chats and messages in the Jarvis database file. Own connection and schema, following `ActivityStore` (`memory/db.spec.md`) |
-| `jarvis/utils/local_guard.py` | `refusal(host, origin)`: the Host and Origin checks shared with the Memory Viewer |
+| `jarvis/utils/local_guard.py` | `refusal(host, origin, sec_fetch_site, host_allowed=...)`: the Host, Origin and cross-site fetch checks shared with the Memory Viewer and phone access |
 | `jarvis/tools/step_log.py` | `StepLog`: the in-memory record of tool steps that `run_tool_with_retries` fills and the hub reads (see **Tool steps**) |
 | `jarvis/webchat/backend.py` | `DaemonBackend`: the only module that touches `jarvis.daemon`, `bridge.modes` and the LLM backend. Tests replace it with a fake |
 | `jarvis/webchat/hub.py` | `ChatHub`: the open chat, mirroring of the dialogue memory into it, query tracking, notices, change notification for long polls, the uploads waiting for a request |

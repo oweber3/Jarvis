@@ -16,7 +16,8 @@ from typing import Callable, List, Optional
 from urllib.parse import parse_qs, urlsplit
 
 from ..debug import debug_log
-from .networks import is_allowed_client
+from ..utils.local_guard import refusal
+from .networks import is_allowed_client, is_own_host, pc_name
 
 MAX_BODY_BYTES = 16 * 1024
 DRAIN_LIMIT_BYTES = 1024 * 1024
@@ -75,6 +76,8 @@ class RemoteServer:
         self.store = store
         self.settings = settings
         self._client_filter = client_filter
+        own_name = pc_name()
+        self._host_allowed: Callable[[str], bool] = lambda name: is_own_host(name, own_name)
         self._httpd: Optional[_HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -109,6 +112,12 @@ def _int_param(query: dict, name: str, default: int) -> int:
         return int(query.get(name, [default])[0])
     except (TypeError, ValueError):
         return default
+
+
+def _declares_json(content_type: Optional[str]) -> bool:
+    """A page can only send ``application/json`` to another origin after a CORS preflight this server never
+    answers, so a JSON body cannot come from a plain form post on another site."""
+    return (content_type or "").split(";")[0].strip().lower() == "application/json"
 
 
 def _make_handler(server: RemoteServer):
@@ -190,6 +199,16 @@ def _make_handler(server: RemoteServer):
                 debug_log("remote: request from outside private networks refused", "remote")
                 raise _Refused(403, "forbidden")
             path = urlsplit(self.path).path
+            is_api = path.startswith("/api/")
+            # A link from another site may open the app; only the API refuses cross-site fetches.
+            why = refusal(self.headers.get("Host", ""), self.headers.get("Origin"),
+                          self.headers.get("Sec-Fetch-Site") if is_api else None, host_allowed=server._host_allowed)
+            if why is not None:
+                debug_log(f"remote: refused a request with a foreign {why}", "remote")
+                raise _Refused(403, "forbidden")
+            if self.command == "POST" and (self._raw_body or path == "/api/pair") and not _declares_json(
+                    self.headers.get("Content-Type")):
+                raise _Refused(415, "json_required")
             if self.command in ("GET", "HEAD") and path in STATIC_FILES:
                 name, content_type = STATIC_FILES[path]
                 self._send(200, (STATIC_DIR / name).read_bytes(), content_type, api=False)
