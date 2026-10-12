@@ -56,7 +56,7 @@ def test_adding_a_google_calendar_stores_the_address_secretly_and_turns_the_cale
     path, store = env
     server = FakeIcsServer(CALENDAR)
     try:
-        io, lines = _io(agenda_cli, ["1", "Uni"], [server.url])
+        io, lines = _io(agenda_cli, ["3", "Uni"], [server.url])
         assert agenda_cli.main(["setup"], io) == 0
     finally:
         server.stop()
@@ -73,7 +73,7 @@ def test_a_bad_address_saves_nothing(env):
     path, store = env
     server = FakeIcsServer("<html>nope</html>", content_type="text/html")
     try:
-        io, lines = _io(agenda_cli, ["2", "Work"], [server.url])
+        io, lines = _io(agenda_cli, ["4", "Work"], [server.url])
         assert agenda_cli.main(["setup"], io) == 1
     finally:
         server.stop()
@@ -85,7 +85,7 @@ def test_listing_testing_and_removing_a_calendar(env):
     path, store = env
     server = FakeIcsServer(CALENDAR)
     try:
-        agenda_cli.main(["setup"], _io(agenda_cli, ["3", "Club"], [server.url])[0])
+        agenda_cli.main(["setup"], _io(agenda_cli, ["5", "Club"], [server.url])[0])
         io, lines = _io(agenda_cli, [])
         assert agenda_cli.main(["list"], io) == 0 and any("Club" in line and "stored" in line for line in lines)
         assert agenda_cli.main(["test", "Club"], _io(agenda_cli, [])[0]) == 0
@@ -121,20 +121,57 @@ def test_a_refused_gmail_password_is_not_kept(env):
     assert any("app password" in line for line in lines)
 
 
-def test_adding_a_microsoft_account_signs_in_with_a_device_code(env):
-    from test_mail_accounts import FakeGraph
+@pytest.fixture
+def accounts(env, monkeypatch):
+    """An account store whose browser sign-in and APIs are the loopback fake."""
+    from dataclasses import replace
+    from fake_accounts_server import FakeAccountsServer
+    from jarvis.accounts import http, logins, manage, oauth
+    path, _store = env
+    server = FakeAccountsServer()
+    monkeypatch.setattr(oauth, "PROVIDERS", {
+        "microsoft": replace(oauth.MICROSOFT, authorize_url=f"{server.base}/common/oauth2/v2.0/authorize",
+                             token_url=f"{server.base}/{{tenant}}/oauth2/v2.0/token"),
+        "google": replace(oauth.GOOGLE, authorize_url=f"{server.base}/google/auth",
+                          token_url=f"{server.base}/google/token")})
+    monkeypatch.setattr(http, "GRAPH_BASE", f"{server.base}/graph/v1.0")
+    monkeypatch.setattr(http, "GOOGLE_CALENDAR_BASE", f"{server.base}/calendar/v3")
+    data = _config(path)
+    data.update({"microsoft_oauth_client_id": "ms-client-id", "google_oauth_client_id": "google-client-id",
+                 "google_oauth_client_secret": server.google_secret})
+    path.write_text(json.dumps(data), encoding="utf-8")
+    logins.forget_sessions()
+    yield manage.AccountStore(path, open_browser=server.browser, sign_in_timeout=10), server
+    server.stop()
+    logins.forget_sessions()
+
+
+def test_adding_a_microsoft_mailbox_signs_in_in_the_browser(env, accounts):
     path, store = env
-    fake = FakeGraph()
-    io, lines = _io(mail_cli, ["4", "", "client-abc", "y"], transport=fake, sleep=lambda s: None)
+    account_store, server = accounts
+    io, lines = _io(mail_cli, ["4"], store=account_store)
     assert mail_cli.main(["setup"], io) == 0
-    assert _config(path)["email_accounts"] == [{"name": "Outlook.com", "type": "graph", "client_id": "client-abc",
-                                                "tenant": "consumers"}]
-    assert any("ABCD-EFGH" in line for line in lines)
-    assert store.items[("jarvis", "email_graph_token:Outlook.com")] == "refresh-2"  # rotated by the test read
-    io, lines = _io(mail_cli, [])
+    [entry] = _config(path)["email_accounts"]
+    assert entry["type"] == "graph" and entry["name"] == "Microsoft" and entry["login"]
+    assert "Calendars.Read" not in server.authorize_requests[0]["scope"]
+    assert not any(token in "\n".join(lines) for token in server.refresh_tokens)
+    io, lines = _io(mail_cli, [], store=account_store)
     mail_cli.main(["list"], io)
     assert any("signed in" in line for line in lines)
-    assert mail_cli.main(["remove", "Outlook.com"], _io(mail_cli, [])[0]) == 0 and store.items == {}
+    assert mail_cli.main(["remove", "Microsoft"], _io(mail_cli, [], store=account_store)[0]) == 0
+    assert store.items == {}
+
+
+def test_adding_a_google_calendar_signs_in_in_the_browser(env, accounts):
+    path, store = env
+    account_store, server = accounts
+    io, lines = _io(agenda_cli, ["2"], store=account_store)
+    assert agenda_cli.main(["setup"], io) == 0
+    assert _config(path)["calendar_sources"][0]["type"] == "google"
+    assert any(line.lstrip().startswith("✅") for line in lines)
+    io, lines = _io(agenda_cli, [], store=account_store)
+    agenda_cli.main(["list"], io)
+    assert any("Google account, signed in" in line for line in lines)
 
 
 def test_outlook_when_only_the_new_outlook_is_installed_explains_why(env, monkeypatch):
@@ -148,7 +185,7 @@ def test_outlook_when_only_the_new_outlook_is_installed_explains_why(env, monkey
 def test_calendar_test_reports_an_unreachable_address_even_with_a_saved_copy(env):
     path, store = env
     server = FakeIcsServer(CALENDAR)
-    agenda_cli.main(["setup"], _io(agenda_cli, ["3", "Club"], [server.url])[0])
+    agenda_cli.main(["setup"], _io(agenda_cli, ["5", "Club"], [server.url])[0])
     server.stop()
     io, lines = _io(agenda_cli, [])
     assert agenda_cli.main(["test", "Club"], io) == 1

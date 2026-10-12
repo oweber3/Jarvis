@@ -16,7 +16,7 @@ from . import ics
 from .sources import IcsSource, OutlookCalendarSource, SourceResult
 
 RANGES = ("today", "tomorrow", "week")
-SOURCE_TYPES = ("ics", "outlook")
+SOURCE_TYPES = ("microsoft", "google", "ics", "outlook")
 _WEEK_DAYS = 7
 _lock = threading.Lock()
 _ics_sources: dict = {}
@@ -36,7 +36,7 @@ def cache_dir(cfg: Any) -> Path:
 
 
 def sources_from_config(cfg: Any) -> list:
-    """One source per entry of ``calendar_sources``; ICS addresses are read from the credential store."""
+    """One source per entry of ``calendar_sources``; ICS addresses and sign-ins come from the credential store."""
     from .. import credentials
     ttl = float(getattr(cfg, "calendar_cache_minutes", 15) or 0) * 60.0
     folder = cache_dir(cfg)
@@ -56,6 +56,11 @@ def sources_from_config(cfg: Any) -> list:
             built.append(source)
         elif kind == "outlook":
             built.append(OutlookCalendarSource(name))
+        elif kind in ("microsoft", "google"):
+            from ..accounts import logins
+            from .online import GoogleCalendarSource, MicrosoftCalendarSource
+            source_class = MicrosoftCalendarSource if kind == "microsoft" else GoogleCalendarSource
+            built.append(source_class(name, session=logins.session_for(entry.get("login") or "")))
     return built
 
 

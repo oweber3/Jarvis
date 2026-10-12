@@ -2463,8 +2463,10 @@ class JarvisSystemTray:
             from desktop_app import pointer_ring
             ring.set_enabled(pointer_ring.configured_enabled())
 
-        # If settings were saved and daemon is running, offer to restart
-        if result == QDialog.DialogCode.Accepted and self.is_listening:
+        # If settings were saved (or an account was added or removed, which is written at once even when the
+        # window is cancelled) and the daemon is running, offer to restart
+        accounts_changed = getattr(dialog, "accounts_changed", False) is True
+        if (result == QDialog.DialogCode.Accepted or accounts_changed) and self.is_listening:
             reply = QMessageBox.question(
                 None, "Restart Jarvis?",
                 "Settings saved. Restart Jarvis now to apply changes?",

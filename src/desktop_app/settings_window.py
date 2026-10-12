@@ -68,6 +68,7 @@ CATEGORIES = [
     ("models", "AI Models"),
     ("cloud", "Cloud Modes"),
     ("privacy", "Privacy"),
+    ("accounts", "Calendar & Email"),
     ("memory", "Memory & Dictation"),
     ("extras", "Extras"),
     ("mcps", "MCP Servers"),
@@ -75,6 +76,8 @@ CATEGORIES = [
 ]
 # Listed in the sidebar only while advanced settings are shown.
 ADVANCED_CATEGORY = "advanced"
+# The Calendar & Email page: the account list (accounts_page.py) above its switches.
+ACCOUNTS_CATEGORY = "accounts"
 # Window preference kept in config.json, written only while on.
 SHOW_ADVANCED_KEY = "settings_show_advanced"
 
@@ -569,35 +572,32 @@ def _build_field_metadata() -> List[FieldMeta]:
     f("document_search_rescan_minutes", "Check for Changes Every",
       "How often the folders are checked for new or changed documents.",
       "privacy", "int", min_val=5, max_val=1440, step=5, suffix="min", advanced=True, shown_when=documents)
-    heading("Calendar and email")
+    heading("Reading")
     calendar_on = _on("calendar_enabled")
     email_on = _on("email_enabled")
     f("calendar_enabled", "Read My Calendar",
-      "Off by default. Let Jarvis read your calendars when you ask (\"what's on today?\", \"when is my next "
-      "meeting?\"). Read only: it never adds or changes events. Add a Google or Outlook.com calendar by its secret "
-      "iCal address, or classic Outlook on this PC, with python -m jarvis.agenda setup. Addresses are kept in "
-      "Windows Credential Manager, never in the settings file. Takes effect after Jarvis restarts.",
-      "privacy", "bool")
-    f("calendar_cache_minutes", "Reuse Calendar For",
-      "Minutes a downloaded calendar is reused before it is fetched again. When offline, Jarvis answers from "
-      "the last copy and says so.",
-      "privacy", "int", min_val=0, max_val=1440, step=5, suffix="min", advanced=True, shown_when=calendar_on)
-    f("calendar_share_with_cloud", "Share Calendar With Codex and Claude",
-      "Off by default: your calendar is available only to the local model and never leaves this PC. Turn on "
-      "to let the Codex and Claude reply modes read it, which sends the events they ask for to OpenAI or "
-      "Anthropic.",
-      "privacy", "bool", shown_when=calendar_on)
+      "Let Jarvis read your calendars when you ask (\"what's on today?\", \"when is my next meeting?\"). Read "
+      "only: it never adds or changes events. Connecting a calendar above turns this on. Takes effect after Jarvis "
+      "restarts.",
+      "accounts", "bool")
     f("email_enabled", "Read My Email",
-      "Off by default. Let Jarvis check your inbox when you ask (\"any new emails?\", \"read me the latest "
-      "email from Sam\"). Read only: it never sends, deletes or marks anything as read. Add Gmail (with an app "
-      "password), classic Outlook on this PC or an Outlook.com account with python -m jarvis.mail setup. "
-      "Passwords and sign-ins are kept in Windows Credential Manager. Takes effect after Jarvis restarts.",
-      "privacy", "bool")
+      "Let Jarvis check your inbox when you ask (\"any new emails?\", \"read me the latest email from Sam\"). "
+      "Read only: it never sends, deletes or marks anything as read. Connecting a mailbox above turns this on. "
+      "Takes effect after Jarvis restarts.",
+      "accounts", "bool")
+    f("calendar_cache_minutes", "Reuse Calendar Link For",
+      "Minutes a calendar read from a link is reused before it is downloaded again. When offline, Jarvis answers "
+      "from the last copy and says so.",
+      "accounts", "int", min_val=0, max_val=1440, step=5, suffix="min", advanced=True, shown_when=calendar_on)
+    heading("Sharing")
+    f("calendar_share_with_cloud", "Share Calendar With Codex and Claude",
+      "Off by default: your calendar is available only to the local model. Turn on to let the Codex and Claude "
+      "reply modes read it, which sends the events they ask for to OpenAI or Anthropic.",
+      "accounts", "bool", shown_when=calendar_on)
     f("email_share_with_cloud", "Share Email With Codex and Claude",
-      "Off by default: your email is available only to the local model and never leaves this PC. Turn on to "
-      "let the Codex and Claude reply modes read it, which sends the messages they ask for to OpenAI or "
-      "Anthropic.",
-      "privacy", "bool", shown_when=email_on)
+      "Off by default: your email is available only to the local model. Turn on to let the Codex and Claude "
+      "reply modes read it, which sends the messages they ask for to OpenAI or Anthropic.",
+      "accounts", "bool", shown_when=email_on)
     heading("Location")
     located = _on("location_enabled")
     f("location_enabled", "Use Location",
@@ -1030,6 +1030,8 @@ class SettingsWindow(QDialog):
         self._initial_values = {fm.key: self._get_value(fm) for fm in self._fields if fm.field_type != "secret"}
         # The fields the last Save changed, so the app can apply the ones that take effect at once.
         self.changed_values: Dict[str, Any] = {}
+        # Whether a calendar or mailbox was added or removed (written at once, even if the window is cancelled).
+        self.accounts_changed = False
 
     # -- UI construction ----------------------------------------------------
 
@@ -1072,12 +1074,14 @@ class SettingsWindow(QDialog):
                 cat_fields = fields_by_cat.get(cat_key, [])
                 if not cat_fields:
                     continue
-                footer = None
+                footer = header = None
                 if cat_key == "general":
                     footer = self._build_windows_footer()
                 elif cat_key == "listening":
                     footer = self._build_voice_footer()
-                page = self._build_category_tab(cat_fields, footer)
+                elif cat_key == ACCOUNTS_CATEGORY:
+                    header = self._build_accounts_page()
+                page = self._build_category_tab(cat_fields, footer, header)
                 if cat_key == "general":
                     self._wire_windows_status()
             self._pages.addWidget(page)
@@ -1141,9 +1145,9 @@ class SettingsWindow(QDialog):
         return label
 
     def _build_category_tab(self, fields: List[FieldMeta],
-                            footer: Optional[QWidget] = None) -> QWidget:
+                            footer: Optional[QWidget] = None, header: Optional[QWidget] = None) -> QWidget:
         """Build a scrollable page for a category's fields: a form under section headings, or a grid when the
-        fields sit in columns. An optional informational footer spans the page width."""
+        fields sit in columns. An optional header (above the fields) and footer span the page width."""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -1163,6 +1167,8 @@ class SettingsWindow(QDialog):
         form.setContentsMargins(16, 16, 16, 16)
         form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        if header is not None:
+            form.addRow(header)
 
         section = None
         section_keys: List[str] = []
@@ -1637,6 +1643,33 @@ class SettingsWindow(QDialog):
                 break
         row, _column, _rows, _columns = grid.getItemPosition(grid.indexOf(widget))
         return row
+
+    def _build_accounts_page(self) -> QWidget:
+        """The connected calendars and mailboxes and the ways to add one (``accounts_page.py``)."""
+        from desktop_app.accounts_page import AccountsPage
+        from jarvis.accounts.manage import AccountStore
+        self.accounts_page = AccountsPage(AccountStore(self._config_path), on_changed=self._on_accounts_changed)
+        return self.accounts_page
+
+    def done(self, result: int) -> None:
+        """Closing (Save, Cancel or the title bar) stops a sign-in still waiting in the browser."""
+        page = getattr(self, "accounts_page", None)
+        if page is not None:
+            page.shutdown()
+        super().done(result)
+
+    def _on_accounts_changed(self) -> None:
+        """An account was added or removed: show the calendar and email switches as the file now has them."""
+        self.accounts_changed = True
+        written = _load_json(self._config_path) or {}
+        for key in ("calendar_enabled", "email_enabled"):
+            value = written.get(key, self._defaults.get(key)) is True
+            self._merged[key] = value
+            self._initial_values[key] = value
+            widget = self._widgets.get(key)
+            if widget is not None:
+                widget.setChecked(value)
+        self._refresh_visibility()
 
     def _build_mcp_page(self) -> QWidget:
         """Build the MCP servers management page."""

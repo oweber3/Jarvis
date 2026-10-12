@@ -8,7 +8,7 @@ The Settings Window provides a graphical interface for editing `config.json` wit
 
 ## Design Principles
 
-1. **Metadata-driven**: All fields are defined in a `FIELD_METADATA` registry. Adding a new config parameter to the settings UI requires only adding a `FieldMeta` entry — no widget code changes.
+1. **Metadata-driven**: All fields are defined in a `FIELD_METADATA` registry. Adding a new config parameter to the settings UI requires only adding a `FieldMeta` entry — no widget code changes. The exceptions are structured lists with their own pages or page headers: MCP servers and the connected accounts on Calendar & Email.
 2. **Minimal config files**: Only non-default values are written to `config.json`. Removing a field from the config reverts it to the default.
 3. **Preserves unknown keys**: Keys not managed by the UI (e.g. `mcps`, `_config_version`, future additions) are preserved when saving.
    A `choice` field whose stored value is not one of its choices (a model set by hand in `config.json`) shows that value as an extra entry, selected, so it is displayed truthfully and saved unchanged rather than replaced by the first choice.
@@ -72,10 +72,11 @@ While **Show advanced settings** is unticked, advanced fields are hidden on ever
 4. **AI Models**: Provider (provider; the Ollama address is advanced; server address and API key while the OpenAI-compatible server is chosen); Models (chat model, fast model, tool model, think before answering, answer time limit); Embeddings (see AI Models).
 5. **Cloud Modes**: Codex and Claude side by side. Access (allow); Model (model and effort); What it may see (recent conversation, and messages shared while it is on; the window you're looking at, recent desktop actions, your memories, timers, reminders, lists and notes); Limits (answer time limit, queued requests, tool calls per request and program, all advanced). A mode's rows other than Allow are shown while it is allowed. See the Codex and Claude bridge specs.
 6. **Privacy**: Screen and files (screen awareness, allow file deletion); Activity log (the off-by-default switch that states what is recorded and where it stays, and while it is on: pause, retention, the two exclusion lists, sharing with Codex and Claude; the idle threshold is advanced; see `memory/activity_log.spec.md`); Location (use location, and while on: detect automatically, address to use; recheck interval and public address look-up are advanced).
-7. **Memory & Dictation**: Memory (conversation ends after, memories per reply; memory source is advanced); Dictation (the switch, and while on: hotkey, custom words, filler word removal, and thinking while cleaning up while filler removal is on).
-8. **Extras**: Phone access (the switch, and while on: approve from the phone, quick actions; listen address and port are advanced); Web chat (the switch; port is advanced); TV (Roku TV address); Gesture control (the switch that offers gesture control, and while on: camera, hand, pointer ring, reach, scroll speed; the finger thresholds, hold time, steadiness and fast-move response are advanced; see `gestures/gestures.spec.md`, Gesture snapping).
-9. **MCP Servers**
-10. **Advanced** (listed only while advanced settings are shown): Speech recognition (model, engine, device, precision, minimum confidence, silence filter); When Jarvis stops listening (speech detection, noise filtering, minimum speech loudness for when speech detection is off or fails, silence that ends a phrase, longest phrase, longest phrase while speaking, longest request, recent speech kept); Echo detection (timing tolerance, estimated speaking rate); Wake check (thinking, time limit); Time limits (routing, time and weather, memory search); Local model (context size and keep-loaded time, while Ollama is chosen); Tool use (planning multi-step requests, how tools are chosen, most steps per request, tool results remembered and their length).
+7. **Calendar & Email**: the connected accounts (see Calendar & Email below), then Reading (read my calendar, read my email; reuse calendar link for is advanced) and Sharing (share calendar, share email with Codex and Claude, each while its switch is on).
+8. **Memory & Dictation**: Memory (conversation ends after, memories per reply; memory source is advanced); Dictation (the switch, and while on: hotkey, custom words, filler word removal, and thinking while cleaning up while filler removal is on).
+9. **Extras**: Phone access (the switch, and while on: approve from the phone, quick actions; listen address and port are advanced); Web chat (the switch; port is advanced); TV (Roku TV address); Gesture control (the switch that offers gesture control, and while on: camera, hand, pointer ring, reach, scroll speed; the finger thresholds, hold time, steadiness and fast-move response are advanced; see `gestures/gestures.spec.md`, Gesture snapping).
+10. **MCP Servers**
+11. **Advanced** (listed only while advanced settings are shown): Speech recognition (model, engine, device, precision, minimum confidence, silence filter); When Jarvis stops listening (speech detection, noise filtering, minimum speech loudness for when speech detection is off or fails, silence that ends a phrase, longest phrase, longest phrase while speaking, longest request, recent speech kept); Echo detection (timing tolerance, estimated speaking rate); Wake check (thinking, time limit); Time limits (routing, time and weather, memory search); Local model (context size and keep-loaded time, while Ollama is chosen); Tool use (planning multi-step requests, how tools are chosen, most steps per request, tool results remembered and their length).
 
 Each enabled local extension that declares settings adds one page after these, titled with the label it gives (`jarvis/extensions/extensions.spec.md`, Settings). Its fields behave like built-in fields: defaults come from the extension, only non-default values are written and unknown keys are preserved. An extension that fails to load adds no page and the window opens as usual.
 
@@ -96,6 +97,12 @@ The OpenAI-compatible connection fields are nullable: leaving one empty falls ba
 ### Voice Input
 
 The Listening page's Your voice section holds `speaker_verification` ("Speaker Verification": off, soft, strict; default off) and `barge_in_enabled` ("Talk Over Jarvis", default on, shown while verification is soft or strict). The page has a footer built by `_build_voice_footer`, a **Voice enrolment** group with the enrolment status ("Voice enrolled" or "Voice not enrolled"), a hint to run `scripts/enrol_voice.py`, and a **Delete my voiceprint** button. The button is enabled only while a voiceprint exists, asks for confirmation and deletes the file through `jarvis.listening.voiceprint`. Deleting takes effect at once and is not part of Save; the thresholds are config-only. The voiceprint is never displayed or exported.
+
+### Calendar & Email
+
+The page's form has a header built by `_build_accounts_page` (`desktop_app/accounts_page.py`, `_build_category_tab(..., header=...)`) above its fields. It lists the connected calendars and mailboxes ("Calendar: Microsoft (Microsoft account, address)") with **Test** and **Remove** (Remove asks first), and offers: **Sign in with Microsoft** with Calendar and Email ticks, **Sign in with Google** (calendar only), **Use Outlook on this PC** (shown only when classic Outlook is installed), and **Add Gmail...**, **Other email (IMAP)...** and **Paste a calendar link...** dialogs. A sign-in button whose OAuth client ID is empty in this build is disabled, and its tooltip and hint say why. The Gmail dialog has short steps and a button that opens myaccount.google.com/apppasswords; every dialog tests before it saves and stays open with the reason when the test fails. Passwords and links are typed into hidden fields.
+
+Account actions are not part of Save: they run on a worker thread through `jarvis.accounts.manage.AccountStore` (`accounts/accounts.spec.md`) and write `config.json` and Windows Credential Manager at once. While one runs, the page's buttons are disabled; a sign-in shows a Cancel button, and closing the window cancels it. After a change the window sets `accounts_changed` and shows the Read My Calendar and Read My Email switches as the file now has them (an add turns its switch on, removing the last turns it off), so Save neither reverts nor rewrites them. The page notes that changes take effect after a restart.
 
 ### Windows Control
 
@@ -129,7 +136,7 @@ The Listening page includes a device dropdown populated at window open time via 
 - Existing keys not managed by the UI are preserved (e.g. `mcps`, `wake_aliases`, `stop_commands`).
 - `settings_show_advanced` is written as `true` while **Show advanced settings** is ticked and removed otherwise.
 - After save, a dialog confirms success and reminds the user to restart.
-- If the daemon is running when save completes, the tray app offers to restart it.
+- If the daemon is running when save completes, or when the window closes in any way after an account was added or removed (`accounts_changed`), the tray app offers to restart it.
 
 ## Reset to Defaults
 

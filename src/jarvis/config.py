@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 
+from .accounts.clients import BUILT_IN_OAUTH_CLIENTS
+
 
 # ============================================================================
 # SUPPORTED CHAT MODELS - Single Source of Truth
@@ -422,17 +424,24 @@ class Settings:
     document_search_share_with_cloud: bool = False
     document_search_max_file_mb: int = 20
     document_search_rescan_minutes: int = 60
-    # Read-only calendar (see src/jarvis/agenda/agenda.spec.md): secret ICS addresses (in the credential
-    # store, never here) and classic Outlook. Off by default; sources are added with python -m jarvis.agenda.
+    # Read-only calendar (see src/jarvis/agenda/agenda.spec.md): Microsoft and Google sign-ins, secret ICS
+    # addresses and classic Outlook. Addresses and sign-ins live in the credential store, never here. Off by
+    # default; added in Settings > Calendar & Email (or python -m jarvis.agenda).
     calendar_enabled: bool = False
     calendar_sources: list[Dict[str, Any]] = field(default_factory=list)
     calendar_cache_minutes: int = 15
     calendar_share_with_cloud: bool = False
-    # Read-only email (see src/jarvis/mail/mail.spec.md): IMAP, classic Outlook and Microsoft Graph accounts.
-    # Passwords and tokens live in the credential store. Off by default; added with python -m jarvis.mail.
+    # Read-only email (see src/jarvis/mail/mail.spec.md): IMAP, classic Outlook and Microsoft accounts.
+    # Passwords and sign-ins live in the credential store. Off by default; added in Settings > Calendar &
+    # Email (or python -m jarvis.mail).
     email_enabled: bool = False
     email_accounts: list[Dict[str, Any]] = field(default_factory=list)
     email_share_with_cloud: bool = False
+    # The OAuth apps behind "Sign in with Microsoft" and "Sign in with Google" (accounts/accounts.spec.md).
+    # Defaults are jarvis.accounts.clients.BUILT_IN_OAUTH_CLIENTS; empty turns that sign-in off.
+    microsoft_oauth_client_id: str = ""
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
 
     # Screen awareness (see src/jarvis/tools/builtin/screenshot.spec.md): the screenshot tool looks at the
     # screen only when a request asks about it. Off removes the tool from every reply mode.
@@ -609,9 +618,11 @@ def _bounded_number(value: Any, default: float, minimum: float, cast=float):
 
 # Calendar sources and email accounts: the keys each type may carry besides ``name`` and ``type``.
 # Secrets (addresses, passwords, tokens) are never config keys; they live in the credential store.
-_CALENDAR_SOURCE_FIELDS: Dict[str, tuple] = {"ics": (), "outlook": ()}
+# ``login`` names a stored sign-in (accounts/logins.py) and ``user`` is the signed-in address, for display.
+_CALENDAR_SOURCE_FIELDS: Dict[str, tuple] = {"ics": (), "outlook": (), "microsoft": ("login", "user"),
+                                             "google": ("login", "user")}
 _EMAIL_ACCOUNT_FIELDS: Dict[str, tuple] = {"imap": ("host", "port", "username"), "outlook": (),
-                                           "graph": ("client_id", "tenant")}
+                                           "graph": ("login", "user")}
 
 
 def _named_entries(value: Any, fields: Dict[str, tuple]) -> list:
@@ -868,8 +879,8 @@ def read_config_file() -> Dict[str, Any]:
     return _load_json(_config_path())
 
 
-def update_config_values(updates: Dict[str, Any]) -> bool:
-    """Write ``updates`` to the config file the way the settings window does.
+def update_config_values(updates: Dict[str, Any], path: Optional[Path] = None) -> bool:
+    """Write ``updates`` to the config file (``path``, or the one Jarvis reads) the way the settings window does.
 
     A value equal to its default is removed rather than written, every other key is preserved, and
     the write is atomic. Returns True on success.
@@ -878,7 +889,7 @@ def update_config_values(updates: Dict[str, Any]) -> bool:
     secret = [key for key in updates if key in SECRET_KEYS]
     if secret:
         raise ValueError(f"API keys are stored with jarvis.credentials, not in config.json: {secret}")
-    path = _config_path()
+    path = path or _config_path()
     data = _load_json(path)
     defaults = get_default_config()
     for key, value in updates.items():
@@ -1040,6 +1051,7 @@ def get_default_config() -> Dict[str, Any]:
         "email_enabled": False,
         "email_accounts": [],
         "email_share_with_cloud": False,
+        **BUILT_IN_OAUTH_CLIENTS,
         "screen_awareness_enabled": True,
         "file_delete_enabled": False,
         "gesture_snap_enabled": False,
@@ -1535,6 +1547,7 @@ def load_settings() -> Settings:
         email_enabled=merged.get("email_enabled") is True,
         email_accounts=_named_entries(merged.get("email_accounts"), _EMAIL_ACCOUNT_FIELDS),
         email_share_with_cloud=merged.get("email_share_with_cloud") is True,
+        **{key: _text(merged.get(key), default).strip() for key, default in BUILT_IN_OAUTH_CLIENTS.items()},
         screen_awareness_enabled=merged.get("screen_awareness_enabled", True) is True,
         file_delete_enabled=merged.get("file_delete_enabled") is True,
         **_gesture_snap_settings(merged, defaults),

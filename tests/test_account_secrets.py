@@ -42,7 +42,7 @@ def test_each_account_has_its_own_secret(store):
 
 
 def test_a_value_longer_than_the_store_allows_is_kept_whole_and_removed_whole(store):
-    key = secrets.account_key("email_graph_token", "Outlook.com")
+    key = secrets.account_key("oauth_login", "Outlook.com")
     token = "x" * 4000 + "end"
     assert secrets.set_secret(key, token)
     assert secrets.get_secret(key) == token
@@ -62,15 +62,15 @@ def test_only_known_account_secret_kinds_are_accepted(store):
 
 
 def test_a_damaged_split_marker_reads_as_nothing_and_names_cannot_collide_with_parts(store):
-    key = secrets.account_key("email_graph_token", "Live")
+    key = secrets.account_key("oauth_login", "Live")
     store.items[("jarvis", key)] = secrets._CHUNK_MARKER + "abc"
     assert secrets.get_secret(key) == ""
     with pytest.raises(ValueError):
-        secrets.account_key("email_graph_token", "Work#1")
+        secrets.account_key("oauth_login", "Work#1")
 
 
 def test_replacing_a_split_value_never_leaves_a_mixture(store):
-    key = secrets.account_key("email_graph_token", "Live")
+    key = secrets.account_key("oauth_login", "Live")
     secrets.set_secret(key, "a" * 2500)
     original = store.set_password
     calls = []
