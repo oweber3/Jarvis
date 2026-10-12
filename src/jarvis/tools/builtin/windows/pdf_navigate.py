@@ -44,7 +44,7 @@ class PdfNavigateTool(Tool):
             'additionalProperties': False,
         }
 
-    def fast_available(self, cfg) -> bool:
+    def fast_available(self, cfg, args) -> bool:
         """Fast page routes apply only while the user is in a PDF viewer; anywhere else the model decides."""
         try:
             from ....platform.windows import pdf_viewer as pv

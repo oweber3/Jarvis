@@ -110,3 +110,28 @@ class TestGestureSnapping:
         desk = FakeDesktop(windows=[FakeWindow((0, 0, 1920, 1080))])
         assert cli.main(["--snap", "--camera", "2", "--seconds", "0.5"], make_output=lambda: desk) == 0
         assert made == [2]
+
+
+def _crossed_tracker(camera_index):
+    from tests.test_window_snap_hands import crossed
+    return HandTracker(camera_index, hands_factory=lambda: lambda frame, t: crossed(),
+                       camera_factory=lambda index: _Camera(), max_fps=50, max_hands=2)
+
+
+@pytest.mark.unit
+class TestTwoHandsInTheDiagnostic:
+    def test_crossed_wrists_end_the_snap_command_early(self, capsys):
+        import time
+        from tests.synthetic_hands import FakeDesktop
+        started = time.perf_counter()
+        assert cli.main(["--snap", "--seconds", "10"], make_tracker=_crossed_tracker, make_output=FakeDesktop) == 0
+        assert time.perf_counter() - started < 5
+        assert "Gesture snapping off" in capsys.readouterr().out
+
+    def test_the_readout_shows_the_two_hand_measures(self):
+        from jarvis.gestures.window_snap import describe_two_hands
+        from tests.test_window_snap_hands import crossed
+        text = describe_two_hands(*crossed(), 640, 480)
+        assert "wrists" in text and "palm" in text and "lean" in text and "crossed" in text
+        apart = describe_two_hands(*crossed(gap=0.3), 640, 480)
+        assert "crossed" not in apart

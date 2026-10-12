@@ -1904,6 +1904,35 @@ class VoiceListener(threading.Thread):
         debug_log("manual wake toggle requested", "voice")
         self._manual_wake_toggle = True
 
+    # Set from any thread (a raised hand in gesture control); consumed on the listener thread.
+    _listen_requested = False
+
+    def listen_now(self) -> None:
+        """Wait for a request as if the wake word were spoken alone. Unlike the orb's toggle it never ends a wait or
+        a hot window already running and never interrupts a reply in progress (thread-safe)."""
+        if self._reply_active():
+            debug_log("listening request ignored: a reply is in progress", "voice")
+            return
+        debug_log("listening requested", "voice")
+        self._listen_requested = True
+
+    def _reply_active(self) -> bool:
+        """Whether a reply is queued, being generated or spoken, or a bridge request or routine is running."""
+        from ..bridge import runtime as bridge_runtime
+        from ..routines import runner as routines
+        speaking = self.tts is not None and self.tts.is_speaking()
+        return bool(self._pending_replies or speaking or bridge_runtime.request_active() or routines.is_running())
+
+    def _apply_listen_now(self) -> None:
+        if self._dictation_active:
+            return
+        if self.state_manager.is_collecting() or self.state_manager.is_hot_window_active():
+            debug_log("listening request: already listening", "voice")
+            return
+        debug_log("listening request: waiting for the request", "voice")
+        self._turn = None
+        self._begin_collection("", "", addressed=True)
+
     def _stop_reply_in_progress(self) -> bool:
         """Stop whatever reply is being generated or spoken at once. Returns whether there was one."""
         from ..bridge import runtime as bridge_runtime
@@ -2012,6 +2041,9 @@ class VoiceListener(threading.Thread):
         if self._manual_wake_toggle:
             self._manual_wake_toggle = False
             self._apply_manual_wake_toggle()
+        if self._listen_requested:
+            self._listen_requested = False
+            self._apply_listen_now()
         if self.state_manager.is_collecting():
             self.state_manager.note_voice_activity(self._last_voice_frame_time)
         if self.state_manager.check_collection_timeout(speech_pending=self._speech_pending()):

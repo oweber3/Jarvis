@@ -276,3 +276,96 @@ def test_a_maximised_test_window_is_restored_under_the_hand_at_its_normal_size_a
         assert abs(root.winfo_width() - 400) <= 10 and abs(root.winfo_height() - 300) <= 10
     finally:
         root.destroy()
+
+
+
+@pytest.mark.parametrize("kind,buttons", [("click", ["left down", "left up"]),
+                                          ("double_click", ["left down", "left up", "left down", "left up"]),
+                                          ("right_click", ["right down", "right up"])])
+def test_a_click_presses_and_releases_the_button_at_the_pointer(kind, buttons):
+    names = {0x0002: "left down", 0x0004: "left up", 0x0008: "right down", 0x0010: "right up"}
+    items = output.click_inputs(kind)
+    assert [names[i.union.mi.dwFlags] for i in items] == buttons
+    assert all(i.type == 0 and i.union.mi.dx == 0 and i.union.mi.dy == 0 for i in items)  # no movement
+
+
+def test_an_unknown_click_kind_is_refused():
+    with pytest.raises(ValueError):
+        output.click_inputs("middle_click")
+
+
+def test_a_click_is_sent_through_the_click_sender():
+    sent = []
+    output.WindowsSnapOutput(click_sender=sent.append).click("right_click")
+    assert sent == ["right_click"]
+
+
+def test_a_zoom_holds_ctrl_around_the_wheel_and_always_lets_it_go():
+    items = output.zoom_inputs(-240)
+    ctrl = 0xA3
+    assert items[0].type == 1 and items[0].union.ki.wVk == ctrl and not items[0].union.ki.dwFlags & 0x2
+    assert items[1].type == 0 and items[1].union.mi.mouseData == (-240) & 0xFFFFFFFF
+    assert items[2].type == 1 and items[2].union.ki.wVk == ctrl and items[2].union.ki.dwFlags & 0x2
+
+
+def test_zooming_sends_the_signed_delta_and_zero_sends_nothing():
+    sent = []
+    out = output.WindowsSnapOutput(zoom_sender=sent.append)
+    out.zoom(120)
+    out.zoom(0)
+    out.zoom(-120)
+    assert sent == [120, -120]
+
+
+@pytest.mark.interactive
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_real_clicks_and_zoom_reach_the_window_under_the_pointer():
+    import ctypes
+    import tkinter
+    root = tkinter.Tk()
+    root.title("gesture click test")
+    root.geometry("400x300+300+300")
+    root.attributes("-topmost", True)
+    seen = []
+    root.bind("<Button-1>", lambda e: seen.append("left"))
+    root.bind("<Double-Button-1>", lambda e: seen.append("double"))
+    root.bind("<Button-3>", lambda e: seen.append("right"))
+    root.bind("<Control-MouseWheel>", lambda e: seen.append(("zoom", e.delta)))
+    _pump(root, 0.4)
+    desk = output.WindowsSnapOutput()
+    x, y = root.winfo_rootx() + 200, root.winfo_rooty() + 150
+    try:
+        desk.move_to(x, y)
+        _pump(root, 0.2)
+        under = ctypes.windll.user32.GetAncestor(ctypes.windll.user32.WindowFromPoint(output._Point(x, y)), 2)
+        if under != ctypes.windll.user32.GetAncestor(root.winfo_id(), 2):
+            pytest.skip("another window covers the test window; nothing was clicked")
+        desk.click("click")
+        _pump(root, 0.6)  # past the double-click time, so the next click is a new one
+        desk.click("double_click")
+        _pump(root)
+        desk.click("right_click")
+        _pump(root)
+        desk.zoom(120)
+        desk.zoom(-120)
+        _pump(root)
+        assert seen.count("left") >= 2 and "double" in seen and "right" in seen
+        assert ("zoom", 120) in seen and ("zoom", -120) in seen
+        assert not ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000  # Ctrl was let go
+    finally:
+        root.destroy()
+
+
+
+def test_a_click_follows_swapped_mouse_buttons():
+    names = {0x0002: "left down", 0x0004: "left up", 0x0008: "right down", 0x0010: "right up"}
+    assert [names[i.union.mi.dwFlags] for i in output.click_inputs("click", swapped=True)] == ["right down",
+                                                                                               "right up"]
+    assert [names[i.union.mi.dwFlags] for i in output.click_inputs("right_click", swapped=True)] == ["left down",
+                                                                                                     "left up"]
+
+
+def test_a_zoom_uses_the_right_ctrl_key_so_left_ctrl_shortcuts_never_see_a_double_tap():
+    items = output.zoom_inputs(120)
+    assert items[0].union.ki.wVk == 0xA3 and items[2].union.ki.wVk == 0xA3
+    assert items[0].union.ki.dwFlags & 0x1 and items[2].union.ki.dwFlags & 0x1  # extended key

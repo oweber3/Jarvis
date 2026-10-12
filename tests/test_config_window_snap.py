@@ -79,3 +79,10 @@ class TestGestureSnapSettings:
         defaults = get_default_config()
         shown = {meta.key for meta in FIELD_METADATA if meta.key.startswith("gesture_snap_")}
         assert shown <= set(defaults)
+
+    @pytest.mark.parametrize("key", ["gesture_snap_talk", "gesture_snap_two_hands"])
+    def test_the_raised_hand_and_two_hand_gestures_are_on_by_default_and_need_a_real_bool(
+            self, tmp_path, monkeypatch, key):
+        assert get_default_config()[key] is True
+        assert getattr(load(tmp_path, monkeypatch, {key: False}), key) is False
+        assert getattr(load(tmp_path, monkeypatch, {key: "no"}), key) is True

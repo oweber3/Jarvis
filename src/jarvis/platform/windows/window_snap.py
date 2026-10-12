@@ -1,7 +1,9 @@
 """The Windows output gesture snapping drives: the pointer as an aim, and grabbing, moving and snapping windows.
 
 Used only by gesture snapping (``gestures/gestures.spec.md``), which relays the user's own hand movements;
-nothing here is a tool action and nothing here clicks or sends keys (it scrolls the wheel only). Coordinates are physical pixels in the virtual desktop.
+nothing here is a tool action. It scrolls the wheel, zooms (the wheel with Ctrl held), and clicks only at the
+pointer for a click the user asked for in words; it types nothing. Coordinates are physical pixels in the virtual
+desktop.
 It also keeps the diagnostic preview window out of screen captures (``exclude_from_capture``).
 Grabbing and moving post to windows without waiting (``ShowWindowAsync``, ``SWP_ASYNCWINDOWPOS``), so a hung
 application never holds up tracking; the final snap runs on a worker thread through the shared, verified
@@ -26,7 +28,15 @@ _SHELL_CLASSES = frozenset({"Progman", "WorkerW", "Shell_TrayWnd", "Shell_Second
 # Where a restored window's top edge sits above the pointer when a maximised window is grabbed.
 _TITLE_GRIP_PX = 16
 _SW_RESTORE = 9
-_INPUT_MOUSE, _MOUSEEVENTF_WHEEL = 0, 0x0800
+_INPUT_MOUSE, _INPUT_KEYBOARD, _MOUSEEVENTF_WHEEL = 0, 1, 0x0800
+_LEFT_DOWN, _LEFT_UP, _RIGHT_DOWN, _RIGHT_UP = 0x0002, 0x0004, 0x0008, 0x0010
+_CLICK_BUTTONS = {"click": ((_LEFT_DOWN, _LEFT_UP),), "double_click": ((_LEFT_DOWN, _LEFT_UP),) * 2,
+                  "right_click": ((_RIGHT_DOWN, _RIGHT_UP),)}
+# Right Ctrl: Left Ctrl pressed twice is a shortcut of its own (PowerToys Find My Mouse), and zoom notches can come
+# that close together.
+_VK_RCONTROL, _KEYEVENTF_EXTENDEDKEY, _KEYEVENTF_KEYUP = 0xA3, 0x0001, 0x0002
+_SM_SWAPBUTTON = 23
+_SWAPPED = {_LEFT_DOWN: _RIGHT_DOWN, _LEFT_UP: _RIGHT_UP, _RIGHT_DOWN: _LEFT_DOWN, _RIGHT_UP: _LEFT_UP}
 _WDA_MONITOR, _WDA_EXCLUDEFROMCAPTURE = 0x1, 0x11
 
 
@@ -142,22 +152,61 @@ def wheel_input(delta: int):
     return _Input(_INPUT_MOUSE, _InputUnion(mi=wheel))
 
 
-def _send_wheel(delta: int) -> None:
+def click_inputs(kind: str, swapped: bool = False) -> list:
+    """The button presses and releases of a click at the pointer (``click``, ``double_click`` or ``right_click``),
+    without any movement. ``swapped`` (the left-handed mouse setting) sends the other physical button, so a click
+    is still the primary button."""
+    from .input_control import _Input, _InputUnion, _MouseInput
+    if kind not in _CLICK_BUTTONS:
+        raise ValueError(f"unknown click {kind!r}")
+    return [_Input(_INPUT_MOUSE, _InputUnion(mi=_MouseInput(0, 0, 0, _SWAPPED[flag] if swapped else flag, 0, 0)))
+            for pair in _CLICK_BUTTONS[kind] for flag in pair]
+
+
+def zoom_inputs(delta: int) -> list:
+    """Right Ctrl down, one wheel event at the pointer, Right Ctrl up: what browsers and most apps read as
+    zooming."""
+    from .input_control import _Input, _InputUnion, _KeyboardInput
+
+    def ctrl(flags: int):
+        return _Input(_INPUT_KEYBOARD,
+                      _InputUnion(ki=_KeyboardInput(_VK_RCONTROL, 0, _KEYEVENTF_EXTENDEDKEY | flags, 0, 0)))
+    return [ctrl(0), wheel_input(delta), ctrl(_KEYEVENTF_KEYUP)]
+
+
+def _send(items: list, refused: str) -> None:
+    """Send the inputs in one ``SendInput`` call, so nothing else can come between them."""
     from .input_control import _Input
     user = ctypes.WinDLL("user32", use_last_error=True)
     user.SendInput.argtypes = [ctypes.c_uint, ctypes.POINTER(_Input), ctypes.c_int]
     user.SendInput.restype = ctypes.c_uint
-    item = wheel_input(delta)
-    if user.SendInput(1, ctypes.byref(item), ctypes.sizeof(item)) != 1:
-        raise OSError("Windows blocked the scroll (a higher-privilege window may be under the pointer).")
+    batch = (_Input * len(items))(*items)
+    if user.SendInput(len(items), batch, ctypes.sizeof(_Input)) != len(items):
+        raise OSError(refused)
+
+
+def _send_wheel(delta: int) -> None:
+    _send([wheel_input(delta)], "Windows blocked the scroll (a higher-privilege window may be under the pointer).")
+
+
+def _send_zoom(delta: int) -> None:
+    _send(zoom_inputs(delta), "Windows blocked the zoom (a higher-privilege window may be under the pointer).")
+
+
+def _send_click(kind: str) -> None:
+    swapped = bool(ctypes.WinDLL("user32").GetSystemMetrics(_SM_SWAPBUTTON))
+    _send(click_inputs(kind, swapped), "Windows blocked the click (a higher-privilege window may be under the pointer).")
 
 
 class WindowsSnapOutput:
     """The real desktop: monitors, the pointer and top-level windows."""
 
     def __init__(self, wheel_sender: Optional[Callable[[int], None]] = None, *, use_fancyzones: bool = True,
-                 languages: Sequence[str] = ("en",)) -> None:
+                 languages: Sequence[str] = ("en",), zoom_sender: Optional[Callable[[int], None]] = None,
+                 click_sender: Optional[Callable[[str], None]] = None) -> None:
         self._wheel_sender = wheel_sender or _send_wheel
+        self._zoom_sender = zoom_sender or _send_zoom
+        self._click_sender = click_sender or _send_click
         self._use_fancyzones = bool(use_fancyzones)
         self._languages = tuple(languages)
         self._in_flight = _InFlight()
@@ -166,6 +215,15 @@ class WindowsSnapOutput:
         """One vertical wheel event at the pointer, so it reaches the window under it; zero does nothing."""
         if int(delta):
             self._wheel_sender(int(delta))
+
+    def zoom(self, delta: int) -> None:
+        """One wheel event with Ctrl held at the pointer (positive zooms in); zero does nothing."""
+        if int(delta):
+            self._zoom_sender(int(delta))
+
+    def click(self, kind: str) -> None:
+        """Click at the pointer: ``click``, ``double_click`` or ``right_click``."""
+        self._click_sender(kind)
 
     def desktop(self) -> List[Rectangle]:
         from .displays import list_monitors

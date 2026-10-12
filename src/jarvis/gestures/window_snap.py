@@ -1,10 +1,12 @@
 """Gesture snapping by raised fingers: one finger aims the pointer, a fist grabs the window under it and the window
-follows the hand, raising a finger snaps it into a zone, two fingers scroll, an open hand pauses.
+follows the hand, raising a finger snaps it into a zone, two fingers scroll, an open hand pauses and, held up,
+asks to listen. With two hands, two open hands zoom and crossed wrists ask to switch the mode off.
 
 Pure gesture logic on ``HandFrame``s. The desktop is an output object (``desktop``, ``move_to``, ``grab``,
-``move_window``, ``drop``, ``scroll``) supplied by the caller, so this module knows nothing of
-Windows or FancyZones. It never clicks. It is the only code that moves the pointer or windows this way, and
-only from the user's own hand movements. See ``gestures.spec.md``, Gesture snapping.
+``move_window``, ``drop``, ``scroll``, ``zoom``, ``click``) supplied by the caller, so this module knows nothing
+of Windows or FancyZones. No gesture clicks: ``click`` is called only for a click the user asked for in words,
+at the pointer. It is the only code that moves the pointer or windows this way, and only from the user's own hand
+movements. See ``gestures.spec.md``, Gesture snapping.
 """
 from __future__ import annotations
 
@@ -42,6 +44,22 @@ MIN_WHEEL_STEP = 30
 SCROLL_DEAD_ZONE = 0.03
 _DERIVATIVE_CUTOFF_HZ = 1.0
 FINGERS = ("INDEX", "MIDDLE", "RING", "PINKY")
+# An open hand held up this long asks to listen.
+TALK_HOLD_SEC = 1.0
+# Two-hand zoom: one notch for every ZOOM_STEP times the palms move apart (or together), sent once the distance is
+# ZOOM_HYSTERESIS of a step past the last notch; it ends once the hands have not both been open for ZOOM_EXIT_SEC.
+ZOOM_STEP = 1.15
+ZOOM_HYSTERESIS = 0.75
+ZOOM_EXIT_SEC = 0.3
+# Crossed wrists: wrists closer than CROSS_WRIST_GAP palm lengths, each hand leaning outwards by CROSS_LEAN_DEG,
+# held for CROSS_HOLD_SEC.
+CROSS_HOLD_SEC = 0.6
+CROSS_WRIST_GAP = 0.6
+CROSS_LEAN_DEG = 20.0
+# A crossed-wrists hold survives frames without the pose (a hand merged or dropped where the wrists overlap) for this long.
+CROSS_DROPOUT_SEC = 0.2
+CLICKS = ("click", "double_click", "right_click")
+TALK, SWITCH_OFF = "talk", "switch off"
 
 ONE, TWO, FIST, OPEN, OTHER = "one finger", "two fingers", "fist", "open hand", "other"
 _SHAPES: Dict[FrozenSet[str], str] = {
@@ -54,6 +72,7 @@ _SHAPES: Dict[FrozenSet[str], str] = {
 _IDLE, _AIMING, _HOLDING, _HOLDING_NOTHING, _SCROLLING = "idle", "aiming", "holding", "holding nothing", "scrolling"
 _STATE_NAMES = {_IDLE: "paused", _AIMING: "aiming", _HOLDING: "holding", _HOLDING_NOTHING: "holding nothing",
                 _SCROLLING: "scrolling"}
+_BUSY = (_HOLDING, _HOLDING_NOTHING, _SCROLLING)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -72,6 +91,8 @@ class WindowSnapSettings:
     scroll_speed: float = 15.0
     min_cutoff: float = 1.0
     beta: float = 0.005
+    talk: bool = True
+    two_hands: bool = True
 
     @classmethod
     def from_config(cls, cfg: Any) -> "WindowSnapSettings":
@@ -80,6 +101,10 @@ class WindowSnapSettings:
         def number(key: str, fallback: float) -> float:
             value = getattr(cfg, key, fallback)
             return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else fallback
+
+        def flag(key: str, fallback: bool) -> bool:
+            value = getattr(cfg, key, fallback)
+            return value if isinstance(value, bool) else fallback
 
         hand = getattr(cfg, "gesture_snap_hand", default.hand)
         up = number("gesture_snap_finger_up", default.finger_up)
@@ -92,7 +117,9 @@ class WindowSnapSettings:
                    debounce=number("gesture_snap_debounce_ms", default.debounce * 1000) / 1000,
                    scroll_speed=number("gesture_snap_scroll_speed", default.scroll_speed),
                    min_cutoff=number("gesture_snap_smoothing", default.min_cutoff),
-                   beta=number("gesture_snap_speed_response", default.beta))
+                   beta=number("gesture_snap_speed_response", default.beta),
+                   talk=flag("gesture_snap_talk", default.talk),
+                   two_hands=flag("gesture_snap_two_hands", default.two_hands))
 
 
 # --------------------------------------------------------------------------------------------------
@@ -127,6 +154,51 @@ def describe_hand(hand: Hand, settings: Optional["WindowSnapSettings"] = None) -
     raised = frozenset(f for f, c in curls.items() if c > s.finger_up)
     names = {"INDEX": "index", "MIDDLE": "middle", "RING": "ring", "PINKY": "little"}
     return " ".join(f"{names[f]} {curls[f]:.2f}" for f in FINGERS) + f" · {shape_of(raised)}"
+
+
+def _pixels(hand: Hand, landmark: int, width: int, height: int) -> Tuple[float, float]:
+    point = hand.point(landmark)
+    return point.x * width, point.y * height
+
+
+def lean(hand: Hand, width: int = 640, height: int = 480) -> Optional[float]:
+    """Degrees the hand leans from upright in the image (wrist to the middle finger's base; positive leans to the
+    user's right), or None when it does not point upwards."""
+    wx, wy = _pixels(hand, Landmark.WRIST, width, height)
+    mx, my = _pixels(hand, Landmark.MIDDLE_MCP, width, height)
+    if my >= wy:
+        return None
+    return math.degrees(math.atan2(mx - wx, wy - my))
+
+
+def wrists_crossed(a: Hand, b: Hand, width: int = 640, height: int = 480) -> bool:
+    """The wrists together and the hands fanned out, as when the forearms cross: the wrists closer than
+    ``CROSS_WRIST_GAP`` palm lengths, the hand further left leaning left and the other right."""
+    wa, wb = _pixels(a, Landmark.WRIST, width, height), _pixels(b, Landmark.WRIST, width, height)
+    palm = (math.dist(wa, _pixels(a, Landmark.MIDDLE_MCP, width, height))
+            + math.dist(wb, _pixels(b, Landmark.MIDDLE_MCP, width, height))) / 2
+    if palm <= 0 or math.dist(wa, wb) >= CROSS_WRIST_GAP * palm:
+        return False
+    left, right = sorted((a, b), key=lambda h: palm_centre(h)[0])
+    left_lean, right_lean = lean(left, width, height), lean(right, width, height)
+    return (left_lean is not None and right_lean is not None
+            and left_lean <= -CROSS_LEAN_DEG and right_lean >= CROSS_LEAN_DEG)
+
+
+def describe_two_hands(a: Hand, b: Hand, width: int = 640, height: int = 480) -> str:
+    """How far apart the wrists are in palm lengths and how each hand leans (left hand in the image first), and
+    whether that reads as crossed wrists, for the diagnostic readout."""
+    wa, wb = _pixels(a, Landmark.WRIST, width, height), _pixels(b, Landmark.WRIST, width, height)
+    palm = (math.dist(wa, _pixels(a, Landmark.MIDDLE_MCP, width, height))
+            + math.dist(wb, _pixels(b, Landmark.MIDDLE_MCP, width, height))) / 2
+    left, right = sorted((a, b), key=lambda h: palm_centre(h)[0])
+
+    def angle(hand: Hand) -> str:
+        value = lean(hand, width, height)
+        return "down" if value is None else f"{value:+.0f}°"
+    gap = math.dist(wa, wb) / palm if palm > 0 else float("inf")
+    crossed = " · crossed" if wrists_crossed(a, b, width, height) else ""
+    return f"wrists {gap:.2f} palm lengths apart, lean {angle(left)} / {angle(right)}{crossed}"
 
 
 def shape_of(raised: FrozenSet[str]) -> str:
@@ -194,10 +266,12 @@ class WindowSnap:
     ``on_frame`` runs on the detection thread, ``tick`` on a watchdog thread and ``close`` on whichever
     thread stops the mode; one lock serialises them."""
 
-    def __init__(self, output: Any, settings: WindowSnapSettings, clock: Callable[[], float] = time.perf_counter):
+    def __init__(self, output: Any, settings: WindowSnapSettings, clock: Callable[[], float] = time.perf_counter,
+                 on_event: Optional[Callable[[str], None]] = None):
         self._out = output
         self._s = settings
         self._clock = clock
+        self._on_event = on_event
         self._lock = threading.Lock()
         self._monitors: List[Rectangle] = [tuple(int(v) for v in m) for m in output.desktop()]  # type: ignore
         if not self._monitors:
@@ -231,10 +305,25 @@ class WindowSnap:
         self._neutral = 0.0  # the palm's height (desktop pixels) when the scroll started
         self._closed = False
         self._failing: set = set()
+        self._talk_armed = False  # an open hand that may ask to listen once held long enough
+        self._open_since = 0.0
+        self._second_raised: Dict[str, bool] = {}
+        self._both_open_since: Optional[float] = None
+        self._zoom_ref: Optional[float] = None  # palm distance (pixels) when the zoom started; None when not zooming
+        self._zoom_sent = 0
+        self._zoom_lapse: Optional[float] = None  # since when the hands have not both been open while zooming
+        self._cross_since: Optional[float] = None
+        self._cross_last = 0.0
+        self._cross_fired = False
+        self._second_in_view = False  # a second hand in view: a fist grabs nothing
+        self._grab_blocked = False  # after a zoom, a fist grabs nothing until one finger is raised
+        self._zoom_second_seen = True
 
     @property
     def state(self) -> str:
-        """For display: paused, aiming, hand changing, holding, holding nothing or scrolling."""
+        """For display: paused, aiming, hand changing, holding, holding nothing, scrolling or zooming."""
+        if self._zoom_ref is not None:
+            return "zooming"
         if self._candidate is not None and self._state != _IDLE:
             return "hand changing"
         return _STATE_NAMES[self._state]
@@ -269,13 +358,33 @@ class WindowSnap:
             gain = self._desktop_width / (self._s.comfort_box * max(frame.width, 1))
             position = (self._fx(self._centre[0] + (px - self._box[0]) * frame.width * gain, frame.time),
                         self._fy(self._centre[1] + (py - self._box[1]) * frame.height * gain, frame.time))
-            self._step(position, self._shape(chosen), frame.time, frame.height * gain)
+            shape = self._shape(chosen)
+            seconds = [h for h in frame.hands if h is not chosen]
+            second = max(seconds, key=lambda h: h.score) if seconds and self._s.two_hands else None
+            self._second_in_view = second is not None
+            if second is not None or self._zoom_ref is not None or self._cross_since is not None:
+                if self._two_hands(chosen, shape, second, frame):
+                    return  # a two-hand gesture is under way: the one-hand gestures wait
+            self._step(position, shape, frame.time, frame.height * gain)
+            self._maybe_talk(frame.time, alone=second is None)
 
     def tick(self) -> None:
         """Watchdog: let go once the hand has been missing too long, even when no frames arrive."""
         with self._lock:
             if not self._closed:
                 self._check_lost(self._clock())
+
+    def click(self, kind: str) -> str:
+        """Click at the pointer (``click``, ``double_click`` or ``right_click``), for a click the user asked for
+        in words. ``"busy"`` while a window is held or a scroll or zoom runs; raises ``OSError`` when refused."""
+        if kind not in CLICKS:
+            raise ValueError(f"unknown click {kind!r}")
+        with self._lock:
+            if self._zoom_ref is not None or self._state in _BUSY:
+                return "busy"
+            self._out.click(kind)
+            debug_log("gesture snapping: clicked at the pointer on request", "gestures")
+            return "clicked"
 
     def close(self) -> None:
         """Stop for good, leaving a held window where it is."""
@@ -360,6 +469,13 @@ class WindowSnap:
         self._last_palm = None
         self._fx.reset()
         self._fy.reset()
+        self._talk_armed = False
+        self._second_raised.clear()
+        self._both_open_since = self._cross_since = None
+        self._cross_fired = False
+        if self._zoom_ref is not None:
+            self._end_zoom()
+        self._grab_blocked = self._second_in_view = False
 
     # -- the state machine -----------------------------------------------------------------------
 
@@ -377,7 +493,7 @@ class WindowSnap:
             needed = max(self._s.debounce, SCROLL_EXIT_SEC) if self._state == _SCROLLING else self._s.debounce
             if t - self._candidate_since >= needed:
                 self._candidate = None
-                self._confirm(shape, p)
+                self._confirm(shape, p, t)
             # Until the new gesture counts the pointer (and a held window) stays still; a scroll carries on, its
             # speed set by where the hand is, so misreads do not stop it.
             if self._state == _SCROLLING:
@@ -397,10 +513,13 @@ class WindowSnap:
         else:
             self._ref = p
 
-    def _confirm(self, shape: str, p: Tuple[float, float]) -> None:
+    def _confirm(self, shape: str, p: Tuple[float, float], t: float) -> None:
         """A new gesture has lasted the debounce time: act on it."""
         previous, self._gesture = self._gesture, shape
         paused = self._state == _IDLE
+        # An open hand may ask to listen, unless it is letting go of a held window.
+        self._talk_armed = shape == OPEN and self._state != _HOLDING
+        self._open_since = t
         if self._state in (_HOLDING, _HOLDING_NOTHING):
             if not self._raised.get("INDEX"):
                 self._hold_place(p)
@@ -428,7 +547,12 @@ class WindowSnap:
             else:
                 self._hold_place(p)
         if shape == ONE:
+            self._grab_blocked = False
             self._state = _AIMING
+        elif shape == FIST and (self._second_in_view or self._grab_blocked):
+            # Two hands moving together (crossing, zooming) are misread as fists: they never grab.
+            self._state = _HOLDING_NOTHING
+            debug_log("gesture snapping: fist with two hands or after a zoom grabs nothing", "gestures")
         elif shape == FIST:
             self._grab()
         elif shape == TWO:
@@ -463,6 +587,127 @@ class WindowSnap:
             return
         self._shown = target
         self._failing.discard("move the pointer")
+
+    # -- talking ---------------------------------------------------------------------------------
+
+    def _maybe_talk(self, t: float, alone: bool) -> None:
+        """Ask to listen once an open hand has been held up on its own for ``TALK_HOLD_SEC``."""
+        if not (self._s.talk and self._talk_armed and self._gesture == OPEN):
+            return
+        if not alone:
+            self._open_since = t  # a second hand restarts the wait: two open hands zoom
+            return
+        if self._candidate is None and t - self._open_since >= TALK_HOLD_SEC:
+            self._talk_armed = False
+            debug_log("gesture snapping: raised hand asks to listen", "gestures")
+            self._emit(TALK)
+
+    def _emit(self, event: str) -> None:
+        if self._on_event is None:
+            return
+        try:
+            self._on_event(event)
+        except Exception as exc:  # noqa: BLE001 - a failing handler never stops tracking
+            debug_log(f"gesture snapping: {event} handler failed ({type(exc).__name__})", "gestures")
+
+    # -- two hands -------------------------------------------------------------------------------
+
+    def _second_open(self, hand: Hand) -> bool:
+        """Whether the second hand is open, with the same thresholds and hysteresis as the driving hand."""
+        for finger in FINGERS:
+            curl = finger_curl(hand, finger)
+            if curl > self._s.finger_up:
+                self._second_raised[finger] = True
+            elif curl < self._s.finger_down:
+                self._second_raised[finger] = False
+            else:
+                self._second_raised.setdefault(finger, False)
+        return all(self._second_raised[f] for f in FINGERS)
+
+    def _two_hands(self, chosen: Hand, shape: str, second: Optional[Hand], frame: HandFrame) -> bool:
+        """Crossed wrists and two-hand zoom. Returns whether one is under way, so the one-hand gestures wait."""
+        t = frame.time
+        if second is None:
+            self._second_raised.clear()
+        if second is not None and wrists_crossed(chosen, second, frame.width, frame.height):
+            self._cross_last = t
+            if self._cross_since is None:
+                self._cross_since = t
+            elif not self._cross_fired and t - self._cross_since >= CROSS_HOLD_SEC:
+                self._cross_fired = True
+                debug_log("gesture snapping: crossed wrists turn it off", "gestures")
+                self._emit(SWITCH_OFF)
+            return True
+        if self._cross_since is not None and t - self._cross_last <= CROSS_DROPOUT_SEC:
+            return True  # a frame without the pose while the wrists overlap: the hold goes on
+        self._cross_since, self._cross_fired = None, False
+        second_open = second is not None and self._second_open(second)
+        both_open = second_open and shape == OPEN
+        if self._zoom_ref is not None:
+            if both_open:
+                self._zoom_lapse = None
+            else:
+                if self._zoom_lapse is None:
+                    self._zoom_lapse = t
+                if t - self._zoom_lapse >= ZOOM_EXIT_SEC:
+                    self._end_zoom()
+                    return False
+            if second is None:
+                self._zoom_second_seen = False
+            else:
+                gap = self._palm_gap(chosen, second, frame)
+                if not self._zoom_second_seen:
+                    # The second hand is back: carry on from the zoom already sent, without catching up at once.
+                    self._zoom_ref = max(gap / ZOOM_STEP ** self._zoom_sent, 1e-6)
+                    self._zoom_second_seen = True
+                self._zoom_to(gap)
+            return True
+        if not both_open or self._state in _BUSY:
+            self._both_open_since = None
+            return False
+        if self._both_open_since is None:
+            self._both_open_since = t
+        if t - self._both_open_since < self._s.debounce:
+            return False
+        self._zoom_ref = max(self._palm_gap(chosen, second, frame), 1.0)
+        self._zoom_sent = 0
+        self._zoom_lapse = None
+        self._zoom_second_seen = True
+        # The one-hand gestures pause; afterwards the open hand carries on without asking to listen.
+        self._state, self._gesture, self._candidate = _IDLE, OPEN, None
+        self._talk_armed = False
+        debug_log("gesture snapping: zoom started", "gestures")
+        return True
+
+    @staticmethod
+    def _palm_gap(a: Hand, b: Hand, frame: HandFrame) -> float:
+        (ax, ay), (bx, by) = palm_centre(a), palm_centre(b)
+        return math.hypot((ax - bx) * frame.width, (ay - by) * frame.height)
+
+    def _zoom_to(self, gap: float) -> None:
+        """Send a notch when the palms have moved a ``ZOOM_STEP`` further apart or together than the last one, at
+        most one a frame, so a misread palm never sends a burst."""
+        steps = math.log(max(gap, 1e-6) / self._zoom_ref) / math.log(ZOOM_STEP)
+        if steps - self._zoom_sent > ZOOM_HYSTERESIS:
+            self._zoom_notch(1)
+        elif self._zoom_sent - steps > ZOOM_HYSTERESIS:
+            self._zoom_notch(-1)
+
+    def _zoom_notch(self, direction: int) -> bool:
+        try:
+            self._out.zoom(direction * WHEEL_NOTCH)
+        except Exception as exc:  # noqa: BLE001 - the next frame tries again
+            self._output_failed("zoom", exc)
+            return False
+        self._zoom_sent += direction
+        self._failing.discard("zoom")
+        return True
+
+    def _end_zoom(self) -> None:
+        self._zoom_ref = None
+        self._grab_blocked = True
+        self._zoom_lapse = self._both_open_since = None
+        debug_log("gesture snapping: zoom ended", "gestures")
 
     # -- scrolling -------------------------------------------------------------------------------
 
@@ -558,7 +803,7 @@ class WindowSnap:
         debug_log(f"gesture snapping could not {what} ({type(exc).__name__})", "gestures")
         try:
             print(f"🖐️ Gesture snapping could not {what}\n"
-                  "   💡 Windows blocks moving or scrolling apps that run as administrator, and input while the PC "
+                  "   💡 Windows blocks moving, scrolling or zooming apps that run as administrator, and input while the PC "
                   "is locked",
                   flush=True)
         except Exception:  # noqa: BLE001 - a console that cannot print never stops tracking

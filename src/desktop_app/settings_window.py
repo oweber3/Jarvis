@@ -636,7 +636,9 @@ def _build_field_metadata() -> List[FieldMeta]:
       "Move and scroll windows with your hand through the webcam, palm towards the camera: raise one "
       "finger to aim the pointer, make a fist to grab the window under it and move it, then raise a finger or open "
       "your hand to snap it into the FancyZones zone under the pointer. Raise two fingers and move your hand up or "
-      "down to scroll. Open your hand flat to pause. It never clicks. This only makes it available: say \"start "
+      "down to scroll. Open your hand flat to pause, or hold it up for a second to talk to Jarvis. Pull two open "
+      "hands apart or together to zoom, and cross your wrists to turn it off. Gestures never click; say \"Jarvis, click\", "
+      "\"double click\" or \"right click\" to click at the pointer. This only makes it available: say \"start "
       "gesture control\" to turn the camera on and \"stop gesture control\" to turn it off. Everything stays on "
       "this PC. Takes effect after Jarvis restarts.",
       "extras", "bool")
@@ -647,6 +649,14 @@ def _build_field_metadata() -> List[FieldMeta]:
       "Which hand aims. Any: whichever hand is in view, and the one already in use keeps control.",
       "extras", "choice", choices=[("any", "Any hand"), ("right", "Right hand"), ("left", "Left hand")],
       shown_when=gestures)
+    f("gesture_snap_talk", "Raise Hand to Talk",
+      "Hold an open hand up for a second while gesture control is on and Jarvis starts listening, as clicking the "
+      "orb does. Snapping a window by opening your hand never starts it.",
+      "extras", "bool", shown_when=gestures)
+    f("gesture_snap_two_hands", "Two-Hand Gestures",
+      "Pull two open hands apart or together to zoom the window under the pointer, and cross your wrists to turn "
+      "gesture control off. Tracking two hands takes a little more processing.",
+      "extras", "bool", shown_when=gestures)
     f("gesture_snap_pointer_ring", "Pointer Ring",
       "Show a small glowing ring round the mouse pointer while gesture control is on, so the pointer is easy to "
       "follow. Clicks pass through it and it never takes focus. Applies as soon as Settings are saved.",

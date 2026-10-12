@@ -92,3 +92,49 @@ def test_the_routes_are_routine_and_so_eligible(mock_config):
     from jarvis.tools.confirmation import SafetyTier, evaluate_safety
     for args in ({'action': 'start'}, {'action': 'stop'}):
         assert evaluate_safety('gestureControl', args, mock_config, tool=GestureControlTool()).tier == SafetyTier.SAFE
+
+
+@pytest.mark.parametrize('text,action', [('click', 'click'), ('Click.', 'click'), ('click it', 'click'),
+                                         ('click here', 'click'), ('left click', 'click'),
+                                         ('double click', 'double_click'), ('double-click', 'double_click'),
+                                         ('right click', 'right_click'), ('Right-click.', 'right_click')])
+def test_click_phrases_click(text, action):
+    result = route(text)
+    assert result is not None, text
+    assert (result.tool_name, result.args) == ('gestureControl', {'action': action})
+
+
+@pytest.mark.parametrize('text', ['click the save button', 'click on settings', 'how do I right click',
+                                  'what does double click do', 'clicking'])
+def test_other_click_requests_are_not_spoken_clicks(text):
+    result = route(text)
+    assert result is None or result.tool_name != 'gestureControl'
+
+
+def test_a_click_route_waits_for_gesture_snapping_to_run(mock_config, monkeypatch):
+    """Matched or not, a click is dispatched only while gesture snapping runs; otherwise the model decides."""
+    from jarvis.fastpath import dispatcher
+    from jarvis.gestures import window_snap_service
+    from jarvis.tools.builtin.gesture_control import GestureControlTool
+    from jarvis.tools.registry import BUILTIN_TOOLS
+    monkeypatch.setitem(BUILTIN_TOOLS, 'gestureControl', GestureControlTool())
+    monkeypatch.setattr(window_snap_service, '_service', None)
+    assert dispatcher.match_command('click', mock_config, 'en') is None
+    started = dispatcher.match_command('start gesture control', mock_config, 'en')
+    assert started is not None and started.args == {'action': 'start'}
+
+
+
+def test_a_spoken_click_needs_the_wake_word_or_a_raised_hand(mock_config, monkeypatch):
+    """A bare "click" overheard in the hot window never clicks; addressed (wake word, orb, raised hand) it does."""
+    from jarvis.fastpath import dispatcher
+    from jarvis.gestures import window_snap_service
+    from jarvis.tools.builtin.gesture_control import GestureControlTool
+    from jarvis.tools.registry import BUILTIN_TOOLS
+
+    class Running:
+        running = True
+    monkeypatch.setitem(BUILTIN_TOOLS, 'gestureControl', GestureControlTool())
+    monkeypatch.setattr(window_snap_service, '_service', Running())
+    assert dispatcher.match_command('click', mock_config, 'en', addressed=False) is None
+    assert dispatcher.match_command('click', mock_config, 'en', addressed=True).args == {'action': 'click'}

@@ -39,9 +39,10 @@ def match_command(text, cfg, language=None, addressed=True):
         if result is not None and result.needs_wake_word and not addressed:
             debug_log(f'Fast route {result.command_id} needs the wake word; using LLM_ROUTE.', 'routing')
             return None
-        # A tool can make its routes depend on live state (pdfNavigate: a PDF viewer is in front).
+        # A tool can make its routes depend on live state (pdfNavigate: a PDF viewer is in front; gestureControl
+        # clicks: gesture snapping is running).
         ready = getattr(BUILTIN_TOOLS[result.tool_name], 'fast_available', None) if result else None
-        if ready is not None and not ready(cfg):
+        if ready is not None and not ready(cfg, result.args):
             debug_log(f'Fast route {result.command_id} not available now; using LLM_ROUTE.', 'routing')
             return None
         if result is not None and evaluate_safety(

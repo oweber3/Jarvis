@@ -5,6 +5,7 @@ fold each finger, so tests can describe gestures in the user's terms (one finger
 hand) without a camera."""
 from __future__ import annotations
 
+import math
 from typing import Dict, List, Optional, Tuple
 
 from jarvis.gestures.hand_tracking import Hand, HandFrame, Landmark, Point
@@ -18,9 +19,12 @@ UP, DOWN = 1.35, 0.75  # finger curls measured on a real webcam with the palm to
 
 
 def hand(x: float = 0.5, y: float = 0.5, *, gesture: str = "one", side: str = "right", score: float = 0.9,
-         curls: Optional[Dict[str, float]] = None) -> Hand:
+         curls: Optional[Dict[str, float]] = None, tilt: float = 0.0,
+         wrist: Optional[Tuple[float, float]] = None) -> Hand:
     """A hand with its palm centre at image position ``(x, y)`` making ``gesture`` (one, two, fist, open or
-    rock). ``curls`` sets chosen fingers' curl exactly (wrist to tip over wrist to middle joint)."""
+    rock). ``curls`` sets chosen fingers' curl exactly (wrist to tip over wrist to middle joint). ``tilt`` leans
+    the hand in the image by that many degrees (positive leans the fingers to the user's right); ``wrist`` places
+    the wrist at that image position instead of placing the palm centre."""
     raised = GESTURES[gesture]
     wanted = {name: (UP if name in raised else DOWN) for name in FINGERS}
     wanted.update({k.upper(): v for k, v in (curls or {}).items()})
@@ -41,7 +45,18 @@ def hand(x: float = 0.5, y: float = 0.5, *, gesture: str = "one", side: str = "r
                                Landmark.PINKY_MCP)]
     cx, cy = sum(p.x for p in palm) / 5, sum(p.y for p in palm) / 5
     # Image points: the shape scaled into a 640 x 480 frame around the palm centre, with square pixels.
-    points = tuple(Point(x + (p.x - cx) * 1.5, y + (p.y - cy) * 2, p.z) for p in world)
+    angle = math.radians(tilt)
+
+    def placed(p: Point) -> Tuple[float, float]:
+        # In square pixels of a 640 x 480 frame, turned clockwise on screen by ``tilt``.
+        dx, dy = (p.x - cx) * 1.5 * 640, (p.y - cy) * 2 * 480
+        rx, ry = dx * math.cos(angle) - dy * math.sin(angle), dx * math.sin(angle) + dy * math.cos(angle)
+        return rx / 640, ry / 480
+
+    if wrist is not None:
+        wx, wy = placed(world[Landmark.WRIST])
+        x, y = wrist[0] - wx, wrist[1] - wy
+    points = tuple(Point(x + placed(p)[0], y + placed(p)[1], p.z) for p in world)
     return Hand(side=side, score=score, points=points, world=tuple(world))
 
 
@@ -115,6 +130,17 @@ class FakeDesktop:
 
     def drop(self, window, x: int, y: int) -> None:
         self.events.append(("drop", window, x, y))
+
+    def zoom(self, delta: int) -> None:
+        self.events.append(("zoom", delta))
+
+    def zoomed(self) -> int:
+        return sum(e[1] for e in self.events if e[0] == "zoom")
+
+    def click(self, kind: str) -> None:
+        if self.fail:
+            raise OSError("refused")
+        self.events.append(("click", kind, self.at))
 
     def of(self, kind: str) -> List[tuple]:
         return [e for e in self.events if e[0] == kind]

@@ -1289,6 +1289,73 @@
       ]
     },
     {
+      "id": "gesture_click.click",
+      "family": "gesture_click",
+      "tool": "gestureControl",
+      "args": {
+        "action": "click"
+      },
+      "reply": null,
+      "phrases": [
+        "click",
+        "click it",
+        "click here",
+        "click there",
+        "click that",
+        "left click",
+        "left click it",
+        "click the mouse",
+        "mouse click",
+        "left-click",
+        "left-click it"
+      ],
+      "needs_wake_word": true
+    },
+    {
+      "id": "gesture_click.double_click",
+      "family": "gesture_click",
+      "tool": "gestureControl",
+      "args": {
+        "action": "double_click"
+      },
+      "reply": null,
+      "phrases": [
+        "double click",
+        "double click it",
+        "double click here",
+        "double click there",
+        "double click that",
+        "double-click",
+        "double-click it",
+        "double-click here",
+        "double-click there",
+        "double-click that"
+      ],
+      "needs_wake_word": true
+    },
+    {
+      "id": "gesture_click.right_click",
+      "family": "gesture_click",
+      "tool": "gestureControl",
+      "args": {
+        "action": "right_click"
+      },
+      "reply": null,
+      "phrases": [
+        "right click",
+        "right click it",
+        "right click here",
+        "right click there",
+        "right click that",
+        "right-click",
+        "right-click it",
+        "right-click here",
+        "right-click there",
+        "right-click that"
+      ],
+      "needs_wake_word": true
+    },
+    {
       "id": "tv.power_on",
       "family": "tv",
       "tool": "tvControl",

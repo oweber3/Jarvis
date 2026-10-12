@@ -1,7 +1,8 @@
 """Gesture snapping as a mode that can be turned on and off: one hand tracker, one ``WindowSnap`` and a watchdog.
 
 The camera runs only while the mode is on. ``stop`` lets go of a held window before it releases the camera, and
-runs at process exit too. See ``gestures.spec.md``, Gesture snapping.
+runs at process exit too. A raised hand calls the talk handler the daemon sets, crossed wrists stop the mode, and
+``click`` clicks at the pointer for a spoken click. See ``gestures.spec.md``, Gesture snapping.
 """
 from __future__ import annotations
 
@@ -12,11 +13,21 @@ from typing import Any, Callable, Optional
 from ..debug import debug_log
 from . import snap_state
 from .hand_tracking import IDLE_FPS, HandTracker
-from .window_snap import WATCHDOG_SEC, WindowSnap, WindowSnapSettings
+from .window_snap import SWITCH_OFF, TALK, WATCHDOG_SEC, WindowSnap, WindowSnapSettings
 
 GESTURE_GUIDE = ("Raise one finger to aim, make a fist to grab the window under the pointer and move it, "
                  "then raise a finger or open your hand to snap it into a zone; raise two fingers and hold your hand "
-                 "above or below where you started to scroll; open your hand flat to pause.")
+                 "above or below where you started to scroll; open your hand flat to pause, and hold it up to talk "
+                 "to me. Say \"Jarvis, click\", double click or right click to click at the pointer. Pull two open hands apart "
+                 "or together to zoom, and cross your wrists to turn gesture control off.")
+
+_talk_handler: Optional[Callable[[], None]] = None
+
+
+def set_talk_handler(handler: Optional[Callable[[], None]]) -> None:
+    """What a raised hand calls to start listening (the daemon's ``listen_now``), or None."""
+    global _talk_handler
+    _talk_handler = handler
 
 
 class WindowSnapUnavailable(Exception):
@@ -26,8 +37,9 @@ class WindowSnapUnavailable(Exception):
 def snap_tracker(cfg: Any, camera: int, **kwargs: Any) -> HandTracker:
     """The hand tracker gesture snapping runs on: one hand unless a named side needs both in view, and the idle
     rate while no hand is in view. ``kwargs`` (test doubles) go to ``HandTracker``."""
-    hand = WindowSnapSettings.from_config(cfg).hand
-    return HandTracker(camera, max_hands=1 if hand == "any" else 2, idle_fps=IDLE_FPS, **kwargs)
+    settings = WindowSnapSettings.from_config(cfg)
+    one = settings.hand == "any" and not settings.two_hands
+    return HandTracker(camera, max_hands=1 if one else 2, idle_fps=IDLE_FPS, **kwargs)
 
 
 class WindowSnapService:
@@ -46,6 +58,7 @@ class WindowSnapService:
         self._stop_watchdog: Optional[threading.Event] = None
         self._watchdog: Optional[threading.Thread] = None
         self._exit_hook = False
+        self._no_talk_said = False
 
     @property
     def running(self) -> bool:
@@ -65,7 +78,8 @@ class WindowSnapService:
             if self._snap is not None:
                 return "already"
             try:
-                snap = WindowSnap(self._output_factory(), WindowSnapSettings.from_config(self._cfg))
+                snap = WindowSnap(self._output_factory(), WindowSnapSettings.from_config(self._cfg),
+                                  on_event=self._on_event)
             except Exception as exc:  # noqa: BLE001 - no desktop output means no gesture snapping
                 debug_log(f"gesture snapping not started: desktop output unavailable ({type(exc).__name__})",
                           "gestures")
@@ -106,8 +120,10 @@ class WindowSnapService:
              "   ☝️ Raise one finger to aim the pointer\n"
              "   ✊ Make a fist to grab the window under it, raise a finger or open your hand to snap it into a zone\n"
              "   ✌️ Raise two fingers, then hold your hand higher or lower to scroll (further is faster)\n"
-             "   ✋ Open your hand flat to pause\n"
-             "   🗣️ Say \"stop gesture control\" to turn it off")
+             "   ✋ Open your hand flat to pause, hold it up for a second to talk to Jarvis\n"
+             "   🖱️ Say \"Jarvis, click\", \"double click\" or \"right click\" to click at the pointer\n"
+             "   👐 Pull two open hands apart or together to zoom\n"
+             "   🙅 Cross your wrists, or say \"stop gesture control\", to turn it off")
         return "started"
 
     def stop(self) -> bool:
@@ -134,6 +150,38 @@ class WindowSnapService:
         debug_log("gesture snapping stopped", "gestures")
         _say("🖐️ Gesture snapping off")
         return True
+
+    def click(self, kind: str) -> str:
+        """Click at the pointer for a spoken click: ``"clicked"``, ``"busy"`` (holding, scrolling or zooming) or
+        ``"off"``. Raises ``OSError`` when Windows refuses it."""
+        with self._lock:
+            snap = self._snap
+        if snap is None:
+            return "off"
+        return snap.click(kind)
+
+    def _on_event(self, event: str) -> None:
+        """From the detection thread: hand the work to a short-lived thread so tracking never waits, and so stopping
+        never runs on the thread it stops."""
+        if event == TALK:
+            work = self._talk
+        elif event == SWITCH_OFF:
+            work = self.stop
+        else:
+            return
+        threading.Thread(target=work, name=f"gesture-snap-{event.replace(' ', '-')}", daemon=True).start()
+
+    def _talk(self) -> None:
+        handler = _talk_handler
+        if handler is None:
+            if not self._no_talk_said:
+                self._no_talk_said = True
+                _say("🖐️ Listening by raising a hand is not available here")
+            return
+        try:
+            handler()
+        except Exception as exc:  # noqa: BLE001 - a failed wake never stops gesture snapping
+            debug_log(f"gesture snapping: raised hand could not start listening ({type(exc).__name__})", "gestures")
 
     @staticmethod
     def _watch(snap: WindowSnap, stop: threading.Event) -> None:

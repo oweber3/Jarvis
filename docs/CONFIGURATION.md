@@ -296,26 +296,31 @@ Gesture snapping moves and scrolls windows with your hand through the webcam. It
 
 Gestures are recognised by counting your raised fingers (index, middle, ring and little), with your palm towards the camera. A gesture must hold briefly (the debounce) to count.
 
-- **Raise one finger** (your index) to aim the pointer. The pointer follows the middle of your palm, absolutely: a box around where you first raise your hand (the comfort box, half the camera's width by default) is your whole desktop, every monitor included, so raising your hand puts the pointer in the middle of the desktop and every edge is always within reach. To re-centre, take your hand out of view and raise it again. Nothing is ever clicked.
+- **Raise one finger** (your index) to aim the pointer. The pointer follows the middle of your palm, absolutely: a box around where you first raise your hand (the comfort box, half the camera's width by default) is your whole desktop, every monitor included, so raising your hand puts the pointer in the middle of the desktop and every edge is always within reach. To re-centre, take your hand out of view and raise it again. A gesture never clicks: say "Jarvis, click", "double click" or "right click" to click at the pointer (only while gesture control is on, and only at the PC; the wake word or a raised hand first, so an overheard "click" never clicks).
 - **Make a fist** (all four fingers down) to grab the window under the pointer. It comes to the front and follows your hand.
 - **Raise a finger again** (or open your hand) to drop the window and snap it into the zone under the pointer. The zones are the FancyZones layouts you set up in Microsoft PowerToys (only while **Use FancyZones Layouts** is on in Settings → General → Windows control); on a monitor without zones the window stays where you drop it.
 - **Raise two fingers** (index and middle) to scroll the window under the pointer, like a joystick: where your hand is when you raise them is neutral, holding it higher scrolls up and lower scrolls down, and further from neutral is faster. Back near neutral it stops. The pointer stays still while you scroll.
 - **Open your hand flat** (all four fingers up) to pause the pointer; raising one finger brings it straight back to your hand. To leave a held window where it is without snapping, take your hand out of view.
+- **Hold an open hand up for a second** to make Jarvis listen, as clicking the orb does. It never cuts off an answer Jarvis is giving, and opening your hand to snap a window never does this.
+- **Pull two open hands apart** to zoom in on the window under the pointer, or **push them together** to zoom out (Ctrl and the mouse wheel). A fist never grabs a window while both hands are in view.
+- **Cross your wrists** (hands fanned out in an X) for about half a second to turn gesture control off.
 
 | Setting | Default | What it does |
 |---|---|---|
 | `gesture_snap_camera` | `0` | Webcam index |
-| `gesture_snap_hand` | `any` | `any`, `right` or `left`. `any` follows one hand and is the lightest on the CPU; `right` and `left` look for both hands so they can pick the side |
+| `gesture_snap_hand` | `any` | `any`, `right` or `left`: the hand that aims. `any` with two-hand gestures off follows one hand and is the lightest on the CPU |
 | `gesture_snap_comfort_box` | `0.5` | Share of the camera's width that spans the whole desktop; smaller is more sensitive |
 | `gesture_snap_finger_up` / `gesture_snap_finger_down` | `1.1` / `0.95` | Finger curl (wrist-to-tip distance over wrist-to-middle-joint distance) above which a finger counts as raised and below which it counts as lowered; in between it keeps its last state. Down is always kept below up |
 | `gesture_snap_debounce_ms` | `100` | How long a gesture must hold to count |
 | `gesture_snap_scroll_speed` | `15` | Wheel notches a second for each tenth of the camera's height your hand is held beyond neutral |
 | `gesture_snap_smoothing` / `gesture_snap_speed_response` | `1.0` / `0.005` | Steadiness when still, and how fast smoothing gives way when you move quickly |
+| `gesture_snap_talk` | `true` | Holding an open hand up for a second makes Jarvis listen (**Raise Hand to Talk**) |
+| `gesture_snap_two_hands` | `true` | Two-hand zoom and crossed wrists to turn gesture control off (**Two-Hand Gestures**). Tracks two hands, which takes a little more processing; turn it off with `gesture_snap_hand` at `any` to follow one hand only |
 | `gesture_snap_pointer_ring` | `true` | Show a glowing ring round the mouse pointer while gesture control is on (**Pointer Ring**); applies as soon as Settings are saved |
 
 While no hand has been in view for a few seconds, Jarvis checks the camera only a few times a second to save power, and goes back to full speed the moment a hand appears.
 
-To check the camera and tune the thresholds, `python -m jarvis.gestures --snap --preview` runs gesture snapping with a window showing what the camera sees, your hand's landmarks and the live finger curl values. Hand tracking runs on this PC with MediaPipe; frames are never stored and nothing is sent anywhere. Codex and Claude modes cannot turn the camera on. Spec: `src/jarvis/gestures/gestures.spec.md`.
+To check the camera and tune the thresholds, `python -m jarvis.gestures --snap --preview` runs gesture snapping with a window showing what the camera sees, your hand's landmarks and the live finger curl values; with two hands in view the console also shows how far apart the wrists are and how each hand leans, to check crossed wrists. Hand tracking runs on this PC with MediaPipe; frames are never stored and nothing is sent anywhere. Codex and Claude modes cannot turn the camera on. Spec: `src/jarvis/gestures/gestures.spec.md`.
 
 ### Safety and Confirmation Policy
 

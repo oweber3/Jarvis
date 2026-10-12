@@ -226,3 +226,61 @@ def test_a_daemon_restarted_in_the_same_process_uses_the_settings_saved_before_t
         assert trackers[-1].camera == 2
     finally:
         window_snap_service.stop_service()
+
+
+def _wait_for(condition, seconds=2.0):
+    deadline = time.monotonic() + seconds
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return condition()
+
+
+def _show(tracker, seconds, *hands):
+    t = time.perf_counter()
+    for i in range(int(seconds * 30)):
+        tracker.deliver(frame(t + i / 30, *hands))
+
+
+def test_a_raised_open_hand_calls_the_talk_handler(mock_config, desk, monkeypatch):
+    from jarvis.gestures import window_snap_service
+    asked = []
+    monkeypatch.setattr(window_snap_service, "_talk_handler", None)
+    window_snap_service.set_talk_handler(lambda: asked.append("listen"))
+    svc = service(mock_config, desk)
+    svc.start()
+    _show(FakeTracker.instances[-1], 1.3, hand(0.5, 0.5, gesture="open"))
+    assert _wait_for(lambda: asked == ["listen"])
+    svc.stop()
+
+
+def test_a_raised_hand_without_a_talk_handler_says_so_once(mock_config, desk, monkeypatch, capsys):
+    from jarvis.gestures import window_snap_service
+    monkeypatch.setattr(window_snap_service, "_talk_handler", None)
+    svc = service(mock_config, desk)
+    svc.start()
+    tracker = FakeTracker.instances[-1]
+    for _ in range(2):
+        _show(tracker, 1.3, hand(0.5, 0.5, gesture="open"))
+        _show(tracker, 0.3, hand(0.5, 0.5))
+    time.sleep(0.2)
+    svc.stop()
+    assert capsys.readouterr().out.count("Listening by raising a hand") == 1
+
+
+def test_crossed_wrists_turn_the_mode_off_and_release_the_camera(mock_config, desk):
+    from tests.test_window_snap_hands import crossed
+    svc = service(mock_config, desk)
+    svc.start()
+    tracker = FakeTracker.instances[-1]
+    _show(tracker, 0.9, *crossed())
+    assert _wait_for(lambda: not svc.running and not tracker.running)
+
+
+def test_a_click_reaches_the_pointer_only_while_the_mode_is_on(mock_config, desk):
+    svc = service(mock_config, desk)
+    assert svc.click("click") == "off"
+    svc.start()
+    assert svc.click("double_click") == "clicked"
+    assert desk.of("click") == [("click", "double_click", desk.at)]
+    svc.stop()
+    assert svc.click("click") == "off"
