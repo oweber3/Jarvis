@@ -114,13 +114,15 @@ class _FingerReadout:
         self.hand_frame: Optional[HandFrame] = None
 
     def __call__(self, frame: HandFrame) -> None:
-        from .window_snap import describe_hand
+        from .window_snap import describe_hand, describe_two_hands
 
         text = None
         self.hand_frame = frame
         if frame.hands:
             hand = max(frame.hands, key=lambda h: h.score)
             text = f"{hand.side} · {describe_hand(hand, self._settings)}"
+        if len(frame.hands) >= 2:
+            text += f" · two hands: {describe_two_hands(frame.hands[0], frame.hands[1], frame.width, frame.height)}"
         with self._lock:
             self.frames += 1
             self.latest = text
@@ -180,7 +182,9 @@ def _snap(args: argparse.Namespace, make_tracker: Optional[Callable[[int], HandT
             run_window(tap, lambda: readout.hand_frame, lambda: service.state, args.seconds,
                        lambda: print(f"   📊 {readout.take()[1] or 'no hands'} · {service.state}", flush=True),
                        readout._settings)
-        while tap is None and not (args.seconds and time.perf_counter() - started >= args.seconds):
+        # Crossed wrists turn the mode off, which ends the command too.
+        while tap is None and service.running and not (args.seconds
+                                                       and time.perf_counter() - started >= args.seconds):
             time.sleep(0.05)
             if time.perf_counter() - last_tick >= 1.0:
                 count, latest = readout.take()

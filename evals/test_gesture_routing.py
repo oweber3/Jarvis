@@ -1,5 +1,5 @@
-"""Gesture snapping routing: turning gesture control on and off reaches gestureControl, and placing a named window by
-voice still reaches windowControl.
+"""Gesture snapping routing: turning gesture control on and off and clicking where the hand points reach gestureControl,
+and placing a named window by voice still reaches windowControl.
 
 Runs the local model's tool selection and chat call with ``gestureControl`` offered next to the Windows tools.
 Nothing is executed and the camera is never opened.
@@ -21,6 +21,9 @@ CASES = [
     ('Stop gesture control', 'gestureControl', {'action': 'stop'}),
     ('Turn gesture snapping off', 'gestureControl', {'action': 'stop'}),
     ('Is gesture control on?', 'gestureControl', {'action': 'status'}),
+    ('Click where I am pointing', 'gestureControl', {'action': 'click'}),
+    ('Right click where my hand is pointing', 'gestureControl', {'action': 'right_click'}),
+    ('Double click where I am pointing', 'gestureControl', {'action': 'double_click'}),
     ('Move Spotify to the left half of my main monitor', 'windowControl', None),
     ('Open Word', 'appControl', None),
 ]

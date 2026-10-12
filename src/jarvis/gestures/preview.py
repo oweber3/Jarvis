@@ -125,6 +125,9 @@ def run_window(tap: FrameTap, latest_hands: Callable[[], Optional[HandFrame]], s
     picture, text = window.picture, window.text
 
     def refresh() -> None:
+        if state() == "off":  # crossed wrists turned gesture snapping off
+            window.close()
+            return
         image = tap.take()
         hands = latest_hands()
         text.setText(caption(hands, state(), settings))

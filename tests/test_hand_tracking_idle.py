@@ -213,8 +213,8 @@ class TestHowManyHands:
             assert detector_log[-1] == expected
 
 
-def _cfg(hand="any"):
-    return SimpleNamespace(gesture_snap_hand=hand)
+def _cfg(hand="any", two_hands=False):
+    return SimpleNamespace(gesture_snap_hand=hand, gesture_snap_two_hands=two_hands)
 
 
 @pytest.mark.unit
@@ -225,6 +225,13 @@ class TestSnapTracker:
         assert tracker.start() is True
         tracker.stop()
         assert detector_log == [looks_for]
+
+    @pytest.mark.parametrize("hand", ["any", "left", "right"])
+    def test_it_looks_for_two_hands_while_the_two_hand_gestures_are_on(self, detector_log, hand):
+        tracker = snap_tracker(_cfg(hand, two_hands=True), 0, camera_factory=lambda index: FakeCamera())
+        assert tracker.start() is True
+        tracker.stop()
+        assert detector_log == [2]
 
     def test_it_searches_fewer_frames_while_there_are_no_hands(self):
         hands = _Hands()

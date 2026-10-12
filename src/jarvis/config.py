@@ -421,6 +421,8 @@ class Settings:
     gesture_snap_scroll_speed: float = 15.0
     gesture_snap_smoothing: float = 1.0
     gesture_snap_speed_response: float = 0.005
+    gesture_snap_talk: bool = True
+    gesture_snap_two_hands: bool = True
     gesture_snap_pointer_ring: bool = True
 
     # File deletion (see src/jarvis/tools/builtin/local_files.spec.md): off means no request can delete a
@@ -547,6 +549,10 @@ def _gesture_snap_settings(merged: Dict[str, Any], defaults: Dict[str, Any]) -> 
     finger_down = get("gesture_snap_finger_down", 0.5, 1.5)
     hand = merged.get("gesture_snap_hand")
     ring = merged.get("gesture_snap_pointer_ring")
+
+    def flag(key: str) -> bool:
+        value = merged.get(key)
+        return value if isinstance(value, bool) else defaults[key]
     return {
         "gesture_snap_enabled": merged.get("gesture_snap_enabled") is True,
         "gesture_snap_camera": get("gesture_snap_camera", 0, 16, int),
@@ -559,6 +565,8 @@ def _gesture_snap_settings(merged: Dict[str, Any], defaults: Dict[str, Any]) -> 
         "gesture_snap_smoothing": get("gesture_snap_smoothing", 0.05, 10.0),
         "gesture_snap_speed_response": get("gesture_snap_speed_response", 0.0, 0.1),
         "gesture_snap_pointer_ring": ring if isinstance(ring, bool) else defaults["gesture_snap_pointer_ring"],
+        "gesture_snap_talk": flag("gesture_snap_talk"),
+        "gesture_snap_two_hands": flag("gesture_snap_two_hands"),
     }
 
 
@@ -952,6 +960,10 @@ def get_default_config() -> Dict[str, Any]:
         "gesture_snap_scroll_speed": 15.0,
         "gesture_snap_smoothing": 1.0,
         "gesture_snap_speed_response": 0.005,
+        # An open hand held up for a second starts listening
+        "gesture_snap_talk": True,
+        # Look for two hands: two open hands zoom, crossed wrists turn gesture snapping off
+        "gesture_snap_two_hands": True,
         # Desktop app: a glowing ring round the pointer while gesture snapping is on (desktop_app.pointer_ring)
         "gesture_snap_pointer_ring": True,
         "remote_access_enabled": False,

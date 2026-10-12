@@ -843,6 +843,19 @@ def toggle_manual_wake() -> None:
     listener.toggle_manual_wake()
 
 
+def listen_now() -> None:
+    """A raised hand in gesture control: wait for a request, as a bare wake word does, without ending a wait
+    already running or interrupting a reply. Ignored while a typed request is in flight or no listener runs."""
+    if _chat_cancel_event is not None:
+        debug_log("listen request ignored: a typed request is in flight", "jarvis")
+        return
+    listener = _global_voice_listener
+    if listener is None:
+        debug_log("listen request ignored: no voice listener running", "jarvis")
+        return
+    listener.listen_now()
+
+
 def set_reply_mode(mode: str):
     """Switch the reply mode at runtime (tray, bundled mode). Returns the ``SwitchResult``.
 
@@ -1416,6 +1429,7 @@ def main(smoke_test: bool = False) -> None:
     voice_thread = VoiceListener(db, cfg, tts, _global_dialogue_memory)
     voice_thread.start()
     _global_voice_listener = voice_thread
+    window_snap_service.set_talk_handler(listen_now)  # a raised hand in gesture control
 
     # Initialize dictation engine (hold-to-dictate)
     dictation = None
@@ -1480,6 +1494,7 @@ def main(smoke_test: bool = False) -> None:
                 pass
 
         _global_voice_listener = None
+        window_snap_service.set_talk_handler(None)
         if voice_thread is not None:
             try:
                 voice_thread.stop()
@@ -1618,6 +1633,7 @@ def main(smoke_test: bool = False) -> None:
             debug_log("dictation engine stopped", "jarvis")
 
         _global_voice_listener = None
+        window_snap_service.set_talk_handler(None)
         if voice_thread is not None:
             debug_log("stopping voice thread...", "jarvis")
             voice_thread.stop()
