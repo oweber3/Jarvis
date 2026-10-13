@@ -143,7 +143,11 @@ def _remove_damaged_files(base: Path) -> bool:
 
 
 def gpu_acceleration_available() -> bool:
-    """Whether the installed ONNX Runtime can run Kokoro on an NVIDIA graphics card (CUDA)."""
+    """Whether Kokoro can run on an NVIDIA graphics card: its helper is installed (``kokoro_gpu.py``), or
+    Jarvis's own ONNX Runtime offers CUDA."""
+    from . import kokoro_gpu
+    if kokoro_gpu.helper_installed():
+        return True
     try:
         import onnxruntime as ort
         return "CUDAExecutionProvider" in ort.get_available_providers()
@@ -152,8 +156,14 @@ def gpu_acceleration_available() -> bool:
 
 
 def _create_session(model_path: Path, device: str = "gpu"):
-    """An ONNX session on the graphics card when ``device`` is "gpu" and this ONNX Runtime offers CUDA,
-    otherwise on the processor."""
+    """An ONNX session on the graphics card when ``device`` is "gpu": in the graphics card helper when it is
+    installed, else in this process when its ONNX Runtime offers CUDA; otherwise on the processor."""
+    from . import kokoro_gpu
+    if device == "gpu" and kokoro_gpu.helper_installed():
+        try:
+            return kokoro_gpu.WorkerSession(kokoro_gpu.helper_python(), model_path, "cuda"), "graphics card"
+        except Exception as e:
+            debug_log(f"Kokoro's graphics card helper did not start ({type(e).__name__}); trying in process", "tts")
     from ..utils.onnx_privacy import disable_onnxruntime_telemetry
     disable_onnxruntime_telemetry()
     import onnxruntime as ort
