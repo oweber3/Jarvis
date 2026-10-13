@@ -51,7 +51,7 @@ def service(mock_config, desk, *, works=True):
 def grab_and_hold(tracker):
     t = time.perf_counter()
     tracker.deliver(frame(t, hand(0.5, 0.5)))
-    for i in range(1, 6):
+    for i in range(1, 14):  # longer than the grab hold
         tracker.deliver(frame(t + i / 30, hand(0.5, 0.5, gesture="fist")))
 
 
