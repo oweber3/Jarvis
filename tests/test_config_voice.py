@@ -53,3 +53,10 @@ def test_kokoro_speed_stays_in_its_range(tmp_path, monkeypatch, speed):
     cfg = _load(tmp_path, monkeypatch, {"tts_kokoro_speed": speed})
     low, high = KOKORO_SPEED_RANGE
     assert low <= cfg.tts_kokoro_speed <= high
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value, expected", [(None, "gpu"), ("cpu", "cpu"), ("GPU", "gpu"), ("quantum", "gpu")])
+def test_kokoro_device_is_graphics_card_or_processor(tmp_path, monkeypatch, value, expected):
+    cfg = _load(tmp_path, monkeypatch, {} if value is None else {"tts_kokoro_device": value})
+    assert cfg.tts_kokoro_device == expected

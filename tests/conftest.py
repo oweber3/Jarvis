@@ -77,6 +77,7 @@ class MockConfig:
     tts_piper_voice: str = "en_GB-alan-medium"
     tts_kokoro_voice: str = "bm_george"
     tts_kokoro_speed: float = 1.0
+    tts_kokoro_device: str = "gpu"
     tts_chatterbox_device: str = "cpu"
     tts_chatterbox_audio_prompt: Optional[str] = None
     tts_chatterbox_exaggeration: float = 0.5

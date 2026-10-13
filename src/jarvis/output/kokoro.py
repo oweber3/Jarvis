@@ -25,6 +25,7 @@ SAMPLE_RATE = 24000
 MAX_TOKENS = 509  # phoneme tokens per model run; the voice tables have a style row for each length
 KOKORO_DEFAULT_VOICE = "bm_george"
 KOKORO_SPEED_RANGE = (0.5, 2.0)
+KOKORO_DEVICES = ("gpu", "cpu")  # graphics card (when ONNX Runtime offers CUDA, else the processor), processor
 # The model pads each window with about 0.25 s of silence before and 0.5 s after; keep a little of each.
 _LEAD_KEEP_S = 0.03
 _TAIL_KEEP_S = 0.05
@@ -150,15 +151,16 @@ def gpu_acceleration_available() -> bool:
         return False
 
 
-def _create_session(model_path: Path):
-    """An ONNX session on the graphics card when this ONNX Runtime offers CUDA, otherwise the processor."""
+def _create_session(model_path: Path, device: str = "gpu"):
+    """An ONNX session on the graphics card when ``device`` is "gpu" and this ONNX Runtime offers CUDA,
+    otherwise on the processor."""
     from ..utils.onnx_privacy import disable_onnxruntime_telemetry
     disable_onnxruntime_telemetry()
     import onnxruntime as ort
 
     options = ort.SessionOptions()
     options.log_severity_level = 3  # errors only; CUDA prints noisy placement warnings
-    if "CUDAExecutionProvider" in ort.get_available_providers():
+    if device == "gpu" and "CUDAExecutionProvider" in ort.get_available_providers():
         try:
             if hasattr(ort, "preload_dlls"):
                 ort.preload_dlls()
@@ -172,7 +174,7 @@ def _create_session(model_path: Path):
 
 
 def load_kokoro_voice(models_dir: Optional[Path] = None, voice: str = KOKORO_DEFAULT_VOICE,
-                      speed: float = 1.0) -> "KokoroVoice":
+                      speed: float = 1.0, device: str = "gpu") -> "KokoroVoice":
     """Load the model for ``voice``; raises ``KokoroUnavailable`` with the reason when it cannot."""
     base = Path(models_dir or kokoro_models_dir())
     if not kokoro_files_present(base):
@@ -181,7 +183,7 @@ def load_kokoro_voice(models_dir: Optional[Path] = None, voice: str = KOKORO_DEF
         raise KokoroUnavailable(f"{voice} is not one of the Kokoro voices Jarvis offers")
     try:
         import numpy as np
-        session, device = _create_session(base / "kokoro-v1.0.onnx")
+        session, device = _create_session(base / "kokoro-v1.0.onnx", device)
         with np.load(base / "voices-v1.0.bin") as table:
             voices = {voice: table[voice]}
         with open(base / "config.json", encoding="utf-8") as fh:

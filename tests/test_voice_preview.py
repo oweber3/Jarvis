@@ -75,7 +75,7 @@ def test_kokoro_preview_downloads_its_files_first_and_speaks_with_kokoro(piper, 
         present["now"] = True
         return True
 
-    def load(models_dir=None, voice=kokoro.KOKORO_DEFAULT_VOICE, speed=1.0):
+    def load(models_dir=None, voice=kokoro.KOKORO_DEFAULT_VOICE, speed=1.0, device="gpu"):
         if not present["now"]:
             raise kokoro.KokoroUnavailable("the Kokoro voice files are not downloaded yet")
         return FakeKokoro(voice, speed)

@@ -519,3 +519,50 @@ def test_a_damaged_model_file_is_removed_so_it_downloads_again(tmp_path, monkeyp
     with pytest.raises(kokoro.KokoroUnavailable, match="download"):
         kokoro.load_kokoro_voice(tmp_path)
     assert not kokoro.kokoro_files_present(tmp_path)
+
+
+# --------------------------------------------------------------------------
+# Where Kokoro runs
+
+
+class _FakeOrt:
+    """Stands in for onnxruntime, recording the providers each session asked for."""
+
+    def __init__(self, available, cuda_fails=False):
+        self.available, self.cuda_fails, self.asked = available, cuda_fails, []
+
+    def get_available_providers(self):
+        return list(self.available)
+
+    class SessionOptions:
+        log_severity_level = 0
+
+    def InferenceSession(self, path, options=None, providers=()):
+        self.asked.append(list(providers))
+        if self.cuda_fails and providers[0] == "CUDAExecutionProvider":
+            raise RuntimeError("no CUDA")
+        return SimpleNamespace(get_providers=lambda: list(providers))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("device, available, cuda_fails, expected", [
+    ("gpu", ["CUDAExecutionProvider", "CPUExecutionProvider"], False, "graphics card"),
+    ("gpu", ["CPUExecutionProvider"], False, "processor"),
+    ("gpu", ["CUDAExecutionProvider", "CPUExecutionProvider"], True, "processor"),
+    ("cpu", ["CUDAExecutionProvider", "CPUExecutionProvider"], False, "processor"),
+])
+def test_kokoro_runs_where_chosen_and_falls_back_to_the_processor(monkeypatch, tmp_path, device, available,
+                                                                  cuda_fails, expected):
+    import sys
+    fake = _FakeOrt(available, cuda_fails)
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake)
+    _session, where = kokoro._create_session(tmp_path / "model.onnx", device)
+    assert where == expected
+    if device == "cpu":
+        assert all(p == ["CPUExecutionProvider"] for p in fake.asked)
+
+
+@pytest.mark.unit
+def test_the_factory_passes_the_chosen_device(no_network):
+    engine = create_tts_engine(engine="kokoro", enabled=True, kokoro_device="cpu")
+    assert engine.kokoro_device == "cpu"

@@ -451,10 +451,11 @@ Choose the engine and voice in **Settings → Speaking**; **Preview** speaks a s
 | `tts_piper_model_path` | `null` | A Piper `.onnx` voice file of your own (with its `.onnx.json` beside it); wins over `tts_piper_voice` |
 | `tts_kokoro_voice` | `"bm_george"` | A Kokoro English voice, such as `af_heart`, `bf_emma` or `bm_george` (`a` American, `b` British, `f` female, `m` male) |
 | `tts_kokoro_speed` | `1.0` | Kokoro speed, 0.5 to 2.0 |
+| `tts_kokoro_device` | `"gpu"` | `gpu` runs Kokoro on the graphics card (**Runs On** in Settings), falling back to the processor when it cannot be used; `cpu` always uses the processor |
 
 **Piper (default)** is the lightest and fastest on any PC.
 
-**Kokoro** (Kokoro-82M, Apache-2.0) sounds more natural. It runs on the ONNX Runtime Jarvis already uses, with no PyTorch. Its files (about 354 MB in `~/.local/share/jarvis/models/kokoro`) download only once you choose it, from pinned addresses with SHA-256 checks; until they are ready, or whenever Kokoro cannot load, Piper speaks and the log says why. It uses an NVIDIA graphics card when the installed ONNX Runtime offers CUDA (the `onnxruntime-gpu` build), otherwise the processor.
+**Kokoro** (Kokoro-82M, Apache-2.0) sounds more natural. It runs on the ONNX Runtime Jarvis already uses, with no PyTorch. Its files (about 354 MB in `~/.local/share/jarvis/models/kokoro`) download only once you choose it, from pinned addresses with SHA-256 checks; until they are ready, or whenever Kokoro cannot load, Piper speaks and the log says why. It uses an NVIDIA graphics card when **Runs On** is Graphics card and the installed ONNX Runtime offers CUDA, otherwise the processor. For the graphics card, a source install replaces `onnxruntime` with `onnxruntime-gpu` 1.23 (CUDA 12) and adds `nvidia-cuda-runtime-cu12`, `nvidia-cufft-cu12` and `nvidia-curand-cu12` next to the CUDA libraries Whisper uses.
 
 Measured on one PC (12-thread CPU, RTX 5070), time from a reply being ready to the first sound:
 

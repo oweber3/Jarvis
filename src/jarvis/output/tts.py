@@ -1173,8 +1173,9 @@ class KokoroTTS(PiperTTS):
     """
 
     def __init__(self, *, kokoro_voice: str = kokoro.KOKORO_DEFAULT_VOICE, kokoro_speed: float = 1.0,
-                 kokoro_model_dir: Optional[Path] = None, **piper_kwargs) -> None:
+                 kokoro_device: str = "gpu", kokoro_model_dir: Optional[Path] = None, **piper_kwargs) -> None:
         super().__init__(**piper_kwargs)
+        self.kokoro_device = kokoro_device
         self.kokoro_voice = kokoro_voice
         self.kokoro_speed = kokoro_speed
         self.kokoro_model_dir = kokoro_model_dir
@@ -1185,7 +1186,8 @@ class KokoroTTS(PiperTTS):
 
     def _load_voice(self) -> None:
         try:
-            self._use_kokoro(kokoro.load_kokoro_voice(self.kokoro_model_dir, self.kokoro_voice, self.kokoro_speed))
+            self._use_kokoro(kokoro.load_kokoro_voice(self.kokoro_model_dir, self.kokoro_voice, self.kokoro_speed,
+                                                      self.kokoro_device))
             return
         except kokoro.KokoroUnavailable as e:
             self._fall_back_to_piper(str(e))
@@ -1240,7 +1242,7 @@ class KokoroTTS(PiperTTS):
             generation = self._interrupt_generation
             try:
                 self._use_kokoro(kokoro.load_kokoro_voice(self.kokoro_model_dir, self.kokoro_voice,
-                                                         self.kokoro_speed))
+                                                         self.kokoro_speed, self.kokoro_device))
                 self._initialized = True
             except kokoro.KokoroUnavailable as e:
                 self.fallback_reason = str(e)
@@ -1317,6 +1319,7 @@ def create_tts_engine(
     # Kokoro parameters
     kokoro_voice: str = kokoro.KOKORO_DEFAULT_VOICE,
     kokoro_speed: float = 1.0,
+    kokoro_device: str = "gpu",
     # Voice outputs (extensions/extensions.spec.md, Voice outputs)
     pc_speakers_enabled: bool = True,
     voice_outputs: Sequence["VoiceOutput"] = (),
@@ -1362,7 +1365,8 @@ def create_tts_engine(
         voice_outputs=voice_outputs,
     )
     if engine.lower() == "kokoro":
-        return KokoroTTS(kokoro_voice=kokoro_voice, kokoro_speed=kokoro_speed, **piper_kwargs)
+        return KokoroTTS(kokoro_voice=kokoro_voice, kokoro_speed=kokoro_speed, kokoro_device=kokoro_device,
+                         **piper_kwargs)
     # Default to Piper TTS
     return PiperTTS(**piper_kwargs)
 
