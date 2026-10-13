@@ -14,6 +14,7 @@ from typing import List, Optional
 
 _LOCK = threading.RLock()
 _ERR_PASSWORD = 4  # FPDF_ERR_PASSWORD: the file opens only with a password
+_ACTION_GOTO = 1  # PDFACTION_GOTO: a jump within this file (GoToR targets another file)
 
 
 class PdfTextError(ValueError):
@@ -62,11 +63,16 @@ class PdfText:
         with _LOCK:
             found = []
             for bookmark in self._doc.get_toc():
-                dest = pdfium_c.FPDFBookmark_GetDest(self._doc, bookmark)
-                if not dest:
-                    # Many books link bookmarks through a GoTo action rather than a direct destination.
-                    action = pdfium_c.FPDFBookmark_GetAction(bookmark)
-                    dest = pdfium_c.FPDFAction_GetDest(self._doc, action) if action else None
+                # Many books link bookmarks through a GoTo action rather than a direct destination.
+                # Any other action (another file, a web address) has no page in this file, though
+                # PDFium still resolves the other file's destination for it.
+                action = pdfium_c.FPDFBookmark_GetAction(bookmark)
+                if action and pdfium_c.FPDFAction_GetType(action) != _ACTION_GOTO:
+                    dest = None
+                else:
+                    dest = pdfium_c.FPDFBookmark_GetDest(self._doc, bookmark)
+                    if not dest and action:
+                        dest = pdfium_c.FPDFAction_GetDest(self._doc, action)
                 index = pdfium_c.FPDFDest_GetDestPageIndex(self._doc, dest) if dest else -1
                 found.append(Bookmark(bookmark.get_title() or '', bookmark.level,
                                       index if 0 <= index < self.page_count else None))

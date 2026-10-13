@@ -77,3 +77,23 @@ def test_a_password_protected_file_says_so(tmp_path):
     assert not caught.value.needs_password
     with PdfText(owner_only) as pdf:  # an empty user password opens without asking
         assert 'open to read' in pdf.page_text(0)
+
+
+def test_a_bookmark_into_another_file_has_no_page_here(tmp_path):
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import ArrayObject, DictionaryObject, NameObject, NumberObject, TextStringObject
+    from jarvis.utils.pdf_text import PdfText
+    base = make_pdf(tmp_path / 'base.pdf', ['One', 'Two', 'Three'], [('Local', 1)])
+    writer = PdfWriter(clone_from=PdfReader(base))
+    remote = DictionaryObject({
+        NameObject('/S'): NameObject('/GoToR'),
+        NameObject('/F'): TextStringObject('other.pdf'),
+        NameObject('/D'): ArrayObject([NumberObject(2), NameObject('/Fit')]),
+    })
+    writer.add_outline_item_dict(DictionaryObject({
+        NameObject('/Title'): TextStringObject('Elsewhere'), NameObject('/A'): remote}))
+    path = tmp_path / 'linked.pdf'
+    writer.write(path)
+    with PdfText(path) as pdf:
+        pages = {b.title: b.page_index for b in pdf.bookmarks()}
+    assert pages == {'Local': 1, 'Elsewhere': None}

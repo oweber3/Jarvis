@@ -248,3 +248,17 @@ def test_closest_entries_share_more_than_half_the_query_words(textbook):
     # Only the common word "problems" is shared, which says nothing about where 4.13 is.
     assert doc.outline_closest('problem 4.13', limit=4) == []
     assert doc.outline_closest('chapter 6 practice problems', limit=4)[0].page == 8
+
+
+def test_searching_a_large_book_stays_quick(tmp_path):
+    from jarvis.utils import pdf_document
+    pdf_document.clear_cache()
+    filler = ' '.join(f'word{n} momentum equation control volume flow' for n in range(60))
+    pages = [f'Page {n} {filler} problem' + (' 4.13 duct' if n == 900 else '') for n in range(1200)]
+    doc = pdf_document.open_document(make_pdf(tmp_path / 'big.pdf', pages))
+    assert doc.search('problem', budget_sec=30).complete
+    started = time.monotonic()
+    hits = doc.search('problem 4.13 duct', budget_sec=0).hits
+    assert time.monotonic() - started < 1.0
+    assert hits[0].page == 901
+    pdf_document.clear_cache()

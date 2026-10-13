@@ -12,10 +12,10 @@ import os
 import re
 import threading
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ..debug import debug_log
 from .pdf_text import PdfText
@@ -93,6 +93,7 @@ class PdfDocument:
     def __init__(self, path: Path):
         self.path = path
         self._texts: List[str] = []
+        self._index: Dict[str, Dict[int, int]] = {}  # word -> {page index: occurrences}
         self._lock = threading.Lock()
         self._worker: Optional[threading.Thread] = None
         self._pdf: Optional[PdfText] = None
@@ -177,6 +178,8 @@ class PdfDocument:
                 debug_log(f'PDF page text unreadable ({type(exc).__name__}).', 'pdf')
                 text = ''
             self._texts.append(text)
+            for word, occurrences in Counter(words(text)).items():
+                self._index.setdefault(word, {})[index] = occurrences
             if len(self._texts) >= self.page_count:
                 self._release()
             return True
@@ -202,19 +205,22 @@ class PdfDocument:
     def search(self, query: str, budget_sec: float = DEFAULT_SEARCH_BUDGET_SEC, limit: int = 8) -> SearchResult:
         wanted = words(query)
         self._extract_for(budget_sec)
+        unique = list(dict.fromkeys(wanted))
+        # The word index is built as pages are read, so a query scans the document's vocabulary
+        # once instead of every page's words: quick even for a 1,700-page book.
+        pages: Dict[int, Dict[str, int]] = {}  # page index -> {query word: occurrences}
         with self._lock:
             texts = list(self._texts)
+            for q in unique:
+                for word, occurrences in self._index.items():
+                    if word_matches(q, word):
+                        for index, count in occurrences.items():
+                            per_page = pages.setdefault(index, {})
+                            per_page[q] = per_page.get(q, 0) + count
         if len(texts) < self.page_count:
             self._continue_in_background()
-        unique = list(dict.fromkeys(wanted))
-        found = []  # (index, text, hit count, query words on the page)
-        for index, text in enumerate(texts):
-            page_words = words(text)
-            vocabulary = set(page_words)
-            present = frozenset(q for q in unique if any(word_matches(q, t) for t in vocabulary))
-            if present:
-                count = sum(1 for t in page_words if any(word_matches(q, t) for q in present))
-                found.append((index, text, count, present))
+        found = [(index, texts[index], sum(counts.values()), frozenset(counts))  # (index, text, hits, words)
+                 for index, counts in pages.items() if index < len(texts)]
         # Pages with every word lead. Then pages with some, scored by how rare their words are in
         # the document (inverse document frequency), so "4.13" outweighs "problem".
         frequency = {q: sum(1 for item in found if q in item[3]) for q in unique}
