@@ -91,6 +91,10 @@ so a retry can never store the same meal twice.
 Both passes share `cfg.llm_chat_timeout_sec` and the `llm_thinking_enabled`
 flag.
 
+`debug_log` never records the meal text or the extractor's output: an
+extractor that returns `NONE` or unparseable JSON is logged with the
+character count, and an exception by its type.
+
 ### Database
 
 Logged via `Database.insert_meal(...)`, which uses parameterised SQL.

@@ -49,7 +49,7 @@ class Client:
             all_headers["Authorization"] = f"Bearer {self.token}"
         payload = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
         if payload is not None:
-            all_headers["Content-Type"] = "application/json"
+            all_headers.setdefault("Content-Type", "application/json")
         conn.request(method, path, body=payload, headers=all_headers)
         response = conn.getresponse()
         data = response.read()
@@ -210,3 +210,76 @@ class TestConfirmation:
             assert backend.resolved == []
         finally:
             server.stop()
+
+
+@pytest.mark.unit
+class TestOtherWebPagesCannotReachTheServer:
+    """Another web page in a browser on the network must not reach phone access: a rebound DNS name arrives with
+    a foreign Host, a cross-site request carries a foreign Origin or ``Sec-Fetch-Site``, and a simple form post
+    cannot send a JSON body. The phone app itself, opened by address or by the PC's name, is served."""
+
+    @pytest.mark.parametrize("host", ["192.168.1.5:8765", "100.101.102.103:8765", "127.0.0.1:8765",
+                                      "localhost:8765", "[fd7a:115c:a1e0::1]:8765"])
+    def test_the_app_opened_by_address_is_served(self, server, host):
+        assert Client(server).request("GET", "/", headers={"Host": host})[0] == 200
+
+    def test_the_app_opened_by_the_pcs_name_is_served(self, server):
+        import socket
+        name = socket.gethostname()
+        for host in (f"{name}:8765", f"{name.lower()}.local:8765", f"{name.lower()}.tail1234.ts.net"):
+            assert Client(server).request("GET", "/", headers={"Host": host})[0] == 200, host
+
+    @pytest.mark.parametrize("host", ["evil.example:8765", "evil.example", "8.8.8.8:8765", "",
+                                      "192.168.1.5.evil.example", "phone.tail1234.ts.net"])
+    def test_a_foreign_host_is_refused(self, server, host):
+        assert Client(server).request("GET", "/", headers={"Host": host})[0] == 403
+
+    def test_a_rebound_name_cannot_spend_pairing_attempts(self, server, store):
+        code = store.start_pairing()
+        wrong = "000000" if code != "000000" else "111111"
+        for _ in range(6):
+            status, _, _ = Client(server).request("POST", "/api/pair", {"code": wrong, "name": "x"},
+                                                  headers={"Host": "evil.example:8765"})
+            assert status == 403
+        assert Client(server).request("POST", "/api/pair", {"code": code, "name": "phone"})[0] == 200
+
+    def test_a_request_from_another_origin_is_refused(self, server, store):
+        code = store.start_pairing()
+        status, _, _ = Client(server).request("POST", "/api/pair", {"code": code, "name": "x"},
+                                              headers={"Origin": "http://evil.example"})
+        assert status == 403
+        assert store.devices() == []
+
+    def test_a_request_from_the_page_itself_is_served(self, server, store):
+        code = store.start_pairing()
+        status, _, _ = Client(server).request(
+            "POST", "/api/pair", {"code": code, "name": "phone"},
+            headers={"Host": "192.168.1.5:8765", "Origin": "http://192.168.1.5:8765", "Sec-Fetch-Site": "same-origin"})
+        assert status == 200
+
+    @pytest.mark.parametrize("site", ["cross-site"])
+    def test_a_cross_site_api_request_is_refused(self, server, store, site):
+        client = paired_client(server, store)
+        assert client.request("GET", "/api/poll?after=0&rev=-1", headers={"Sec-Fetch-Site": site})[0] == 403
+
+    def test_a_link_from_another_site_still_opens_the_app(self, server):
+        assert Client(server).request("GET", "/", headers={"Sec-Fetch-Site": "cross-site"})[0] == 200
+
+    @pytest.mark.parametrize("content_type", ["text/plain", "application/x-www-form-urlencoded", None])
+    def test_a_body_that_is_not_declared_json_is_refused(self, server, store, content_type):
+        code = store.start_pairing()
+        headers = {"Content-Type": content_type} if content_type else {"Content-Type": ""}
+        raw = json.dumps({"code": code, "name": "x"}).encode()
+        assert Client(server).request("POST", "/api/pair", raw=raw, headers=headers)[0] == 415
+        assert Client(server).request("POST", "/api/pair", {"code": code, "name": "phone"})[0] == 200
+
+    def test_a_pairing_without_a_body_is_refused_without_spending_an_attempt(self, server, store):
+        code = store.start_pairing()
+        for _ in range(6):
+            assert Client(server).request("POST", "/api/pair")[0] == 415
+        assert Client(server).request("POST", "/api/pair", {"code": code, "name": "phone"})[0] == 200
+
+    def test_bodiless_commands_from_the_phone_still_work(self, server, store, backend):
+        client = paired_client(server, store)
+        assert client.request("POST", "/api/stop")[0] == 200
+        assert client.request("POST", "/api/unpair")[0] == 200

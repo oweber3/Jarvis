@@ -140,6 +140,13 @@ main thread. All are optional and default to `None`.
 Callbacks fire from the worker thread. The desktop app must marshal them onto
 the Qt main thread via signals (same pattern as `DiaryUpdateDialog`).
 
+Before anything else a typed request prints, the daemon prints one content-free
+turn line, `💬 Turn: <origin>` (`jarvis.daemon.TURN_LINE_PREFIX`), so readers of
+the console output, such as the issue report (`desktop_app.spec.md`, Report
+Issue), know where the conversation starts even though `quiet=True` prints no
+`📝 Heard:` line or reply. Announcements (`deliver_announcement`) print
+`💬 Turn: announcement` before their text.
+
 ### IPC protocol (subprocess mode)
 
 When the daemon runs as a subprocess (development mode), callbacks are not

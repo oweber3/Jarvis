@@ -539,6 +539,11 @@ def _build_field_metadata() -> List[FieldMeta]:
       "cannot delete files at all, whatever is asked and in every reply mode. Moving, copying and "
       "renaming are not affected. Takes effect after Jarvis restarts.",
       "privacy", "bool")
+    heading("Updates")
+    f("update_check_on_startup", "Check for Updates at Start-up",
+      "Off by default. When on, the installed app asks GitHub whether a newer version exists each time it "
+      "starts. When off, nothing is sent until you choose Check for Updates in the tray menu.",
+      "privacy", "bool")
     heading("Activity log")
     logging = _on("activity_log_enabled")
     f("activity_log_enabled", "Record Activity",

@@ -1265,6 +1265,8 @@ def get_default_config() -> Dict[str, Any]:
 
         # Desktop app: light the screen edges while Jarvis is awake (read by desktop_app.wake_overlay)
         "wake_overlay_enabled": True,
+        # Desktop app: ask GitHub for a newer release at start-up (read by desktop_app.updater). Off: offline first.
+        "update_check_on_startup": False,
 
         # MCP Integration (external servers Jarvis can use). No defaults.
         "mcps": {},

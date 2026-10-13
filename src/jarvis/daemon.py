@@ -451,6 +451,11 @@ def _flush_detached_conversation(detached) -> None:
 # Diary IPC protocol prefix - desktop app intercepts lines starting with this
 DIARY_IPC_PREFIX = "__DIARY__:"
 
+# The first console line of every typed request and every announcement, followed by its origin and nothing
+# else, printed before anything that carries conversation. Readers of the console output (the desktop app's
+# issue report) end the start-up section at it; voice turns start with the listener's ``📝 Heard:`` line.
+TURN_LINE_PREFIX = "💬 Turn: "
+
 
 def _emit_ipc_event(prefix: str, event_type: str, data, debug_tag: str) -> None:
     """Emit a JSON IPC event line to stdout for the desktop app (subprocess mode).
@@ -660,6 +665,7 @@ def deliver_announcement(text: str) -> None:
     safe = redact(text or "").strip()
     if not safe:
         return
+    print(f"{TURN_LINE_PREFIX}announcement", flush=True)
     print(f"⏰ {safe}", flush=True)
     dm = _global_dialogue_memory
     if dm is not None:
@@ -867,6 +873,7 @@ def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc
     global _chat_cancel_event
     cancel_event = threading.Event()
     _chat_cancel_event = cancel_event
+    print(f"{TURN_LINE_PREFIX}{origin}", flush=True)
 
     def _worker() -> None:
         reply = None

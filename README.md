@@ -448,10 +448,11 @@ Local AI is the default, not a paid upgrade. No cloud AI service is required.
 - **Activity log (opt-in, off by default):** foreground application names, redacted window titles and idle periods, in the same local database. Never sent anywhere unless you allow it for Codex or Claude, and never written to the diary or logs. Delete it any time from the tray.
 - **Document search (opt-in, off by default):** passages of the documents in the folders you choose, with their file paths and a local embedding of each, in the same local database. Never sent anywhere unless you allow it for Codex or Claude, and never written to the diary or logs. Delete the index any time from the tray.
 - **Calendar and email (opt-in, off by default):** read on request from the accounts you add, with read-only sign-ins; a copy of each calendar link is kept next to the database for offline answers (Microsoft and Google calendars are read live, never saved). Passwords, calendar links and sign-ins are in Windows Credential Manager. Never sent to Codex or Claude unless you allow it, and never written to the diary or logs.
-- **Phone access (opt-in, off by default):** your PC serves the conversation to phones you pair, over your own network or VPN only. Paired phones are stored as hashed keys next to the database; the phone's copy of the conversation is held in memory and gone when Jarvis stops.
+- **Phone access (opt-in, off by default):** your PC serves the conversation to phones you pair, over your own network or VPN only, and refuses requests from other web pages. Paired phones are stored as hashed keys next to the database; the phone's copy of the conversation is held in memory and gone when Jarvis stops.
 - **Web chat (opt-in, off by default):** your chats and projects are stored in the same local database as redacted text, served only on this PC's loopback address. Delete one chat from its menu.
 - **Voices:** every voice engine runs on this PC. Voice files download once, from fixed addresses, and are checked before use; Kokoro's are fetched only if you choose Kokoro.
-- **Network boundaries:** model downloads, web tools and enabled integrations can make network requests. An external model endpoint receives the requests you send to it.
+- **Network boundaries:** model downloads, web tools and enabled integrations can make network requests. An external model endpoint receives the requests you send to it. The installed app checks GitHub for updates only when you choose **Check for Updates** or turn on **Check for Updates at Start-up** in Settings → Privacy.
+- **Bug reports:** **Report Issue** fills in a GitHub issue with the start-up part of the log; what was said and replied afterwards shows only as icons.
 
 <details>
 <summary><strong>Reduce optional network access</strong></summary>
@@ -469,7 +470,7 @@ Use a local model endpoint, download the required models first, disable web tool
 }
 ```
 
-These options are not a network firewall. Other online tools and app update checks may still use the network; enforce network restrictions separately if required.
+These options are not a network firewall. Other online tools and an update check you ask for may still use the network; enforce network restrictions separately if required.
 
 </details>
 

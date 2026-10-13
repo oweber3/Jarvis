@@ -82,7 +82,7 @@ def _fetch_page_content(url: str, max_chars: int = 1500,
         debug_log("Refused a result or redirect that is not a public address", "web")
         return None
     except Exception as e:
-        debug_log(f"Failed to fetch page content from {url}: {e}", "web")
+        debug_log(f"Failed to fetch page content: {type(e).__name__}", "web")
         return None
 
 
@@ -162,7 +162,7 @@ def _cascade_fetch(candidates: List[Tuple[str, str]],
                     results_by_rank[rank] = fut.result()
                 except Exception as e:
                     debug_log(
-                        f"Fetch raised for result #{rank + 1}: {e}", "web",
+                        f"Fetch raised for result #{rank + 1}: {type(e).__name__}", "web",
                     )
                     results_by_rank[rank] = None
                 # Short-circuit only when the top-1 result is both present
@@ -245,13 +245,8 @@ def _brave_search(query: str, api_key: str, count: int = 5
                 pairs.append((title, url))
         return pairs
     except Exception as e:
-        # Scrub the API key from any stringified exception — `requests`
-        # generally doesn't echo headers, but a future library update or a
-        # custom adapter could change that. Cheap defence in depth.
-        msg = str(e)
-        if api_key and api_key in msg:
-            msg = msg.replace(api_key, "***")
-        debug_log(f"Brave Search failed: {msg}", "web")
+        # By type only: the message carries the request URL (the query) and could carry the key.
+        debug_log(f"Brave Search failed: {type(e).__name__}", "web")
         return []
 
 
@@ -394,7 +389,7 @@ def _resolve_wikipedia_title(
     if not isinstance(title, str) or not title.strip():
         return None
     debug_log(
-        f"Wikipedia fulltext resolved '{query}' → '{title}'",
+        "Wikipedia fulltext resolved a title",
         "web",
     )
     return title
@@ -471,7 +466,7 @@ def _wikipedia_summary(
         )
         return (summary_data.get("title") or title, page_url, extract)
     except Exception as e:
-        debug_log(f"Wikipedia fallback failed: {e}", "web")
+        debug_log(f"Wikipedia fallback failed: {type(e).__name__}", "web")
         return None
 
 
@@ -526,7 +521,7 @@ class WebSearchTool(Tool):
                 return ToolExecutionResult(success=False, reply_text="Please provide a search query for the web search.")
 
             context.user_print(f"🌐 Searching the web for '{search_query}'…")
-            debug_log(f"    🌐 searching for '{search_query}'", "web")
+            debug_log(f"    🌐 searching ({len(search_query)} chars)", "web")
 
             # Overall wall-clock deadline across the full provider chain.
             # Individual providers have their own per-call timeouts, but
@@ -604,13 +599,11 @@ class WebSearchTool(Tool):
                     links = soup.find_all('a', href=True)
                     result_count = 0
                     debug_log(f"Found {len(links)} total links on DDG page", "web")
-                    for i, link in enumerate(links):
+                    for link in links:
                         if result_count >= 5:
                             break
                         href = link.get('href', '')
                         title = link.get_text().strip()
-                        if i < 10:
-                            debug_log(f"Link {i}: href='{href[:50]}...', title='{title[:50]}...'", "web")
                         actual_url = href
                         if href.startswith('//duckduckgo.com/l/') and 'uddg=' in href:
                             try:
@@ -629,14 +622,14 @@ class WebSearchTool(Tool):
                             search_results.append(f"   Link: {actual_url}")
                             search_results.append("")
                             result_urls.append((title, actual_url))
-                            debug_log(f"Accepted result {result_count}: '{title[:50]}...'", "web")
+                            debug_log(f"Accepted result {result_count}", "web")
                     debug_log(f"DuckDuckGo found {result_count} results", "web")
                 else:
                     debug_log(f"DuckDuckGo returned status {ddg_response.status_code}", "web")
             except ImportError:
                 debug_log("BeautifulSoup not available", "web")
             except Exception as ddg_error:
-                debug_log(f"DuckDuckGo search failed: {ddg_error}", "web")
+                debug_log(f"DuckDuckGo search failed: {type(ddg_error).__name__}", "web")
 
             # Log DDG outcome immediately — field-triage must see why we're
             # falling back regardless of whether a subsequent provider rescues
@@ -788,8 +781,7 @@ class WebSearchTool(Tool):
                     ]
                     fetch_attempted_any = True
                     debug_log(
-                        f"Wikipedia ({lang}) returned {len(extract)} chars for "
-                        f"'{title}'",
+                        f"Wikipedia ({lang}) returned {len(extract)} chars",
                         "web",
                     )
 
@@ -979,11 +971,11 @@ class WebSearchTool(Tool):
 
             return ToolExecutionResult(success=True, reply_text=reply_text)
         except Exception as search_error:
-            debug_log(f"search failed: {search_error}", "web")
+            debug_log(f"search failed: {type(search_error).__name__}", "web")
             return ToolExecutionResult(
                 success=False,
                 reply_text=f"I wasn't able to perform a web search for '{search_query}' at the moment. This could be due to network issues or search service limitations. Please try again later or search manually."
             )
         except Exception as e:  # pragma: no cover (safety net)
-            debug_log(f"error {e}", "web")
+            debug_log(f"error {type(e).__name__}", "web")
             return ToolExecutionResult(success=False, reply_text="Sorry, I had trouble performing the web search.")
