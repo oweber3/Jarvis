@@ -6,6 +6,8 @@ place only when its size and digest match the pinned values. Nothing is sent but
 from __future__ import annotations
 
 import hashlib
+import os
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -36,13 +38,17 @@ def download_verified(url: str, target: Path, *, size: int, digest: str, algorit
 
     def say(message: str) -> None:
         if progress:
-            progress(message)
+            try:
+                progress(message)
+            except Exception as e:  # a closed window must not abort the download
+                debug_log(f"{label} progress report failed ({type(e).__name__})", "tts")
 
     target = Path(target)
     if _matches(target, size, digest, algorithm):
         debug_log(f"{label} already present", "tts")
         return True
-    temp_path = target.with_name(target.name + ".part")
+    # A name of its own per download, so two downloads of one file never write the same partial file.
+    temp_path = target.with_name(f"{target.name}.{os.getpid()}-{threading.get_ident()}.part")
     try:
         response = None
         for attempt in range(MAX_RETRIES + 1):
@@ -91,7 +97,6 @@ def download_verified(url: str, target: Path, *, size: int, digest: str, algorit
         response.close()
 
         if downloaded != size or hasher.hexdigest() != digest.lower():
-            temp_path.unlink(missing_ok=True)
             say(f"  ❌ {label} failed its integrity check and was discarded")
             debug_log(f"{label} rejected: size or digest mismatch", "tts")
             return False
@@ -102,8 +107,13 @@ def download_verified(url: str, target: Path, *, size: int, digest: str, algorit
     except requests.RequestException as e:
         say(f"  ❌ {label} download failed: {e}")
         debug_log(f"{label} download failed: {type(e).__name__}", "tts")
-    except OSError as e:
+    except Exception as e:
         say(f"  ❌ {label} could not be saved: {e}")
         debug_log(f"{label} save failed: {type(e).__name__}", "tts")
-    temp_path.unlink(missing_ok=True)
-    return False
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            debug_log(f"{label} partial file could not be removed", "tts")
+    # Another download may have put a good copy in place meanwhile.
+    return _matches(target, size, digest, algorithm)

@@ -128,3 +128,35 @@ def test_downloaded_state_follows_the_files_on_disk(tmp_path):
     assert not piper_voice_downloaded("en_GB-alan-medium", tmp_path)
     (tmp_path / "en_GB-alan-medium.onnx.json").write_text("{}")
     assert piper_voice_downloaded("en_GB-alan-medium", tmp_path)
+
+
+@pytest.mark.unit
+def test_a_failing_progress_callback_never_leaves_a_partial_file(tmp_path, served):
+    from jarvis.output.model_download import download_verified
+
+    payloads, _ = served
+    payloads["https://example.test/voice.onnx"] = b"voice weights"
+
+    def closed_window(message):
+        raise RuntimeError("wrapped C/C++ object has been deleted")
+
+    target = tmp_path / "voice.onnx"
+    ok = download_verified("https://example.test/voice.onnx", target, size=13,
+                           digest=hashlib.sha256(b"voice weights").hexdigest(), algorithm="sha256",
+                           label="Test voice", progress=closed_window)
+    assert ok and target.read_bytes() == b"voice weights"
+    assert [p.name for p in tmp_path.iterdir()] == ["voice.onnx"]
+
+
+@pytest.mark.unit
+def test_an_unexpected_error_leaves_no_partial_file(tmp_path, monkeypatch):
+    from jarvis.output.model_download import download_verified
+
+    response = _response(b"voice weights")
+    response.headers = {"content-length": "not a number"}
+    monkeypatch.setattr("requests.get", lambda url, **kw: response)
+    target = tmp_path / "voice.onnx"
+    assert not download_verified("https://example.test/voice.onnx", target, size=13,
+                                 digest=hashlib.sha256(b"voice weights").hexdigest(), algorithm="sha256",
+                                 label="Test voice")
+    assert list(tmp_path.iterdir()) == []

@@ -404,3 +404,118 @@ def test_the_real_model_synthesises_speech(tmp_path):
         w.setframerate(kokoro.SAMPLE_RATE)
         w.writeframes(audio.tobytes())
     assert path.stat().st_size > 44
+
+
+# --------------------------------------------------------------------------
+# Robustness
+
+
+@pytest.mark.unit
+def test_kokoro_downloads_never_overlap(tmp_path, monkeypatch):
+    active, overlaps = [0], []
+
+    def fetch(*args, **kwargs):
+        active[0] += 1
+        overlaps.append(active[0])
+        time.sleep(0.05)
+        active[0] -= 1
+        return True
+
+    monkeypatch.setattr(kokoro, "download_verified", fetch)
+    threads = [threading.Thread(target=kokoro.download_kokoro, args=(tmp_path,)) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert max(overlaps) == 1
+
+
+@pytest.mark.unit
+def test_restarting_the_engine_does_not_start_a_second_download(tmp_path, monkeypatch, piper_loads):
+    started, release = [], threading.Event()
+
+    def download(*args, **kwargs):
+        started.append(1)
+        release.wait(WAIT)
+        return False
+
+    monkeypatch.setattr(kokoro, "download_kokoro", download)
+    tts = KokoroTTS(enabled=True, kokoro_model_dir=tmp_path)
+    try:
+        tts.start()
+        tts.stop()
+        tts.start()
+        time.sleep(0.1)
+    finally:
+        release.set()
+        tts.stop()
+    assert len(started) == 1
+
+
+@pytest.mark.unit
+def test_an_interrupt_while_kokoro_loads_drops_that_reply(tmp_path, monkeypatch, piper_loads, streams):
+    voice, _session = _fake_voice()
+    loading, finish_loading = threading.Event(), threading.Event()
+    present = {"now": False}
+
+    def load(*args, **kwargs):
+        if not present["now"]:
+            raise kokoro.KokoroUnavailable("the Kokoro voice files are not downloaded yet")
+        loading.set()
+        assert finish_loading.wait(WAIT)
+        return voice
+
+    monkeypatch.setattr(kokoro, "kokoro_files_present", lambda *_: present["now"])
+    monkeypatch.setattr(kokoro, "download_kokoro", lambda *a, **k: False)
+    monkeypatch.setattr(kokoro, "load_kokoro_voice", load)
+    tts = KokoroTTS(enabled=True, kokoro_model_dir=tmp_path)
+    tts.start()
+    try:
+        present["now"] = True
+        tts.kokoro_downloaded.set()
+        completed = threading.Event()
+        tts.speak("Interrupt me.", completion_callback=completed.set)
+        assert loading.wait(WAIT)
+        tts.interrupt()
+        finish_loading.set()
+        time.sleep(0.3)
+    finally:
+        tts.stop()
+    assert streams == [] and not completed.is_set()
+    assert tts.engine_in_use == "kokoro", "the voice is still ready for the next reply"
+
+
+@pytest.mark.unit
+def test_kokoro_failing_mid_session_hands_the_reply_to_piper(tmp_path, monkeypatch, piper_loads, streams, capsys):
+    class BrokenSession(FakeSession):
+        def run(self, _outputs, inputs):
+            raise RuntimeError("CUDA out of memory")
+
+    voice, _ = _fake_voice()
+    voice._session = BrokenSession()
+    monkeypatch.setattr(kokoro, "kokoro_files_present", lambda *_: True)
+    monkeypatch.setattr(kokoro, "load_kokoro_voice", lambda *a, **k: voice)
+    tts = KokoroTTS(enabled=True, kokoro_model_dir=tmp_path)
+    tts.start()
+    try:
+        first, second = threading.Event(), threading.Event()
+        tts.speak("Say this anyway.", completion_callback=first.set)
+        assert first.wait(WAIT), "the reply is still spoken"
+        tts.speak("And this.", completion_callback=second.set)
+        assert second.wait(WAIT)
+    finally:
+        tts.stop()
+    assert [s.samplerate for s in streams] == [22050, 22050]
+    assert tts.engine_in_use == "piper" and "out of memory" in tts.fallback_reason
+    assert "Piper" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_a_damaged_model_file_is_removed_so_it_downloads_again(tmp_path, monkeypatch):
+    for f in kokoro.KOKORO_FILES:
+        (tmp_path / f.name).write_bytes(b"\0" * 10)
+    monkeypatch.setattr(kokoro, "KOKORO_FILES", tuple(
+        kokoro.KokoroFile(f.name, f.url, 10, f.sha256) for f in kokoro.KOKORO_FILES))
+    with pytest.raises(kokoro.KokoroUnavailable, match="download"):
+        kokoro.load_kokoro_voice(tmp_path)
+    assert not kokoro.kokoro_files_present(tmp_path)

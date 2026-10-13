@@ -159,3 +159,10 @@ def test_saving_a_kokoro_voice_writes_plain_keys(window_with):
     saved = json.loads(cfg.read_text())
     assert saved["tts_engine"] == "kokoro" and saved["tts_kokoro_voice"] == "af_heart"
     assert "tts_kokoro_speed" not in saved, "an unchanged default is not written"
+
+
+@pytest.mark.unit
+def test_the_panel_follows_a_typed_custom_voice_file(window_with):
+    win, _ = window_with({})
+    win._widgets["tts_piper_model_path"].setText(r"C:\voices\my-voice.onnx")
+    assert "my-voice.onnx" in win.voice_panel.status_label.text()

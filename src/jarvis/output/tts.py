@@ -1188,16 +1188,22 @@ class KokoroTTS(PiperTTS):
             self._use_kokoro(kokoro.load_kokoro_voice(self.kokoro_model_dir, self.kokoro_voice, self.kokoro_speed))
             return
         except kokoro.KokoroUnavailable as e:
-            self.fallback_reason = str(e)
-        print(f"⚠️ Kokoro voice unavailable: {self.fallback_reason}", flush=True)
+            self._fall_back_to_piper(str(e))
+
+    def _fall_back_to_piper(self, reason: str) -> None:
+        """Load Piper in Kokoro's place and say why."""
+        self.fallback_reason = reason
+        print(f"⚠️ Kokoro voice unavailable: {reason}", flush=True)
         print("   🔁 Speaking with Piper instead", flush=True)
         debug_log("Kokoro unavailable; Piper speaks instead", "tts")
+        self._voice = None
+        self.engine_in_use = None
         super()._load_voice()
         if self._voice is not None:
             self.engine_in_use = "piper"
 
     def _use_kokoro(self, voice) -> None:
-        self._voice = voice
+        self._voice = _GuardedKokoro(self, voice)
         self._sample_rate = kokoro.SAMPLE_RATE
         self.engine_in_use = "kokoro"
         self.fallback_reason = None
@@ -1208,7 +1214,8 @@ class KokoroTTS(PiperTTS):
         if not self.enabled or self._thread is not None:
             return
         super().start()
-        if self.engine_in_use != "kokoro" and not kokoro.kokoro_files_present(self.kokoro_model_dir):
+        downloading = self._download_thread is not None and self._download_thread.is_alive()
+        if self.engine_in_use != "kokoro" and not downloading                 and not kokoro.kokoro_files_present(self.kokoro_model_dir):
             self._download_thread = threading.Thread(target=self._download, daemon=True, name="kokoro-download")
             self._download_thread.start()
 
@@ -1230,6 +1237,7 @@ class KokoroTTS(PiperTTS):
         # Switch on the speaking thread, between replies, so a reply never changes voice half-way.
         if self.kokoro_downloaded.is_set() and self.engine_in_use != "kokoro":
             self.kokoro_downloaded.clear()
+            generation = self._interrupt_generation
             try:
                 self._use_kokoro(kokoro.load_kokoro_voice(self.kokoro_model_dir, self.kokoro_voice,
                                                          self.kokoro_speed))
@@ -1238,7 +1246,35 @@ class KokoroTTS(PiperTTS):
                 self.fallback_reason = str(e)
                 print(f"⚠️ Kokoro voice unavailable: {e}", flush=True)
                 print("   🔁 Piper keeps speaking", flush=True)
+            if generation != self._interrupt_generation:
+                # Loading takes seconds; an interrupt meanwhile cancels this reply as it would mid-speech.
+                debug_log("Kokoro TTS reply interrupted while the voice loaded", "tts")
+                return
         super()._speak_once(text)
+
+
+class _GuardedKokoro:
+    """A Kokoro voice that hands over to Piper when synthesis fails (for example the graphics card runs out of
+    memory), so a failure while speaking never silences Jarvis. Before any audio of the reply, Piper speaks
+    the whole reply; after some audio, the reply ends and later replies use Piper."""
+
+    def __init__(self, owner: "KokoroTTS", voice) -> None:
+        self._owner = owner
+        self._voice = voice
+        self.device = getattr(voice, "device", "processor")
+
+    def synthesize(self, text: str, config):
+        produced = False
+        try:
+            for chunk in self._voice.synthesize(text, config):
+                produced = True
+                yield chunk
+        except Exception as e:
+            owner = self._owner
+            owner._fall_back_to_piper(f"Kokoro failed while speaking ({type(e).__name__}: {e})")
+            if produced or owner._voice is None:
+                raise
+            yield from owner._voice.synthesize(text, owner._synthesis_config())
 
 
 # The longest the PC voice waits for an extra voice output (extensions/extensions.spec.md, Voice outputs).

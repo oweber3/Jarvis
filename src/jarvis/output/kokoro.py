@@ -90,6 +90,7 @@ _ESPEAK_VOICES = {"a": "en-us", "b": "en"}
 # espeak-ng keeps process-wide state; Piper uses the same library and sets its own voice before each use.
 _espeak_lock = threading.Lock()
 _espeak_ready = False
+_download_lock = threading.Lock()  # one Kokoro download at a time in this process
 
 
 class KokoroUnavailable(Exception):
@@ -109,11 +110,35 @@ def kokoro_files_present(models_dir: Optional[Path] = None) -> bool:
 def download_kokoro(models_dir: Optional[Path] = None, progress: Optional[Callable[[str], None]] = None) -> bool:
     """Fetch and verify the model files; True once all are present."""
     base = Path(models_dir or kokoro_models_dir())
-    for f in KOKORO_FILES:
-        if not download_verified(f.url, base / f.name, size=f.size, digest=f.sha256, algorithm="sha256",
-                                 label=f"Kokoro {f.name}", progress=progress):
-            return False
+    with _download_lock:
+        for f in KOKORO_FILES:
+            if not download_verified(f.url, base / f.name, size=f.size, digest=f.sha256, algorithm="sha256",
+                                     label=f"Kokoro {f.name}", progress=progress):
+                return False
     return True
+
+
+def _remove_damaged_files(base: Path) -> bool:
+    """Delete model files whose SHA-256 no longer matches, so they download again; True if any was removed."""
+    import hashlib
+
+    removed = False
+    for f in KOKORO_FILES:
+        path = base / f.name
+        if not path.is_file():
+            continue
+        hasher = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                hasher.update(block)
+        if hasher.hexdigest() != f.sha256:
+            try:
+                path.unlink()
+                removed = True
+                debug_log(f"Kokoro removed a damaged {f.name}", "tts")
+            except OSError:
+                debug_log(f"Kokoro could not remove a damaged {f.name}", "tts")
+    return removed
 
 
 def gpu_acceleration_available() -> bool:
@@ -164,6 +189,9 @@ def load_kokoro_voice(models_dir: Optional[Path] = None, voice: str = KOKORO_DEF
     except ImportError as e:
         raise KokoroUnavailable(f"ONNX Runtime is not installed ({e})") from e
     except Exception as e:
+        if _remove_damaged_files(base):
+            raise KokoroUnavailable("a Kokoro voice file was damaged and was removed; it will download again "
+                                    "next time Kokoro starts") from e
         raise KokoroUnavailable(f"the Kokoro model could not be loaded ({type(e).__name__}: {e})") from e
     loaded = KokoroVoice(session, voices, vocab, voice=voice, speed=speed)
     loaded.device = device

@@ -1157,7 +1157,8 @@ class SettingsWindow(QDialog):
         if hasattr(self, "voice_panel"):
             for key in ("tts_enabled", "tts_engine", "tts_piper_voice", "tts_piper_model_path"):
                 widget = self._widgets.get(key)
-                signal = getattr(widget, "toggled", None) or getattr(widget, "currentIndexChanged", None)                     or getattr(widget, "textChanged", None)
+                signal = (getattr(widget, "toggled", None) or getattr(widget, "currentIndexChanged", None)
+                          or getattr(widget, "textChanged", None))
                 if signal is not None:
                     signal.connect(self.voice_panel.refresh)
             self.voice_panel.refresh()

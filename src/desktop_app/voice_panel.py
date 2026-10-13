@@ -118,25 +118,26 @@ class VoicePanel(QGroupBox):
         def work() -> None:
             try:
                 result = render_preview(values, text, self._emit_progress)
-                self._emit(self.finished, ("playing", result))
+                self._emit("finished", ("playing", result))
                 play(result)
             except PreviewUnavailable as e:
                 result = e
             except Exception as e:  # noqa: BLE001 - the button must come back whatever happened
                 debug_log(f"Voice preview failed ({type(e).__name__})", "settings")
                 result = PreviewUnavailable(f"The preview failed ({type(e).__name__}).")
-            self._emit(self.finished, result)
+            self._emit("finished", result)
 
         threading.Thread(target=work, daemon=True, name="settings-voice-preview").start()
 
-    def _emit(self, signal, value) -> None:
+    def _emit(self, signal_name: str, value) -> None:
+        """Emit from the worker thread; once the window has closed (its Qt object is gone) nothing is shown."""
         try:
-            signal.emit(value)
-        except RuntimeError:  # the window closed while the preview ran
+            getattr(self, signal_name).emit(value)
+        except RuntimeError:
             pass
 
     def _emit_progress(self, message: str) -> None:
-        self._emit(self.progress, message)
+        self._emit("progress", message)
 
     @pyqtSlot(str)
     def _on_progress(self, message: str) -> None:
