@@ -148,3 +148,35 @@ def test_the_file_check_runs_within_the_time_limit(cfg, monkeypatch, book):
                         lambda self: threads.append(threading.current_thread().name) or real_is_file(self))
     assert _run(cfg, {'action': 'goto', 'page': 2, 'file': str(book)}).success
     assert threads and threading.main_thread().name not in threads
+
+
+TEXTBOOK_PAGES = [f'Page {n}' for n in range(1, 11)]
+TEXTBOOK_OUTLINE = [
+    ('Chapter 1 Introduction', 0, [('1.1 Units', 1), ('Problems', 2)]),
+    ('Chapter 6 Inviscid Flow', 3, [('6.1 Euler Equation', 4), ('6.2 Bernoulli Equation', 5), ('Problems', 6)]),
+    ('Chapter 7 Dimensional Analysis', 7, [('Problems', 8)]),
+    ('Answers to Selected Problems', 9),
+]
+
+
+@pytest.fixture
+def textbook(tmp_path):
+    from jarvis.utils import pdf_document
+    pdf_document.clear_cache()
+    yield make_pdf(tmp_path / 'Fluids.pdf', TEXTBOOK_PAGES, TEXTBOOK_OUTLINE)
+    pdf_document.clear_cache()
+
+
+def test_find_jumps_to_a_chapters_problems_listed_under_the_chapter(cfg, monkeypatch, textbook):
+    fake = FakeViewer(monkeypatch, textbook)
+    data = json.loads(_run(cfg, {'action': 'find', 'query': 'chapter 6 problems'}).reply_text)
+    assert [shown[2] for shown in fake.shown] == [7]
+    assert data['matched'] == 'outline' and data['title'] == 'Chapter 6 Inviscid Flow > Problems'
+
+
+def test_find_offers_the_closest_chapters_when_no_entry_has_every_word(cfg, monkeypatch, textbook):
+    fake = FakeViewer(monkeypatch, textbook)
+    result = _run(cfg, {'action': 'find', 'query': 'chapter 6 practice problems'})
+    data = json.loads(result.reply_text)
+    assert result.success and fake.shown == []
+    assert data['candidates'][0] == {'page': 7, 'title': 'Chapter 6 Inviscid Flow > Problems'}

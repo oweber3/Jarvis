@@ -175,7 +175,7 @@ class Settings:
 
     # Text-to-Speech
     tts_enabled: bool
-    tts_engine: str  # "piper" (default) or "chatterbox"
+    tts_engine: str  # "piper" (default), "kokoro" or "chatterbox"
     tts_voice: str | None
     tts_rate: int | None  # Words per minute (WPM), 200=normal
     tts_chatterbox_device: str  # "cuda", "auto", or "cpu" for Chatterbox
@@ -190,6 +190,12 @@ class Settings:
     tts_piper_noise_scale: float  # Audio variation
     tts_piper_noise_w: float  # Phoneme width variation
     tts_piper_sentence_silence: float  # Post-sentence silence in seconds
+    tts_piper_voice: str  # Catalogued voice id; tts_piper_model_path (a custom file) wins when set
+
+    # Kokoro TTS (optional engine; its files download only when it is chosen)
+    tts_kokoro_voice: str  # Kokoro voice id, e.g. "bm_george"
+    tts_kokoro_speed: float  # 0.5-2.0, 1.0 = natural
+    tts_kokoro_device: str  # "gpu" (graphics card when available, else processor) or "cpu"
 
     # Voice Input & Audio
     voice_device: str | None
@@ -1114,7 +1120,7 @@ def get_default_config() -> Dict[str, Any]:
 
         # Text-to-Speech
         "tts_enabled": True,
-        "tts_engine": "piper",  # "piper" (default) or "chatterbox"
+        "tts_engine": "piper",  # "piper" (default), "kokoro" or "chatterbox"
         "tts_voice": None,
         "tts_rate": 200,  # Words per minute (WPM), 200=normal
         "tts_chatterbox_device": "cuda",  # "cuda" (recommended), "auto", or "cpu"
@@ -1129,6 +1135,12 @@ def get_default_config() -> Dict[str, Any]:
         "tts_piper_noise_scale": 0.8,  # Audio variation (higher = more expressive)
         "tts_piper_noise_w": 1.0,  # Phoneme width variation (higher = more lively)
         "tts_piper_sentence_silence": 0.2,  # Post-sentence silence in seconds
+        "tts_piper_voice": "en_GB-alan-medium",  # Catalogued Piper voice (output/piper_voices.json)
+
+        # Kokoro TTS (optional; model files download only when this engine is chosen)
+        "tts_kokoro_voice": "bm_george",  # One of output/kokoro.py's KOKORO_VOICES
+        "tts_kokoro_speed": 1.0,  # 0.5-2.0, 1.0 = natural
+        "tts_kokoro_device": "gpu",  # "gpu" (graphics card when available, else processor) or "cpu"
 
         # Voice Input & Audio
         "voice_device": None,
@@ -1339,7 +1351,7 @@ def load_settings() -> Settings:
     use_stdin = bool(merged.get("use_stdin", False))
     tts_enabled = bool(merged.get("tts_enabled", True))
     tts_engine = str(merged.get("tts_engine", "piper")).lower()
-    if tts_engine not in ("piper", "chatterbox"):
+    if tts_engine not in ("piper", "kokoro", "chatterbox"):
         tts_engine = "piper"  # Default to piper if invalid value
     tts_voice_val = merged.get("tts_voice")
     tts_voice = None if tts_voice_val in (None, "", "null") else str(tts_voice_val)
@@ -1366,6 +1378,22 @@ def load_settings() -> Settings:
     tts_piper_noise_scale = float(merged.get("tts_piper_noise_scale", 0.8))
     tts_piper_noise_w = float(merged.get("tts_piper_noise_w", 1.0))
     tts_piper_sentence_silence = float(merged.get("tts_piper_sentence_silence", 0.2))
+    from .output.kokoro import KOKORO_DEFAULT_VOICE, KOKORO_SPEED_RANGE, KOKORO_VOICES
+    from .output.piper_voices import PIPER_DEFAULT_VOICE, piper_voice
+    tts_piper_voice = str(merged.get("tts_piper_voice") or PIPER_DEFAULT_VOICE)
+    if piper_voice(tts_piper_voice) is None:
+        tts_piper_voice = PIPER_DEFAULT_VOICE
+    tts_kokoro_voice = str(merged.get("tts_kokoro_voice") or KOKORO_DEFAULT_VOICE)
+    if tts_kokoro_voice not in KOKORO_VOICES:
+        tts_kokoro_voice = KOKORO_DEFAULT_VOICE
+    try:
+        tts_kokoro_speed = float(merged.get("tts_kokoro_speed", 1.0))
+    except (TypeError, ValueError):
+        tts_kokoro_speed = 1.0
+    tts_kokoro_speed = max(KOKORO_SPEED_RANGE[0], min(KOKORO_SPEED_RANGE[1], tts_kokoro_speed))
+    tts_kokoro_device = str(merged.get("tts_kokoro_device", "gpu")).lower()
+    if tts_kokoro_device not in ("gpu", "cpu"):
+        tts_kokoro_device = "gpu"
 
     voice_device_val = merged.get("voice_device")
     voice_device = None if voice_device_val in (None, "", "default", "system") else str(voice_device_val)
@@ -1630,6 +1658,12 @@ def load_settings() -> Settings:
         tts_piper_noise_scale=tts_piper_noise_scale,
         tts_piper_noise_w=tts_piper_noise_w,
         tts_piper_sentence_silence=tts_piper_sentence_silence,
+        tts_piper_voice=tts_piper_voice,
+
+        # Kokoro TTS
+        tts_kokoro_voice=tts_kokoro_voice,
+        tts_kokoro_speed=tts_kokoro_speed,
+        tts_kokoro_device=tts_kokoro_device,
 
         # Voice Input & Audio
         voice_device=voice_device,

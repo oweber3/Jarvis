@@ -166,6 +166,16 @@ Choose models, tune speech recognition, configure tools and enable Low Power Mod
   <img src="docs/img/settings-window.png" alt="Jarvis Settings with a category sidebar and speech recognition controls" width="900">
 </p>
 
+### A voice you choose
+
+Pick how Jarvis sounds in **Settings → Speaking**, then press **Preview** to hear it before you save. Every voice runs on your PC; there is no cloud voice, not even as an option.
+
+- **Piper** (default) is the lightest and fastest on any PC, with 37 English voices to choose from.
+- **Kokoro** sounds more natural. It needs about 350 MB of voice files (downloaded once, the first time you preview or use it) and more memory, and on a PC without a graphics card it starts speaking a little later. Until its files are ready, or if it cannot load, Piper speaks instead and the log says why.
+- **Chatterbox** clones a voice from a short recording (only your own voice, or someone's who has agreed to it).
+
+Voice files come from fixed addresses and are checked before use; after that they work offline.
+
 ### A quiet companion to voice
 
 When speaking is inconvenient, open Chat from the tray. It picks up the same conversation and memory, without reading text replies aloud. Away from the desk, [phone access](#phone-access-optional) brings the orb and the same conversation to your phone's browser. For several conversations at once, turn on the [web chat](#web-chat-optional): chats grouped into projects, with a model picker.
@@ -193,7 +203,8 @@ This fork is developed and tested on Windows 11, and the desktop controls are Wi
 - **Apple Music playback follows the app's own layout.** Jarvis presses the app's Play controls through Windows accessibility, so an Apple Music update that changes them can stop it working until Jarvis is updated; it then says it could not find the Play control rather than pressing anything else. Songs you uploaded yourself and Apple's editorial playlists cannot be searched.
 - **The activity log is Windows only and records what is in front, not what you did there.** It sees the application and window title, so it can say you were in a spreadsheet called budget, not which cells you edited.
 - **Gmail needs an app password, and the new Outlook cannot be read.** Google's sign-in is used for Google Calendar only (reading Gmail through it would need a paid security audit), so Gmail is added with an app password. The new Outlook app has no interface Jarvis can use, and Outlook.com mail refuses passwords, so Outlook.com mail can only be read through classic Outlook. Its calendar works through a calendar link.
-- **With the Chatterbox voice, the orb does not follow Jarvis's own voice.** Only the default Piper voice reports how loud each moment of a reply is; with Chatterbox the orb and the wake screen effect follow what the microphone hears instead.
+- **With the Chatterbox voice, the orb does not follow Jarvis's own voice.** Only the Piper and Kokoro voices report how loud each moment of a reply is; with Chatterbox the orb and the wake screen effect follow what the microphone hears instead.
+- **Kokoro is slower to start on the processor.** On a PC without a usable graphics card it begins speaking about 0.3 to 1 second after a reply is ready (Piper takes about 0.1 to 0.3 seconds) and uses roughly 600 MB of memory. Using an NVIDIA graphics card needs the graphics card build of ONNX Runtime, which the standard install does not include. The voices offered are English only.
 - **Optional capabilities need their dependencies.** Location awareness needs a GeoLite2 database. Semantic memory search needs working embeddings; otherwise search falls back to keywords.
 
 ## Configuration
@@ -439,6 +450,7 @@ Local AI is the default, not a paid upgrade. No cloud AI service is required.
 - **Calendar and email (opt-in, off by default):** read on request from the accounts you add, with read-only sign-ins; a copy of each calendar link is kept next to the database for offline answers (Microsoft and Google calendars are read live, never saved). Passwords, calendar links and sign-ins are in Windows Credential Manager. Never sent to Codex or Claude unless you allow it, and never written to the diary or logs.
 - **Phone access (opt-in, off by default):** your PC serves the conversation to phones you pair, over your own network or VPN only, and refuses requests from other web pages. Paired phones are stored as hashed keys next to the database; the phone's copy of the conversation is held in memory and gone when Jarvis stops.
 - **Web chat (opt-in, off by default):** your chats and projects are stored in the same local database as redacted text, served only on this PC's loopback address. Delete one chat from its menu.
+- **Voices:** every voice engine runs on this PC. Voice files download once, from fixed addresses, and are checked before use; Kokoro's are fetched only if you choose Kokoro.
 - **Network boundaries:** model downloads, web tools and enabled integrations can make network requests. An external model endpoint receives the requests you send to it. The installed app checks GitHub for updates only when you choose **Check for Updates** or turn on **Check for Updates at Start-up** in Settings → Privacy.
 - **Bug reports:** **Report Issue** fills in a GitHub issue with the start-up part of the log; what was said and replied afterwards shows only as icons.
 

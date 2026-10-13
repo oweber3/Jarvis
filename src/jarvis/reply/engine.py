@@ -1706,11 +1706,11 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
         # Add model-size-appropriate prompt components
         guidance.extend(prompts.to_list())
 
-        # Both current TTS engines (Piper, Chatterbox) only support English.
+        # Every TTS engine Jarvis offers (Piper, Kokoro, Chatterbox) speaks only its English voices.
         # Responding in another language would produce garbled audio.
-        # Remove this constraint when a multilingual TTS engine is added.
+        # Remove this constraint when a multilingual voice is offered.
         tts_engine = getattr(cfg, 'tts_engine', 'piper')
-        if tts_engine in ('piper', 'chatterbox'):
+        if tts_engine in ('piper', 'kokoro', 'chatterbox'):
             guidance.append(
                 "Always respond in English regardless of the language the user speaks in."
             )

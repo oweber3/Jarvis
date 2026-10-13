@@ -1624,6 +1624,11 @@ def main(smoke_test: bool = False) -> None:
         piper_noise_scale=cfg.tts_piper_noise_scale,
         piper_noise_w=cfg.tts_piper_noise_w,
         piper_sentence_silence=cfg.tts_piper_sentence_silence,
+        piper_voice=cfg.tts_piper_voice,
+        # Kokoro parameters
+        kokoro_voice=cfg.tts_kokoro_voice,
+        kokoro_speed=cfg.tts_kokoro_speed,
+        kokoro_device=cfg.tts_kokoro_device,
         # Voice outputs: this PC and any an extension adds
         pc_speakers_enabled=cfg.tts_pc_speakers_enabled,
         voice_outputs=extensions.voice_outputs(),

@@ -559,7 +559,7 @@ def graph_import_diary() -> Response:
                         store=store,
                         summary=summary_text,
                         cfg=settings,
-                        chat_model=settings.llm_chat_model,
+                        chat_model=resolve_model(settings, Tier.BACKGROUND),
                         timeout_sec=settings.llm_chat_timeout_sec,
                         thinking=getattr(settings, 'llm_thinking_enabled', False),
                         date_utc=date_utc,
@@ -650,7 +650,7 @@ def graph_consolidate_all() -> Response:
             for name, before, after in consolidate_all_populated_nodes(
                 store=store,
                 cfg=settings,
-                chat_model=settings.llm_chat_model,
+                chat_model=resolve_model(settings, Tier.BACKGROUND),
                 timeout_sec=20.0,
                 thinking=getattr(settings, 'llm_thinking_enabled', False),
                 picker_model=picker_model,

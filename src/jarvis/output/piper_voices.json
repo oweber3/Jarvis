@@ -1,0 +1,597 @@
+{
+ "source": "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/voices.json",
+ "voices": {
+  "en_GB-alan-low": {
+   "files": {
+    "en/en_GB/alan/low/en_GB-alan-low.onnx": {
+     "md5": "2acae8c79395ab109a7572f0afa61fff",
+     "size": 63104526
+    },
+    "en/en_GB/alan/low/en_GB-alan-low.onnx.json": {
+     "md5": "4c0fa2c6763bf49b343cbb4f655a147b",
+     "size": 4170
+    }
+   },
+   "language": "en_GB",
+   "name": "alan",
+   "quality": "low",
+   "speakers": 1
+  },
+  "en_GB-alan-medium": {
+   "files": {
+    "en/en_GB/alan/medium/en_GB-alan-medium.onnx": {
+     "md5": "8f6b35eeb8ef6269021c6cb6d2414c9b",
+     "size": 63201294
+    },
+    "en/en_GB/alan/medium/en_GB-alan-medium.onnx.json": {
+     "md5": "b11d9afd0a8f5372c42a52fbd6e021d4",
+     "size": 4888
+    }
+   },
+   "language": "en_GB",
+   "name": "alan",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_GB-alba-medium": {
+   "files": {
+    "en/en_GB/alba/medium/en_GB-alba-medium.onnx": {
+     "md5": "c07f313752bb3aba8061041666251654",
+     "size": 63201294
+    },
+    "en/en_GB/alba/medium/en_GB-alba-medium.onnx.json": {
+     "md5": "dbb6f2ede31082710665221417906e13",
+     "size": 4888
+    }
+   },
+   "language": "en_GB",
+   "name": "alba",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_GB-aru-medium": {
+   "files": {
+    "en/en_GB/aru/medium/en_GB-aru-medium.onnx": {
+     "md5": "7862d75539b8ef867e7c04e772d323ea",
+     "size": 76754097
+    },
+    "en/en_GB/aru/medium/en_GB-aru-medium.onnx.json": {
+     "md5": "903a8ec4cdfea0123a004ab4a87e547c",
+     "size": 5048
+    }
+   },
+   "language": "en_GB",
+   "name": "aru",
+   "quality": "medium",
+   "speakers": 12
+  },
+  "en_GB-cori-high": {
+   "files": {
+    "en/en_GB/cori/high/en_GB-cori-high.onnx": {
+     "md5": "3474a80133d9a03e6870d2ac42c18806",
+     "size": 114219352
+    },
+    "en/en_GB/cori/high/en_GB-cori-high.onnx.json": {
+     "md5": "0f7d42e77a99193006aa34a34442f5e0",
+     "size": 4963
+    }
+   },
+   "language": "en_GB",
+   "name": "cori",
+   "quality": "high",
+   "speakers": 1
+  },
+  "en_GB-cori-medium": {
+   "files": {
+    "en/en_GB/cori/medium/en_GB-cori-medium.onnx": {
+     "md5": "f143307611eccea9d976235d0895f57c",
+     "size": 63531379
+    },
+    "en/en_GB/cori/medium/en_GB-cori-medium.onnx.json": {
+     "md5": "12b1dc45d8919f3475cf296d5f16a4c6",
+     "size": 4966
+    }
+   },
+   "language": "en_GB",
+   "name": "cori",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_GB-jenny_dioco-medium": {
+   "files": {
+    "en/en_GB/jenny_dioco/medium/en_GB-jenny_dioco-medium.onnx": {
+     "md5": "d08f2f7edf0c858275a7eca74ff2a9e4",
+     "size": 63201294
+    },
+    "en/en_GB/jenny_dioco/medium/en_GB-jenny_dioco-medium.onnx.json": {
+     "md5": "e999a9c0aa535fb42e43b04cebcd65d2",
+     "size": 4895
+    }
+   },
+   "language": "en_GB",
+   "name": "jenny_dioco",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_GB-northern_english_male-medium": {
+   "files": {
+    "en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx": {
+     "md5": "4c9a9735bfb76ad67c8b31b23d6840a0",
+     "size": 63201294
+    },
+    "en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx.json": {
+     "md5": "0ce3f61a9604616ed475c921fdeedb1a",
+     "size": 4847
+    }
+   },
+   "language": "en_GB",
+   "name": "northern_english_male",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_GB-semaine-medium": {
+   "files": {
+    "en/en_GB/semaine/medium/en_GB-semaine-medium.onnx": {
+     "md5": "3634c3b388165d3b698ea07ba3cac7d2",
+     "size": 76737711
+    },
+    "en/en_GB/semaine/medium/en_GB-semaine-medium.onnx.json": {
+     "md5": "c30f92604f6ce3f378e7211440f13c8f",
+     "size": 5076
+    }
+   },
+   "language": "en_GB",
+   "name": "semaine",
+   "quality": "medium",
+   "speakers": 4
+  },
+  "en_GB-southern_english_female-low": {
+   "files": {
+    "en/en_GB/southern_english_female/low/en_GB-southern_english_female-low.onnx": {
+     "md5": "596c7ed4d8488cf64e027765dce2dad1",
+     "size": 63104526
+    },
+    "en/en_GB/southern_english_female/low/en_GB-southern_english_female-low.onnx.json": {
+     "md5": "7548456e9f2bc4c16bf818be26618ea1",
+     "size": 4189
+    }
+   },
+   "language": "en_GB",
+   "name": "southern_english_female",
+   "quality": "low",
+   "speakers": 1
+  },
+  "en_GB-vctk-medium": {
+   "files": {
+    "en/en_GB/vctk/medium/en_GB-vctk-medium.onnx": {
+     "md5": "573025290fdc68812543b7438ace0c29",
+     "size": 76952753
+    },
+    "en/en_GB/vctk/medium/en_GB-vctk-medium.onnx.json": {
+     "md5": "68e82dee4c9a723e804f9fc0b14f1802",
+     "size": 6637
+    }
+   },
+   "language": "en_GB",
+   "name": "vctk",
+   "quality": "medium",
+   "speakers": 109
+  },
+  "en_US-amy-low": {
+   "files": {
+    "en/en_US/amy/low/en_US-amy-low.onnx": {
+     "md5": "3c3f6a6ec605f3a59763256d3b2db012",
+     "size": 63104526
+    },
+    "en/en_US/amy/low/en_US-amy-low.onnx.json": {
+     "md5": "85a339b51379b13bbbb0784382ca75bc",
+     "size": 4164
+    }
+   },
+   "language": "en_US",
+   "name": "amy",
+   "quality": "low",
+   "speakers": 1
+  },
+  "en_US-amy-medium": {
+   "files": {
+    "en/en_US/amy/medium/en_US-amy-medium.onnx": {
+     "md5": "778d28aeb95fcdf8a882344d9df142fc",
+     "size": 63201294
+    },
+    "en/en_US/amy/medium/en_US-amy-medium.onnx.json": {
+     "md5": "7f37dadb26340c90ebc8088e0b252310",
+     "size": 4882
+    }
+   },
+   "language": "en_US",
+   "name": "amy",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-arctic-medium": {
+   "files": {
+    "en/en_US/arctic/medium/en_US-arctic-medium.onnx": {
+     "md5": "497c47037c2e279faf467e0a06f965d2",
+     "size": 76766385
+    },
+    "en/en_US/arctic/medium/en_US-arctic-medium.onnx.json": {
+     "md5": "b7ed018d74f0d5ba7cd49051de43a461",
+     "size": 5148
+    }
+   },
+   "language": "en_US",
+   "name": "arctic",
+   "quality": "medium",
+   "speakers": 18
+  },
+  "en_US-bryce-medium": {
+   "files": {
+    "en/en_US/bryce/medium/en_US-bryce-medium.onnx": {
+     "md5": "a8482817c3bdc3d20121a0e31bfa9809",
+     "size": 63531379
+    },
+    "en/en_US/bryce/medium/en_US-bryce-medium.onnx.json": {
+     "md5": "a548d1d4ce8579f5a16926bdec77c7bf",
+     "size": 4966
+    }
+   },
+   "language": "en_US",
+   "name": "bryce",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-danny-low": {
+   "files": {
+    "en/en_US/danny/low/en_US-danny-low.onnx": {
+     "md5": "73cc296e178ab3d2a5698179b629cd12",
+     "size": 63104526
+    },
+    "en/en_US/danny/low/en_US-danny-low.onnx.json": {
+     "md5": "c0aa454db4e5a6581e45799c79aa99c6",
+     "size": 4166
+    }
+   },
+   "language": "en_US",
+   "name": "danny",
+   "quality": "low",
+   "speakers": 1
+  },
+  "en_US-hfc_female-medium": {
+   "files": {
+    "en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx": {
+     "md5": "7abec91f1d6e19e913fbc4a333f62787",
+     "size": 63201294
+    },
+    "en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx.json": {
+     "md5": "c3d00f54dac3b4068f2576c15c5da3bc",
+     "size": 5033
+    }
+   },
+   "language": "en_US",
+   "name": "hfc_female",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-hfc_male-medium": {
+   "files": {
+    "en/en_US/hfc_male/medium/en_US-hfc_male-medium.onnx": {
+     "md5": "cd2fda1933f0653d3ddc85e5f30ebdd2",
+     "size": 63201294
+    },
+    "en/en_US/hfc_male/medium/en_US-hfc_male-medium.onnx.json": {
+     "md5": "9b4849dbc1e72f35de7391528dea60d9",
+     "size": 5033
+    }
+   },
+   "language": "en_US",
+   "name": "hfc_male",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-joe-medium": {
+   "files": {
+    "en/en_US/joe/medium/en_US-joe-medium.onnx": {
+     "md5": "74fd6a4dc39e0aa9dce145d7f5acd4f6",
+     "size": 63201294
+    },
+    "en/en_US/joe/medium/en_US-joe-medium.onnx.json": {
+     "md5": "811036b9c1451545f9495fdc1baa0754",
+     "size": 4794
+    }
+   },
+   "language": "en_US",
+   "name": "joe",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-john-medium": {
+   "files": {
+    "en/en_US/john/medium/en_US-john-medium.onnx": {
+     "md5": "70480857f21f2560f3a232722023b36d",
+     "size": 63531379
+    },
+    "en/en_US/john/medium/en_US-john-medium.onnx.json": {
+     "md5": "f2d04611b498e14d394385d1ec8a2d2d",
+     "size": 4965
+    }
+   },
+   "language": "en_US",
+   "name": "john",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-kathleen-low": {
+   "files": {
+    "en/en_US/kathleen/low/en_US-kathleen-low.onnx": {
+     "md5": "dd1ab131724b1cff76fe388252bec47b",
+     "size": 63104526
+    },
+    "en/en_US/kathleen/low/en_US-kathleen-low.onnx.json": {
+     "md5": "d970eebfe8e9f8515e405659da658f9b",
+     "size": 4169
+    }
+   },
+   "language": "en_US",
+   "name": "kathleen",
+   "quality": "low",
+   "speakers": 1
+  },
+  "en_US-kristin-medium": {
+   "files": {
+    "en/en_US/kristin/medium/en_US-kristin-medium.onnx": {
+     "md5": "5fed42d2296baca042e2bf74785db725",
+     "size": 63531379
+    },
+    "en/en_US/kristin/medium/en_US-kristin-medium.onnx.json": {
+     "md5": "70bc97d350c796c64ea5e4d08241afac",
+     "size": 4968
+    }
+   },
+   "language": "en_US",
+   "name": "kristin",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-kusal-medium": {
+   "files": {
+    "en/en_US/kusal/medium/en_US-kusal-medium.onnx": {
+     "md5": "95334de7385a03c5c9de25b920c33492",
+     "size": 63201294
+    },
+    "en/en_US/kusal/medium/en_US-kusal-medium.onnx.json": {
+     "md5": "722e434f8e1a768dd6b6fab5b4cfde4d",
+     "size": 4884
+    }
+   },
+   "language": "en_US",
+   "name": "kusal",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-l2arctic-medium": {
+   "files": {
+    "en/en_US/l2arctic/medium/en_US-l2arctic-medium.onnx": {
+     "md5": "a71d8acf9b01676931cd548f739382cd",
+     "size": 76778673
+    },
+    "en/en_US/l2arctic/medium/en_US-l2arctic-medium.onnx.json": {
+     "md5": "a0f29a10628f08dccd757aca57ccb163",
+     "size": 5252
+    }
+   },
+   "language": "en_US",
+   "name": "l2arctic",
+   "quality": "medium",
+   "speakers": 24
+  },
+  "en_US-lessac-high": {
+   "files": {
+    "en/en_US/lessac/high/en_US-lessac-high.onnx": {
+     "md5": "99d1f6181a7f5ccbe3f117ba8ce63c93",
+     "size": 113895201
+    },
+    "en/en_US/lessac/high/en_US-lessac-high.onnx.json": {
+     "md5": "02e8e364c86b5d3b75e81704b0369856",
+     "size": 4883
+    }
+   },
+   "language": "en_US",
+   "name": "lessac",
+   "quality": "high",
+   "speakers": 1
+  },
+  "en_US-lessac-low": {
+   "files": {
+    "en/en_US/lessac/low/en_US-lessac-low.onnx": {
+     "md5": "31883a7506589feadf3c3474fd8ef658",
+     "size": 63201294
+    },
+    "en/en_US/lessac/low/en_US-lessac-low.onnx.json": {
+     "md5": "64876daa19dd042b368cd64fa379a75f",
+     "size": 4882
+    }
+   },
+   "language": "en_US",
+   "name": "lessac",
+   "quality": "low",
+   "speakers": 1
+  },
+  "en_US-lessac-medium": {
+   "files": {
+    "en/en_US/lessac/medium/en_US-lessac-medium.onnx": {
+     "md5": "2fc642b535197b6305c7c8f92dc8b24f",
+     "size": 63201294
+    },
+    "en/en_US/lessac/medium/en_US-lessac-medium.onnx.json": {
+     "md5": "c1f2b7bddefe113f3255ff9ef234cfd3",
+     "size": 4885
+    }
+   },
+   "language": "en_US",
+   "name": "lessac",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-libritts-high": {
+   "files": {
+    "en/en_US/libritts/high/en_US-libritts-high.onnx": {
+     "md5": "61d7845257f8abdc27476f606151ef8d",
+     "size": 136673811
+    },
+    "en/en_US/libritts/high/en_US-libritts-high.onnx.json": {
+     "md5": "cb1564bb779f3b1f87e2de778adeb669",
+     "size": 20163
+    }
+   },
+   "language": "en_US",
+   "name": "libritts",
+   "quality": "high",
+   "speakers": 904
+  },
+  "en_US-libritts_r-medium": {
+   "files": {
+    "en/en_US/libritts_r/medium/en_US-libritts_r-medium.onnx": {
+     "md5": "bb2c2776cffbfd736c7c497f620c0ca6",
+     "size": 78580914
+    },
+    "en/en_US/libritts_r/medium/en_US-libritts_r-medium.onnx.json": {
+     "md5": "c740db18a0dab11b13ce0292ea1196c6",
+     "size": 20123
+    }
+   },
+   "language": "en_US",
+   "name": "libritts_r",
+   "quality": "medium",
+   "speakers": 904
+  },
+  "en_US-ljspeech-high": {
+   "files": {
+    "en/en_US/ljspeech/high/en_US-ljspeech-high.onnx": {
+     "md5": "dad093b5d2cff6a5fda99883ceda09d1",
+     "size": 114199011
+    },
+    "en/en_US/ljspeech/high/en_US-ljspeech-high.onnx.json": {
+     "md5": "de98fc398ddead60fb82d93bfafb3ad1",
+     "size": 4970
+    }
+   },
+   "language": "en_US",
+   "name": "ljspeech",
+   "quality": "high",
+   "speakers": 1
+  },
+  "en_US-ljspeech-medium": {
+   "files": {
+    "en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx": {
+     "md5": "109d552e9dd78d92d1169a7edd6de38d",
+     "size": 63531379
+    },
+    "en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx.json": {
+     "md5": "0668112b8b3ac5bb4b12c2b1a366776a",
+     "size": 4972
+    }
+   },
+   "language": "en_US",
+   "name": "ljspeech",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-norman-medium": {
+   "files": {
+    "en/en_US/norman/medium/en_US-norman-medium.onnx": {
+     "md5": "829cea515dc724d694b83b71e8083f9f",
+     "size": 63531379
+    },
+    "en/en_US/norman/medium/en_US-norman-medium.onnx.json": {
+     "md5": "975830d6f230f6eccf657d265de99eba",
+     "size": 4968
+    }
+   },
+   "language": "en_US",
+   "name": "norman",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-reza_ibrahim-medium": {
+   "files": {
+    "en/en_US/reza_ibrahim/medium/en_US-reza_ibrahim-medium.onnx": {
+     "md5": "b9d4059c794df8336060fb7f36264a43",
+     "size": 63511038
+    },
+    "en/en_US/reza_ibrahim/medium/en_US-reza_ibrahim-medium.onnx.json": {
+     "md5": "94aa2ac1bcb4c64f3c4c561d5d5f5676",
+     "size": 4976
+    }
+   },
+   "language": "en_US",
+   "name": "reza_ibrahim",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-ryan-high": {
+   "files": {
+    "en/en_US/ryan/high/en_US-ryan-high.onnx": {
+     "md5": "5d879a17bddf5007f76655b445ba78b4",
+     "size": 120786792
+    },
+    "en/en_US/ryan/high/en_US-ryan-high.onnx.json": {
+     "md5": "444ff9d6c17218a0eb1d12a20559d869",
+     "size": 4166
+    }
+   },
+   "language": "en_US",
+   "name": "ryan",
+   "quality": "high",
+   "speakers": 1
+  },
+  "en_US-ryan-low": {
+   "files": {
+    "en/en_US/ryan/low/en_US-ryan-low.onnx": {
+     "md5": "32f6a995d6d561cd040b20a76f4edb1e",
+     "size": 63104526
+    },
+    "en/en_US/ryan/low/en_US-ryan-low.onnx.json": {
+     "md5": "38eb0602e1f8bf627a0d9a747723cbf6",
+     "size": 4165
+    }
+   },
+   "language": "en_US",
+   "name": "ryan",
+   "quality": "low",
+   "speakers": 1
+  },
+  "en_US-ryan-medium": {
+   "files": {
+    "en/en_US/ryan/medium/en_US-ryan-medium.onnx": {
+     "md5": "8f06d3aff8ded5a7f13f907e6bec32ac",
+     "size": 63201294
+    },
+    "en/en_US/ryan/medium/en_US-ryan-medium.onnx.json": {
+     "md5": "f173a2b5202b3e4128ccc3ed8195306c",
+     "size": 4883
+    }
+   },
+   "language": "en_US",
+   "name": "ryan",
+   "quality": "medium",
+   "speakers": 1
+  },
+  "en_US-sam-medium": {
+   "files": {
+    "en/en_US/sam/medium/en_US-sam-medium.onnx": {
+     "md5": "57efcb38a3d0510051f9f55c517ccb76",
+     "size": 62950044
+    },
+    "en/en_US/sam/medium/en_US-sam-medium.onnx.json": {
+     "md5": "a124497d09ce818f9800d16f24e1a8d1",
+     "size": 5040
+    }
+   },
+   "language": "en_US",
+   "name": "sam",
+   "quality": "medium",
+   "speakers": 1
+  }
+ }
+}

@@ -122,6 +122,7 @@ def _rewrite_diary_summary(
             _REWRITE_DEFLECTION_SYSTEM_PROMPT,
             user_prompt,
             timeout_sec=timeout_sec,
+            tier=Tier.BACKGROUND,
             # Rewrite output scales with the input summary (created at
             # "max 200 words" ≈ 260 tokens), so a fixed cap could truncate
             # it. Cap proportionally to the summary length with a floor —
@@ -465,6 +466,7 @@ def optimise_diary_topics(
             user_content,
             timeout_sec=60.0,
             max_tokens=200,
+            tier=Tier.BACKGROUND,
         )
         if raw:
             # Strip markdown fences if the model wrapped the JSON.
