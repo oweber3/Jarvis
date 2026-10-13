@@ -37,13 +37,17 @@ _INSTRUCTIONS = (
 
 
 def assistant_instructions() -> str:
-    """The system prompt of every request session, at most ``MAX_INSTRUCTION_CHARS`` characters."""
+    """The fixed session contract, at most ``MAX_INSTRUCTION_CHARS`` characters."""
     return _INSTRUCTIONS
 
 
 def session_instructions(cfg: Any) -> str:
-    """The system prompt of a session: the fixed contract, then the active personality's reply voice."""
-    return _INSTRUCTIONS + "\n\n" + bridge_voice(cfg)
+    """The system prompt of a session: the fixed contract, then the active personality's reply voice.
+
+    It travels as a command-line argument, and an npm install starts Claude Code through a
+    ``claude.cmd`` shim that cmd.exe reads, so it is one line with no double quotes or percent signs."""
+    text = " ".join((_INSTRUCTIONS + " " + bridge_voice(cfg)).split())
+    return text.replace('"', "”").replace("%", "％")
 
 
 if __name__ == "__main__":

@@ -25,7 +25,7 @@ FieldMeta (dataclass)
   ├── label: str         # Human-readable label
   ├── description: str   # Hint under the field, and its tooltip
   ├── category: str      # Tab grouping key
-  ├── field_type: str    # "bool" | "int" | "float" | "str" | "secret" | "choice" | "device" | "list"
+  ├── field_type: str    # "bool" | "int" | "float" | "str" | "text" | "secret" | "choice" | "device" | "list"
   ├── choices            # For "choice"/"device": [(value, display), ...]
   ├── min_val / max_val  # Numeric bounds
   ├── step               # Increment step
@@ -49,6 +49,7 @@ Every built-in field has a section. Numbers show as many decimal places as their
 | `int` (nullable) | QCheckBox + QSpinBox | Checkbox enables/disables the spinbox |
 | `float` | QDoubleSpinBox | With bounds, step, suffix |
 | `str` | QLineEdit | Placeholder if nullable |
+| `text` | QPlainTextEdit (multi-line, fixed height) | Saved trimmed, line breaks kept (the custom personality) |
 | `secret` | Status label + QLineEdit (EchoMode.Password) + Remove | API keys. Shows only whether a key is stored ("Stored" in the success colour, "Removed on save" in the warning colour, "Not set" muted), never the key. A typed key is stored, or a Remove takes effect, on Save, in the OS credential store (`jarvis.credentials`, Windows Credential Manager). Never written to `config.json`; Reset clears typed input only |
 | `choice` | QComboBox | Pre-defined options. An offered empty choice ("Model default", "Automatic", "Off", "Same as chat provider") is saved as `""`, a value of its own, never as `null` |
 | `device` | QComboBox | Dynamically populated from sounddevice |
@@ -66,7 +67,7 @@ While **Show advanced settings** is unticked, advanced fields are hidden on ever
 
 ## Categories (Sidebar Order)
 
-1. **General**: Reply mode (the mode Jarvis starts in: local, ChatGPT through Codex, Claude through Claude Code; a cloud mode must also be allowed on Cloud Modes, see `bridge/bridge.spec.md`); Windows control (quick commands, Windows control tools, FancyZones layouts); Web search (web search; Wikipedia fallback and the Brave key are advanced); Performance (low-power mode). Footer: Windows status and safety summary (see Windows Control).
+1. **General**: Reply mode (the mode Jarvis starts in: local, ChatGPT through Codex, Claude through Claude Code; a cloud mode must also be allowed on Cloud Modes, see `bridge/bridge.spec.md`); Personality (Butler, Plain, Friendly or Custom, and the custom description as a text box shown only for Custom, see `jarvis/personality.spec.md`); Windows control (quick commands, Windows control tools, FancyZones layouts); Web search (web search; Wikipedia fallback and the Brave key are advanced); Performance (low-power mode). Footer: Windows status and safety summary (see Windows Control).
 2. **Listening**: Microphone (device; sample rate is advanced); Wake word (word, strictness, wait after the wake word); Conversation (pause before sending, follow-up listening and its time, wake screen effect); Your voice (speaker verification; talk over Jarvis while verification is on). Footer: Voice enrolment (see Voice Input).
 3. **Speaking**: Voice (speak replies, voice on this PC, voice engine); Piper voice (speed and sentence pause; expressiveness, rhythm, custom voice file and speaker number are advanced) shown while Piper is chosen; Chatterbox voice (voice to clone, emotion; pacing and device are advanced) shown while Chatterbox is chosen.
 4. **AI Models**: Provider (provider; the Ollama address is advanced; server address and API key while the OpenAI-compatible server is chosen); Models (chat model, fast model, tool model, think before answering, answer time limit); Embeddings (see AI Models).

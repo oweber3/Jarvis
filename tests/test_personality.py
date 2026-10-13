@@ -20,6 +20,11 @@ def isolated():
     personality.reset()
 
 
+def _words(text):
+    """Text with its whitespace collapsed, as the Claude prompt sends it on one line."""
+    return " ".join(text.split())
+
+
 def _cfg(**values):
     base = {"personality": "butler", "personality_custom_text": "", "wake_word": "jarvis"}
     base.update(values)
@@ -96,6 +101,12 @@ class TestSwitching:
         assert result.ok and result.reason == "not_saved"
         assert personality.current(cfg)[0] == "plain"
 
+    def test_a_switch_before_start_says_it_was_not_saved(self):
+        cfg = _cfg()
+        result = personality.switch("plain", cfg)
+        assert result.ok and result.reason == "not_saved"
+        assert personality.current(cfg)[0] == "plain"
+
     def test_start_drops_an_earlier_switch(self):
         cfg = _cfg()
         personality.start(cfg, save=lambda values: True)
@@ -150,7 +161,7 @@ class TestReplies:
         cfg = _cfg(personality="friendly", wake_word="friday")
         text = prompts.session_instructions(cfg)
         assert text.startswith(prompts.assistant_instructions())
-        assert character_section("friendly", "", "Friday") in text
+        assert _words(character_section("friendly", "", "Friday")) in _words(text)
 
     @pytest.mark.parametrize("module", ["jarvis.claude_bridge.prompts", "jarvis.codex_bridge.prompts"])
     def test_cloud_sessions_follow_a_switch(self, module):
@@ -161,7 +172,14 @@ class TestReplies:
         before = prompts.session_instructions(cfg)
         personality.switch("plain")
         after = prompts.session_instructions(cfg)
-        assert before != after and character_section("plain", "", "Jarvis") in after
+        assert before != after and _words(character_section("plain", "", "Jarvis")) in _words(after)
+
+    def test_the_claude_prompt_survives_a_cmd_shim(self):
+        from jarvis.claude_bridge import prompts
+        text = prompts.session_instructions(_cfg(personality="custom", personality_custom_text=(
+            'Say "cheers" a lot.\nUse 100% British slang & %PATH% jokes.')))
+        assert "\n" not in text and "\r" not in text and '"' not in text and "%" not in text
+        assert "cheers" in text and "PATH" in text
 
     @pytest.mark.parametrize("module", ["jarvis.claude_bridge.prompts", "jarvis.codex_bridge.prompts"])
     def test_custom_text_reaches_the_cloud_fenced(self, module):
@@ -217,6 +235,21 @@ class TestTool:
         result = self._run(cfg, {"action": "set", "name": "friendly"})
         assert result.success and "restart" in result.reply_text.lower()
 
+    def test_a_pairing_with_nothing_usable_is_not_announced(self):
+        cfg = _cfg(personality_voices={"friendly": {"tts_not_a_setting": 1, "tts_rate": "fast"}})
+        personality.start(cfg, save=lambda values: True)
+        result = self._run(cfg, {"action": "set", "name": "friendly"})
+        assert result.success and "restart" not in result.reply_text.lower()
+
+    def test_the_web_chat_step_names_only_a_real_switch(self):
+        cfg = _cfg()
+        personality.start(cfg, save=lambda values: True)
+        tool = BUILTIN_TOOLS["personality"]
+        done = self._run(cfg, {"action": "set", "name": "plain"})
+        assert "Plain" in tool.step_note({"action": "set", "name": "plain"}, done).label
+        again = self._run(cfg, {"action": "set", "name": "plain"})
+        assert tool.step_note({"action": "set", "name": "plain"}, again) is None
+
     def test_a_cloud_model_may_switch_it(self, mock_config):
         from jarvis.claude_bridge.service import claude_tool_snapshot
         from jarvis.codex_bridge.service import codex_tool_snapshot
@@ -237,6 +270,12 @@ class TestFastPath:
         from jarvis.fastpath.dispatcher import match_command
         match = match_command(text, mock_config, "en")
         assert (match.tool_name, match.args) == ("personality", {"action": "set", "name": name})
+
+    @pytest.mark.parametrize("text", ["be plain", "plain mode", "be friendly", "be the butler"])
+    def test_short_forms_need_the_wake_word(self, mock_config, text):
+        from jarvis.fastpath.dispatcher import match_command
+        assert match_command(text, mock_config, "en", addressed=False) is None
+        assert match_command("switch to plain mode", mock_config, "en", addressed=False).tool_name == "personality"
 
     @pytest.mark.parametrize("text", ["what is plain text", "be friendly to my sister",
                                       "write a friendly email", "open plain"])
@@ -279,6 +318,13 @@ class TestPairedVoice:
             "personality_voices": {"plain": {"reply_mode": "claude", "claude_enabled": True,
                                              "tts_not_a_setting": 1, "tts_rate": 150}}})
         assert cfg.reply_mode == "local" and cfg.claude_enabled is False and cfg.tts_rate == 150
+
+    @pytest.mark.parametrize("value", ["fast", None, True, [1]])
+    def test_a_value_of_the_wrong_type_is_ignored_and_jarvis_still_starts(self, tmp_path, monkeypatch, value):
+        cfg = self._load(tmp_path, monkeypatch, {
+            "personality": "plain", "tts_piper_length_scale": 0.7, "tts_rate": 180,
+            "personality_voices": {"plain": {"tts_piper_length_scale": value, "tts_rate": 150}}})
+        assert cfg.tts_piper_length_scale == 0.7 and cfg.tts_rate == 150
 
     @pytest.mark.parametrize("voices", [None, [], "piper", {"plain": "piper"}, {"plain": None}])
     def test_malformed_pairings_are_ignored(self, tmp_path, monkeypatch, voices):

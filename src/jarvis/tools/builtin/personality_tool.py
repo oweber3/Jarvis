@@ -38,7 +38,8 @@ class PersonalityTool(Tool):
     def step_note(self, args: Optional[Dict[str, Any]], result: ToolExecutionResult) -> Optional[StepNote]:
         from ... import personality
         name = (args or {}).get("name")
-        if (args or {}).get("action") == "set" and name in personality.LABELS:
+        switched = (result.reply_text or "").startswith("Switched")
+        if (args or {}).get("action") == "set" and name in personality.LABELS and switched:
             return StepNote(f"Switched to the {personality.LABELS[name]} personality")
         return None
 

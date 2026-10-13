@@ -738,6 +738,36 @@ table. Other detected languages fall through. Set `fast_commands_enabled` to
 `false` to use conversational routing for every request. These keys can be set
 in `config.json` without changing model settings.
 
+## Personality
+
+How Jarvis talks, in every reply mode (local, Codex and Claude). Pick it in **Settings → General → Personality** or switch at any time by voice or text; a switch applies to the next reply with no restart and is written back to `personality`.
+
+| `personality` | Sounds like | Say |
+| :--- | :--- | :--- |
+| `butler` (default) | A composed British butler with one dry aside on casual topics | "switch to butler mode", "be the butler" |
+| `plain` | The shortest useful answer, no wit or small talk | "switch to plain mode", "be plain" |
+| `friendly` | Warm, casual and encouraging | "switch to friendly mode", "be friendly" |
+| `custom` | Your own description in `personality_custom_text` (up to 1,500 characters) | "use my custom personality" |
+
+```json
+{
+  "personality": "custom",
+  "personality_custom_text": "A calm, encouraging coach who keeps it short."
+}
+```
+
+A personality changes only the voice. The rules underneath (never mean or sycophantic, honest about what tools did, memory, confirmations and safety checks) are the same whichever you pick, and a custom description cannot remove them. Custom with no text is the Butler. Fast commands ("set volume to 30%") reply with the same short sentence whatever the personality.
+
+**Paired voice (optional).** A personality can bring its own voice settings: `personality_voices` maps a personality to any `tts_*` settings, used instead of your normal voice settings when Jarvis starts with that personality. Leave it out and nothing changes. After a voice switch to a personality with a paired voice, the voice changes at the next restart.
+
+```json
+{
+  "personality_voices": {
+    "friendly": {"tts_piper_length_scale": 0.6}
+  }
+}
+```
+
 ## Reply modes
 
 Jarvis answers with the local model unless you allow a cloud mode. `codex_enabled` and `claude_enabled` (both `false`) allow ChatGPT through Codex and Claude through Claude Code; `reply_mode` (`local`, `codex` or `claude`) is the mode Jarvis starts in, and a cloud mode that is not allowed starts as local.

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from .debug import debug_log
 from .system_prompt import CUSTOM, DEFAULT_PERSONALITY, PERSONALITIES, character_section, clean_custom_text
@@ -79,15 +79,33 @@ def bridge_voice(cfg: Any) -> str:
             + reply_character(cfg))
 
 
-def voice_overrides(voices: Any, name: str, known_keys: Optional[Iterable[str]] = None) -> Dict[str, Any]:
-    """The voice settings ``name`` is paired with in ``personality_voices``: only ``tts_*`` keys (and,
-    when ``known_keys`` is given, only those among them). Anything malformed pairs nothing."""
+def _fits(value: Any, default: Any) -> bool:
+    """Whether ``value`` can stand in for a setting whose default is ``default``."""
+    if isinstance(default, bool):
+        return isinstance(value, bool)
+    if isinstance(default, (int, float)):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if isinstance(default, str):
+        return isinstance(value, str)
+    if default is None:
+        return value is None or (isinstance(value, (str, int, float)) and not isinstance(value, bool))
+    return False
+
+
+def voice_overrides(voices: Any, name: str, defaults: Dict[str, Any]) -> Dict[str, Any]:
+    """The voice settings ``name`` is paired with in ``personality_voices``: only known ``tts_*`` settings
+    whose value has the setting's type. Anything else pairs nothing."""
     pairing = voices.get(name) if isinstance(voices, dict) else None
     if not isinstance(pairing, dict):
         return {}
-    known = set(known_keys) if known_keys is not None else None
-    return {key: value for key, value in pairing.items()
-            if isinstance(key, str) and key.startswith(VOICE_KEY_PREFIX) and (known is None or key in known)}
+    chosen = {}
+    for key, value in pairing.items():
+        if isinstance(key, str) and key.startswith(VOICE_KEY_PREFIX) and key in defaults:
+            if _fits(value, defaults[key]):
+                chosen[key] = value
+            else:
+                debug_log(f"personality {name} voice setting {key} ignored: wrong type", "personality")
+    return chosen
 
 
 def _persist(values: Dict[str, Any]) -> bool:
@@ -129,8 +147,9 @@ def switch(name: Any, cfg: Any = None) -> SwitchResult:
     with _lock:
         _override = wanted
         save = _save
-    saved = save({"personality": wanted}) if save is not None else True
-    paired = bool(voice_overrides(getattr(cfg, "personality_voices", None), wanted))
+    saved = save({"personality": wanted}) if save is not None else False
+    from .config import get_default_config
+    paired = bool(voice_overrides(getattr(cfg, "personality_voices", None), wanted, get_default_config()))
     print(f"🎭 Personality: {LABELS[wanted]}", flush=True)
     debug_log(f"personality {previous} -> {wanted} ({'saved' if saved else 'not saved'})", "personality")
     return SwitchResult(True, wanted, previous, None if saved else "not_saved", voice_paired=paired)

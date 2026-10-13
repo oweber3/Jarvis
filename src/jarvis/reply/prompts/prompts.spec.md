@@ -97,6 +97,8 @@ prompts = get_system_prompts(model_size)
 # Build system message from prompts.to_list()
 ```
 
+These components follow the persona prompt (`src/jarvis/system_prompt.py`): the active personality's character section, then its fixed rules (`src/jarvis/personality.spec.md`). They are the same for every personality, so a custom personality never removes or reorders them.
+
 ### Language Agnosticism
 
 All prompts are language-agnostic:

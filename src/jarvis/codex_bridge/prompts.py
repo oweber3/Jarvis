@@ -37,7 +37,7 @@ _INSTRUCTIONS = (
 
 
 def assistant_instructions() -> str:
-    """The base instructions of every request session, at most ``MAX_INSTRUCTION_CHARS`` characters."""
+    """The fixed session contract, at most ``MAX_INSTRUCTION_CHARS`` characters."""
     return _INSTRUCTIONS
 
 

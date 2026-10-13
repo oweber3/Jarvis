@@ -24,7 +24,7 @@ TOOLS = {
 
 
 def build(script=None, cfg=None, tools=None, executor=None, auth=None, claude_kwargs=None, tmp_path=None,
-          **service_kwargs):
+          instructions=None, **service_kwargs):
     cfg = cfg or make_cfg()
     claude = FakeClaude(script, **(claude_kwargs or {}))
     store = FakeStore()
@@ -39,7 +39,7 @@ def build(script=None, cfg=None, tools=None, executor=None, auth=None, claude_kw
 
     service = ClaudeBridgeService(cfg, claude, executor=executor, confirmation_store=store,
                                   tools_provider=lambda c: dict(tools or TOOLS), auth_reader=auth_reader,
-                                  instructions_provider=lambda: "CONTRACT", **service_kwargs)
+                                  instructions_provider=instructions or (lambda: "CONTRACT"), **service_kwargs)
     service.auth_calls = auth_calls
     return service, claude, executor, store
 
@@ -543,7 +543,7 @@ class TestSpareSession:
     def test_a_spare_started_with_other_instructions_is_discarded(self):
         voice = {"text": "CONTRACT butler"}
         service, claude, _, _ = build(scripted(("answer", "completed", "ok")))
-        service._instructions = lambda: voice["text"]
+        service, claude, _, _ = build(scripted(("answer", "completed", "ok")), instructions=lambda: voice["text"])
         try:
             run(service)
             assert wait_for(lambda: any(s.alive and not s.user_texts for s in claude.sessions))
