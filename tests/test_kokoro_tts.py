@@ -563,6 +563,47 @@ def test_kokoro_runs_where_chosen_and_falls_back_to_the_processor(monkeypatch, t
 
 
 @pytest.mark.unit
+def test_a_graphics_card_that_fails_at_first_run_is_reported_as_the_processor(monkeypatch, tmp_path):
+    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    class Session(FakeSession):
+        def get_providers(self):
+            return providers
+
+        def run(self, outputs, inputs):
+            providers[:] = ["CPUExecutionProvider"]  # what ONNX Runtime does after a CUDA failure
+            return super().run(outputs, inputs)
+
+    monkeypatch.setattr(kokoro, "kokoro_files_present", lambda *_: True)
+    monkeypatch.setattr(kokoro, "_create_session", lambda path, device: (Session(), "graphics card"))
+    import numpy as np_
+    monkeypatch.setattr(np_, "load", lambda path: _NpzLike(_voice_table()))
+    monkeypatch.setattr("builtins.open", _vocab_open(open))
+    voice = kokoro.load_kokoro_voice(tmp_path, kokoro.KOKORO_DEFAULT_VOICE, 1.0, "gpu")
+    assert voice.device == "processor"
+
+
+class _NpzLike(dict):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _vocab_open(real_open):
+    import io
+    import json as json_
+
+    def fake(path, *args, **kwargs):
+        if str(path).endswith("config.json"):
+            return io.StringIO(json_.dumps({"vocab": {chr(c): c for c in range(32, 0x2FF)}}))
+        return real_open(path, *args, **kwargs)
+
+    return fake
+
+
+@pytest.mark.unit
 def test_the_factory_passes_the_chosen_device(no_network):
     engine = create_tts_engine(engine="kokoro", enabled=True, kokoro_device="cpu")
     assert engine.kokoro_device == "cpu"
