@@ -30,6 +30,8 @@ from jarvis.config import (
     SUPPORTED_CHAT_MODELS, TOOL_USE_CHAT_MODELS,
 )
 from jarvis.debug import debug_log
+from jarvis.output.kokoro import KOKORO_SPEED_RANGE, KOKORO_VOICES
+from jarvis.output.piper_voices import piper_voices
 from desktop_app.themes import apply_theme, divider, hud_heading, link, set_role
 from desktop_app.mcp_catalogue import CATALOGUE, CATALOGUE_BY_NAME, MCPEntry
 
@@ -324,13 +326,21 @@ def _build_field_metadata() -> List[FieldMeta]:
       "another voice output, such as one added by an extension.",
       "speaking", "bool", shown_when=_on("tts_enabled"))
     f("tts_engine", "Voice Engine",
-      "Piper is fast and light. Chatterbox can clone a voice from a recording but needs a strong PC, "
-      "ideally an NVIDIA graphics card.",
-      "speaking", "choice", choices=[("piper", "Piper (fast)"), ("chatterbox", "Chatterbox (voice cloning)")],
+      "Piper is the lightest and fastest on any PC. Kokoro sounds more natural but uses more memory and "
+      "starts speaking a little later on PCs without a graphics card; it is best with one. Chatterbox clones "
+      "a voice from a recording and needs a strong PC, ideally an NVIDIA graphics card. All run on this PC.",
+      "speaking", "choice",
+      choices=[("piper", "Piper (lightest, default)"), ("kokoro", "Kokoro (more natural)"),
+               ("chatterbox", "Chatterbox (voice cloning)")],
       shown_when=_on("tts_enabled"))
     piper = _all(_on("tts_enabled"), _is("tts_engine", "piper"))
+    kokoro = _all(_on("tts_enabled"), _is("tts_engine", "kokoro"))
     chatterbox = _all(_on("tts_enabled"), _is("tts_engine", "chatterbox"))
     heading("Piper voice")
+    f("tts_piper_voice", "Voice",
+      "Which Piper voice speaks. A voice not used before downloads once (about 20 to 120 MB) when you "
+      "preview it or when Jarvis starts.",
+      "speaking", "choice", choices=[(key, v.label) for key, v in piper_voices().items()], shown_when=piper)
     f("tts_piper_length_scale", "Speaking Speed",
       "Below 1.0 speaks faster, above 1.0 slower.",
       "speaking", "float", min_val=0.1, max_val=3.0, step=0.05, shown_when=piper)
@@ -344,14 +354,24 @@ def _build_field_metadata() -> List[FieldMeta]:
       "Higher gives a livelier, less even rhythm.",
       "speaking", "float", min_val=0.0, max_val=2.0, step=0.05, advanced=True, shown_when=piper)
     f("tts_piper_model_path", "Custom Voice File",
-      "Full path to a Piper .onnx voice. Leave empty for the built-in voice.",
+      "Full path to a Piper .onnx voice of your own. Leave empty to use the voice chosen above.",
       "speaking", "str", nullable=True, advanced=True, shown_when=piper)
     f("tts_piper_speaker", "Speaker Number",
       "For voice files that contain several speakers: which one to use.",
       "speaking", "int", min_val=0, max_val=99, nullable=True, advanced=True, shown_when=piper)
+    heading("Kokoro voice")
+    f("tts_kokoro_voice", "Voice",
+      "Which Kokoro voice speaks. Kokoro's files (about 350 MB) download once, the first time you preview or "
+      "use it; until then Piper speaks.",
+      "speaking", "choice", choices=list(KOKORO_VOICES.items()), shown_when=kokoro)
+    f("tts_kokoro_speed", "Speaking Speed",
+      "1.0 is natural; higher speaks faster, lower slower.",
+      "speaking", "float", min_val=KOKORO_SPEED_RANGE[0], max_val=KOKORO_SPEED_RANGE[1], step=0.05,
+      shown_when=kokoro)
     heading("Chatterbox voice")
     f("tts_chatterbox_audio_prompt", "Voice to Clone",
-      "Full path to a short, clear recording of the voice to copy. Leave empty for Chatterbox's own voice.",
+      "Full path to a short, clear recording of the voice to copy. Leave empty for Chatterbox's own voice. "
+      "Only clone your own voice, or someone's who has given their consent.",
       "speaking", "str", nullable=True, shown_when=chatterbox)
     f("tts_chatterbox_exaggeration", "Emotion",
       "How much feeling goes into the voice. 0.5 is natural; higher is more dramatic.",
@@ -1079,6 +1099,8 @@ class SettingsWindow(QDialog):
                     footer = self._build_windows_footer()
                 elif cat_key == "listening":
                     footer = self._build_voice_footer()
+                elif cat_key == "speaking":
+                    footer = self._build_voice_panel()
                 elif cat_key == ACCOUNTS_CATEGORY:
                     header = self._build_accounts_page()
                 page = self._build_category_tab(cat_fields, footer, header)
@@ -1132,6 +1154,14 @@ class SettingsWindow(QDialog):
             elif fm.field_type == "choice":
                 w.currentIndexChanged.connect(self._refresh_visibility)
         self._refresh_visibility()
+        if hasattr(self, "voice_panel"):
+            for key in ("tts_enabled", "tts_engine", "tts_piper_voice", "tts_piper_model_path"):
+                widget = self._widgets.get(key)
+                signal = (getattr(widget, "toggled", None) or getattr(widget, "currentIndexChanged", None)
+                          or getattr(widget, "textChanged", None))
+                if signal is not None:
+                    signal.connect(self.voice_panel.refresh)
+            self.voice_panel.refresh()
 
     def _section_heading(self, title: str) -> QLabel:
         label = QLabel(title)
@@ -1534,6 +1564,16 @@ class SettingsWindow(QDialog):
         self._windows_config_note.setObjectName("hint")
         layout.addWidget(self._windows_config_note)
         return box
+
+    def _build_voice_panel(self) -> QWidget:
+        """Download state, graphics card information and the Preview button for the chosen voice."""
+        from desktop_app.voice_panel import VoicePanel
+
+        self.voice_panel = VoicePanel(self._current, self._assistant_name)
+        return self.voice_panel
+
+    def _assistant_name(self) -> str:
+        return str(self._current("wake_word") or "Jarvis").strip().capitalize()
 
     def _build_voice_footer(self) -> QWidget:
         """Enrolment status and deletion for the stored voiceprint."""

@@ -574,9 +574,14 @@ class TestPiperVoiceDownloadRetry:
             resp.iter_content.return_value = [b"data"]
             return resp
 
-        with patch("requests.get", side_effect=mock_get):
+        import hashlib
+        from src.jarvis.output import piper_voices
+        real_checks = piper_voices._file_checks
+        checks = {name: (4, hashlib.md5(b"data").hexdigest()) for name in real_checks("en_GB-alan-medium")}
+        with patch("requests.get", side_effect=mock_get), \
+                patch.object(piper_voices, "_file_checks", lambda key: checks):
             with patch("src.jarvis.output.tts._get_piper_models_dir", return_value=tmp_path):
-                with patch("src.jarvis.output.tts.time.sleep") as mock_sleep:
+                with patch("time.sleep") as mock_sleep:
                     result = _download_piper_voice("en_GB-alan-medium")
 
         assert result is not None
@@ -601,7 +606,7 @@ class TestPiperVoiceDownloadRetry:
 
         with patch("requests.get", side_effect=mock_get):
             with patch("src.jarvis.output.tts._get_piper_models_dir", return_value=tmp_path):
-                with patch("src.jarvis.output.tts.time.sleep") as mock_sleep:
+                with patch("time.sleep") as mock_sleep:
                     result = _download_piper_voice("en_GB-alan-medium")
 
         assert result is None

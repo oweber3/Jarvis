@@ -72,7 +72,7 @@ A phrase file uses the `fastpath/phrases/<lang>.json` rule format (`id`, `family
 
 ## Voice outputs
 
-A voice output receives Jarvis's spoken replies in addition to (or instead of) this PC's speakers. Only the Piper engine feeds voice outputs; with Chatterbox selected, each enabled output prints once that it needs Piper and stays silent.
+A voice output receives Jarvis's spoken replies in addition to (or instead of) this PC's speakers. The Piper and Kokoro engines feed voice outputs (Kokoro plays through Piper's streaming player at its own sample rate, which `convert` receives); with Chatterbox selected, each enabled output prints once that it needs the Piper or Kokoro voice engine and stays silent.
 
 ```python
 class VoiceOutput(Protocol):

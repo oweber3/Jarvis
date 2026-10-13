@@ -170,7 +170,12 @@ def test_piper_updates_are_throttled_and_complete(tmp_path, monkeypatch, known_s
     response.iter_content.side_effect = lambda **kw: iter([b"x" * 1000] * 1000)
     monkeypatch.setattr("requests.get", lambda *args, **kwargs: response)
     monkeypatch.setattr(tts, "_get_piper_models_dir", lambda: tmp_path)
-    monkeypatch.setattr(tts.time, "monotonic", lambda: 1.0)
+    import hashlib
+    from jarvis.output import piper_voices
+    body = hashlib.md5(b"x" * 1_000_000).hexdigest()
+    monkeypatch.setattr(piper_voices, "_file_checks",
+                        lambda key: {f"{key}.onnx": (1_000_000, body), f"{key}.onnx.json": (1_000_000, body)})
+    monkeypatch.setattr("time.monotonic", lambda: 1.0)
     logs = []
     assert tts._download_piper_voice("en_GB-alan-medium", logs.append)
     assert len(logs) < 15

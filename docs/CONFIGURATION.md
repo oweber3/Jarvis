@@ -441,24 +441,35 @@ Customise the hotkey in Settings or `config.json`:
 <details>
 <summary><strong>Text-to-Speech</strong></summary>
 
-**Piper TTS (default)** - Neural TTS that auto-downloads on first use (~60MB):
-- Works out of the box - no setup required
-- High-quality British English male voice (en_GB-alan-medium)
-- Fast local synthesis with exact duration tracking
+Choose the engine and voice in **Settings → Speaking**; **Preview** speaks a sample line with your unsaved choice. The voice is three plain keys per engine (engine, voice, speed), so other features can name a voice too.
 
-To use different Piper voices, download from [HuggingFace](https://huggingface.co/rhasspy/piper-voices) and set:
-```json
-{
-  "tts_piper_model_path": "~/.local/share/jarvis/models/piper/en_GB-alan-medium.onnx"
-}
-```
+| Key | Default | Meaning |
+| :--- | :--- | :--- |
+| `tts_engine` | `"piper"` | `piper`, `kokoro` or `chatterbox`. Never changed automatically for your hardware |
+| `tts_piper_voice` | `"en_GB-alan-medium"` | One of the English voices in the pinned Piper catalogue (`src/jarvis/output/piper_voices.json`); downloads once (20 to 120 MB) and is checked against the catalogue's size and digest |
+| `tts_piper_length_scale` | `0.65` | Piper speed: below 1.0 faster, above 1.0 slower |
+| `tts_piper_model_path` | `null` | A Piper `.onnx` voice file of your own (with its `.onnx.json` beside it); wins over `tts_piper_voice` |
+| `tts_kokoro_voice` | `"bm_george"` | A Kokoro English voice, such as `af_heart`, `bf_emma` or `bm_george` (`a` American, `b` British, `f` female, `m` male) |
+| `tts_kokoro_speed` | `1.0` | Kokoro speed, 0.5 to 2.0 |
+
+**Piper (default)** is the lightest and fastest on any PC.
+
+**Kokoro** (Kokoro-82M, Apache-2.0) sounds more natural. It runs on the ONNX Runtime Jarvis already uses, with no PyTorch. Its files (about 354 MB in `~/.local/share/jarvis/models/kokoro`) download only once you choose it, from pinned addresses with SHA-256 checks; until they are ready, or whenever Kokoro cannot load, Piper speaks and the log says why. It uses an NVIDIA graphics card when the installed ONNX Runtime offers CUDA (the `onnxruntime-gpu` build), otherwise the processor.
+
+Measured on one PC (12-thread CPU, RTX 5070), time from a reply being ready to the first sound:
+
+| Engine | First sound | Synthesis speed (lower is faster) | Extra memory | Disk |
+| :--- | :--- | :--- | :--- | :--- |
+| Piper, processor | 0.1 to 0.3 s | 0.04 × real time | about 260 MB | 63 MB per voice |
+| Kokoro, processor | 0.3 to 1.2 s (longer first sentences take longer) | 0.3 × real time | about 610 MB | 354 MB |
+| Kokoro, graphics card | 0.15 to 0.35 s | 0.08 × real time | about 1.3 GB, plus 0.5 to 0.8 GB of graphics memory | 354 MB |
 
 **Chatterbox** - AI voice with emotion control (requires running from source):
 ```json
 { "tts_engine": "chatterbox" }
 ```
 
-Voice cloning with Chatterbox - add a 3-10 second .wav sample:
+Voice cloning with Chatterbox (only clone your own voice, or someone's who has given consent) - add a 3-10 second .wav sample:
 ```json
 {
   "tts_engine": "chatterbox",

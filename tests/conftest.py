@@ -74,6 +74,9 @@ class MockConfig:
     tts_piper_noise_scale: float = 0.667
     tts_piper_noise_w: float = 0.8
     tts_piper_sentence_silence: float = 0.2
+    tts_piper_voice: str = "en_GB-alan-medium"
+    tts_kokoro_voice: str = "bm_george"
+    tts_kokoro_speed: float = 1.0
     tts_chatterbox_device: str = "cpu"
     tts_chatterbox_audio_prompt: Optional[str] = None
     tts_chatterbox_exaggeration: float = 0.5
