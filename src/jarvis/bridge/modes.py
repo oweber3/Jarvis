@@ -176,6 +176,8 @@ def _release_local_models(cfg: Any, mode: str) -> None:
         models = local_reply_models(cfg)
         backend = get_llm_backend(cfg) if models else None
         for model in models:
+            if active_mode() not in CLOUD_MODES:
+                return
             if backend.release(model):
                 print(f"  🧹 Unloaded local model '{model}' ({LABELS[mode]} replies do not use it)", flush=True)
                 debug_log(f"released local reply model {model}", "bridge")

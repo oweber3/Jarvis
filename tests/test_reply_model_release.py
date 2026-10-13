@@ -195,6 +195,18 @@ def test_moving_between_cloud_modes_unloads_a_chat_model_loaded_meanwhile():
 
 
 @pytest.mark.unit
+def test_a_release_that_runs_after_a_return_to_local_unloads_nothing():
+    ollama = FakeOllama(["big-chat"])
+    try:
+        _start(_cfg(ollama.url))
+        modes._release_local_models(_cfg(ollama.url), modes.CODEX)
+        assert ollama.unloaded == []
+        assert ollama.loaded == ["big-chat"]
+    finally:
+        ollama.close()
+
+
+@pytest.mark.unit
 def test_returning_to_local_unloads_nothing():
     ollama = FakeOllama(["small-fast", "embed-text"])
     try:
