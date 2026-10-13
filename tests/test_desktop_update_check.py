@@ -17,7 +17,8 @@ pytestmark = pytest.mark.unit
 
 
 def _tray():
-    return SimpleNamespace(_update_signals=SimpleNamespace(checked=Mock()), _update_check_running=False)
+    return SimpleNamespace(_update_signals=SimpleNamespace(checked=Mock()), _update_check_running=False,
+                           _update_dialog_requested=False)
 
 
 def _wait_for(mock, seconds=5.0):
@@ -108,3 +109,24 @@ class TestStartUpCheckIsOptIn:
     def test_the_settings_window_offers_the_switch(self):
         from desktop_app.settings_window import FIELD_METADATA
         assert any(field.key == "update_check_on_startup" for field in FIELD_METADATA)
+
+
+def test_asking_while_the_start_up_check_runs_still_answers(monkeypatch):
+    """A Check for Updates click during the silent start-up check gets its dialog when that check ends."""
+    from desktop_app import app as app_module
+    import desktop_app.updater as updater
+
+    monkeypatch.setattr(updater, "is_frozen", lambda: True)
+    tray = _tray()
+    tray._update_check_running = True
+
+    app_module.JarvisSystemTray.check_for_updates(tray, show_no_update_dialog=True)
+
+    shown = []
+    monkeypatch.setattr("desktop_app.update_dialog.show_no_update_dialog", lambda version: shown.append(version))
+    status = updater.UpdateStatus(update_available=False, current_version="1.2.3", current_channel="stable",
+                                  latest_release=None)
+    app_module.JarvisSystemTray._on_update_checked(tray, status, False)
+
+    assert shown == ["1.2.3"]
+    assert tray._update_check_running is False

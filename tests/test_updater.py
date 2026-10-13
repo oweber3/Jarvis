@@ -1594,7 +1594,8 @@ class TestTrayUpdateFlow:
                               current_channel="stable", latest_release=release)
         accepted = MagicMock()
         accepted.return_value.exec.return_value = QDialog.DialogCode.Accepted
-        tray = SimpleNamespace(is_listening=False, quit_app=MagicMock(), _update_check_running=True)
+        tray = SimpleNamespace(is_listening=False, quit_app=MagicMock(), _update_check_running=True,
+                               _update_dialog_requested=False)
 
         with patch("desktop_app.updater.update_install_blocker", return_value="move it"), \
              patch("desktop_app.update_dialog.UpdateAvailableDialog", accepted), \

@@ -101,3 +101,13 @@ def test_an_announcement_during_a_request_is_queued_without_ending_it():
                           "_speak_reply": lambda self, text: replies.append(text)})()
     VoiceListener.speak_announcement(fake, "Your timer is done.")
     assert spoken == ["Your timer is done."] and replies == []
+
+
+def test_an_announcement_starts_with_its_turn_line(monkeypatch, capsys):
+    monkeypatch.setattr(daemon, "_global_voice_listener", None)
+    monkeypatch.setattr(daemon, "_global_dialogue_memory", None)
+    monkeypatch.setattr(daemon, "_global_tts_engine", None)
+    monkeypatch.setattr(daemon, "_stdin_ipc_enabled", lambda: False)
+    daemon.deliver_announcement("Reminder: call the dentist.")
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[:2] == [f"{daemon.TURN_LINE_PREFIX}announcement", "⏰ Reminder: call the dentist."]

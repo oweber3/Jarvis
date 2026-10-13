@@ -141,6 +141,58 @@ class TestReportSafeLog:
         assert "private-value" not in report
 
 
+    def test_a_typed_request_before_listening_ends_the_start_up_section(self):
+        """Text chat, phone and web chat print no Heard line; their turn line marks where they start."""
+        from desktop_app.report_filter import report_safe_log
+        from jarvis.daemon import TURN_LINE_PREFIX
+
+        typed = (
+            f"{TURN_LINE_PREFIX}chat\n"
+            "  🔍 Memory search: biopsy, Quinn\n"
+            "  📖 Diary: recalled 1 entries\n"
+            "     · Talked about the divorce lawyer\n"
+            "    🌐 Searching the web for 'Dr Quinn oncology clinic'…\n"
+        )
+        report = report_safe_log(START_UP + typed)
+
+        _assert_private_words_absent(report)
+        assert "✅ Whisper model 'small' loaded (cuda)" in report
+
+    def test_an_announcement_ends_the_start_up_section(self):
+        from desktop_app.report_filter import report_safe_log
+        from jarvis.daemon import TURN_LINE_PREFIX
+
+        report = report_safe_log(START_UP + f"{TURN_LINE_PREFIX}announcement\n⏰ Take the biopsy forms to Dr Quinn\n")
+
+        _assert_private_words_absent(report)
+
+    def test_a_log_cleared_after_start_up_is_all_conversation(self):
+        from desktop_app.report_filter import report_safe_log
+
+        report = report_safe_log("    🌐 Searching the web for 'Dr Quinn oncology clinic'…\n", start_up=False)
+
+        _assert_private_words_absent(report)
+
+    def test_names_printed_at_start_up_are_left_out(self):
+        """Phone links carry the PC's name and the microphone often carries the owner's."""
+        from desktop_app.report_filter import report_safe_log
+
+        report = report_safe_log("📱 Phone access is on (port 8765)\n   🔗 http://OWENS-LAPTOP:8765/\n"
+                                 "  🎤 Using audio device: Owen's AirPods\n")
+
+        assert "OWENS-LAPTOP" not in report and "Owen" not in report
+        assert "📱 Phone access is on (port 8765)" in report
+
+    @pytest.mark.parametrize("line", ["+447700900123 is Sarah's number", "$5000 rent to Sarah", "£40 for Sarah",
+                                      "<Sarah> said hi", "~Sarah"])
+    def test_a_later_line_keeps_only_a_leading_icon(self, line):
+        from desktop_app.report_filter import report_safe_log
+
+        report = report_safe_log(START_UP + LISTENING + "  " + line + "\n")
+
+        assert "Sarah" not in report and "447700900123" not in report and "5000" not in report
+
+
 class TestReportIssueButton:
     def test_the_opened_issue_carries_no_conversation(self, qapp, monkeypatch):
         from desktop_app.app import LogViewerWindow
@@ -157,6 +209,22 @@ class TestReportIssueButton:
         _assert_private_words_absent(body)
         assert "__DIARY__" not in body
         assert "Whisper model 'small' loaded" in body
+        window.close()
+
+    def test_a_cleared_log_is_reported_as_conversation(self, qapp, monkeypatch):
+        from desktop_app.app import LogViewerWindow
+
+        window = LogViewerWindow()
+        window.append_log(START_UP + LISTENING)
+        window.clear_logs()
+        window.append_log("    🌐 Searching the web for 'Dr Quinn oncology clinic'…\n")
+        opened = []
+        monkeypatch.setattr("desktop_app.app.webbrowser.open", opened.append)
+
+        window._report_issue()
+
+        body = parse_qs(urlparse(opened[0]).query)["body"][0]
+        _assert_private_words_absent(body)
         window.close()
 
 

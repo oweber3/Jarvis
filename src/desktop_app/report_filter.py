@@ -22,10 +22,14 @@ ELIDED = "…"
 _TIMESTAMP = re.compile(r"^\d{2}:\d{2}:\d{2}  ")
 _IPC_LINE = re.compile(r"^\s*__[A-Z][A-Z0-9_]*__:")
 # The listener's ready announcement ends the start-up section, and so does a
-# conversation turn that arrives before it.
+# turn that arrives before it: a voice turn's Heard line, a reply, or the turn
+# line every typed request and announcement starts with (``TURN_LINE_PREFIX``).
 _START_UP_END = re.compile(r"^\s*\S+\s+Listening!")
-_TURN_START = re.compile(r"^\s*📝 Heard:|^\s*\S+ Jarvis\s*$")
-_LOCATION = re.compile(r"^\s*📍")
+_VOICE_TURN = re.compile(r"^\s*📝 Heard:|^\s*\S+ Jarvis\s*$")
+# Start-up lines that name a place, the PC or a device (whose names often carry the owner's).
+_NAMING_START_UP_LINE = re.compile(r"^\s*(?:📍|🔗|🎤 Using audio device:)")
+# An icon is a run of emoji: other-symbol characters with their variation selectors and joiners.
+_ICON_PARTS = {"\ufe0f", "\u200d"}
 _KEPT_VERBATIM = re.compile(
     r"^\s*(?:Traceback \(most recent call last\):|File \"|Fatal Python error: |Windows fatal exception: |"
     r"Current thread 0x|Thread 0x|Stack \(most recent call first\)|Extension modules:)"
@@ -36,10 +40,16 @@ _EXCEPTION_NAME = re.compile(r"\b[A-Z]\w*(?:Error|Exception)\b")
 _ERROR_ICONS = ("❌", "⚠️", "⚠")
 
 
-def report_safe_log(text: str) -> str:
-    """The parts of ``text`` an issue report may carry, with secrets scrubbed."""
+def report_safe_log(text: str, *, start_up: bool = True) -> str:
+    """The parts of ``text`` an issue report may carry, with secrets scrubbed.
+
+    ``start_up`` says whether ``text`` begins with the start-up section; a log
+    cleared after start-up holds only conversation-time lines.
+    """
+    from jarvis.daemon import TURN_LINE_PREFIX
+
     kept: list[str] = []
-    in_start_up = True
+    in_start_up = start_up
     after_frame = False
     for timestamped in _without_home(text).splitlines():
         stamp = _TIMESTAMP.match(timestamped)
@@ -47,10 +57,11 @@ def report_safe_log(text: str) -> str:
         line = timestamped[len(prefix):]
         if _IPC_LINE.match(line):
             continue
-        if in_start_up and (_START_UP_END.match(line) or _TURN_START.match(line)):
+        if in_start_up and (_START_UP_END.match(line) or _VOICE_TURN.match(line)
+                            or line.lstrip().startswith(TURN_LINE_PREFIX)):
             in_start_up = False
         if in_start_up:
-            safe = _shape(line) if _LOCATION.match(line) else line
+            safe = _shape(line) if _NAMING_START_UP_LINE.match(line) else line
         elif after_frame and line[:1].isspace() and not _KEPT_VERBATIM.match(line):
             safe = line  # the source line under a traceback frame
         else:
@@ -87,13 +98,16 @@ def _runtime_line(line: str) -> str:
 
 
 def _shape(line: str) -> str:
-    """A line reduced to its indentation and leading icon."""
-    token = line.split()[0]
-    if not unicodedata.category(token[0]).startswith("S"):
+    """A line reduced to its indentation and leading icon, or to ``ELIDED`` when it has none."""
+    stripped = line.lstrip()
+    end = 0
+    while end < len(stripped) and (unicodedata.category(stripped[end]) == "So" or stripped[end] in _ICON_PARTS):
+        end += 1
+    icon = stripped[:end]
+    if not icon:
         return ELIDED
-    indent = line[:len(line) - len(line.lstrip())]
-    shape = f"{indent}{token} {ELIDED}"
-    if token.startswith(_ERROR_ICONS):
+    shape = f"{line[:len(line) - len(stripped)]}{icon} {ELIDED}"
+    if icon.startswith(_ERROR_ICONS):
         names = dict.fromkeys(_EXCEPTION_NAME.findall(line))
         if names:
             shape += " " + ", ".join(names)

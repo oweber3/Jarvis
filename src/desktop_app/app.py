@@ -1392,6 +1392,8 @@ class LogViewerWindow(QMainWindow):
         self.download_card.hide()
         self._downloads = {}
         self._download_times = {}
+        # Once cleared, the log no longer starts with the start-up section (see report_safe_log).
+        self._cleared = False
         self._last_progress_at = 0.0
         self._progress_detail = ""
         self._progress_timer = QTimer(self)
@@ -1506,6 +1508,7 @@ class LogViewerWindow(QMainWindow):
     def clear_logs(self) -> None:
         """Clear all logs."""
         self.log_display.clear()
+        self._cleared = True
         self._downloads.clear()
         self._download_times.clear()
         self._progress_timer.stop()
@@ -1524,7 +1527,7 @@ class LogViewerWindow(QMainWindow):
             version = "unknown"
 
         # The log window shows the conversation; the report carries the start-up section and the shape of the rest.
-        redacted_logs = report_safe_log(self.log_display.toPlainText())
+        redacted_logs = report_safe_log(self.log_display.toPlainText(), start_up=not self._cleared)
         if not self.download_card.isHidden():
             percentage = f"{self.download_bar.value()}% · " if self.download_bar.maximum() else ''
             redacted_logs += scrub_secrets(
@@ -2085,6 +2088,7 @@ class JarvisSystemTray:
         self._update_signals = UpdateCheckSignals()
         self._update_signals.checked.connect(self._on_update_checked)
         self._update_check_running = False
+        self._update_dialog_requested = False
 
         # Reply mode: the tray submenu, the orb and chat badges follow the daemon's state. In
         # bundled mode the daemon's mode listener calls us directly (on its own thread); in
@@ -2570,7 +2574,9 @@ class JarvisSystemTray:
             return
 
         if self._update_check_running:
-            debug_log("update check already running; skipped", "desktop")
+            # The running check answers this request too, with a dialog when this one asked for it.
+            self._update_dialog_requested = self._update_dialog_requested or show_no_update_dialog
+            debug_log("update check already running; joined it", "desktop")
             return
         self._update_check_running = True
 
@@ -2582,7 +2588,11 @@ class JarvisSystemTray:
                                       latest_release=None, error=f"{type(exc).__name__}: {exc}")
             self._update_signals.checked.emit(status, show_no_update_dialog)
 
-        threading.Thread(target=_check, name="update-check", daemon=True).start()
+        try:
+            threading.Thread(target=_check, name="update-check", daemon=True).start()
+        except RuntimeError as exc:
+            self._update_check_running = False
+            debug_log(f"update check could not start: {type(exc).__name__}", "desktop")
 
     def _on_update_checked(self, status, show_no_update_dialog: bool) -> None:
         """Act on an update check's result. Runs on the Qt main thread."""
@@ -2595,7 +2605,9 @@ class JarvisSystemTray:
             show_update_error_dialog,
         )
 
+        show_no_update_dialog = show_no_update_dialog or self._update_dialog_requested
         self._update_check_running = False
+        self._update_dialog_requested = False
         try:
             if status.error:
                 debug_log(f"Update check failed: {status.error}", "desktop")
