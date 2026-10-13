@@ -127,6 +127,12 @@ class RuntimeStatusSignals(QObject):
     ready = pyqtSignal(object)
 
 
+class UpdateCheckSignals(QObject):
+    """Carries an update check's result (status, whether to report "no update") to the GUI thread."""
+
+    checked = pyqtSignal(object, bool)
+
+
 class ReplyModeSignals(QObject):
     """Carries the daemon's reply-mode state (active mode, allowed modes) to the GUI thread."""
 
@@ -2075,6 +2081,11 @@ class JarvisSystemTray:
         self._runtime_status_signals = RuntimeStatusSignals()
         self._runtime_status_signals.ready.connect(self._show_runtime_status_dialog)
 
+        # The update check asks GitHub over the network: a worker thread does that, the dialogs run here.
+        self._update_signals = UpdateCheckSignals()
+        self._update_signals.checked.connect(self._on_update_checked)
+        self._update_check_running = False
+
         # Reply mode: the tray submenu, the orb and chat badges follow the daemon's state. In
         # bundled mode the daemon's mode listener calls us directly (on its own thread); in
         # subprocess mode its state lines arrive through the log reader. Both are queued here.
@@ -2118,8 +2129,10 @@ class JarvisSystemTray:
         # Register cleanup on app exit
         self.app.aboutToQuit.connect(self.cleanup_on_exit)
 
-        # Check for updates on startup (delayed by 5 seconds to not block app startup)
-        QTimer.singleShot(5000, self.check_for_updates)
+        # The start-up update check contacts GitHub, so it runs only when the user turned it on.
+        from desktop_app.updater import startup_check_enabled
+        if startup_check_enabled():
+            QTimer.singleShot(5000, self.check_for_updates)
 
         debug_log("desktop app initialized", "desktop")
 
@@ -2533,17 +2546,15 @@ class JarvisSystemTray:
     def check_for_updates(self, show_no_update_dialog: bool = False) -> None:
         """Check for available updates.
 
+        The request to GitHub runs on a worker thread and its result comes back through
+        ``_update_signals``: offline it waits for its timeout, which would freeze the tray on the
+        Qt main thread. A check asked for while one is running is skipped.
+
         Args:
             show_no_update_dialog: If True, shows a dialog even when no update is available.
         """
-        from desktop_app.updater import check_for_updates, is_frozen, update_install_blocker
-        from desktop_app.update_dialog import (
-            UpdateAvailableDialog,
-            UpdateProgressDialog,
-            show_no_update_dialog as show_no_update,
-            show_update_blocked_dialog,
-            show_update_error_dialog,
-        )
+        import threading
+        from desktop_app.updater import UpdateStatus, check_for_updates, is_frozen
 
         # Only check for updates if running as bundled app
         if not is_frozen():
@@ -2558,9 +2569,34 @@ class JarvisSystemTray:
                 msg.exec()
             return
 
-        try:
-            status = check_for_updates()
+        if self._update_check_running:
+            debug_log("update check already running; skipped", "desktop")
+            return
+        self._update_check_running = True
 
+        def _check() -> None:
+            try:
+                status = check_for_updates()
+            except Exception as exc:
+                status = UpdateStatus(update_available=False, current_version="", current_channel="",
+                                      latest_release=None, error=f"{type(exc).__name__}: {exc}")
+            self._update_signals.checked.emit(status, show_no_update_dialog)
+
+        threading.Thread(target=_check, name="update-check", daemon=True).start()
+
+    def _on_update_checked(self, status, show_no_update_dialog: bool) -> None:
+        """Act on an update check's result. Runs on the Qt main thread."""
+        from desktop_app.updater import update_install_blocker
+        from desktop_app.update_dialog import (
+            UpdateAvailableDialog,
+            UpdateProgressDialog,
+            show_no_update_dialog as show_no_update,
+            show_update_blocked_dialog,
+            show_update_error_dialog,
+        )
+
+        self._update_check_running = False
+        try:
             if status.error:
                 debug_log(f"Update check failed: {status.error}", "desktop")
                 if show_no_update_dialog:

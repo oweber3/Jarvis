@@ -302,6 +302,8 @@ The desktop app includes an auto-update mechanism:
 
 Updates are only available in bundled mode (PyInstaller builds).
 
+**When the check runs**: the check contacts GitHub, so it is opt-in. **Check for Updates** in the tray menu always runs it. The automatic check five seconds after start-up runs only when `update_check_on_startup` is `true` (default `false`, Settings > Privacy > Updates, read from the config file by `updater.startup_check_enabled()`). The request runs on a worker thread and its result reaches the Qt main thread through `UpdateCheckSignals`, so an offline or slow network never freezes the tray or any window; a check asked for while one is running is skipped. A failed check is logged by the app and reported in a dialog only when the user asked for it.
+
 ### Platform-Specific Update Installation
 
 | Platform | Strategy |

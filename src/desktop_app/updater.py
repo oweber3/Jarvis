@@ -433,6 +433,19 @@ def get_app_path() -> Path:
         raise RuntimeError("Cannot update when running from source")
 
 
+STARTUP_CHECK_KEY = "update_check_on_startup"
+
+
+def startup_check_enabled() -> bool:
+    """Whether the user turned on the start-up update check (off when unset or unreadable)."""
+    try:
+        from jarvis.config import read_config_file
+        return read_config_file().get(STARTUP_CHECK_KEY) is True
+    except Exception as exc:
+        debug_log(f"update check: could not read its setting: {type(exc).__name__}", "updater")
+        return False
+
+
 def is_frozen() -> bool:
     """Check if running as a bundled/frozen application."""
     return getattr(sys, "frozen", False)
