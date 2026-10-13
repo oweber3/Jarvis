@@ -204,6 +204,10 @@ def load_kokoro_voice(models_dir: Optional[Path] = None, voice: str = KOKORO_DEF
             pass
     except Exception as e:
         raise KokoroUnavailable(f"the Kokoro model could not speak ({type(e).__name__}: {e})") from e
+    if loaded.device == "graphics card" and session.get_providers()[0] != "CUDAExecutionProvider":
+        # ONNX Runtime moves a session to the processor when a CUDA run fails (e.g. a cuDNN mismatch).
+        loaded.device = "processor"
+        debug_log("Kokoro's graphics card run failed; ONNX Runtime moved it to the processor", "tts")
     debug_log(f"Kokoro loaded on the {device}", "tts")
     return loaded
 
