@@ -325,6 +325,7 @@ class MockConfig:
     # Kokoro TTS settings
     tts_kokoro_voice: str = "bm_george"
     tts_kokoro_speed: float = 1.0
+    tts_kokoro_device: str = "gpu"
     # Chatterbox TTS settings
     tts_chatterbox_device: str = "cpu"
     tts_chatterbox_audio_prompt: Optional[str] = None

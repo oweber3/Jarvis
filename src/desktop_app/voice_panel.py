@@ -19,7 +19,7 @@ from jarvis.output.voice_preview import SAMPLE_LINE, PreviewUnavailable, play, r
 
 PREVIEW_KEYS = (
     "tts_engine", "tts_piper_voice", "tts_piper_model_path", "tts_piper_speaker", "tts_piper_length_scale",
-    "tts_piper_noise_scale", "tts_piper_noise_w", "tts_kokoro_voice", "tts_kokoro_speed",
+    "tts_piper_noise_scale", "tts_piper_noise_w", "tts_kokoro_voice", "tts_kokoro_speed", "tts_kokoro_device",
 )
 ENGINE_NAMES = {"piper": "Piper", "kokoro": "Kokoro", "chatterbox": "Chatterbox"}
 

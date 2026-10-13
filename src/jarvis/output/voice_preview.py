@@ -57,6 +57,7 @@ def render_preview(values: Mapping[str, Any], text: str,
         piper_noise_w=float(get("tts_piper_noise_w", 1.0)),
         kokoro_voice=str(get("tts_kokoro_voice", kokoro.KOKORO_DEFAULT_VOICE)),
         kokoro_speed=float(get("tts_kokoro_speed", 1.0)),
+        kokoro_device=str(get("tts_kokoro_device", "gpu")),
     )
     samples, rate = tts.render(text)
     if samples is None or not len(samples):

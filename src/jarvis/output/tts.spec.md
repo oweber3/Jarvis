@@ -22,6 +22,7 @@ The voice is plain config, so anything that names a voice (Settings, a personali
 | `tts_piper_model_path` | none | A Piper voice file of the user's own; wins over `tts_piper_voice` |
 | `tts_kokoro_voice` | `bm_george` | One of `KOKORO_VOICES`; an unknown id loads as the default |
 | `tts_kokoro_speed` | `1.0` | Kokoro speed, kept within 0.5..2.0 |
+| `tts_kokoro_device` | `gpu` | `gpu` (graphics card) or `cpu` (processor); any other value loads as `gpu` |
 
 Piper is the default for everyone. Nothing changes the engine or a default because of the hardware Jarvis runs on.
 
@@ -36,7 +37,7 @@ Piper is the default for everyone. Nothing changes the engine or a default becau
 - Only English voices are offered (`a` American and `b` British; espeak voices `en-us` and `en`), matching the reply engine's English-only instruction, which applies to every engine.
 - The first sentence of a reply is synthesised clause by clause, so speech starts once its first clause is ready; later sentences are synthesised whole while earlier ones play. A window longer than the model's 509 tokens is split at clause, then word, boundaries without dropping text.
 - The model's padding silence is cut to 30 ms before and 50 ms after the speech, then a pause is added: 0.15 s after a sentence, 0.06 s after a clause spoken on its own.
-- The ONNX session uses the graphics card when the installed ONNX Runtime offers `CUDAExecutionProvider`, otherwise the processor; a CUDA session that fails to start falls back to the processor. A short warm-up run at load keeps the first reply from paying the first-run set-up.
+- With `tts_kokoro_device` `gpu` the ONNX session uses the graphics card when the installed ONNX Runtime offers `CUDAExecutionProvider` (the `onnxruntime-gpu` build with the CUDA 12 libraries), otherwise the processor; `cpu` always uses the processor; a CUDA session that fails to start falls back to the processor. A short warm-up run at load keeps the first reply from paying the first-run set-up.
 - **Never mute.** When Kokoro cannot speak (its files are not downloaded, ONNX Runtime or the model fails to load), `KokoroTTS` loads Piper instead, prints the reason and that Piper is speaking, and records it in `fallback_reason`; `engine_in_use` says which engine is loaded. Synthesis failing while speaking (for example the graphics card running out of memory) does the same: before any audio of the reply, Piper speaks the whole reply; after some audio the reply ends there; later replies use Piper. A model that fails to load is checked against its SHA-256 and a damaged file is removed, so it downloads again on the next start.
 - **Downloads only when chosen.** A Piper user never fetches Kokoro files. When Kokoro is chosen and its files are missing, `start` downloads them on a background thread while Piper speaks; once all are verified, the next reply loads Kokoro on the speaking thread and switches, so a reply never changes voice half-way. An interrupt while Kokoro loads cancels that reply. A failed download leaves Piper speaking and says so. Restarting the engine never starts a second download while one runs, and `download_kokoro` downloads one at a time within a process.
 

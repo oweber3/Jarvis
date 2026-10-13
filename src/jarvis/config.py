@@ -195,6 +195,7 @@ class Settings:
     # Kokoro TTS (optional engine; its files download only when it is chosen)
     tts_kokoro_voice: str  # Kokoro voice id, e.g. "bm_george"
     tts_kokoro_speed: float  # 0.5-2.0, 1.0 = natural
+    tts_kokoro_device: str  # "gpu" (graphics card when available, else processor) or "cpu"
 
     # Voice Input & Audio
     voice_device: str | None
@@ -1139,6 +1140,7 @@ def get_default_config() -> Dict[str, Any]:
         # Kokoro TTS (optional; model files download only when this engine is chosen)
         "tts_kokoro_voice": "bm_george",  # One of output/kokoro.py's KOKORO_VOICES
         "tts_kokoro_speed": 1.0,  # 0.5-2.0, 1.0 = natural
+        "tts_kokoro_device": "gpu",  # "gpu" (graphics card when available, else processor) or "cpu"
 
         # Voice Input & Audio
         "voice_device": None,
@@ -1387,6 +1389,9 @@ def load_settings() -> Settings:
     except (TypeError, ValueError):
         tts_kokoro_speed = 1.0
     tts_kokoro_speed = max(KOKORO_SPEED_RANGE[0], min(KOKORO_SPEED_RANGE[1], tts_kokoro_speed))
+    tts_kokoro_device = str(merged.get("tts_kokoro_device", "gpu")).lower()
+    if tts_kokoro_device not in ("gpu", "cpu"):
+        tts_kokoro_device = "gpu"
 
     voice_device_val = merged.get("voice_device")
     voice_device = None if voice_device_val in (None, "", "default", "system") else str(voice_device_val)
@@ -1656,6 +1661,7 @@ def load_settings() -> Settings:
         # Kokoro TTS
         tts_kokoro_voice=tts_kokoro_voice,
         tts_kokoro_speed=tts_kokoro_speed,
+        tts_kokoro_device=tts_kokoro_device,
 
         # Voice Input & Audio
         voice_device=voice_device,

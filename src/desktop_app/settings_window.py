@@ -368,6 +368,10 @@ def _build_field_metadata() -> List[FieldMeta]:
       "1.0 is natural; higher speaks faster, lower slower.",
       "speaking", "float", min_val=KOKORO_SPEED_RANGE[0], max_val=KOKORO_SPEED_RANGE[1], step=0.05,
       shown_when=kokoro)
+    f("tts_kokoro_device", "Runs On",
+      "The graphics card starts speaking sooner; the processor uses no graphics memory. When the graphics "
+      "card cannot be used, Kokoro runs on the processor.",
+      "speaking", "choice", choices=[("gpu", "Graphics card"), ("cpu", "Processor")], shown_when=kokoro)
     heading("Chatterbox voice")
     f("tts_chatterbox_audio_prompt", "Voice to Clone",
       "Full path to a short, clear recording of the voice to copy. Leave empty for Chatterbox's own voice. "

@@ -166,3 +166,13 @@ def test_the_panel_follows_a_typed_custom_voice_file(window_with):
     win, _ = window_with({})
     win._widgets["tts_piper_model_path"].setText(r"C:\voices\my-voice.onnx")
     assert "my-voice.onnx" in win.voice_panel.status_label.text()
+
+
+@pytest.mark.unit
+def test_kokoro_offers_graphics_card_or_processor(window_with):
+    win, _ = window_with({})
+    assert not win.is_field_shown("tts_kokoro_device")
+    _choose(win._widgets["tts_engine"], "kokoro")
+    assert win.is_field_shown("tts_kokoro_device")
+    combo = win._widgets["tts_kokoro_device"]
+    assert {combo.itemData(i) for i in range(combo.count())} == {"gpu", "cpu"}
