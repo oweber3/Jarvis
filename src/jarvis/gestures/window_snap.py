@@ -33,6 +33,11 @@ _INTERVAL_SMOOTHING = 0.2
 MAX_HAND_JUMP = 0.25
 # Leaving a scroll needs the new gesture to last at least this long: the raised fingers bend as the hand moves.
 SCROLL_EXIT_SEC = 0.5
+# A fist grabs only once it has lasted this long: a moving pointing hand is misread as a fist for a few frames.
+GRAB_HOLD_SEC = 0.3
+# The comfort box is centred again only on a hand that has been out of view at least this long: a fast-moving
+# hand drops out of detection for a moment and comes back where it is.
+RECENTRE_AFTER_SEC = 1.0
 # After a gesture change the pointer's distance from the palm's place fades with this time constant.
 CATCH_UP_SEC = 0.15
 _PALM = (Landmark.WRIST, Landmark.INDEX_MCP, Landmark.MIDDLE_MCP, Landmark.RING_MCP, Landmark.PINKY_MCP)
@@ -348,6 +353,8 @@ class WindowSnap:
                 self._check_lost(arrived)
                 return
             self._measure_interval(arrived)
+            if self._last_hand is not None and arrived - self._last_hand >= RECENTRE_AFTER_SEC:
+                self._box = None
             self._last_hand = arrived
             # Absolute: the comfort box, centred where the palm was when the hand started driving, spans the
             # desktop's bounding rectangle.
@@ -463,7 +470,6 @@ class WindowSnap:
         self._window = None
         self._state = _IDLE
         self._gesture = self._candidate = None
-        self._box = None
         self._shown = None
         self._raised.clear()
         self._last_palm = None
@@ -490,7 +496,12 @@ class WindowSnap:
         else:
             if shape != self._candidate:
                 self._candidate, self._candidate_since = shape, t
-            needed = max(self._s.debounce, SCROLL_EXIT_SEC) if self._state == _SCROLLING else self._s.debounce
+            if self._state == _SCROLLING:
+                needed = max(self._s.debounce, SCROLL_EXIT_SEC)
+            elif shape == FIST and self._state in (_IDLE, _AIMING):
+                needed = max(self._s.debounce, GRAB_HOLD_SEC)
+            else:
+                needed = self._s.debounce
             if t - self._candidate_since >= needed:
                 self._candidate = None
                 self._confirm(shape, p, t)

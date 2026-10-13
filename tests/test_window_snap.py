@@ -5,11 +5,14 @@ import statistics
 
 import pytest
 
-from jarvis.gestures.window_snap import WindowSnap, WindowSnapSettings, finger_curl
+import math
+
+from jarvis.gestures.window_snap import GRAB_HOLD_SEC, RECENTRE_AFTER_SEC, WindowSnap, WindowSnapSettings, finger_curl
 from tests.synthetic_hands import FakeDesktop, FakeWindow, frame, hand
 
 FPS = 30.0
 SETTLE = 5  # frames for a gesture to outlast the 100 ms debounce
+GRAB = math.ceil(GRAB_HOLD_SEC * FPS) + 2  # frames for a fist to outlast the grab hold
 
 
 class Clock:
@@ -64,7 +67,7 @@ class Rig:
 
     def grab_at(self, x, y):
         """Close the hand into a fist at (x, y); the palm shifts slightly as a real closing hand does."""
-        self.show(hand(x + 0.005, y + 0.005, gesture="fist"), frames=SETTLE)
+        self.show(hand(x + 0.005, y + 0.005, gesture="fist"), frames=GRAB)
 
     def two_at(self, x, y):
         self.show(hand(x + 0.01, y + 0.01, gesture="two"), frames=SETTLE)
@@ -127,9 +130,19 @@ def test_taking_the_hand_out_of_view_and_raising_it_elsewhere_re_centres():
     rig.start(0.5, 0.5)
     rig.glide((0.5, 0.5), (0.6, 0.5))
     assert rig.desk.at[0] > 960
-    rig.show(frames=15)
+    rig.show(frames=math.ceil(RECENTRE_AFTER_SEC * FPS) + 1)
     rig.start(0.3, 0.5)
     assert rig.desk.at == (960, 540)
+
+
+def test_a_hand_lost_briefly_while_moving_comes_back_where_it_is_without_re_centring():
+    rig = Rig(FakeDesktop([(0, 0, 1920, 1080)]))
+    rig.start(0.5, 0.5)
+    rig.glide((0.5, 0.5), (0.6, 0.5))
+    followed = rig.desk.at
+    rig.show(frames=round(0.6 * FPS))  # a fast-moving hand drops out of detection for a moment
+    rig.start(0.65, 0.5)
+    assert rig.desk.at[0] > followed[0]  # further right, as the hand is, not back in the middle
 
 
 def test_the_comfort_box_edges_are_the_desktop_edges_across_several_monitors():
@@ -240,8 +253,16 @@ def test_a_fist_grabs_the_window_under_where_the_pointer_was_before_the_hand_clo
 def test_a_fist_raised_straight_after_a_pause_grabs_the_window_under_the_pointer():
     win = window((600, 300, 1200, 800))
     rig = Rig(FakeDesktop(windows=[win]))
-    rig.show(hand(0.5, 0.5, gesture="fist"), frames=SETTLE)
+    rig.show(hand(0.5, 0.5, gesture="fist"), frames=GRAB)
     assert rig.desk.of("grab") == [("grab", win)] and rig.snap.state == "holding"
+
+
+def test_a_fist_misread_for_less_than_the_grab_hold_grabs_nothing():
+    rig = Rig(FakeDesktop(windows=[window()]))
+    rig.start()
+    rig.show(hand(0.5, 0.5, gesture="fist"), frames=math.floor(GRAB_HOLD_SEC * FPS) - 1)
+    rig.show(hand(0.5, 0.5), frames=SETTLE)
+    assert rig.desk.of("grab") == [] and rig.snap.state == "aiming"
 
 
 def test_the_held_window_follows_the_hand_keeping_its_place_under_the_pointer():
@@ -684,7 +705,7 @@ def test_the_state_names_what_the_hand_is_doing():
     rig.show(hand(0.5, 0.5, gesture="two"), frames=SETTLE)
     assert rig.snap.state == "scrolling"
     rig.show(hand(0.5, 0.5), frames=17)
-    rig.show(hand(0.5, 0.5, gesture="fist"), frames=SETTLE)
+    rig.show(hand(0.5, 0.5, gesture="fist"), frames=GRAB)
     assert rig.snap.state == "holding"
     empty = Rig(FakeDesktop(windows=[]))
     empty.start()
