@@ -99,3 +99,74 @@ def test_non_pdf_files_fail_clearly(tmp_path):
         open_document(bogus)
     with pytest.raises(ValueError):
         open_document(tmp_path / 'missing.pdf')
+
+
+# A textbook laid out like most: each chapter's exercises are a child bookmark titled only
+# "Problems", and some publishers pad bookmark titles with NUL characters.
+TEXTBOOK_PAGES = [f'Page {n}' for n in range(1, 13)]
+TEXTBOOK_OUTLINE = [
+    ('Chapter 1 Introduction\x00\x00\x00', 0, [('1.1 Units', 1), ('1.6 Summary', 2), ('Problems\x00\x00', 3)]),
+    ('Chapter 6 Inviscid Flow', 4, [('6.1 Euler Equation', 5), ('6.2 Bernoulli Equation', 6),
+                                    ('Problems\x00\x00', 7)]),
+    ('Chapter 7 Dimensional Analysis', 8, [('7.1 Similitude', 9), ('Problems', 10)]),
+    ('Answers to Selected Problems', 11),
+]
+
+
+@pytest.fixture
+def textbook(tmp_path):
+    from jarvis.utils import pdf_document
+    pdf_document.clear_cache()
+    yield make_pdf(tmp_path / 'fluids.pdf', TEXTBOOK_PAGES, TEXTBOOK_OUTLINE)
+    pdf_document.clear_cache()
+
+
+def test_outline_titles_drop_padding_characters(textbook):
+    from jarvis.utils.pdf_document import open_document
+    titles = [e.title for e in open_document(textbook).outline()]
+    assert 'Chapter 1 Introduction' in titles
+    assert all('\x00' not in title for title in titles)
+
+
+def test_outline_matches_count_the_chapters_above_an_entry(textbook):
+    from jarvis.utils.pdf_document import open_document
+    doc = open_document(textbook)
+    matches = doc.outline_matches('chapter 6 problems')
+    assert [e.page for e in matches] == [8]
+    assert matches[0].label == 'Chapter 6 Inviscid Flow > Problems'
+
+
+def test_a_chapter_request_matches_the_chapter_not_every_section_in_it(textbook):
+    from jarvis.utils.pdf_document import open_document
+    doc = open_document(textbook)
+    assert [e.page for e in doc.outline_matches('chapter 6')] == [5]
+    assert [e.page for e in doc.outline_matches('bernoulli')] == [7]
+
+
+def test_closest_outline_entries_rank_by_how_many_query_words_they_share(textbook):
+    from jarvis.utils.pdf_document import open_document
+    doc = open_document(textbook)
+    # "practice" appears nowhere, so nothing matches every word; the chapter's problems share the most.
+    assert doc.outline_matches('chapter 6 practice problems') == []
+    closest = doc.outline_closest('chapter 6 practice problems', limit=4)
+    assert closest[0].page == 8
+    assert len(closest) <= 4
+    # A section that adds nothing to its chapter's match is not listed separately from it.
+    assert 6 not in [e.page for e in closest] and 7 not in [e.page for e in closest]
+    assert doc.outline_closest('quantum chromodynamics', limit=4) == []
+
+
+def test_pdf_library_warnings_stay_out_of_the_console(caplog):
+    import logging
+    import jarvis.utils.pdf_document  # noqa: F401 - importing it quietens the library
+    with caplog.at_level(logging.WARNING):
+        logging.getLogger('pypdf._cmap').warning('fontTools is required to fully parse the encoding')
+    assert 'fontTools' not in caplog.text
+
+
+def test_section_numbers_match_whole(textbook):
+    from jarvis.utils.pdf_document import open_document
+    doc = open_document(textbook)
+    assert [e.page for e in doc.outline_matches('6.2')] == [7]
+    assert [e.page for e in doc.outline_matches('section 1.6')] == []
+    assert [e.page for e in doc.outline_closest('section 1.6', limit=4)] == [3]

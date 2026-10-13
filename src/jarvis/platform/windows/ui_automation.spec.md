@@ -80,7 +80,7 @@ A separate tool rather than a `uiControl` action group: page and chapter request
 | Action | Behaviour |
 |--------|-----------|
 | `goto` | Shows physical page `page` (1-based) of the open PDF |
-| `find` | Searches the outline titles and the page text for `query`. When exactly one outline entry contains every word of the query, its page is shown immediately. Otherwise up to eight candidates are returned (outline entries first, then pages with text hits, each with a snippet) and nothing moves; the reply model picks one and calls `goto` |
+| `find` | Searches the outline and the page text for `query`. An outline entry is read together with the titles of the entries above it, so a "Problems" bookmark under "Chapter 6 ..." matches "chapter 6 problems", and is listed as `Chapter 6 ... > Problems`. An entry counts only when it matches more query words than every entry above it, so a chapter request finds the chapter rather than each of its sections. When the matching outline entries (every query word) all point to one page, that page is shown immediately. Otherwise up to eight candidates are returned and nothing moves: the outline entries with every word or, when there are none, up to four closest entries (most query words shared, outer entries first), then pages with text hits, each with a snippet. The reply model picks one and calls `goto`, so wording the book does not use ("practice problems") still reaches the right chapter without language rules |
 | `outline` | The document's bookmarks: title, page and level, at most 80 |
 
 "Go to page {number}" and "page {number}" are also fast commands (`fastpath/fastpath.spec.md`), offered only while a PDF viewer is the window the user is working in (`pdf_viewer.foreground_viewer`), so no model is involved.
@@ -103,7 +103,8 @@ A separate tool rather than a `uiControl` action group: page and chapter request
 ### Document data
 
 - `utils/pdf_document.py` reads the outline (with destination page numbers) and page text with `pypdf`, locally and deterministically. Documents are cached per path, size and modification time (three most recent).
-- Text search tokenises with Unicode word characters, case-folded. A query word matches a text word that equals it or, for words of four or more characters, extends it or is extended by it by at most three characters ("transformers" finds "transformer"), with no language rules. A page matches when it contains every query word; pages are ranked by hit count. Snippets are about 160 characters around the first hit.
+- Outline titles drop control characters (some publishers pad them with NULs). `pypdf`'s own warnings (for example about a missing optional font decoder) are kept out of the console; its errors still show.
+- Text and outline matching tokenise with Unicode word characters, case-folded, keeping a dotted number such as `1.6` as one word so "chapter 6" never matches section 1.6. A query word matches a text word that equals it or, for words of four or more characters, extends it or is extended by it by at most three characters ("transformers" finds "transformer"), with no language rules. A page matches when it contains every query word; pages are ranked by hit count. Snippets are about 160 characters around the first hit.
 - Extraction runs within the tool's deadline: pages are extracted in order until a budget is spent, extracted text is kept, and a background worker continues extracting the same document after the call returns. A partial search says `pages_searched` of `page_count` so the reply can say the rest is still being indexed.
 
 ### Delegation and privacy
