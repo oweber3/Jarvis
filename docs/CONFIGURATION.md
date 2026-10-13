@@ -775,7 +775,7 @@ A personality changes only the voice. The rules underneath (never mean or sycoph
 ```json
 {
   "personality_voices": {
-    "friendly": {"tts_piper_length_scale": 0.6}
+    "friendly": {"tts_engine": "kokoro", "tts_kokoro_voice": "af_heart", "tts_kokoro_speed": 1.1}
   }
 }
 ```
