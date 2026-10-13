@@ -11,7 +11,8 @@ Jarvis runs every LLM context on one of two models, or a third when the opt-in t
 - ``Tier.TOOL`` — the opt-in model that chooses and calls tools in a local
   reply's tool phase; empty when tool-model mode is off.
 - ``Tier.BACKGROUND`` — chat-quality local work that runs whatever the
-  reply mode (diary, graph extraction, meal logging, dictation clean-up):
+  reply mode (diary, graph extraction, memory maintenance, meal logging,
+  dictation clean-up):
   the chat model while the local model writes replies, the fast model while
   Codex or Claude does, so a cloud session never pages in the chat model.
 
@@ -49,14 +50,15 @@ def resolve_model(cfg, tier: Tier) -> str:
     to the chat model so a context never receives an empty name.
     ``Tier.TOOL`` reads ``cfg.tool_model`` and is empty while tool-model
     mode is off; it never falls back. ``Tier.BACKGROUND`` resolves as
-    ``Tier.CHAT`` in local reply mode and as ``Tier.FAST`` otherwise.
+    ``Tier.CHAT`` in local reply mode and as ``Tier.FAST`` otherwise
+    (``bridge.modes.background_mode``).
     """
     if tier is Tier.TOOL:
         tool = getattr(cfg, "tool_model", "")
         return tool.strip() if isinstance(tool, str) else ""
     if tier is Tier.BACKGROUND:
         from ..bridge import modes
-        return resolve_model(cfg, Tier.CHAT if modes.active_mode() == modes.LOCAL else Tier.FAST)
+        return resolve_model(cfg, Tier.CHAT if modes.background_mode(cfg) == modes.LOCAL else Tier.FAST)
     chat = str(getattr(cfg, "llm_chat_model", "") or "").strip()
     if tier is Tier.FAST:
         return str(getattr(cfg, "fast_model", "") or "").strip() or chat

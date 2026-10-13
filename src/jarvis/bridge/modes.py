@@ -53,6 +53,18 @@ def active_mode() -> str:
         return _active
 
 
+def background_mode(cfg: Any) -> str:
+    """The reply mode local background work follows: the active mode, or, in a process that runs no
+    bridges (the desktop app's memory viewer), the allowed mode chosen in Settings."""
+    active = active_mode()
+    with _lock:
+        started = _cfg is not None
+    if active != LOCAL or started:
+        return active
+    wanted = getattr(cfg, "reply_mode", LOCAL)
+    return wanted if wanted in CLOUD_MODES and wanted in enabled_modes(cfg) else LOCAL
+
+
 def state() -> Dict[str, Any]:
     with _lock:
         return {"mode": _active, "enabled": enabled_modes(_cfg)}
@@ -113,6 +125,8 @@ def start(cfg: Any, *, factories: Optional[Dict[str, Callable[[Any], Any]]] = No
                     _active = wanted
         mode = active_mode()
     debug_log(f"reply mode {mode} at start", "bridge")
+    if mode in CLOUD_MODES:
+        _release_local_models_soon(cfg, mode)
     _notify()
     return mode
 
@@ -143,11 +157,15 @@ def switch(mode: str, *, persist: bool = True) -> SwitchResult:
             result = SwitchResult(True, mode, previous)
         print(f"🔀 Reply mode: {LABELS[result.mode]}", flush=True)
         debug_log(f"reply mode {previous} -> {result.mode} ({result.reason or 'ok'})", "bridge")
-        if result.ok and previous == LOCAL and result.mode in CLOUD_MODES:
-            threading.Thread(target=_release_local_models, args=(_cfg, result.mode), daemon=True,
-                             name="reply-model-release").start()
+        if result.ok and result.mode in CLOUD_MODES:
+            _release_local_models_soon(_cfg, result.mode)
     _notify()
     return result
+
+
+def _release_local_models_soon(cfg: Any, mode: str) -> None:
+    threading.Thread(target=_release_local_models, args=(cfg, mode), daemon=True,
+                     name="reply-model-release").start()
 
 
 def _release_local_models(cfg: Any, mode: str) -> None:
