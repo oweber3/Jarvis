@@ -1,6 +1,6 @@
-"""Leaving local reply mode unloads the local models only local replies use.
+"""Entering a cloud reply mode unloads the local models only local replies use.
 
-Codex and Claude never page in the chat or tool model, so after a switch away from local those
+Codex and Claude never page in the chat or tool model, so whenever a cloud mode starts, at start-up or by a switch, those
 models would otherwise hold memory (often most of the GPU) for Ollama's whole keep-alive. Models
 the fast tier or embeddings still use stay loaded, and nothing that is not loaded gets touched.
 """
@@ -146,11 +146,72 @@ def test_a_model_that_is_not_loaded_is_left_alone():
 
 
 @pytest.mark.unit
-def test_returning_to_local_or_moving_between_cloud_modes_unloads_nothing():
+@pytest.mark.parametrize("cloud", [modes.CODEX, modes.CLAUDE])
+def test_starting_in_a_cloud_mode_unloads_a_chat_model_left_loaded(cloud):
+    ollama = FakeOllama(["big-chat", "small-fast", "embed-text"])
+    try:
+        assert _start(_cfg(ollama.url, reply_mode=cloud)) == cloud
+        _settle()
+        assert ollama.unloaded == ["big-chat"]
+        assert sorted(ollama.loaded) == ["embed-text", "small-fast"]
+    finally:
+        ollama.close()
+
+
+@pytest.mark.unit
+def test_starting_in_local_mode_unloads_nothing():
+    ollama = FakeOllama(["big-chat", "small-fast"])
+    try:
+        assert _start(_cfg(ollama.url)) == modes.LOCAL
+        _settle()
+        assert ollama.unloaded == []
+    finally:
+        ollama.close()
+
+
+@pytest.mark.unit
+def test_a_configured_cloud_mode_that_is_not_allowed_starts_local_and_unloads_nothing():
+    ollama = FakeOllama(["big-chat"])
+    try:
+        assert _start(_cfg(ollama.url, reply_mode="codex", codex_enabled=False)) == modes.LOCAL
+        _settle()
+        assert ollama.unloaded == []
+    finally:
+        ollama.close()
+
+
+@pytest.mark.unit
+def test_moving_between_cloud_modes_unloads_a_chat_model_loaded_meanwhile():
     ollama = FakeOllama(["small-fast", "embed-text"])
     try:
         _start(_cfg(ollama.url, reply_mode="codex"))
+        _settle()
+        ollama.loaded.append("big-chat")
         assert modes.switch(modes.CLAUDE).ok
+        _settle()
+        assert ollama.unloaded == ["big-chat"]
+    finally:
+        ollama.close()
+
+
+@pytest.mark.unit
+def test_a_release_that_runs_after_a_return_to_local_unloads_nothing():
+    ollama = FakeOllama(["big-chat"])
+    try:
+        _start(_cfg(ollama.url))
+        modes._release_local_models(_cfg(ollama.url), modes.CODEX)
+        assert ollama.unloaded == []
+        assert ollama.loaded == ["big-chat"]
+    finally:
+        ollama.close()
+
+
+@pytest.mark.unit
+def test_returning_to_local_unloads_nothing():
+    ollama = FakeOllama(["small-fast", "embed-text"])
+    try:
+        _start(_cfg(ollama.url, reply_mode="codex"))
+        _settle()
         ollama.loaded.append("big-chat")
         assert modes.switch(modes.LOCAL).ok
         _settle()
