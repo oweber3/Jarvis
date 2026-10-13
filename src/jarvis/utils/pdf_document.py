@@ -67,9 +67,14 @@ def words(text: str) -> List[str]:
 
 
 def word_matches(query_word: str, text_word: str) -> bool:
-    """Equal, or (for longer words) one extends the other by a few characters, in any language."""
+    """Equal, or (for longer words) one extends the other by a few characters, in any language.
+
+    Numbers match only exactly: "10.12" is not "10.1" and "2024" is not "202".
+    """
     if query_word == text_word:
         return True
+    if any(ch.isdigit() for ch in query_word + text_word):
+        return False
     shorter, longer = sorted((query_word, text_word), key=len)
     return (len(shorter) >= _INFLECTION_MIN and len(longer) - len(shorter) <= _INFLECTION_MAX_EXTRA
             and longer.startswith(shorter))
@@ -129,14 +134,14 @@ class PdfDocument:
     def _scored(self, wanted: List[str]) -> List[Tuple[OutlineEntry, int]]:
         """Entries with how many query words their title and the titles above it share.
 
-        An entry is kept only when it shares more than every entry above it, so a section that
-        adds nothing to its chapter's match is not listed beside the chapter.
+        An entry is kept when its own title shares a word or it shares more than every entry above
+        it, so a section that adds nothing to its chapter's match is not listed beside the chapter.
         """
         scored = []
         for entry in self._outline:
             path = entry.parents + (entry.title,)
             shares = [_shared(wanted, words(' '.join(path[:depth]))) for depth in range(1, len(path) + 1)]
-            if shares[-1] and shares[-1] > max(shares[:-1], default=0):
+            if shares[-1] and (shares[-1] > max(shares[:-1], default=0) or _shared(wanted, words(entry.title))):
                 scored.append((entry, shares[-1]))
         return scored
 

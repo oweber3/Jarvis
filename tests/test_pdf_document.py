@@ -170,3 +170,21 @@ def test_section_numbers_match_whole(textbook):
     assert [e.page for e in doc.outline_matches('6.2')] == [7]
     assert [e.page for e in doc.outline_matches('section 1.6')] == []
     assert [e.page for e in doc.outline_closest('section 1.6', limit=4)] == [3]
+
+
+def test_a_bookmark_wrapping_the_whole_book_does_not_hide_matching_sections(tmp_path):
+    from jarvis.utils.pdf_document import open_document
+    path = make_pdf(tmp_path / 'algorithms.pdf', [f'Page {n}' for n in range(1, 6)], [
+        ('Introduction to Algorithms', 0, [('Chapter 1 Sorting', 1, [('Introduction', 2)]),
+                                           ('Chapter 2 Graphs', 3, [('Introduction', 4)])])])
+    assert {e.page for e in open_document(path).outline_matches('introduction')} == {1, 3, 5}
+
+
+def test_numbers_match_exactly(tmp_path):
+    from jarvis.utils.pdf_document import open_document
+    path = make_pdf(tmp_path / 'ds.pdf', [f'Page {n}' for n in range(1, 5)], [
+        ('10.1 Stacks', 0), ('10.12 Queues', 1), ('10.123 Heaps', 2), ('2024 Edition', 3)])
+    doc = open_document(path)
+    assert [e.page for e in doc.outline_matches('10.12')] == [2]
+    assert [e.page for e in doc.outline_matches('2024')] == [4]
+    assert doc.outline_matches('202') == []
