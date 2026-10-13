@@ -6,6 +6,7 @@ background worker, so a large book never blocks the caller. See
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
@@ -17,12 +18,18 @@ from typing import List, Optional, Tuple
 
 from ..debug import debug_log
 
-_WORD_RE = re.compile(r'\w+', re.UNICODE)
+# A section number such as "1.6" is one word, so "chapter 6" never matches section 1.6.
+_WORD_RE = re.compile(r'\d+(?:\.\d+)+|\w+', re.UNICODE)
+_CONTROL_RE = re.compile(r'[\x00-\x1f\x7f]')
 _CACHE_SIZE = 3
 _SNIPPET_CHARS = 160
 _INFLECTION_MIN = 4
 _INFLECTION_MAX_EXTRA = 3
 DEFAULT_SEARCH_BUDGET_SEC = 4.0
+
+# pypdf warns once per font it cannot fully decode (fontTools missing), flooding the console
+# while a book is read; text extraction still works, so only its errors are worth showing.
+logging.getLogger('pypdf').setLevel(logging.ERROR)
 
 
 @dataclass(frozen=True)
@@ -30,6 +37,11 @@ class OutlineEntry:
     title: str
     page: int  # 1-based physical page
     level: int
+    parents: Tuple[str, ...] = ()  # titles of the entries above it, outermost first
+
+    @property
+    def label(self) -> str:
+        return ' > '.join(self.parents + (self.title,))
 
 
 @dataclass(frozen=True)
@@ -55,9 +67,14 @@ def words(text: str) -> List[str]:
 
 
 def word_matches(query_word: str, text_word: str) -> bool:
-    """Equal, or (for longer words) one extends the other by a few characters, in any language."""
+    """Equal, or (for longer words) one extends the other by a few characters, in any language.
+
+    Numbers match only exactly: "10.12" is not "10.1" and "2024" is not "202".
+    """
     if query_word == text_word:
         return True
+    if any(ch.isdigit() for ch in query_word + text_word):
+        return False
     shorter, longer = sorted((query_word, text_word), key=len)
     return (len(shorter) >= _INFLECTION_MIN and len(longer) - len(shorter) <= _INFLECTION_MAX_EXTRA
             and longer.startswith(shorter))
@@ -65,6 +82,10 @@ def word_matches(query_word: str, text_word: str) -> bool:
 
 def _contains_all(query: List[str], text_words: List[str]) -> bool:
     return all(any(word_matches(q, t) for t in text_words) for q in query)
+
+
+def _shared(query: List[str], text_words: List[str]) -> int:
+    return sum(1 for q in query if any(word_matches(q, t) for t in text_words))
 
 
 class PdfDocument:
@@ -87,20 +108,22 @@ class PdfDocument:
     def _read_outline(self) -> List[OutlineEntry]:
         entries: List[OutlineEntry] = []
 
-        def visit(items, level):
+        def visit(items, level, parents):
+            previous = None
             for item in items:
                 if isinstance(item, list):
-                    visit(item, level + 1)
+                    visit(item, level + 1, parents + ((previous,) if previous else ()))
                     continue
+                previous = _CONTROL_RE.sub('', str(item.title or '')).strip()
                 try:
                     page = self._reader.get_destination_page_number(item) + 1
                 except Exception:  # noqa: BLE001 - a broken bookmark is skipped, not fatal
                     continue
                 if page >= 1:
-                    entries.append(OutlineEntry(str(item.title or '').strip(), page, level))
+                    entries.append(OutlineEntry(previous, page, level, parents))
 
         try:
-            visit(self._reader.outline, 0)
+            visit(self._reader.outline, 0, ())
         except Exception as exc:  # noqa: BLE001 - a document without a readable outline has none
             debug_log(f'PDF outline unreadable ({type(exc).__name__}).', 'pdf')
         return entries
@@ -108,11 +131,33 @@ class PdfDocument:
     def outline(self) -> List[OutlineEntry]:
         return list(self._outline)
 
+    def _scored(self, wanted: List[str]) -> List[Tuple[OutlineEntry, int]]:
+        """Entries with how many query words their title and the titles above it share.
+
+        An entry is kept when its own title shares a word or it shares more than every entry above
+        it, so a section that adds nothing to its chapter's match is not listed beside the chapter.
+        """
+        scored = []
+        for entry in self._outline:
+            path = entry.parents + (entry.title,)
+            shares = [_shared(wanted, words(' '.join(path[:depth]))) for depth in range(1, len(path) + 1)]
+            if shares[-1] and (shares[-1] > max(shares[:-1], default=0) or _shared(wanted, words(entry.title))):
+                scored.append((entry, shares[-1]))
+        return scored
+
     def outline_matches(self, query: str) -> List[OutlineEntry]:
+        """Entries whose title, with the titles above it, contains every word of ``query``."""
         wanted = words(query)
         if not wanted:
             return []
-        return [entry for entry in self._outline if _contains_all(wanted, words(entry.title))]
+        return [entry for entry, shared in self._scored(wanted) if shared == len(wanted)]
+
+    def outline_closest(self, query: str, limit: int) -> List[OutlineEntry]:
+        """Entries sharing some but not all query words, most shared first, outer entries before inner."""
+        wanted = words(query)
+        partial = [(entry, shared) for entry, shared in self._scored(wanted) if shared < len(wanted)]
+        partial.sort(key=lambda item: (-item[1], item[0].level, item[0].page))
+        return [entry for entry, _shared_count in partial[:max(0, limit)]]
 
     def _extract_next(self) -> bool:
         """Extract one more page; False when every page is done."""
