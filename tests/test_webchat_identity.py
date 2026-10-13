@@ -223,6 +223,27 @@ class TestWindowAgainstRealServers:
         finally:
             win.close()
 
+    def test_a_load_that_finishes_after_a_restart_is_not_shown_unchecked(self, qapp, jarvis_server):
+        win = self._window(jarvis_server.port, jarvis_server.identity_token)
+        try:
+            win.set_daemon_status("running")
+            assert _pump(qapp, lambda: win.stub.loaded, timeout=5)
+            win.set_daemon_status("stopped")
+            win._identity = lambda: None
+            win.set_daemon_status("running")
+            win.stub.loadFinished.emit(True)  # the old load lands only now
+            assert not win.is_showing_chat()
+        finally:
+            win.close()
+
+    def test_a_window_deleted_while_checking_does_not_crash(self, qapp, foreign_port):
+        from PyQt6 import sip
+        win = self._window(foreign_port, identity.new_token())
+        win.set_daemon_status("running")
+        sip.delete(win)
+        _pump(qapp, timeout=0.5)  # the check returns to a deleted window
+        assert sip.isdeleted(win)
+
     def test_the_default_browser_is_only_sent_to_jarvis(self, qapp, foreign_port, jarvis_server):
         from desktop_app.web_chat_window import WebChatWindow
         squatted = WebChatWindow(foreign_port, "running", view_factory=lambda: None,
@@ -276,6 +297,7 @@ class TestTrayKeepsTheToken:
         tray._chat_submit_fn = None
         tray._confirm_relay = None
         tray._web_chat_token = None
+        tray._web_chat_port = 8766
         tray.log_signals = MagicMock()
         return tray
 
@@ -300,6 +322,20 @@ class TestTrayKeepsTheToken:
     def test_a_malformed_announcement_gives_no_token(self, qapp, line):
         tray = self._tray()
         tray.daemon_process = SimpleNamespace(stdout=io.StringIO(line + "\n"))
+        tray._read_daemon_logs()
+        assert tray._web_chat_identity() is None
+
+    def test_only_the_first_announcement_of_a_run_counts(self, qapp):
+        tray = self._tray()
+        tray.daemon_process = SimpleNamespace(stdout=io.StringIO(
+            self._ready_line("a" * 64) + "\n" + "a tool printed " + self._ready_line("e" * 64) + "\n"
+            + self._ready_line("f" * 64) + "\n"))
+        tray._read_daemon_logs()
+        assert tray._web_chat_identity() == "a" * 64
+
+    def test_an_announcement_for_another_port_is_ignored(self, qapp):
+        tray = self._tray()
+        tray.daemon_process = SimpleNamespace(stdout=io.StringIO(self._ready_line("a" * 64, port=9999) + "\n"))
         tray._read_daemon_logs()
         assert tray._web_chat_identity() is None
 

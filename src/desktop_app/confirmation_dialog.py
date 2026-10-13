@@ -243,17 +243,23 @@ class SubprocessConfirmationRelay:
     """Shows the dialogs a daemon subprocess asks for and writes each answer to its stdin.
 
     ``write_line(line)`` sends one line to the daemon. ``handle_line`` takes the daemon's
-    ``__CONFIRM__:`` events on the GUI thread. A dialog closed by the daemon or by ``close_all``
-    (the daemon went away) answers nothing, which the daemon treats as a refusal. See
+    ``__CONFIRM__:`` events on the GUI thread. A dialog closed by the daemon, by ``close_all``
+    (the daemon went away) or by its own timeout (the daemon's expiry plus a margin, in case the
+    daemon's close never arrives) answers nothing, which the daemon treats as a refusal. See
     ``desktop_app.spec.md`` (Action Confirmation Dialog).
     """
 
     def __init__(self, write_line: Callable[[str], Any],
-                 presenter: Optional[Callable[[Any, Callable[[bool], Any]], Any]] = None) -> None:
+                 presenter: Optional[Callable[[Any, Callable[[bool], Any]], Any]] = None,
+                 timeout_sec: Optional[float] = None) -> None:
+        from jarvis.tools.confirmation import DIALOG_TIMEOUT_SEC
         self._write_line = write_line
         self._presenter = presenter or show_desktop_confirmation_dialog
+        self._timeout_sec = timeout_sec if timeout_sec is not None else DIALOG_TIMEOUT_SEC + 5.0
         self._lock = threading.Lock()
+        # request id -> [dialog handle (None while it opens), expiry timer]
         self._open: dict = {}
+        self._closed = False
 
     def handle_line(self, line: str) -> bool:
         """Apply a ``__CONFIRM__:`` event. True when the line was one, even a malformed one."""
@@ -285,42 +291,62 @@ class SubprocessConfirmationRelay:
         return True
 
     def close_all(self) -> None:
-        """Dismiss every dialog without answering (the daemon stopped or crashed)."""
+        """Dismiss every dialog without answering and show no more (the daemon stopped or crashed)."""
         with self._lock:
-            handles, self._open = list(self._open.values()), {}
-        for handle in handles:
+            self._closed = True
+            entries, self._open = list(self._open.values()), {}
+        for handle, timer in entries:
+            timer.cancel()
             self._dismiss(handle)
-        if handles:
-            debug_log(f"desktop confirmation: closed {len(handles)} dialog(s), the daemon went away", "desktop")
+        if entries:
+            debug_log(f"desktop confirmation: closed {len(entries)} dialog(s), the daemon went away", "desktop")
 
     def _open_dialog(self, request: PipedConfirmationRequest) -> None:
         def resolve(approved: bool) -> None:
-            with self._lock:
-                if self._open.pop(request.id, None) is None:
-                    return  # closed, already answered or never shown
+            if self._take(request.id) is None:
+                return  # closed, timed out or already answered
             self._answer(request.id, bool(approved))
 
+        timer = threading.Timer(self._timeout_sec, self._expire, args=(request.id,))
+        timer.daemon = True
         with self._lock:
-            self._open[request.id] = None
+            if self._closed or request.id in self._open:
+                debug_log("desktop confirmation: request ignored (daemon gone or already shown)", "desktop")
+                return
+            self._open[request.id] = [None, timer]
+        timer.start()
         handle = self._presenter(request, resolve)
         if handle is None:
-            with self._lock:
-                self._open.pop(request.id, None)
-            debug_log("desktop confirmation: dialog could not be shown, declining", "desktop")
-            self._answer(request.id, False)
+            if self._take(request.id) is not None:
+                debug_log("desktop confirmation: dialog could not be shown, declining", "desktop")
+                self._answer(request.id, False)
             return
         with self._lock:
-            if request.id in self._open:
-                self._open[request.id] = handle
+            entry = self._open.get(request.id)
+            if entry is not None:
+                entry[0] = handle
                 debug_log("desktop confirmation: dialog shown for the daemon", "desktop")
                 return
-        self._dismiss(handle)  # answered while it was being opened
+        self._dismiss(handle)  # answered, closed or timed out while it was being opened
+
+    def _take(self, request_id: str) -> Optional[list]:
+        """Remove a request's entry (stopping its timer); ``None`` if it was no longer open."""
+        with self._lock:
+            entry = self._open.pop(request_id, None)
+        if entry is not None:
+            entry[1].cancel()
+        return entry
+
+    def _expire(self, request_id: str) -> None:
+        entry = self._take(request_id)
+        if entry is not None:
+            debug_log("desktop confirmation: dialog timed out unanswered", "desktop")
+            self._dismiss(entry[0])
 
     def _close(self, request_id: str) -> None:
-        with self._lock:
-            handle = self._open.pop(request_id, None)
-        if handle is not None:
-            self._dismiss(handle)
+        entry = self._take(request_id)
+        if entry is not None:
+            self._dismiss(entry[0])
 
     @staticmethod
     def _dismiss(handle: Any) -> None:

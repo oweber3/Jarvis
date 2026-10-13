@@ -349,7 +349,7 @@ Off by default. Turn it on in **Settings → Extras → Web chat** and restart J
 - **Attachments stay in memory.** A file or image lives only until the message that carries it is answered; it is never saved, and the chat history records only that something was attached and its size. File text is treated as data, never as instructions. Attaching to Claude or ChatGPT sends it to that provider with your message.
 - **Saved locally, redacted.** Chats are kept in Jarvis's own database as the redacted text Jarvis sees, never what you typed before redaction. Delete a chat from its menu.
 - **Nothing leaves your PC.** The page is served by Jarvis on `127.0.0.1` only, with no cloud service, CDN or analytics, and works without internet.
-- **Only Jarvis's own page is shown.** If another program already uses the chat's port, the window says so instead of showing that program; pick another port in Settings.
+- **Only Jarvis's own page is shown.** If another program already uses the chat's port, the window never shows that program's page. It keeps waiting and tells you what to check; pick another port in Settings.
 
 Details: [`src/jarvis/webchat/webchat.spec.md`](src/jarvis/webchat/webchat.spec.md). Changing the page itself needs Node; see [`webchat-ui/README.md`](webchat-ui/README.md). Running Jarvis does not.
 

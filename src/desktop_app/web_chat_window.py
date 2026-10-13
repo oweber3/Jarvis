@@ -14,7 +14,7 @@ import urllib.error
 import urllib.request
 from typing import Callable, Optional
 
-from PyQt6.QtCore import QTimer, QUrl, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QLabel, QMainWindow, QPushButton, QStackedWidget, QVBoxLayout, QWidget
 
@@ -116,14 +116,19 @@ if HAS_WEBENGINE:
             return _ExternalLinkPage(self)
 
 
+class _VerifyBridge(QObject):
+    """Carries a verdict from the check's thread to the window. It has no parent and the thread keeps
+    it alive, so emitting never touches a window that was deleted meanwhile (Qt drops the delivery)."""
+
+    verified = pyqtSignal(int, str)
+
+
 class WebChatWindow(QMainWindow):
     """Hosts the web chat. ``view_factory`` builds the browser (``None`` means no embedded browser).
 
     ``identity()`` returns the running server's identity token, or ``None`` while it is not known. The
     page is loaded only after ``verifier(port, token)`` says the server on the port is Jarvis's own.
     """
-
-    _verified = pyqtSignal(int, str)
 
     def __init__(self, port: int, daemon_status: str = "stopped", *,
                  view_factory: Optional[Callable[[], Optional[QWidget]]] = None, retry_ms: int = 2000,
@@ -144,7 +149,10 @@ class WebChatWindow(QMainWindow):
         self._identity = identity
         self._verifier = verifier
         self._attempt = 0
-        self._verified.connect(self._on_verified)
+        # The attempt whose verified load is in the view; only its load may be shown.
+        self._loading_attempt = -1
+        self._bridge = _VerifyBridge()
+        self._bridge.verified.connect(self._on_verified)
 
         factory = view_factory or self._default_view
         self.view: Optional[QWidget] = factory()
@@ -209,6 +217,7 @@ class WebChatWindow(QMainWindow):
         was_running = self._status == "running"
         self._status = status
         if status != "running":
+            self._attempt += 1  # checks and loads already under way no longer count
             self._retry_timer.stop()
             self._loaded = False
             self._ever_requested = False
@@ -232,12 +241,14 @@ class WebChatWindow(QMainWindow):
             self._on_verified(attempt, UNREACHABLE)
             return
 
+        bridge, verifier, port = self._bridge, self._verifier, self._port
+
         def check() -> None:
-            verdict = self._verifier(self._port, token)
+            verdict = verifier(port, token)
             try:
-                self._verified.emit(attempt, verdict)
+                bridge.verified.emit(attempt, verdict)
             except RuntimeError:
-                pass  # the window was destroyed meanwhile
+                pass  # the application is shutting down
 
         threading.Thread(target=check, name="web-chat-verify", daemon=True).start()
 
@@ -245,6 +256,7 @@ class WebChatWindow(QMainWindow):
         if attempt != self._attempt or self._status != "running" or self.view is None:
             return  # a newer check or a daemon change has taken over
         if verdict == JARVIS:
+            self._loading_attempt = attempt
             self.view.setUrl(QUrl(web_chat_url(self._port)))  # type: ignore[attr-defined]
             return
         self._loaded = False
@@ -256,6 +268,9 @@ class WebChatWindow(QMainWindow):
         if self._status != "running":
             return
         if ok:
+            if self._loading_attempt != self._attempt:
+                debug_log("web chat: a load that was not checked for this run was not shown", "desktop")
+                return
             self._loaded = True
             self._load_failed = False
             self._retry_timer.stop()

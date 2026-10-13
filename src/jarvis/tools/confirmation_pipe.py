@@ -81,7 +81,11 @@ class PipeDialogPresenter:
             debug_log("Ignored a desktop confirmation answer for no open dialog", "safety")
             return True
         debug_log(f"Desktop confirmation answered: {'confirmed' if approved else 'cancelled'}", "safety")
-        resolve(approved)
+        try:
+            resolve(approved)
+        except Exception as exc:
+            # Runs on the stdin monitor, which must keep reading whatever happens here.
+            debug_log(f"Applying the desktop confirmation answer failed: {type(exc).__name__}", "safety")
         return True
 
     def _close(self, request_id: str) -> None:
