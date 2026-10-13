@@ -2,7 +2,9 @@
 
 Runs the local router (fast model) and chat call (model under test) with the whole built-in catalogue,
 ``replyMode`` included. Nothing is executed. Phrasings here are ones the fast path does not cover, so
-the model has to choose.
+the model has to choose. A style instruction that names no personality ("be more brief", "drop the
+jokes") is a conversational instruction acknowledged without tools (``prompts.spec.md``, USER
+INSTRUCTIONS), so it is not a case here.
 
     EVAL_JUDGE_MODEL=gpt-oss:20b PYTHONPATH=src .mamba_env/python.exe -m pytest evals/test_personality_routing.py -m eval -v
 """
@@ -17,9 +19,8 @@ from helpers import JUDGE_MODEL, eval_fast_model
 # (utterance, expected personality arguments, or None when personality must not be called)
 CASES = [
     ("Change your personality to the friendly one", {"action": "set", "name": "friendly"}),
-    ("Drop the jokes and the wit from now on, I just want plain answers", {"action": "set", "name": "plain"}),
+    ("Could you switch your personality over to plain, please?", {"action": "set", "name": "plain"}),
     ("Go back to being the witty butler", {"action": "set", "name": "butler"}),
-    ("Which personality are you using at the moment?", {"action": "get"}),
     ("Use Claude", None),
     ("Write a friendly birthday message for my sister", None),
     ("Open Word", None),

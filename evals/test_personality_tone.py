@@ -73,16 +73,17 @@ def _reply(mock_config, eval_db, eval_dialogue_memory, text, personality, custom
 def _judge_voices(question, replies):
     """Which voice the judge hears in each of ``replies`` (labelled A, B, C in that order)."""
     labelled = "\n\n".join(f"Reply {label}: {reply}" for label, reply in zip("ABC", replies))
-    verdict = call_judge_llm(_VOICE_JUDGE, f"User asked: {question}\n\n{labelled}") or ""
+    verdict = call_judge_llm(_VOICE_JUDGE, f"User asked: {question}\n\n{labelled}", timeout_sec=600) or ""
     heard = []
     for label in "ABC":
-        match = re.search(rf"^\W*{label}\W*:\s*\**\s*(BUTLER|PLAIN|FRIENDLY)", verdict, re.IGNORECASE | re.MULTILINE)
+        match = re.search(rf"^\W*(?:reply\s*)?{label}\W*[:=\-]\W*(BUTLER|PLAIN|FRIENDLY)", verdict,
+                          re.IGNORECASE | re.MULTILINE)
         heard.append(match.group(1).lower() if match else "unknown")
     return heard, verdict
 
 
 def _judge_yes(question_about_reply, reply):
-    verdict = call_judge_llm(_YES_NO_JUDGE, f"Question: {question_about_reply}\n\nAssistant reply: {reply}") or ""
+    verdict = call_judge_llm(_YES_NO_JUDGE, f"Question: {question_about_reply}\n\nAssistant reply: {reply}", timeout_sec=600) or ""
     match = re.search(r"ANSWER:\s*\**\s*(YES|NO)", verdict, re.IGNORECASE)
     return (match.group(1).upper() == "YES") if match else None, verdict
 
@@ -105,6 +106,8 @@ class TestBuiltinPersonalityTone:
             shuffle.shuffle(order)
             heard, verdict = _judge_voices(question, [replies[name] for name in order])
             print(f"   💬 {question}")
+            if "unknown" in heard:
+                print(f"      ⚠️ judge said: {verdict[:300]!r}")
             for name, voice in zip(order, heard):
                 words[name] += len(replies[name].split())
                 correct[name] += voice == name
