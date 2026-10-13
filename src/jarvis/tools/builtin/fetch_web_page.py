@@ -64,7 +64,7 @@ class FetchWebPageTool(Tool):
                 return ToolExecutionResult(success=False, reply_text="fetchWebPage requires a valid 'url'.")
             if not url.startswith(('http://', 'https://')):
                 url = 'https://' + url
-            debug_log(f"fetchWebPage: fetching {url}", "web")
+            debug_log(f"fetchWebPage: fetching a {url.split(':', 1)[0]} address", "web")
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -142,10 +142,10 @@ class FetchWebPageTool(Tool):
             context.user_print("⚠️ That address is not a public website, so I did not fetch it.")
             return ToolExecutionResult(success=False, reply_text="Refused: fetchWebPage only fetches public websites, not local or private network addresses.")
         except requests.exceptions.RequestException as e:
-            debug_log(f"fetchWebPage: request failed: {e}", "web")
+            debug_log(f"fetchWebPage: request failed: {type(e).__name__}", "web")
             context.user_print("⚠️ Failed to fetch page.")
             return ToolExecutionResult(success=False, reply_text=f"Failed to fetch page: {e}")
         except Exception as e:  # pragma: no cover (safety net)
-            debug_log(f"fetchWebPage: error: {e}", "web")
+            debug_log(f"fetchWebPage: error: {type(e).__name__}", "web")
             context.user_print("⚠️ Error fetching page.")
             return ToolExecutionResult(success=False, reply_text=f"Error fetching page: {e}")

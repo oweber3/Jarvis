@@ -127,6 +127,12 @@ class RuntimeStatusSignals(QObject):
     ready = pyqtSignal(object)
 
 
+class UpdateCheckSignals(QObject):
+    """Carries an update check's result (status, whether to report "no update") to the GUI thread."""
+
+    checked = pyqtSignal(object, bool)
+
+
 class ReplyModeSignals(QObject):
     """Carries the daemon's reply-mode state (active mode, allowed modes) to the GUI thread."""
 
@@ -758,7 +764,9 @@ def check_previous_crash() -> Optional[str]:
                 content = crash_log.read_text(encoding='utf-8', errors='replace')
                 # Only report if there's actual crash info (faulthandler output or errors)
                 if 'Fatal' in content or 'Error' in content or 'Traceback' in content:
-                    crash_content = content
+                    from desktop_app.report_filter import report_safe_log
+                    # The bundled app's crash log holds the daemon's output, conversation included.
+                    crash_content = report_safe_log(content)
                     # On macOS, append the native .ips stack so the crash
                     # dialog and report-issue body carry the C-level abort
                     # source faulthandler cannot show.
@@ -1384,6 +1392,8 @@ class LogViewerWindow(QMainWindow):
         self.download_card.hide()
         self._downloads = {}
         self._download_times = {}
+        # Once cleared, the log no longer starts with the start-up section (see report_safe_log).
+        self._cleared = False
         self._last_progress_at = 0.0
         self._progress_detail = ""
         self._progress_timer = QTimer(self)
@@ -1498,6 +1508,7 @@ class LogViewerWindow(QMainWindow):
     def clear_logs(self) -> None:
         """Clear all logs."""
         self.log_display.clear()
+        self._cleared = True
         self._downloads.clear()
         self._download_times.clear()
         self._progress_timer.stop()
@@ -1505,23 +1516,22 @@ class LogViewerWindow(QMainWindow):
         self.append_log("🗑️ Logs cleared\n")
 
     def _report_issue(self) -> None:
-        """Open GitHub issue with redacted log contents."""
+        """Open GitHub issue with the report-safe part of the log."""
         from jarvis import get_version
-        from jarvis.utils.redact import _REDACTION_RULES
+        from desktop_app.report_filter import report_safe_log
+        from jarvis.utils.redact import scrub_secrets
 
         try:
             version = get_version()
         except Exception:
             version = "unknown"
 
-        # Get all log content and redact sensitive information (preserving line breaks)
-        log_content = self.log_display.toPlainText()
+        # The log window shows the conversation; the report carries the start-up section and the shape of the rest.
+        redacted_logs = report_safe_log(self.log_display.toPlainText(), start_up=not self._cleared)
         if not self.download_card.isHidden():
             percentage = f"{self.download_bar.value()}% · " if self.download_bar.maximum() else ''
-            log_content += f"\n{self.download_title.text()}: {percentage}{self.download_detail.text()}\n"
-        redacted_logs = log_content
-        for pattern, repl in _REDACTION_RULES:
-            redacted_logs = pattern.sub(repl, redacted_logs)
+            redacted_logs += scrub_secrets(
+                f"\n{self.download_title.text()}: {percentage}{self.download_detail.text()}\n")
 
         # Truncate if too long for URL (GitHub has ~8000 char limit for URLs)
         # Keep init lines + recent tail (recent logs are most useful for debugging)
@@ -1547,6 +1557,8 @@ class LogViewerWindow(QMainWindow):
 
 <details>
 <summary>📋 Logs (click to expand)</summary>
+
+Lines after start-up show only their icons, so the conversation stays on this PC.
 
 ```
 {redacted_logs}
@@ -2072,6 +2084,12 @@ class JarvisSystemTray:
         self._runtime_status_signals = RuntimeStatusSignals()
         self._runtime_status_signals.ready.connect(self._show_runtime_status_dialog)
 
+        # The update check asks GitHub over the network: a worker thread does that, the dialogs run here.
+        self._update_signals = UpdateCheckSignals()
+        self._update_signals.checked.connect(self._on_update_checked)
+        self._update_check_running = False
+        self._update_dialog_requested = False
+
         # Reply mode: the tray submenu, the orb and chat badges follow the daemon's state. In
         # bundled mode the daemon's mode listener calls us directly (on its own thread); in
         # subprocess mode its state lines arrive through the log reader. Both are queued here.
@@ -2115,8 +2133,10 @@ class JarvisSystemTray:
         # Register cleanup on app exit
         self.app.aboutToQuit.connect(self.cleanup_on_exit)
 
-        # Check for updates on startup (delayed by 5 seconds to not block app startup)
-        QTimer.singleShot(5000, self.check_for_updates)
+        # The start-up update check contacts GitHub, so it runs only when the user turned it on.
+        from desktop_app.updater import startup_check_enabled
+        if startup_check_enabled():
+            QTimer.singleShot(5000, self.check_for_updates)
 
         debug_log("desktop app initialized", "desktop")
 
@@ -2530,17 +2550,15 @@ class JarvisSystemTray:
     def check_for_updates(self, show_no_update_dialog: bool = False) -> None:
         """Check for available updates.
 
+        The request to GitHub runs on a worker thread and its result comes back through
+        ``_update_signals``: offline it waits for its timeout, which would freeze the tray on the
+        Qt main thread. A check asked for while one is running is skipped.
+
         Args:
             show_no_update_dialog: If True, shows a dialog even when no update is available.
         """
-        from desktop_app.updater import check_for_updates, is_frozen, update_install_blocker
-        from desktop_app.update_dialog import (
-            UpdateAvailableDialog,
-            UpdateProgressDialog,
-            show_no_update_dialog as show_no_update,
-            show_update_blocked_dialog,
-            show_update_error_dialog,
-        )
+        import threading
+        from desktop_app.updater import UpdateStatus, check_for_updates, is_frozen
 
         # Only check for updates if running as bundled app
         if not is_frozen():
@@ -2555,9 +2573,42 @@ class JarvisSystemTray:
                 msg.exec()
             return
 
-        try:
-            status = check_for_updates()
+        if self._update_check_running:
+            # The running check answers this request too, with a dialog when this one asked for it.
+            self._update_dialog_requested = self._update_dialog_requested or show_no_update_dialog
+            debug_log("update check already running; joined it", "desktop")
+            return
+        self._update_check_running = True
 
+        def _check() -> None:
+            try:
+                status = check_for_updates()
+            except Exception as exc:
+                status = UpdateStatus(update_available=False, current_version="", current_channel="",
+                                      latest_release=None, error=f"{type(exc).__name__}: {exc}")
+            self._update_signals.checked.emit(status, show_no_update_dialog)
+
+        try:
+            threading.Thread(target=_check, name="update-check", daemon=True).start()
+        except RuntimeError as exc:
+            self._update_check_running = False
+            debug_log(f"update check could not start: {type(exc).__name__}", "desktop")
+
+    def _on_update_checked(self, status, show_no_update_dialog: bool) -> None:
+        """Act on an update check's result. Runs on the Qt main thread."""
+        from desktop_app.updater import update_install_blocker
+        from desktop_app.update_dialog import (
+            UpdateAvailableDialog,
+            UpdateProgressDialog,
+            show_no_update_dialog as show_no_update,
+            show_update_blocked_dialog,
+            show_update_error_dialog,
+        )
+
+        show_no_update_dialog = show_no_update_dialog or self._update_dialog_requested
+        self._update_check_running = False
+        self._update_dialog_requested = False
+        try:
             if status.error:
                 debug_log(f"Update check failed: {status.error}", "desktop")
                 if show_no_update_dialog:
@@ -2764,10 +2815,10 @@ class JarvisSystemTray:
             else:  # Linux and other Unix-like systems
                 subprocess.Popen(["xdg-open", str(directory_path)])
 
-            debug_log(f"opened {directory_name} directory: {directory_path}", "desktop")
+            debug_log(f"opened {directory_name} directory", "desktop")
             self.log_signals.new_log.emit(f"📂 Opened {directory_name} directory\n")
         except Exception as e:
-            debug_log(f"failed to open {directory_name} directory: {e}", "desktop")
+            debug_log(f"failed to open {directory_name} directory: {type(e).__name__}", "desktop")
             self.log_signals.new_log.emit(f"❌ Failed to open {directory_name} directory: {str(e)}\n")
             self.tray_icon.showMessage(
                 f"Error Opening {directory_name} Directory",

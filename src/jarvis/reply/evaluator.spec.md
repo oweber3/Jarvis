@@ -1,4 +1,4 @@
-> **Deprecated**: The evaluator is no longer called from the reply engine. The task-list planner (`planner.spec.md`) replaces its per-turn correction role. This file is preserved for reference only.
+> **Deprecated**: The evaluator has no implementation; the task-list planner (`planner.spec.md`) covers its per-turn correction role. This file is preserved for reference only.
 
 ## Agentic-Loop Evaluator Spec
 
@@ -95,5 +95,4 @@ the intent judge and the tool router.
 
 ### Tests
 
-- `tests/test_evaluator.py` covers parse edge cases, terminal and continue-with-nudge paths, timeout / connection-error fail-open (now terminal), missing-config fail-open, redaction, and the available-tools payload shape.
 - `tests/test_engine_tool_search_loop.py` covers the integration with the agentic loop including the continue-then-nudge-then-tool-call sequence.

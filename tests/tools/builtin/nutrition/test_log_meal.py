@@ -270,3 +270,22 @@ class TestLoggedMealIsNeverDuplicated:
         assert result.success is True
         assert meals[0]["calories_kcal"] is None and meals[0]["carbs_g"] == 60
         assert "60g carbs" in result.reply_text
+
+
+@pytest.mark.parametrize("reply", ["NONE", '{"description": "pasta at Alice\'s at 123 Main St", "calories'])
+def test_what_was_eaten_never_reaches_the_debug_log(reply, monkeypatch):
+    """A meal description is personal, and so is the model's reading of it: the debug log gets lengths only."""
+    import src.jarvis.tools.builtin.nutrition.log_meal as module
+    logged = []
+    monkeypatch.setattr(module, "debug_log", lambda message, *a, **k: logged.append(message))
+    cfg = Mock()
+    cfg.llm_chat_timeout_sec = 30
+    cfg.llm_thinking_enabled = False
+
+    with patch('src.jarvis.tools.builtin.nutrition.log_meal.call_llm_direct', return_value=reply):
+        assert module.extract_and_log_meal(Mock(), cfg, "pasta at Alice's house at 123 Main St", "stdin") is None
+
+    text = "\n".join(logged)
+    assert logged
+    for part in ("Alice", "Main St", "pasta"):
+        assert part not in text, part

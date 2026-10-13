@@ -73,6 +73,7 @@ Two independent caches exist, each with in-memory and on-disk tiers:
 - **Single DNS query** — the only external network activity is a raw UDP DNS query to OpenDNS, and only when:
   - `auto_detect=True` and both UPnP and socket detection failed, OR
   - A CGNAT IP is detected and `resolve_cgnat_public_ip=True`.
+- **Nothing identifying in the debug log** — `debug_log` records which method found an address and whether a city was found, never an IP address, a city, a region, a country or the database's folder. Exceptions are logged by type, because geoip2's messages name the address.
 - **Fully disableable** — setting `location_enabled=false` prevents all detection. Setting `location_auto_detect=false` and `location_cgnat_resolve_public_ip=false` prevents any external query while still allowing manual IP geolocation.
 
 ### Error Handling

@@ -257,6 +257,10 @@ The DDG failure lines (`🚧` / `⚠️`) are printed **immediately after the DD
 
 These are ephemeral stdout prints (`context.user_print`). They are not persisted, not logged to file, and not included in the tool result returned to the LLM.
 
+### Debug log
+
+Search terms, result titles and links are personal, so `debug_log` records only kinds, counts, lengths, statuses and ranks: the query's length, how many links and results each provider gave, fetched character counts and relevance scores. An exception is logged by its type alone, because `requests` puts the request URL, query string included, into its messages. `fetchWebPage` follows the same rule and logs only the address's scheme.
+
 ### Per-utterance language
 
 `ToolContext.language` carries the ISO-639-1 code Whisper detected at

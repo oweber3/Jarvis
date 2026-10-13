@@ -217,9 +217,7 @@ def _make_handler(server: WebChatServer):
         # -- dispatch ------------------------------------------------------------------
 
         def _guard(self) -> None:
-            why = refusal(self.headers.get("Host", ""), self.headers.get("Origin"))
-            if why is None and self.headers.get("Sec-Fetch-Site") == "cross-site":
-                why = "origin"
+            why = refusal(self.headers.get("Host", ""), self.headers.get("Origin"), self.headers.get("Sec-Fetch-Site"))
             if why is not None:
                 debug_log(f"webchat: refused a request with a foreign {why}", "webchat")
                 raise _Refused(403, "forbidden")

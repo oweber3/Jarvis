@@ -47,6 +47,17 @@ class TestExtraction:
         assert [page for page, _ in segments] == [1, 2]
         assert "pets" in segments[1][1]
 
+    def test_password_protected_pdf_is_skipped(self, tmp_path):
+        from pypdf import PdfReader, PdfWriter
+        plain = make_pdf(tmp_path / "plain.pdf", ["Salary details."])
+        writer = PdfWriter(clone_from=PdfReader(plain))
+        writer.encrypt(user_password="hunter2", owner_password="owner")
+        locked = tmp_path / "locked.pdf"
+        writer.write(locked)
+        with pytest.raises(extract.ExtractError) as caught:
+            extract.extract_segments(locked)
+        assert caught.value.args[0] == "encrypted"
+
     def test_docx_paragraphs(self, tmp_path):
         doc = make_docx(tmp_path / "notes.docx", ["Thermodynamics exam on Friday.", "Revise the Carnot cycle."])
         text = extract.extract_segments(doc)[0][1]

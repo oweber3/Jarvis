@@ -14,7 +14,7 @@ An opt-in, local semantic index of the user's own documents, so the user can ask
 
 | Module | Responsibility |
 |--------|----------------|
-| `documents/extract.py` | Text extraction from `.txt`, `.md`, `.pdf` (`pypdf`) and `.docx` (standard library: the archive's `word/document.xml`), and chunking. No OS, network or model calls |
+| `documents/extract.py` | Text extraction from `.txt`, `.md`, `.pdf` (PDFium through `utils/pdf_text.py`) and `.docx` (standard library: the archive's `word/document.xml`), and chunking. No OS, network or model calls |
 | `documents/store.py` | `DocumentStore`: the index tables in the Jarvis SQLite file, vector search, delete-all |
 | `documents/indexer.py` | `scan_folders` (which files are eligible) and `DocumentIndexer` (one incremental pass, and the background thread that repeats it) |
 | `documents/runtime.py` | Process-wide start, stop, rebuild, delete, status, search and the cloud-sharing switch, shared by the daemon, the tray and the CLI |
@@ -35,7 +35,7 @@ An opt-in, local semantic index of the user's own documents, so the user can ask
 ## Extraction and chunking
 
 - Text files are decoded as UTF-8 (a UTF-8 or UTF-16 byte-order mark is honoured), undecodable bytes replaced.
-- PDFs are read with `pypdf` page by page (at most 1,000 pages); each passage remembers its page number. An encrypted PDF that does not open with an empty password is skipped.
+- PDFs are read with PDFium page by page (at most 1,000 pages); each passage remembers its page number. An encrypted PDF that does not open with an empty password is skipped.
 - `.docx` files are read from `word/document.xml` inside the archive with the standard library; paragraphs, tabs and line breaks are kept. An archive whose document part is over 50 MB uncompressed is skipped (archive bombs). No extra dependency.
 - At most 2,000,000 characters are taken from one file.
 - Text is split on paragraph boundaries into passages of about 1,000 characters with a 200-character overlap; a single long paragraph is cut at word boundaries. Whitespace is collapsed. At most 400 passages per file.

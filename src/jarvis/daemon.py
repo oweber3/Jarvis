@@ -451,6 +451,11 @@ def _flush_detached_conversation(detached) -> None:
 # Diary IPC protocol prefix - desktop app intercepts lines starting with this
 DIARY_IPC_PREFIX = "__DIARY__:"
 
+# The first console line of every typed request and every announcement, followed by its origin and nothing
+# else, printed before anything that carries conversation. Readers of the console output (the desktop app's
+# issue report) end the start-up section at it; voice turns start with the listener's ``📝 Heard:`` line.
+TURN_LINE_PREFIX = "💬 Turn: "
+
 
 def _emit_ipc_event(prefix: str, event_type: str, data, debug_tag: str) -> None:
     """Emit a JSON IPC event line to stdout for the desktop app (subprocess mode).
@@ -660,6 +665,7 @@ def deliver_announcement(text: str) -> None:
     safe = redact(text or "").strip()
     if not safe:
         return
+    print(f"{TURN_LINE_PREFIX}announcement", flush=True)
     print(f"⏰ {safe}", flush=True)
     dm = _global_dialogue_memory
     if dm is not None:
@@ -867,6 +873,7 @@ def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc
     global _chat_cancel_event
     cancel_event = threading.Event()
     _chat_cancel_event = cancel_event
+    print(f"{TURN_LINE_PREFIX}{origin}", flush=True)
 
     def _worker() -> None:
         reply = None
@@ -1620,6 +1627,11 @@ def main(smoke_test: bool = False) -> None:
         piper_noise_scale=cfg.tts_piper_noise_scale,
         piper_noise_w=cfg.tts_piper_noise_w,
         piper_sentence_silence=cfg.tts_piper_sentence_silence,
+        piper_voice=cfg.tts_piper_voice,
+        # Kokoro parameters
+        kokoro_voice=cfg.tts_kokoro_voice,
+        kokoro_speed=cfg.tts_kokoro_speed,
+        kokoro_device=cfg.tts_kokoro_device,
         # Voice outputs: this PC and any an extension adds
         pc_speakers_enabled=cfg.tts_pc_speakers_enabled,
         voice_outputs=extensions.voice_outputs(),

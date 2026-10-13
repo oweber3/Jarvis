@@ -1594,15 +1594,14 @@ class TestTrayUpdateFlow:
                               current_channel="stable", latest_release=release)
         accepted = MagicMock()
         accepted.return_value.exec.return_value = QDialog.DialogCode.Accepted
-        tray = SimpleNamespace(is_listening=False, quit_app=MagicMock())
+        tray = SimpleNamespace(is_listening=False, quit_app=MagicMock(), _update_check_running=True,
+                               _update_dialog_requested=False)
 
-        with patch("desktop_app.updater.is_frozen", return_value=True), \
-             patch("desktop_app.updater.check_for_updates", return_value=status), \
-             patch("desktop_app.updater.update_install_blocker", return_value="move it"), \
+        with patch("desktop_app.updater.update_install_blocker", return_value="move it"), \
              patch("desktop_app.update_dialog.UpdateAvailableDialog", accepted), \
              patch("desktop_app.update_dialog.UpdateProgressDialog") as progress, \
              patch("desktop_app.update_dialog.show_update_blocked_dialog") as blocked:
-            JarvisSystemTray.check_for_updates(tray)
+            JarvisSystemTray._on_update_checked(tray, status, False)
 
         blocked.assert_called_once_with("move it")
         assert not progress.called

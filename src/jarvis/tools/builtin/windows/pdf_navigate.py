@@ -16,6 +16,7 @@ _TIMEOUT_SEC = 12
 _FAST_CHECK_SEC = 1.0
 _SEARCH_BUDGET_SEC = 4.0
 _MAX_CANDIDATES = 8
+_MAX_CLOSEST = 4
 _MAX_OUTLINE = 80
 
 
@@ -128,11 +129,16 @@ class PdfNavigateTool(Tool):
         if len({entry.page for entry in chapters}) == 1:
             entry = chapters[0]
             shown = pv.show_page(viewer, path, entry.page, document.page_count)
-            return {**base, **shown, 'matched': 'outline', 'title': entry.title}
+            return {**base, **shown, 'matched': 'outline', 'title': entry.label}
+        # No single chapter has every word: the closest chapters lead, so the reply model can pick
+        # one even when the wording differs from the book's ("practice problems" for "Problems").
+        closest = [] if chapters else document.outline_closest(query, _MAX_CLOSEST)
         search = document.search(query, budget_sec=_SEARCH_BUDGET_SEC, limit=_MAX_CANDIDATES)
-        candidates = [{'page': e.page, 'title': e.title} for e in chapters]
+        candidates = [{'page': e.page, 'title': e.label} for e in chapters + closest]
         seen = {c['page'] for c in candidates}
-        candidates += [{'page': hit.page, 'snippet': hit.snippet} for hit in search.hits if hit.page not in seen]
-        debug_log(f'PDF find: {len(chapters)} outline and {len(search.hits)} page matches.', 'windows')
+        candidates += [{'page': hit.page, 'snippet': hit.snippet, **({'partial': True} if hit.partial else {})}
+                       for hit in search.hits if hit.page not in seen]
+        debug_log(f'PDF find: {len(chapters)} outline, {len(closest)} closest and {len(search.hits)} page '
+                  'matches.', 'windows')
         return {**base, 'candidates': candidates[:_MAX_CANDIDATES], 'pages_searched': search.pages_searched,
                 'complete': search.complete}

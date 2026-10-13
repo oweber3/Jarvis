@@ -26,6 +26,7 @@ src/desktop_app/
 ├── pointer_ring.py      # Glowing ring round the pointer while gesture snapping is on (see pointer_ring.spec.md)
 ├── themes.py            # The one orb HUD palette, Qt stylesheet, roles and line icons
 ├── repository.py        # Repository slug and pre-filled issue-report links
+├── report_filter.py     # The part of a log an issue report may carry (no conversation)
 ├── diary_dialog.py      # End-of-session diary update dialog
 ├── chat_window.py       # Text chat interface (see chat_window.spec.md)
 ├── web_chat_window.py   # Window around the web chat page (see jarvis/webchat/webchat.spec.md)
@@ -163,7 +164,7 @@ The Inno Setup script also runs a `VerifyCudaInstall` hook after the CUDA downlo
 - Monospace font for readability (JetBrains Mono on macOS, Consolas elsewhere)
 - **Report Issue button**: Opens GitHub issue with:
   - Pre-filled bug report template
-  - Auto-redacted log contents (emails, tokens, JWTs, passwords, etc.)
+  - Report-safe log contents (`report_filter.report_safe_log`): the report leaves the PC in a URL, while the log window shows the conversation (what Jarvis heard, replies, recalled diary and memory, tool arguments, diary IPC progress). The report keeps the start-up section verbatim up to the listener's `Listening!` announcement or the first turn, whichever comes first: a voice turn's `📝 Heard:` line, a reply header, or the content-free turn line (`jarvis.daemon.TURN_LINE_PREFIX`, `💬 Turn: <origin>`) the daemon prints first for every typed request (chat, phone, web chat) and every announcement. Start-up lines that name a place, the PC or a device (the `📍` location, the `🔗` phone links, the `🎤 Using audio device:` line) are reduced to their icon. A log cleared with Clear Logs no longer begins with the start-up section, so all of it is treated as later lines. Every later line is reduced to its indentation and leading icon, a run of emoji only, never other symbols such as `+`, `$` or `<` (error icons keep any exception class names); traceback frames, their source lines, exception types and crash-dump headers stay. IPC lines (`__NAME__:`) never appear, the home folder is written `~`, and the secret scrub rules (emails, tokens, JWTs, passwords, etc.) apply to what remains
   - Logs in collapsible `<details>` section
   - Version and platform info
   - Log truncation preserves the init section (everything up to the last `─`×50 separator) + recent tail (most useful for debugging); middle lines are truncated
@@ -301,6 +302,8 @@ The desktop app includes an auto-update mechanism:
 
 Updates are only available in bundled mode (PyInstaller builds).
 
+**When the check runs**: the check contacts GitHub, so it is opt-in. **Check for Updates** in the tray menu always runs it. The automatic check five seconds after start-up runs only when `update_check_on_startup` is `true` (default `false`, Settings > Privacy > Updates, read from the config file by `updater.startup_check_enabled()`). The request runs on a worker thread and its result reaches the Qt main thread through `UpdateCheckSignals`, so an offline or slow network never freezes the tray or any window; a check asked for while one is running joins it, and gets its dialog when that check ends. A failed check is logged by the app and reported in a dialog only when the user asked for it.
+
 ### Platform-Specific Update Installation
 
 | Platform | Strategy |
@@ -360,7 +363,7 @@ A Flask-based web interface for browsing conversation history:
 2. On clean exit, removes the marker
 3. On next startup, if marker exists → previous session crashed
 4. Offers to submit crash report to GitHub Issues
-5. The crash log goes through the same redaction rules as Report Issue before it is previewed, so the dialog shows exactly what the pre-filled issue carries
+5. The crash log goes through the same report filter as Report Issue (the bundled app's crash log holds the daemon's output, conversation included) before it is previewed or saved as the previous crash, so the dialog shows exactly what the pre-filled issue carries
 
 ### Crash Reports Carry the Native Stack (macOS)
 

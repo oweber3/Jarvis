@@ -902,3 +902,33 @@ class TestChatSessionControlsLockGuard:
         # Once the lock is free the same calls apply.
         assert daemon.new_chat_session() is True
         assert dm.all_messages() == []
+
+
+@pytest.mark.unit
+class TestTurnLine:
+    """Every typed request prints a content-free turn line before anything else, so readers of the
+    console output (the desktop app's issue report) know where the conversation starts."""
+
+    def setup_method(self, _method):
+        _reset_daemon_globals()
+
+    def teardown_method(self, _method):
+        _reset_daemon_globals()
+
+    @pytest.mark.parametrize("origin", ["chat", "phone"])
+    def test_a_typed_request_starts_with_its_turn_line(self, monkeypatch, capsys, origin):
+        _install_dialogue_memory(cfg=object(), db=object())
+
+        def fake_engine(*args, **kwargs):
+            print("  🔍 Memory search: private words", flush=True)
+            return "reply"
+
+        monkeypatch.setattr("jarvis.reply.engine.run_reply_engine", fake_engine)
+        events = []
+        daemon.submit_text_query("private words", origin=origin,
+                                 on_complete=lambda r: events.append(("complete", r)))
+        _wait_for_complete(events)
+
+        lines = capsys.readouterr().out.splitlines()
+        assert lines[0] == f"{daemon.TURN_LINE_PREFIX}{origin}"
+        assert "private" not in lines[0]

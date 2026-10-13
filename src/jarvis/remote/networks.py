@@ -29,6 +29,41 @@ def is_allowed_client(address) -> bool:
     return any(ip.version == net.version and ip in net for net in ALLOWED_NETWORKS)
 
 
+# Local DNS suffixes a home router or mDNS gives the PC's name; a Tailscale MagicDNS name is
+# ``<name>.<tailnet>.ts.net``.
+_LOCAL_NAME_SUFFIXES = (".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain")
+
+
+def pc_name() -> str:
+    """This PC's host name in lower case, or ``""``. Read locally; nothing is sent on the network."""
+    try:
+        return socket.gethostname().lower()
+    except OSError:
+        return ""
+
+
+def is_own_host(name: str, own_name: str) -> bool:
+    """Whether ``name`` (a request's lower-case ``Host`` name) is one the phone app is opened by.
+
+    A private or loopback address, ``localhost``, or this PC's name (``own_name``) bare, under a local DNS
+    suffix or as a Tailscale MagicDNS name. Any other name may be a DNS name rebound to this PC.
+    """
+    if name == "localhost":
+        return True
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        pass
+    else:
+        return is_allowed_client(name)
+    if not own_name or not name.startswith(own_name):
+        return False
+    suffix = name[len(own_name):]
+    if suffix in ("", *_LOCAL_NAME_SUFFIXES):
+        return True
+    return suffix.startswith(".") and suffix.endswith(".ts.net") and suffix.count(".") == 3
+
+
 def local_addresses() -> List[str]:
     """This PC's private IPv4 addresses (home network and VPN adapters), for showing the phone link.
 

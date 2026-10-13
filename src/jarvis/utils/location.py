@@ -293,7 +293,7 @@ def _get_external_ip_automatically() -> Optional[str]:
     # Final fallback: single DNS query to OpenDNS (privacy-light)
     ip = _resolve_public_ip_via_opendns()
     if ip and not _is_private_ip(ip):
-        debug_log(f"Public IP resolved via OpenDNS: {ip}", "location")
+        debug_log("Public IP resolved via OpenDNS", "location")
         return ip
 
     return None
@@ -344,13 +344,13 @@ def _download_geolite2_database() -> bool:
                 debug_log("GeoLite2 database found and up to date", "location")
                 return True
 
-        debug_log(f"GeoLite2 database not found or outdated at: {db_path}", "location")
+        debug_log("GeoLite2 database not found or outdated", "location")
         _print_location_setup_instructions(db_path)
 
         return False
 
     except Exception as e:
-        debug_log(f"Error checking database: {e}", "location")
+        debug_log(f"Error checking database: {type(e).__name__}", "location")
         return False
 
 
@@ -441,7 +441,7 @@ def get_location_info(
                 if now - ts < _CGNAT_RESOLUTION_TTL:
                     # Use cached result (even if None to avoid extra queries)
                     if cached_public and not _is_cgnat_ip(cached_public) and not _is_private_ip(cached_public):
-                        debug_log(f"CGNAT IP {ip_address} used cached public {cached_public}", "location")
+                        debug_log("CGNAT address: using the cached public address", "location")
                         ip_address = cached_public
                 else:
                     # Expired entry
@@ -456,7 +456,7 @@ def get_location_info(
             # Persist CGNAT cache change
             _persist_disk_caches(location_cache_minutes)
             if resolved and not _is_cgnat_ip(resolved) and not _is_private_ip(resolved):
-                debug_log(f"CGNAT IP {ip_address} resolved to public {resolved} via OpenDNS", "location")
+                debug_log("CGNAT address resolved to a public address via OpenDNS", "location")
                 ip_address = resolved
 
     # Return cached location result if we already computed for this final ip_address
@@ -506,14 +506,14 @@ def get_location_info(
 
             # Clean up None values and empty strings
             cleaned_info = {k: v for k, v in location_info.items() if v is not None and v != ""}
-            debug_log(f"Location detected: {cleaned_info.get('city', 'Unknown city')}, {cleaned_info.get('country', 'Unknown country')}", "location")
+            debug_log(f"Location detected ({'city' if 'city' in cleaned_info else 'country only'})", "location")
             # Cache successful lookup
             _location_cache[ip_address] = cleaned_info.copy()
             _persist_disk_caches(location_cache_minutes)
             return cleaned_info
 
     except geoip2.errors.AddressNotFoundError:
-        debug_log(f"IP address {ip_address} not found in database", "location")
+        debug_log("IP address not found in database", "location")
         reason = "cgnat_not_found" if cgnat_flag else "not_found"
         advice = (
             "Detected CGNAT (100.64.0.0/10). Configure 'location_ip_address' with a real public IP or disable auto-detect."
@@ -533,7 +533,7 @@ def get_location_info(
         _persist_disk_caches(location_cache_minutes)
         return result
     except Exception as e:
-        debug_log(f"Error looking up location: {e}", "location")
+        debug_log(f"Error looking up location: {type(e).__name__}", "location")
         result = {"error": f"Error looking up location: {e}", "ip": ip_address}
         cached_result = result.copy()
         cached_result["_cached_at"] = datetime.now(timezone.utc)

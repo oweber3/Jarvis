@@ -1,6 +1,6 @@
 """Text extraction for document search, and chunking into passages.
 
-Reads ``.txt``, ``.md``, ``.pdf`` (``pypdf``) and ``.docx`` (the archive's ``word/document.xml``, standard
+Reads ``.txt``, ``.md``, ``.pdf`` (PDFium, ``utils/pdf_text.py``) and ``.docx`` (the archive's ``word/document.xml``, standard
 library only). Every reader is bounded. No OS, network or model calls. See ``documents.spec.md``.
 """
 from __future__ import annotations
@@ -76,26 +76,21 @@ def _plain(path: Path) -> str:
 
 
 def _pdf(path: Path) -> List[Segment]:
+    from ..utils.pdf_text import PdfText, PdfTextError
     try:
-        from pypdf import PdfReader
-        reader = PdfReader(str(path), strict=False)
-        if reader.is_encrypted and not reader.decrypt(""):
-            raise ExtractError("encrypted")
+        pdf = PdfText(path)
+    except PdfTextError as exc:
+        raise ExtractError("encrypted" if exc.needs_password else "pdf_unreadable") from exc
+    with pdf:
         segments: List[Segment] = []
-        for number, page in enumerate(reader.pages, start=1):
-            if number > MAX_PDF_PAGES:
-                break
+        for index in range(min(pdf.page_count, MAX_PDF_PAGES)):
             try:
-                text = page.extract_text() or ""
-            except Exception:
+                text = pdf.page_text(index)
+            except Exception:  # noqa: BLE001 - an unreadable page has no text
                 text = ""
             if text.strip():
-                segments.append((number, text))
+                segments.append((index + 1, text))
         return segments
-    except ExtractError:
-        raise
-    except Exception as exc:
-        raise ExtractError("pdf_unreadable") from exc
 
 
 def _docx(path: Path) -> str:
