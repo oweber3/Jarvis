@@ -1,22 +1,24 @@
 """Local, deterministic PDF reading: outline with page numbers and keyword search with snippets.
 
-Pure ``pypdf``; no OS or model calls. Text extraction is bounded per call and continues on a
-background worker, so a large book never blocks the caller. See
+Reads through PDFium (``utils/pdf_text.py``); no OS or model calls. Text extraction is bounded
+per call and continues on a background worker, so a large book never blocks the caller. The file
+is open only while it is being read, so the viewer can still save it. See
 ``platform/windows/ui_automation.spec.md`` (pdfNavigate, Document data).
 """
 from __future__ import annotations
 
-import logging
+import math
 import os
 import re
 import threading
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ..debug import debug_log
+from .pdf_text import PdfText
 
 # A section number such as "1.6" is one word, so "chapter 6" never matches section 1.6.
 _WORD_RE = re.compile(r'\d+(?:\.\d+)+|\w+', re.UNICODE)
@@ -26,10 +28,6 @@ _SNIPPET_CHARS = 160
 _INFLECTION_MIN = 4
 _INFLECTION_MAX_EXTRA = 3
 DEFAULT_SEARCH_BUDGET_SEC = 4.0
-
-# pypdf warns once per font it cannot fully decode (fontTools missing), flooding the console
-# while a book is read; text extraction still works, so only its errors are worth showing.
-logging.getLogger('pypdf').setLevel(logging.ERROR)
 
 
 @dataclass(frozen=True)
@@ -49,6 +47,7 @@ class PageHit:
     page: int
     hits: int
     snippet: str
+    partial: bool = False  # the page has some query words, not all
 
 
 @dataclass(frozen=True)
@@ -92,41 +91,38 @@ class PdfDocument:
     """One PDF file: outline read on open, page text extracted lazily and kept."""
 
     def __init__(self, path: Path):
-        from pypdf import PdfReader
-        from pypdf.errors import PdfReadError
-        try:
-            self._reader = PdfReader(str(path))
-            self.page_count = len(self._reader.pages)
-        except (PdfReadError, OSError, ValueError) as exc:
-            raise ValueError('This file could not be read as a PDF.') from exc
         self.path = path
         self._texts: List[str] = []
+        self._index: Dict[str, Dict[int, int]] = {}  # word -> {page index: occurrences}
         self._lock = threading.Lock()
         self._worker: Optional[threading.Thread] = None
-        self._outline = self._read_outline()
+        self._pdf: Optional[PdfText] = None
+        with PdfText(path) as pdf:  # PdfTextError is a ValueError
+            self.page_count = pdf.page_count
+            self._outline = self._read_outline(pdf)
 
-    def _read_outline(self) -> List[OutlineEntry]:
-        entries: List[OutlineEntry] = []
-
-        def visit(items, level, parents):
-            previous = None
-            for item in items:
-                if isinstance(item, list):
-                    visit(item, level + 1, parents + ((previous,) if previous else ()))
-                    continue
-                previous = _CONTROL_RE.sub('', str(item.title or '')).strip()
-                try:
-                    page = self._reader.get_destination_page_number(item) + 1
-                except Exception:  # noqa: BLE001 - a broken bookmark is skipped, not fatal
-                    continue
-                if page >= 1:
-                    entries.append(OutlineEntry(previous, page, level, parents))
-
+    @staticmethod
+    def _read_outline(pdf: PdfText) -> List[OutlineEntry]:
         try:
-            visit(self._reader.outline, 0, ())
+            bookmarks = pdf.bookmarks()
         except Exception as exc:  # noqa: BLE001 - a document without a readable outline has none
             debug_log(f'PDF outline unreadable ({type(exc).__name__}).', 'pdf')
+            return []
+        entries: List[OutlineEntry] = []
+        path: List[str] = []  # titles of the bookmarks enclosing the current one
+        for bookmark in bookmarks:
+            title = _CONTROL_RE.sub('', bookmark.title).strip()
+            del path[bookmark.level:]
+            parents = tuple(path)
+            path.append(title)
+            if bookmark.page_index is not None:  # a broken bookmark is skipped, its children kept
+                entries.append(OutlineEntry(title, bookmark.page_index + 1, bookmark.level, parents))
         return entries
+
+    def _release(self) -> None:
+        if self._pdf is not None:
+            self._pdf.close()
+            self._pdf = None
 
     def outline(self) -> List[OutlineEntry]:
         return list(self._outline)
@@ -153,9 +149,13 @@ class PdfDocument:
         return [entry for entry, shared in self._scored(wanted) if shared == len(wanted)]
 
     def outline_closest(self, query: str, limit: int) -> List[OutlineEntry]:
-        """Entries sharing some but not all query words, most shared first, outer entries before inner."""
+        """Entries sharing more than half but not all query words, most shared first, outer entries first.
+
+        Sharing half or fewer (only "problems" of "problem 4.13") says too little to offer the entry.
+        """
         wanted = words(query)
-        partial = [(entry, shared) for entry, shared in self._scored(wanted) if shared < len(wanted)]
+        partial = [(entry, shared) for entry, shared in self._scored(wanted)
+                   if len(wanted) / 2 < shared < len(wanted)]
         partial.sort(key=lambda item: (-item[1], item[0].level, item[0].page))
         return [entry for entry, _shared_count in partial[:max(0, limit)]]
 
@@ -165,12 +165,23 @@ class PdfDocument:
             index = len(self._texts)
             if index >= self.page_count:
                 return False
+            if self._pdf is None:
+                try:
+                    self._pdf = PdfText(self.path)
+                except ValueError:
+                    debug_log('PDF could not be reopened for its text.', 'pdf')
+                    self._texts.extend([''] * (self.page_count - index))  # moved or deleted since
+                    return False
             try:
-                text = self._reader.pages[index].extract_text() or ''
+                text = self._pdf.page_text(index)
             except Exception as exc:  # noqa: BLE001 - an unreadable page has no text
                 debug_log(f'PDF page text unreadable ({type(exc).__name__}).', 'pdf')
                 text = ''
             self._texts.append(text)
+            for word, occurrences in Counter(words(text)).items():
+                self._index.setdefault(word, {})[index] = occurrences
+            if len(self._texts) >= self.page_count:
+                self._release()
             return True
 
     def _extract_for(self, budget_sec: float) -> None:
@@ -194,19 +205,33 @@ class PdfDocument:
     def search(self, query: str, budget_sec: float = DEFAULT_SEARCH_BUDGET_SEC, limit: int = 8) -> SearchResult:
         wanted = words(query)
         self._extract_for(budget_sec)
+        unique = list(dict.fromkeys(wanted))
+        # The word index is built as pages are read, so a query scans the document's vocabulary
+        # once instead of every page's words: quick even for a 1,700-page book.
+        pages: Dict[int, Dict[str, int]] = {}  # page index -> {query word: occurrences}
         with self._lock:
             texts = list(self._texts)
+            for q in unique:
+                for word, occurrences in self._index.items():
+                    if word_matches(q, word):
+                        for index, count in occurrences.items():
+                            per_page = pages.setdefault(index, {})
+                            per_page[q] = per_page.get(q, 0) + count
         if len(texts) < self.page_count:
             self._continue_in_background()
-        hits: List[PageHit] = []
-        if wanted:
-            for index, text in enumerate(texts):
-                page_words = words(text)
-                if not _contains_all(wanted, page_words):
-                    continue
-                count = sum(1 for t in page_words if any(word_matches(q, t) for q in wanted))
-                hits.append(PageHit(index + 1, count, _snippet(text, wanted)))
-        hits.sort(key=lambda hit: (-hit.hits, hit.page))
+        found = [(index, texts[index], sum(counts.values()), frozenset(counts))  # (index, text, hits, words)
+                 for index, counts in pages.items() if index < len(texts)]
+        # Pages with every word lead. Then pages with some, scored by how rare their words are in
+        # the document (inverse document frequency), so "4.13" outweighs "problem".
+        frequency = {q: sum(1 for item in found if q in item[3]) for q in unique}
+        weight = {q: math.log((len(texts) + 1) / (frequency[q] + 1)) for q in unique}
+        full = sorted((item for item in found if len(item[3]) == len(unique)), key=lambda i: (-i[2], i[0]))
+        partial = sorted((item for item in found if len(item[3]) < len(unique)),
+                         key=lambda i: (-sum(weight[q] for q in i[3]), -i[2], i[0]))
+        hits = [PageHit(i + 1, count, _snippet(text, unique)) for i, text, count, _present in full]
+        for index, text, count, present in partial[:max(0, limit - len(hits))]:
+            rarest = max(present, key=lambda q: weight[q])
+            hits.append(PageHit(index + 1, count, _snippet(text, [rarest]), partial=True))
         return SearchResult(hits[:max(1, limit)], len(texts), self.page_count)
 
 

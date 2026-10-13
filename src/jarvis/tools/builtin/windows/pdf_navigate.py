@@ -136,7 +136,8 @@ class PdfNavigateTool(Tool):
         search = document.search(query, budget_sec=_SEARCH_BUDGET_SEC, limit=_MAX_CANDIDATES)
         candidates = [{'page': e.page, 'title': e.label} for e in chapters + closest]
         seen = {c['page'] for c in candidates}
-        candidates += [{'page': hit.page, 'snippet': hit.snippet} for hit in search.hits if hit.page not in seen]
+        candidates += [{'page': hit.page, 'snippet': hit.snippet, **({'partial': True} if hit.partial else {})}
+                       for hit in search.hits if hit.page not in seen]
         debug_log(f'PDF find: {len(chapters)} outline, {len(closest)} closest and {len(search.hits)} page '
                   'matches.', 'windows')
         return {**base, 'candidates': candidates[:_MAX_CANDIDATES], 'pages_searched': search.pages_searched,

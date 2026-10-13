@@ -57,7 +57,9 @@ winrt-Windows.Media.Ocr>=3.2.1; sys_platform == "win32"
 winrt-Windows.Graphics.Imaging>=3.2.1; sys_platform == "win32"
 winrt-Windows.Storage.Streams>=3.2.1; sys_platform == "win32"
 winrt-Windows.Globalization>=3.2.1; sys_platform == "win32"
-# PDF outline and text for PDF navigation (local, pure Python)
+# PDF text and bookmarks for PDF navigation and document search (local PDFium, Chrome's PDF engine)
+pypdfium2>=5.14.0
+# PDF text of web chat attachments (local, pure Python)
 pypdf>=6.19.0
 # Note: 6.13.0+ has VC runtime pre-loading fix for Windows
 pyinstaller>=6.13.0

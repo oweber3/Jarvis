@@ -180,3 +180,15 @@ def test_find_offers_the_closest_chapters_when_no_entry_has_every_word(cfg, monk
     data = json.loads(result.reply_text)
     assert result.success and fake.shown == []
     assert data['candidates'][0] == {'page': 7, 'title': 'Chapter 6 Inviscid Flow > Problems'}
+
+
+def test_find_lists_pages_holding_the_rarest_words_when_none_has_every_word(cfg, monkeypatch, tmp_path):
+    from jarvis.utils import pdf_document
+    pdf_document.clear_cache()
+    book = make_pdf(tmp_path / 'Exercises.pdf', ['Problems: every problem uses momentum.',
+                                                 '4.13 A rectangular air duct carries air.', 'Problem tips.'])
+    FakeViewer(monkeypatch, book)
+    data = json.loads(_run(cfg, {'action': 'find', 'query': 'problem 4.13'}).reply_text)
+    assert data['candidates'][0]['page'] == 2 and data['candidates'][0]['partial'] is True
+    assert '4.13' in data['candidates'][0]['snippet']
+    pdf_document.clear_cache()
