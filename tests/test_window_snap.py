@@ -119,7 +119,7 @@ THREE = [(-1920, 0, 0, 1080), (0, 0, 2560, 1440), (2560, 0, 4480, 1080)]  # desk
 
 
 def test_raising_the_hand_anywhere_puts_the_pointer_in_the_middle_of_the_desktop():
-    for place in ((0.5, 0.5), (0.3, 0.65)):
+    for place in ((0.5, 0.5), (0.4, 0.6)):
         rig = Rig(FakeDesktop(THREE, at=(-1500, 100)))
         rig.start(*place)
         assert rig.desk.at == (1280, 720)
@@ -131,7 +131,7 @@ def test_taking_the_hand_out_of_view_and_raising_it_elsewhere_re_centres():
     rig.glide((0.5, 0.5), (0.6, 0.5))
     assert rig.desk.at[0] > 960
     rig.show(frames=math.ceil(RECENTRE_AFTER_SEC * FPS) + 1)
-    rig.start(0.3, 0.5)
+    rig.start(0.4, 0.5)
     assert rig.desk.at == (960, 540)
 
 
@@ -152,6 +152,42 @@ def test_the_comfort_box_edges_are_the_desktop_edges_across_several_monitors():
     assert rig.desk.at[0] == -1920
     rig.glide((0.25, 0.5), (0.75, 0.5), frames=20)
     assert rig.desk.at[0] == pytest.approx(4479, abs=2)
+
+
+PORTRAIT_BESIDE = [(0, 0, 2560, 1440), (-1080, -162, 0, 1758)]  # a portrait monitor reaching below the main one
+
+
+def furthest_in_view(corner):
+    """The palm place nearest an image corner ((-1 or 1, -1 or 1), x then y) with the whole hand in view."""
+    h = hand(0.5, 0.5)
+    xs, ys = [p.x for p in h.points], [p.y for p in h.points]
+    x = 0.5 + (1 - max(xs) if corner[0] > 0 else -min(xs))
+    y = 0.5 + (1 - max(ys) if corner[1] > 0 else -min(ys))
+    return x, y
+
+
+@pytest.mark.parametrize("place", [(0.5, 0.85), (0.5, 0.2), (0.15, 0.5), (0.85, 0.85)])
+@pytest.mark.parametrize("box", [0.5, 1.0])
+def test_every_corner_of_the_desktop_is_reachable_with_the_whole_hand_in_view(place, box):
+    # A hand raised near the edge of the view, or a box wider than the view, still reaches every corner without
+    # the hand leaving the camera's view.
+    left, top, right, bottom = -1080, -162, 2560, 1758
+    targets = {(-1, -1): (left, top), (1, -1): (right - 1, 0), (-1, 1): (left, bottom - 1),
+               (1, 1): (right - 1, 1439)}
+    for corner, target in targets.items():
+        rig = Rig(FakeDesktop(PORTRAIT_BESIDE), comfort_box=box)
+        rig.start(*place)
+        rig.glide(place, furthest_in_view(corner), frames=20)
+        assert rig.desk.at == pytest.approx(target, abs=2), corner
+
+
+def test_a_hand_raised_low_reaches_the_bottom_of_a_monitor_that_hangs_lower():
+    rig = Rig(FakeDesktop(PORTRAIT_BESIDE))
+    rig.start(0.3, 0.8)  # the hand comes up from below the view and stops low
+    bottom = furthest_in_view((-1, 1))
+    rig.glide((0.3, 0.8), (0.3, bottom[1]), frames=10)
+    rig.glide((0.3, bottom[1]), bottom, frames=10)
+    assert rig.desk.at == pytest.approx((-1080, 1757), abs=2)
 
 
 def test_a_palm_outside_the_comfort_box_holds_the_pointer_at_the_edge():
