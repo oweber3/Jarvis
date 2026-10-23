@@ -297,6 +297,11 @@ class ChatHub:
         uses it for a pending confirmation and for reply audio."""
         self._watches.append(signal)
 
+    def unwatch(self, signal: Callable[[], Any]) -> None:
+        """Stop following a signal given to ``watch`` (a server using the shared hub stops)."""
+        if signal in self._watches:
+            self._watches.remove(signal)
+
     def poke(self) -> None:
         """Tell every waiting poll that something outside the chat changed."""
         with self._cond:

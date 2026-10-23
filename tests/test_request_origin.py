@@ -42,9 +42,9 @@ def test_the_chat_window_submits_as_chat(engine_origins):
 
 @pytest.mark.unit
 def test_a_paired_phone_submits_as_phone(engine_origins):
-    from jarvis.remote.backend import DaemonBackend
+    from jarvis.webchat.backend import DaemonBackend
 
     seen, done = engine_origins
-    DaemonBackend().submit("close this", on_start=None, on_complete=None, on_busy=None)
+    DaemonBackend().submit("close this", on_start=None, on_complete=None, on_busy=None, origin="phone")
     assert done.wait(5)
     assert seen == [("phone", True)]

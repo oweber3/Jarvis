@@ -11,6 +11,13 @@ from .. import assistant_state
 from ..debug import debug_log
 
 
+_BUSY_STATES = frozenset({
+    assistant_state.AssistantState.LISTENING, assistant_state.AssistantState.THINKING,
+    assistant_state.AssistantState.SPEAKING, assistant_state.AssistantState.DICTATING,
+    assistant_state.AssistantState.DICTATION_PROCESSING,
+})
+
+
 class DaemonBackend:
     """What phone access needs from the running daemon. Every call returns quickly except speech."""
 
@@ -29,7 +36,7 @@ class DaemonBackend:
     def is_busy(self) -> bool:
         """A request is running, or Jarvis is listening or speaking at the PC."""
         from .. import daemon
-        return daemon.is_query_running() or assistant_state.current() is not assistant_state.AssistantState.IDLE
+        return daemon.is_query_running() or assistant_state.current() in _BUSY_STATES
 
     def pc_stats(self) -> Optional[dict]:
         try:
