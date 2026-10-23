@@ -1012,8 +1012,13 @@ class DictationEngine:
             debug_log("dictation capture heard nothing", "dictation")
             return ""
         audio = np.concatenate(capture.frames)
-        if capture.stream_rate != self._target_sample_rate:
-            audio = _resample(audio, capture.stream_rate, self._target_sample_rate)
+        return self._transcribe_for_caller(audio, capture.stream_rate)
+
+    def _transcribe_for_caller(self, audio, rate: int) -> str:
+        """The transcript of mono float32 ``audio`` at ``rate``: resampled to the model's rate, gated, then given
+        the custom dictionary and filler removal. Never logs the text."""
+        if rate != self._target_sample_rate:
+            audio = _resample(audio, rate, self._target_sample_rate)
         if len(audio) < self._target_sample_rate * 0.3:
             debug_log("dictation capture too short for transcription", "dictation")
             return ""
@@ -1023,6 +1028,28 @@ class DictationEngine:
         if text and self._filler_removal:
             text = _llm_clean_dictation(text, self._cfg, thinking=self._thinking, log_text=False)
         return text or ""
+
+    def transcribe_blocker(self) -> Optional[str]:
+        """Why audio could not be transcribed now (``unavailable`` or ``not_ready``), or ``None``."""
+        if sd is None or np is None:
+            return "unavailable"
+        if self._whisper_model_ref() is None and self._whisper_backend_ref() != "mlx":
+            return "not_ready"
+        return None
+
+    def transcribe_samples(self, samples, rate: int) -> str:
+        """Transcribe audio recorded elsewhere (mono float32 in -1..1 at ``rate``), for a caller that shows the
+        text itself (phone access). Only transcribes: no microphone, listener pause, face change, beep, paste
+        or history entry, so it may run beside a capture. Returns ``""`` for audio that is too short, silent or
+        when the model is not ready. The audio and the text are never stored or logged."""
+        if self.transcribe_blocker() is not None:
+            debug_log("dictation cannot transcribe supplied audio now", "dictation")
+            return ""
+        audio = np.asarray(samples, dtype=np.float32)
+        debug_log(f"dictation transcribing supplied audio ({len(audio) / max(1, rate):.1f}s)", "dictation")
+        text = self._transcribe_for_caller(audio, int(rate))
+        debug_log(f"dictation supplied audio {'gave text' if text else 'gave nothing'}", "dictation")
+        return text
 
     # ------------------------------------------------------------------
     # Key event handlers

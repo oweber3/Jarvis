@@ -1,80 +1,25 @@
-"""A stand-in for the daemon behind phone access: a real dialogue memory and a scripted reply engine."""
+"""A stand-in for the daemon behind phone access: confirmations, PC statistics, speech in and out."""
 from __future__ import annotations
 
-import threading
-from typing import Callable, List, Optional
-
-from jarvis.memory.conversation import DialogueMemory
+from typing import List, Optional, Tuple
 
 
-class FakeBackend:
-    """Mirrors ``DaemonBackend``. ``reply_with`` decides how each submitted query ends.
-
-    ``mode`` is ``"reply"`` (store the turn and answer), ``"busy"``, ``"unavailable"`` (answer ``None``
-    at once, like a daemon that has not booted), ``"fail"`` (start, then ``None``) or ``"hold"`` (start
-    and wait until ``release()``).
-    """
+class FakeRemoteBackend:
+    """Mirrors ``jarvis.remote.backend.DaemonBackend``. The chat itself is the web chat's fake backend."""
 
     def __init__(self) -> None:
-        self.memory: Optional[DialogueMemory] = DialogueMemory()
-        self.state = "idle"
-        self.mode = "reply"
-        self.reply_text = "Done."
-        self.busy = False
-        self.cancelled = 0
-        self.submitted: List[str] = []
         self.confirmation: Optional[dict] = None
         self.resolved: List[tuple] = []
-        self.reply_mode = {"mode": "local", "enabled": ["local"]}
-        self.stats = {"cpu": 12.0, "ram": 40.0}
-        self._subscribers: List[Callable[[str], None]] = []
-        self._release = threading.Event()
-        self._held: Optional[tuple] = None
-
-    # -- backend interface ---------------------------------------------------
-
-    def submit(self, text: str, *, on_start, on_complete, on_busy) -> None:
-        self.submitted.append(text)
-        if self.mode == "busy":
-            on_busy()
-            return
-        if self.mode == "unavailable":
-            on_complete(None)
-            return
-        on_start(text)
-        if self.mode == "fail":
-            on_complete(None)
-            return
-        if self.mode == "hold":
-            self._held = (text, on_complete)
-            return
-        self._answer(text, on_complete)
-
-    def cancel(self) -> None:
-        self.cancelled += 1
-        if self._held is not None:
-            text, on_complete = self._held
-            self._held = None
-            on_complete(None)
-
-    def release(self) -> None:
-        if self._held is not None:
-            text, on_complete = self._held
-            self._held = None
-            self._answer(text, on_complete)
-
-    def assistant_state(self) -> str:
-        return self.state
-
-    def subscribe_state(self, callback: Callable[[str], None]) -> Callable[[], None]:
-        self._subscribers.append(callback)
-        return lambda: self._subscribers.remove(callback)
-
-    def dialogue_memory(self):
-        return self.memory
-
-    def is_busy(self) -> bool:
-        return self.busy
+        self.stats: Optional[dict] = {"cpu": 12.0, "ram": 40.0}
+        self.busy = False
+        # Speech in: why transcription cannot work now, what it returns, and the samples it was given.
+        self.voice_blocker: Optional[str] = None
+        self.transcript = "what time is it"
+        self.transcribed: list = []
+        # Speech out: raw 16-bit mono samples and their rate (None: no voice could speak), and the texts.
+        self.speech: Optional[Tuple[bytes, int]] = (b"\x01\x00\x02\x00" * 400, 22050)
+        self.render_error: Optional[Exception] = None
+        self.rendered: List[str] = []
 
     def pending_confirmation(self) -> Optional[dict]:
         return self.confirmation
@@ -86,20 +31,21 @@ class FakeBackend:
         self.confirmation = None
         return True
 
-    def reply_mode_state(self) -> Optional[dict]:
-        return self.reply_mode
-
     def pc_stats(self) -> Optional[dict]:
         return self.stats
 
-    # -- helpers ---------------------------------------------------------------
+    def is_busy(self) -> bool:
+        return self.busy
 
-    def set_state(self, state: str) -> None:
-        self.state = state
-        for callback in list(self._subscribers):
-            callback(state)
+    def voice_reason(self) -> Optional[str]:
+        return self.voice_blocker
 
-    def _answer(self, text: str, on_complete) -> None:
-        self.memory.add_message("user", text)
-        self.memory.add_message("assistant", self.reply_text)
-        on_complete(self.reply_text)
+    def transcribe(self, samples) -> str:
+        self.transcribed.append(samples)
+        return self.transcript
+
+    def render_speech(self, text: str) -> Optional[Tuple[bytes, int]]:
+        self.rendered.append(text)
+        if self.render_error is not None:
+            raise self.render_error
+        return self.speech
