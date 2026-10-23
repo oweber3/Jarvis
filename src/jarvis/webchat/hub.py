@@ -99,6 +99,8 @@ class ChatHub:
         self._wake = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._unsubscribe: Optional[Callable[[], None]] = None
+        self._users = 0
+        self._watches: List[Callable[[], Any]] = []
         self.mic = MicSessions(backend)
 
     @property
@@ -112,7 +114,12 @@ class ChatHub:
     # -- lifecycle ---------------------------------------------------------------
 
     def start(self) -> None:
-        """Mirror in the background and on every assistant state change."""
+        """Mirror in the background and on every assistant state change.
+
+        The hub is shared by the web chat and phone access: every ``start`` is paired with one ``stop``,
+        and the mirror runs until the last user has stopped."""
+        with self._cond:
+            self._users += 1
         if self._thread is not None:
             return
         self._stop.clear()
@@ -121,6 +128,10 @@ class ChatHub:
         self._thread.start()
 
     def stop(self) -> None:
+        with self._cond:
+            self._users = max(0, self._users - 1)
+            if self._users > 0:
+                return
         self._stop.set()
         self._wake.set()
         self.mic.shutdown()
@@ -208,7 +219,7 @@ class ChatHub:
     def _store_turn(self, chat_id: str, turn) -> None:
         last = self._store.last_messages(chat_id, 1)
         if self._typed_in_flight():
-            source = "typed"
+            source = self._inflight_source()
         elif turn.role == "assistant" and last and last[0].role == "assistant":
             source = "confirmed"  # a reply with no request before it: the outcome of a confirmed action
         elif turn.role == "assistant" and last:
@@ -246,6 +257,13 @@ class ChatHub:
         with self._cond:
             return bool(self._pending)
 
+    def _inflight_source(self) -> str:
+        """``typed``, or ``voice`` for a spoken phone request, of the request in flight."""
+        with self._cond:
+            for record in self._pending.values():
+                return record.get("source", "typed")
+        return "typed"
+
     def _claim_attachments(self) -> List[Dict[str, Any]]:
         """The kind and size of what the typed request in flight carried, once, for its user turn."""
         with self._cond:
@@ -261,7 +279,28 @@ class ChatHub:
         cloud = self._backend.cloud_model_state() or {}
         return (self._effective_state(), bool(self._backend.is_busy()), mode.get("mode"),
                 tuple(mode.get("enabled") or ()), model.get("current"), self._backend.is_ready(),
-                tuple(sorted(cloud.items())))
+                tuple(sorted(cloud.items())), self._watched())
+
+    def _watched(self) -> tuple:
+        """The values of the extra change signals; one that raises reads as unchanged."""
+        values = []
+        for watch in list(self._watches):
+            try:
+                values.append(watch())
+            except Exception as exc:
+                debug_log(f"webchat: a change signal failed: {type(exc).__name__}", "webchat")
+                values.append(None)
+        return tuple(values)
+
+    def watch(self, signal: Callable[[], Any]) -> None:
+        """Wake the long polls whenever ``signal()`` returns a different (comparable) value. Phone access
+        uses it for a pending confirmation and for reply audio."""
+        self._watches.append(signal)
+
+    def poke(self) -> None:
+        """Tell every waiting poll that something outside the chat changed."""
+        with self._cond:
+            self._bump_locked()
 
     def _bump_locked(self) -> None:
         self._rev += 1
@@ -357,10 +396,17 @@ class ChatHub:
 
     # -- requests ----------------------------------------------------------------
 
-    def submit(self, text: str, attachment_ids: Sequence[str] = ()) -> SubmitResult:
-        """Send a typed request through the daemon's text path, into the open chat. ``attachment_ids`` are
+    def submit(self, text: str, attachment_ids: Sequence[str] = (), *, origin: str = "chat",
+               source: str = "typed", on_finish: Optional[Callable[[int, str, Optional[str]], None]] = None
+               ) -> SubmitResult:
+        """Send a request through the daemon's text path, into the open chat. ``attachment_ids`` are
         uploads waiting in the store: they go with this request only. An id that is unknown, or an image the
-        active route cannot see, refuses the whole request and keeps the uploads for another try."""
+        active route cannot see, refuses the whole request and keeps the uploads for another try.
+
+        ``origin`` is the daemon's request origin (``chat``, or ``phone`` for a paired phone) and ``source`` how
+        the owner made the request (``typed``, or ``voice`` for a spoken phone request), which is how its turns
+        are stored. ``on_finish(query_id, status, reply)`` is called once, after the reply is in the chat, with
+        ``done`` (and the reply text), ``busy``, ``stopped``, ``unavailable`` or ``failed``."""
         with self._sync_lock:
             self.sync()
             self._ensure_open_chat()
@@ -370,7 +416,8 @@ class ChatHub:
             with self._cond:
                 query_id = self._next_query_id
                 self._next_query_id += 1
-                self._pending[query_id] = {"display": None, "started": False, "cancel": False, "status": "pending"}
+                self._pending[query_id] = {"display": None, "started": False, "cancel": False, "status": "pending",
+                                           "source": source, "on_finish": on_finish}
                 self._bump_locked()
             attachments: List[RequestAttachment] = []
             if attachment_ids:
@@ -402,7 +449,7 @@ class ChatHub:
             if reply is None and record.get("cancel"):
                 self._finish(query_id, "stopped")
             elif isinstance(reply, str):
-                self._finish(query_id, "done")
+                self._finish(query_id, "done", reply=reply)
             elif not record.get("started"):
                 self._finish(query_id, "unavailable")
             else:
@@ -412,6 +459,8 @@ class ChatHub:
             self._submitting.add(query_id)
         try:
             extra = {"attachments": tuple(attachments)} if attachments else {}
+            if origin != "chat":
+                extra["origin"] = origin
             self._backend.submit(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy, **extra)
         except Exception as exc:
             debug_log(f"webchat: query {query_id} could not be submitted: {type(exc).__name__}", "webchat")
@@ -432,7 +481,8 @@ class ChatHub:
             debug_log(f"webchat: attachments refused ({reason})", "webchat")
             raise UploadRefused(reason)
 
-    def _finish(self, query_id: int, status: str, *, request: Optional[str] = None) -> None:
+    def _finish(self, query_id: int, status: str, *, request: Optional[str] = None,
+                reply: Optional[str] = None) -> None:
         with self._cond:
             record = self._pending.pop(query_id, None)
             if record is None:
@@ -449,6 +499,12 @@ class ChatHub:
         elif status != "busy":
             self._drop_steps()
         debug_log(f"webchat: query {query_id} {status}", "webchat")
+        hook = record.get("on_finish")
+        if hook is not None:
+            try:
+                hook(query_id, status, reply)
+            except Exception as exc:
+                debug_log(f"webchat: a request hook failed: {type(exc).__name__}", "webchat")
 
     def _remember_model(self) -> None:
         """Record which reply mode and local model answered, on the open chat."""

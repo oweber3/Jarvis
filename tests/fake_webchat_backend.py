@@ -20,6 +20,7 @@ class FakeWebChatBackend:
         self.busy = False
         self.cancelled = 0
         self.submitted: List[str] = []
+        self.origins: List[str] = []
         # What came with each typed request (a tuple of ``RequestAttachment``), and what attaching can do now.
         self.attachments_received: List[tuple] = []
         self.support = {"images": {"ok": True, "reason": None}, "screenshot": {"ok": True, "reason": None}}
@@ -57,8 +58,10 @@ class FakeWebChatBackend:
     def is_ready(self) -> bool:
         return self.memory is not None
 
-    def submit(self, text: str, *, on_start, on_complete, on_busy, attachments: tuple = ()) -> None:
+    def submit(self, text: str, *, on_start, on_complete, on_busy, attachments: tuple = (),
+               origin: str = "chat") -> None:
         self.submitted.append(text)
+        self.origins.append(origin)
         self.attachments_received.append(tuple(attachments))
         if self.mode == "busy":
             on_busy()

@@ -7,7 +7,6 @@ See ``webchat.spec.md``.
 from __future__ import annotations
 
 import json
-import re
 import socket
 import threading
 from dataclasses import dataclass
@@ -17,17 +16,13 @@ from typing import Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..debug import debug_log
-from ..memory.chat_store import SEARCH_QUERY_MAX_CHARS
 from ..utils.local_guard import refusal
 from . import identity
-from .hub import chat_dict, message_dict
-from .mic import MAX_RECORDING_SEC
-from .uploads import MAX_UPLOAD_BYTES, UploadRefused
+from .api import POLL_TIMEOUT_SEC, ChatApi, Refused as _Refused
+from .uploads import MAX_UPLOAD_BYTES
 
 MAX_BODY_BYTES = 64 * 1024
 DRAIN_LIMIT_BYTES = 1024 * 1024
-MAX_TEXT_CHARS = 4000
-POLL_TIMEOUT_SEC = 25.0
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 CONTENT_TYPES = {
@@ -53,26 +48,12 @@ SECURITY_HEADERS = {
     "Permissions-Policy": "microphone=(), camera=(), geolocation=()",
 }
 
-_PROJECT_PATH = re.compile(r"^/api/projects/([0-9a-f]+)$")
-_CHAT_PATH = re.compile(r"^/api/chats/([0-9a-f]+)$")
-_CHAT_OPEN_PATH = re.compile(r"^/api/chats/([0-9a-f]+)/open$")
-_SESSION = re.compile(r"^[0-9a-f]{32}$")
-_UPLOAD_PATH = re.compile(r"^/api/attachments/([0-9a-f]+)$")
-_UPLOAD_ROUTE = ("POST", "/api/attachments")
-
-
 @dataclass(frozen=True)
 class ServerSettings:
     host: str
     port: int
     static_dir: Path = STATIC_DIR
     poll_timeout_sec: float = POLL_TIMEOUT_SEC
-
-
-class _Refused(Exception):
-    def __init__(self, status: int, error: str) -> None:
-        super().__init__(error)
-        self.status, self.error = status, error
 
 
 class _HTTPServer(ThreadingHTTPServer):
@@ -124,16 +105,9 @@ class WebChatServer:
         debug_log("webchat: stopped", "webchat")
 
 
-def _int_param(query: dict, name: str, default: int) -> int:
-    try:
-        return int(query.get(name, [default])[0])
-    except (TypeError, ValueError):
-        return default
-
-
 def _make_handler(server: WebChatServer):
-    hub = server.hub
-    store = hub.store
+    api = ChatApi(server.hub, surface="web", origin="chat", poll_timeout_sec=server.settings.poll_timeout_sec,
+                  identity_token=server.identity_token)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "Jarvis"
@@ -173,7 +147,7 @@ def _make_handler(server: WebChatServer):
                 self.close_connection = True
                 return
             # Only an upload may be large; everything else is a small JSON body.
-            limit = MAX_UPLOAD_BYTES if self._is_upload(urlsplit(self.path).path) else MAX_BODY_BYTES
+            limit = MAX_UPLOAD_BYTES if api.is_upload(self.command, urlsplit(self.path).path) else MAX_BODY_BYTES
             if length > limit:
                 self._body_error = _Refused(413, "too_large")
                 remaining = min(length, limit + DRAIN_LIMIT_BYTES)
@@ -186,9 +160,6 @@ def _make_handler(server: WebChatServer):
                 return
             if length > 0:
                 self._raw_body = self.rfile.read(length)
-
-        def _is_upload(self, path: str) -> bool:
-            return (self.command, path) == _UPLOAD_ROUTE
 
         def _upload_body(self) -> dict:
             """The raw bytes of an upload. What they are is decided from their content, never from a declared
@@ -231,50 +202,9 @@ def _make_handler(server: WebChatServer):
             if not path.startswith("/api/"):
                 raise _Refused(404, "not_found")
             # Parsed first so a bad body is refused whatever the route.
-            body = self._upload_body() if self._is_upload(path) else self._body()
-            handler = self._route(path)
-            handler(body)
-
-        def _route(self, path: str):
-            method = self.command
-            if (method, path) in self._FIXED:
-                return getattr(self, self._FIXED[(method, path)])
-            for pattern, table in ((_PROJECT_PATH, self._PROJECT), (_CHAT_PATH, self._CHAT),
-                                   (_CHAT_OPEN_PATH, self._OPEN), (_UPLOAD_PATH, self._UPLOAD)):
-                found = pattern.match(path)
-                if found and method in table:
-                    identifier = found.group(1)
-                    handler = getattr(self, table[method])
-                    return lambda body: handler(identifier, body)
-            raise _Refused(404, "not_found")
-
-        _FIXED = {
-            ("GET", "/api/state"): "_state",
-            ("GET", "/api/models"): "_models",
-            ("GET", "/api/library"): "_library",
-            ("GET", "/api/suggestions"): "_suggestions",
-            ("GET", "/api/search"): "_search",
-            ("GET", "/api/poll"): "_poll",
-            ("GET", "/api/identity"): "_identity",
-            ("POST", "/api/projects"): "_create_project",
-            ("POST", "/api/chats"): "_create_chat",
-            ("POST", "/api/chat"): "_chat",
-            ("GET", "/api/attachments/support"): "_attachment_support",
-            ("POST", "/api/attachments"): "_upload",
-            ("POST", "/api/attachments/screenshot"): "_screenshot",
-            ("POST", "/api/stop"): "_stop",
-            ("POST", "/api/model"): "_model",
-            ("POST", "/api/clear"): "_clear",
-            ("GET", "/api/mic"): "_mic_status",
-            ("POST", "/api/mic/start"): "_mic_start",
-            ("POST", "/api/mic/heartbeat"): "_mic_heartbeat",
-            ("POST", "/api/mic/stop"): "_mic_stop",
-            ("POST", "/api/mic/cancel"): "_mic_cancel",
-        }
-        _PROJECT = {"PATCH": "_rename_project", "DELETE": "_delete_project"}
-        _CHAT = {"GET": "_get_chat", "PATCH": "_patch_chat", "DELETE": "_delete_chat"}
-        _OPEN = {"POST": "_open_chat"}
-        _UPLOAD = {"DELETE": "_discard_upload"}
+            body = self._upload_body() if api.is_upload(self.command, path) else self._body()
+            status, payload = api.dispatch(self.command, path, parse_qs(urlsplit(self.path).query), body)
+            self._json(status, payload)
 
         def _run(self) -> None:
             try:
@@ -311,220 +241,5 @@ def _make_handler(server: WebChatServer):
                 raise _Refused(404, "not_found")
             content_type = CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
             self._send(200, target.read_bytes(), content_type, api=False)
-
-        # -- endpoints: state ------------------------------------------------------------
-
-        def _state(self, _body) -> None:
-            snapshot = hub.snapshot(2 ** 62)
-            self._json(200, {key: snapshot[key] for key in
-                             ("ready", "state", "busy", "active_chat_id", "mode", "model", "cloud")})
-
-        def _models(self, _body) -> None:
-            self._json(200, hub.models())
-
-        def _library(self, _body) -> None:
-            self._json(200, hub.library())
-
-        def _suggestions(self, _body) -> None:
-            self._json(200, hub.suggestions())
-        def _search(self, _body) -> None:
-            query = parse_qs(urlsplit(self.path).query).get("q", [""])[0]
-            if not query.strip() or len(query) > SEARCH_QUERY_MAX_CHARS:
-                raise _Refused(400, "bad_query")
-            self._json(200, {"results": [{"chat_id": h.chat_id, "message_id": h.message_id,
-                                          "snippet": h.snippet, "ts": h.ts}
-                                         for h in store.search_messages(query)]})
-
-        def _poll(self, _body) -> None:
-            query = parse_qs(urlsplit(self.path).query)
-            self._json(200, hub.wait(rev=_int_param(query, "rev", -1), after=_int_param(query, "after", 0),
-                                     timeout_sec=server.settings.poll_timeout_sec))
-
-        def _identity(self, _body) -> None:
-            nonce = parse_qs(urlsplit(self.path).query).get("nonce", [""])[0]
-            if not identity.is_valid_nonce(nonce):
-                raise _Refused(400, "bad_nonce")
-            self._json(200, {"proof": identity.proof(server.identity_token, nonce)})
-
-        # -- endpoints: projects ---------------------------------------------------------
-
-        @staticmethod
-        def _name(body: dict, key: str = "name") -> str:
-            value = body.get(key)
-            if not isinstance(value, str) or not value.strip():
-                raise _Refused(400, "bad_name")
-            return value
-
-        def _create_project(self, body) -> None:
-            project = store.create_project(self._name(body))
-            hub.changed_library()
-            self._json(201, {"id": project.id, "name": project.name, "position": project.position})
-
-        def _rename_project(self, project_id, body) -> None:
-            if not store.rename_project(project_id, self._name(body)):
-                raise _Refused(404, "unknown")
-            hub.changed_library()
-            self._json(200, {"ok": True})
-
-        def _delete_project(self, project_id, _body) -> None:
-            if not store.delete_project(project_id):
-                raise _Refused(404, "unknown")
-            hub.changed_library()
-            self._json(200, {"ok": True})
-
-        # -- endpoints: chats --------------------------------------------------------------
-
-        @staticmethod
-        def _answer_for(status: str) -> int:
-            return {"ok": 200, "unknown": 404, "busy": 409, "unavailable": 503}[status]
-
-        def _create_chat(self, body) -> None:
-            project_id = body.get("project_id")
-            if project_id is not None and not isinstance(project_id, str):
-                raise _Refused(400, "bad_project")
-            result = hub.new_chat(project_id)
-            if result.status != "ok":
-                raise _Refused(self._answer_for(result.status), result.status)
-            self._json(201, {"chat": chat_dict(result.chat)})
-
-        def _open_chat(self, chat_id, _body) -> None:
-            result = hub.open_chat(chat_id)
-            if result.status != "ok":
-                raise _Refused(self._answer_for(result.status), result.status)
-            self._json(200, {"chat": chat_dict(result.chat)})
-
-        def _get_chat(self, chat_id, _body) -> None:
-            chat = store.get_chat(chat_id)
-            if chat is None:
-                raise _Refused(404, "unknown")
-            self._json(200, {"chat": chat_dict(chat),
-                             "messages": [message_dict(m) for m in store.messages(chat_id)]})
-
-        def _patch_chat(self, chat_id, body) -> None:
-            if store.get_chat(chat_id) is None:
-                raise _Refused(404, "unknown")
-            if "title" in body:
-                title = body["title"]
-                if not isinstance(title, str) or not title.strip():
-                    raise _Refused(400, "bad_name")
-            if "project_id" in body and body["project_id"] is not None and not isinstance(body["project_id"], str):
-                raise _Refused(400, "bad_project")
-            if "pinned" in body and not isinstance(body["pinned"], bool):
-                raise _Refused(400, "bad_pinned")
-            if "project_id" in body and not store.move_chat(chat_id, body["project_id"]):
-                raise _Refused(404, "unknown_project")
-            if "title" in body:
-                store.rename_chat(chat_id, body["title"])
-            if "pinned" in body:
-                store.set_pinned(chat_id, body["pinned"])
-            hub.changed_library()
-            self._json(200, {"ok": True})
-
-        def _delete_chat(self, chat_id, _body) -> None:
-            status = hub.delete_chat(chat_id)
-            if status != "ok":
-                raise _Refused(self._answer_for(status), status)
-            self._json(200, {"ok": True})
-
-        def _clear(self, body) -> None:
-            if body.get("confirm") is not True:
-                raise _Refused(400, "confirm_required")
-            status = hub.delete_all()
-            if status != "ok":
-                raise _Refused(self._answer_for(status), status)
-            self._json(200, {"ok": True})
-
-        # -- endpoints: requests and models -----------------------------------------------
-
-        def _chat(self, body) -> None:
-            text = body.get("text")
-            if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
-                raise _Refused(400, "bad_text")
-            ids = body.get("attachments", [])
-            if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
-                raise _Refused(400, "bad_attachments")
-            try:
-                result = hub.submit(text, ids)
-            except UploadRefused as refused:
-                raise _Refused(refused.status, refused.code)
-            if result.status != "accepted":
-                raise _Refused({"busy": 409}.get(result.status, 503), result.status)
-            self._json(202, {"query_id": result.query_id, "status": result.status})
-
-        # -- endpoints: attachments -------------------------------------------------------
-
-        def _upload(self, body) -> None:
-            try:
-                info = hub.add_upload(body["bytes"])
-            except UploadRefused as refused:
-                raise _Refused(refused.status, refused.code)
-            self._json(201, info)
-
-        def _screenshot(self, _body) -> None:
-            try:
-                info = hub.capture_screenshot()
-            except UploadRefused as refused:
-                raise _Refused(refused.status, refused.code)
-            self._json(201, info)
-
-        def _discard_upload(self, upload_id, _body) -> None:
-            hub.discard_upload(upload_id)
-            self._json(200, {"ok": True})
-
-        def _attachment_support(self, _body) -> None:
-            self._json(200, hub.attachment_support())
-
-        def _stop(self, _body) -> None:
-            hub.cancel()
-            self._json(200, {"ok": True})
-
-        # -- endpoints: the microphone ----------------------------------------------------
-
-        @staticmethod
-        def _session(body: dict) -> str:
-            value = body.get("session")
-            if not isinstance(value, str) or not _SESSION.match(value):
-                raise _Refused(400, "bad_session")
-            return value
-
-        def _mic_status(self, _body) -> None:
-            self._json(200, hub.mic.status())
-
-        def _mic_start(self, _body) -> None:
-            session, reason = hub.mic.start()
-            if session is None:
-                raise _Refused(409 if reason == "busy" else 503, reason or "unavailable")
-            self._json(200, {"session": session, "max_seconds": MAX_RECORDING_SEC})
-
-        def _mic_heartbeat(self, body) -> None:
-            state = hub.mic.beat(self._session(body))
-            if state is None:
-                raise _Refused(404, "unknown")
-            self._json(200, {"state": state})
-
-        def _mic_stop(self, body) -> None:
-            text = hub.mic.stop(self._session(body))  # the transcript goes to this response only
-            if text is None:
-                raise _Refused(404, "unknown")
-            self._json(200, {"text": text})
-
-        def _mic_cancel(self, body) -> None:
-            hub.mic.cancel(self._session(body))
-            self._json(200, {"ok": True})
-
-        def _model(self, body) -> None:
-            kind, value, effort = body.get("kind"), body.get("value"), body.get("effort")
-            if (kind not in ("mode", "local", "cloud") or not isinstance(value, str) or not value.strip()
-                    or not (effort is None or isinstance(effort, str))):
-                raise _Refused(400, "bad_model")
-            if kind == "mode":
-                result = hub.switch_mode(value)
-            elif kind == "local":
-                result = hub.set_local_model(value)
-            else:
-                result = hub.set_cloud_model(value, effort)
-            if not result.ok:
-                raise _Refused(409, result.reason or "refused")
-            self._json(200, {"ok": True})
 
     return Handler
