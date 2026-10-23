@@ -52,6 +52,10 @@ Piper is the default for everyone. Nothing changes the engine or a default becau
 - **Kokoro**: `kokoro-v1.0.onnx` and `voices-v1.0.bin` from the kokoro-onnx `model-files-v1.0` release and `config.json` (the vocabulary) from `hexgrad/Kokoro-82M` at a fixed revision, each with its SHA-256 (about 354 MB in all, Apache-2.0 weights), in `~/.local/share/jarvis/models/kokoro`. `kokoro_files_present` checks every file exists with its pinned size.
 - Nothing but the file requests is sent; there is no telemetry, and ONNX Runtime's telemetry is switched off before any session is created.
 
+## Rendering for another device
+
+Phone Access plays replies on the phone (`remote/remote.spec.md`, Reply audio). It uses the engine Jarvis already speaks with: the daemon's live engine renders the reply with `render(text)` (Piper, or Kokoro with its fall-back to Piper), without playing it, without ducking, interrupting or feeding the PC's voice outputs, and the samples become a WAV in memory. An engine without `render` (Chatterbox) is replaced for this purpose by a Piper voice built from the same Piper settings. No voice file is downloaded for a render: a voice that is not on disk gives no audio and the phone shows that nothing was spoken. The audio goes to the phone only and is never written to disk.
+
 ## Preview
 
 `render_preview(values, text, progress)` builds the engine the daemon would build from the config `values` and returns the whole sample as samples, rate, the engine that spoke and the fallback reason. It first downloads what the choice needs (Kokoro's files, or a catalogued Piper voice not yet on disk), reporting progress. Chatterbox has no preview (`PreviewUnavailable`); a voice that cannot load raises `PreviewUnavailable` with the reason. `play` plays the samples on the default output and waits. The preview never writes `config.json`.
