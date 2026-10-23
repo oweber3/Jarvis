@@ -57,3 +57,26 @@ class TestRemoteAccessSettings:
         assert keys <= set(fields), sorted(keys - set(fields))
         assert {fields[k].category for k in keys} == {"extras"}
         assert "extras" in {key for key, _ in CATEGORIES}
+
+
+@pytest.mark.unit
+class TestRemoteAccessHttpsSettings:
+    KEYS = ("remote_access_tls_cert", "remote_access_tls_key", "remote_access_tls_host")
+
+    def test_https_is_off_by_default(self, tmp_path, monkeypatch):
+        defaults = get_default_config()
+        cfg = load(tmp_path, monkeypatch)
+        for key in self.KEYS:
+            assert defaults[key] == "" and getattr(cfg, key) == "", key
+
+    def test_paths_and_host_are_trimmed(self, tmp_path, monkeypatch):
+        cfg = load(tmp_path, monkeypatch, {"remote_access_tls_cert": " C:/jarvis/a.crt ",
+                                           "remote_access_tls_key": " C:/jarvis/a.key ",
+                                           "remote_access_tls_host": " pc.tail1234.ts.net "})
+        assert (cfg.remote_access_tls_cert, cfg.remote_access_tls_key, cfg.remote_access_tls_host) == (
+            "C:/jarvis/a.crt", "C:/jarvis/a.key", "pc.tail1234.ts.net")
+
+    @pytest.mark.parametrize("bad", [5, None, True, ["a"], "   "])
+    def test_anything_but_text_reads_as_not_set(self, tmp_path, monkeypatch, bad):
+        cfg = load(tmp_path, monkeypatch, {key: bad for key in self.KEYS})
+        assert [getattr(cfg, key) for key in self.KEYS] == ["", "", ""]

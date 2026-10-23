@@ -170,7 +170,7 @@ class PhoneAccessDialog(QDialog):
         else:
             self.status_label.setText("Phone access is off. Turn it on, then restart Jarvis.")
         self.turn_on_button.setHidden(enabled)
-        self.links_label.setText("\n".join(phone_links(int(self._cfg.remote_access_port))))
+        self.links_label.setText("\n".join(phone_links(self._cfg)))
         self._render_devices()
 
     def _render_devices(self) -> None:

@@ -487,6 +487,11 @@ class Settings:
     remote_access_port: int = 8765
     remote_access_allow_confirm: bool = True
     remote_access_quick_actions: list[str] = field(default_factory=lambda: list(REMOTE_QUICK_ACTIONS))
+    # HTTPS for phone access (the phone's microphone needs it): a certificate chain and key in PEM, and the
+    # certificate's DNS name. Written by `python -m jarvis.remote cert`; empty serves plain HTTP.
+    remote_access_tls_cert: str = ""
+    remote_access_tls_key: str = ""
+    remote_access_tls_host: str = ""
 
     # Opt-in web chat (see src/jarvis/webchat/webchat.spec.md): chats grouped into projects, shown in the
     # desktop app from a page the daemon serves on the loopback interface only. Off by default.
@@ -1090,6 +1095,9 @@ def get_default_config() -> Dict[str, Any]:
         "remote_access_port": 8765,
         "remote_access_allow_confirm": True,
         "remote_access_quick_actions": list(REMOTE_QUICK_ACTIONS),
+        "remote_access_tls_cert": "",
+        "remote_access_tls_key": "",
+        "remote_access_tls_host": "",
         "web_chat_enabled": False,
         "web_chat_port": 8766,
         # Database & Storage
@@ -1605,6 +1613,9 @@ def load_settings() -> Settings:
         remote_access_allow_confirm=bool(merged.get("remote_access_allow_confirm", True)),
         remote_access_quick_actions=_string_list(merged.get("remote_access_quick_actions"),
                                                  defaults["remote_access_quick_actions"]),
+        remote_access_tls_cert=_text(merged.get("remote_access_tls_cert"), ""),
+        remote_access_tls_key=_text(merged.get("remote_access_tls_key"), ""),
+        remote_access_tls_host=_text(merged.get("remote_access_tls_host"), ""),
         web_chat_enabled=merged.get("web_chat_enabled") is True,
         web_chat_port=_port(merged.get("web_chat_port"), defaults["web_chat_port"]),
         fast_commands_enabled=bool(merged.get('fast_commands_enabled', True)),

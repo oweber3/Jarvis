@@ -710,6 +710,17 @@ def _build_field_metadata() -> List[FieldMeta]:
     f("remote_access_quick_actions", "Quick Actions",
       "Commands shown as one-tap buttons on the phone, one per line. Each is sent as if typed.",
       "extras", "list", shown_when=phone)
+    f("remote_access_tls_cert", "HTTPS Certificate File",
+      "Needed for talking to Jarvis from the phone (browsers allow the microphone only over HTTPS). "
+      "Leave the three HTTPS settings to the command: python -m jarvis.remote cert gets a certificate "
+      "from your local Tailscale and fills them in.",
+      "extras", "str", advanced=True, shown_when=phone)
+    f("remote_access_tls_key", "HTTPS Key File",
+      "The private key of the certificate above. Keep it on this PC.",
+      "extras", "str", advanced=True, shown_when=phone)
+    f("remote_access_tls_host", "HTTPS Address",
+      "The certificate's name, such as pc.tail1234.ts.net. The phone opens https://<this name>:8765/.",
+      "extras", "str", advanced=True, shown_when=phone)
     f("remote_access_host", "Listen Address",
       "0.0.0.0 listens on every network of this PC; only private addresses are ever answered. Enter one "
       "address, such as this PC's Tailscale address, to answer on that network only.",

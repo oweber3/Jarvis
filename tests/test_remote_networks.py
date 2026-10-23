@@ -47,3 +47,14 @@ class TestOwnHostNames:
     def test_without_a_pc_name_only_addresses_count(self):
         assert is_own_host("192.168.1.5", "")
         assert not is_own_host("anything.local", "")
+
+    def test_the_certificates_own_name_is_the_pcs_even_when_it_differs_from_the_host_name(self):
+        assert is_own_host("renamed.tail1234.ts.net", "desktop-abc", extra_hosts=("renamed.tail1234.ts.net",))
+        assert not is_own_host("renamed.tail1234.ts.net", "desktop-abc")
+
+    def test_other_names_stay_refused_beside_the_certificate_name(self):
+        assert not is_own_host("evil.example", "desktop-abc", extra_hosts=("renamed.tail1234.ts.net",))
+        assert not is_own_host("sub.renamed.tail1234.ts.net", "desktop-abc", extra_hosts=("renamed.tail1234.ts.net",))
+
+    def test_the_certificate_name_is_compared_in_lower_case(self):
+        assert is_own_host("pc.tail1234.ts.net", "other", extra_hosts=("PC.Tail1234.ts.net",))

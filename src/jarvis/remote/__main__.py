@@ -1,18 +1,45 @@
-"""Pair and manage phones from a terminal: ``python -m jarvis.remote pair | devices | revoke <id>``."""
+"""Phone access from a terminal: ``python -m jarvis.remote pair | devices | revoke <id> | cert``."""
 from __future__ import annotations
 
 import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Callable
 
 from .pairing import CODE_TTL_SEC, DeviceStore
 from .runtime import devices_directory, phone_links
+from .tailscale import CertProblem, IssuedCertificate, issue_certificate, remember
 
 
 def _when(stamp: float) -> str:
     return datetime.fromtimestamp(stamp).strftime("%Y-%m-%d %H:%M") if stamp else "never"
 
 
-def main(argv=None) -> int:
+def _cert(cfg, issue: Callable[[Path], IssuedCertificate]) -> int:
+    from ..config import _config_path
+    print("🔐 Getting an HTTPS certificate for phone access")
+    print("   🔎 Asking the local Tailscale for this PC's name and certificate...")
+    try:
+        issued = issue(_config_path().parent)
+    except CertProblem as problem:
+        print(f"   ❌ {problem.lines[0]}")
+        for line in problem.lines[1:]:
+            print(f"      💡 {line}")
+        return 1
+    if not remember(issued):
+        print("   ❌ The certificate was saved but config.json could not be updated.")
+        print(f"      💡 Set remote_access_tls_cert, remote_access_tls_key and remote_access_tls_host "
+              f"({issued.host}) in Settings > Extras > Phone access.")
+        return 1
+    print(f"   ✅ Certificate saved for {issued.host}")
+    print("   ⚙️ The three HTTPS settings are saved in config.json")
+    print(f"   🔗 Open on your phone: https://{issued.host}:{cfg.remote_access_port}/")
+    print("   ⏳ The certificate lasts about 90 days. Run this command again to renew it; no restart is needed.")
+    print("   ♻️ If phone access is already running, restart Jarvis once so it serves HTTPS.")
+    return 0
+
+
+def main(argv=None, *, issue: Callable[[Path], IssuedCertificate] = issue_certificate) -> int:
     from ..config import load_settings
     for stream in (sys.stdout, sys.stderr):  # a Windows console may not default to UTF-8, and lines start with emoji
         if hasattr(stream, "reconfigure"):
@@ -28,8 +55,10 @@ def main(argv=None) -> int:
         if not cfg.remote_access_enabled:
             print("   ⚠️ Phone access is off. Turn it on in Settings > Extras > Phone access and restart Jarvis.")
         print("   🔗 Open one of these on the phone:")
-        for link in phone_links(cfg.remote_access_port):
+        for link in phone_links(cfg):
             print(f"      {link}")
+        if not cfg.remote_access_tls_cert or not cfg.remote_access_tls_key:
+            print("   🎙️ Talking to Jarvis from the phone needs HTTPS: run python -m jarvis.remote cert")
         print(f"   🔑 Pairing code: {code}")
         print(f"   ⏳ Valid for {CODE_TTL_SEC // 60} minutes, once.")
         return 0
@@ -49,7 +78,10 @@ def main(argv=None) -> int:
         print(f"❌ No paired phone with id {args[1]}")
         return 1
 
-    print("ℹ️ Usage: python -m jarvis.remote pair | devices | revoke <id>")
+    if command == "cert":
+        return _cert(cfg, issue)
+
+    print("ℹ️ Usage: python -m jarvis.remote pair | devices | revoke <id> | cert")
     return 2
 
 

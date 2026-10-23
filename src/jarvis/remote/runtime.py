@@ -11,6 +11,7 @@ from .hub import RemoteHub
 from .networks import local_addresses
 from .pairing import DeviceStore
 from .server import RemoteServer, ServerSettings
+from .tls import tls_config
 
 _lock = threading.Lock()
 _server: Optional[RemoteServer] = None
@@ -21,14 +22,27 @@ def devices_directory(cfg) -> Path:
     return Path(str(cfg.db_path)).expanduser().parent
 
 
-def phone_links(port: int):
-    """``http://<address>:<port>/`` for each private address of this PC, then its host name."""
+def phone_links(cfg, port: Optional[int] = None):
+    """Where the phone opens the app. With a certificate: ``https://<certificate name>:<port>/`` only, since
+    the port then serves nothing but HTTPS. Without: ``http://<address>:<port>/`` for each private address of
+    this PC, then its host name."""
+    port = int(cfg.remote_access_port) if port is None else port
+    secure = tls_config(cfg) is not None
+    if secure:
+        name = str(getattr(cfg, "remote_access_tls_host", "") or "").strip() or _own_name()
+        return [f"https://{name}:{port}/"] if name else []
     hosts = local_addresses()
-    try:
-        hosts.append(socket.gethostname())
-    except OSError:
-        pass
+    own = _own_name()
+    if own:
+        hosts.append(own)
     return [f"http://{host}:{port}/" for host in hosts]
+
+
+def _own_name() -> str:
+    try:
+        return socket.gethostname()
+    except OSError:
+        return ""
 
 
 def start(cfg, *, backend=None) -> Optional[RemoteServer]:
@@ -59,7 +73,7 @@ def start(cfg, *, backend=None) -> Optional[RemoteServer]:
             return None
         _server = server
     print(f"📱 Phone access is on (port {server.port})", flush=True)
-    for link in phone_links(server.port):
+    for link in phone_links(cfg, server.port):
         print(f"   🔗 {link}", flush=True)
     print("   🔑 Pair a phone from the tray: Phone Access", flush=True)
     return server

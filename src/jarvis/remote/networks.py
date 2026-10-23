@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from typing import List
+from typing import Iterable, List
 
 # Loopback, home LAN ranges, link-local, the shared address space VPNs such as Tailscale use, and IPv6
 # unique-local addresses (Tailscale's IPv6 range is inside fc00::/7).
@@ -42,13 +42,14 @@ def pc_name() -> str:
         return ""
 
 
-def is_own_host(name: str, own_name: str) -> bool:
+def is_own_host(name: str, own_name: str, extra_hosts: Iterable[str] = ()) -> bool:
     """Whether ``name`` (a request's lower-case ``Host`` name) is one the phone app is opened by.
 
     A private or loopback address, ``localhost``, or this PC's name (``own_name``) bare, under a local DNS
-    suffix or as a Tailscale MagicDNS name. Any other name may be a DNS name rebound to this PC.
+    suffix or as a Tailscale MagicDNS name, or one of ``extra_hosts`` (the certificate's own name, which
+    can differ from the host name). Any other name may be a DNS name rebound to this PC.
     """
-    if name == "localhost":
+    if name == "localhost" or name in {host.lower() for host in extra_hosts if host}:
         return True
     try:
         ipaddress.ip_address(name)

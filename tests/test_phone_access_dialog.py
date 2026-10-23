@@ -79,7 +79,7 @@ def test_shrinking_the_dialog_never_squeezes_wrapped_text(qapp, tmp_path, monkey
     import ui_windows
     ui_windows.load_fonts()
     monkeypatch.setattr("desktop_app.phone_access_dialog.phone_links",
-                        lambda port: [f"http://192.168.1.20:{port}/", f"http://my-pc:{port}/"])
+                        lambda cfg: ["http://192.168.1.20:8765/", "http://my-pc:8765/"])
     store = DeviceStore(tmp_path)
     store.complete_pairing(store.start_pairing(), "A phone with a fairly long descriptive name")
     dialog = open_dialog(tmp_path, enabled=enabled)
