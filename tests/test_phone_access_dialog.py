@@ -94,3 +94,24 @@ def test_shrinking_the_dialog_never_squeezes_wrapped_text(qapp, tmp_path, monkey
                 and label.height() < label.heightForWidth(label.width())]
     assert squeezed == []
     dialog.close()
+
+
+@pytest.mark.unit
+class TestHttpsInTheDialog:
+    def tls_cfg(self, tmp_path, **values):
+        base = dict(remote_access_enabled=True, remote_access_port=9123, db_path=str(tmp_path / "jarvis.db"),
+                    remote_access_tls_cert="a.crt", remote_access_tls_key="a.key",
+                    remote_access_tls_host="pc.tail1234.ts.net")
+        base.update(values)
+        return SimpleNamespace(**base)
+
+    def test_with_a_certificate_the_dialog_shows_the_https_address(self, qapp, tmp_path):
+        from desktop_app.phone_access_dialog import PhoneAccessDialog
+        dialog = PhoneAccessDialog(cfg=self.tls_cfg(tmp_path))
+        assert dialog.links_label.text() == "https://pc.tail1234.ts.net:9123/"
+        assert dialog.https_hint.isHidden()
+
+    def test_without_one_it_says_voice_needs_https_and_how_to_set_it_up(self, qapp, tmp_path):
+        dialog = open_dialog(tmp_path)
+        assert not dialog.https_hint.isHidden()
+        assert "python -m jarvis.remote cert" in dialog.https_hint.text() and "HTTPS" in dialog.https_hint.text()

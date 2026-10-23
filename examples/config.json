@@ -139,6 +139,9 @@
     "Volume down",
     "What's using the most RAM?"
   ],
+  "remote_access_tls_cert": "",
+  "remote_access_tls_key": "",
+  "remote_access_tls_host": "",
   "web_chat_enabled": false,
   "web_chat_port": 8766,
   "db_path": "~/.local/share/jarvis/jarvis.db",
