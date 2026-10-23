@@ -56,6 +56,8 @@ export type ThreadComponents = {
   Welcome?: ComponentType | undefined;
   ComposerLeading?: ComponentType | undefined;
   ComposerTrailing?: ComponentType | undefined;
+  /** The Screenshot button; `null` leaves it out (the phone app has no screen of its own to share). */
+  ComposerScreenshotButton?: ComponentType | null | undefined;
 };
 
 export type ThreadProps = {
@@ -423,13 +425,13 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
 };
 
 const ComposerAction: FC<{ blocked: boolean }> = ({ blocked }) => {
-  const { ComposerLeading, ComposerTrailing } = useContext(ThreadComponentsContext);
+  const { ComposerLeading, ComposerTrailing, ComposerScreenshotButton = ComposerScreenshot } = useContext(ThreadComponentsContext);
 
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
       <div className="flex min-w-0 items-center gap-1.5">
         <ComposerAddAttachment />
-        <ComposerScreenshot />
+        {ComposerScreenshotButton ? <ComposerScreenshotButton /> : null}
         {ComposerLeading ? <ComposerLeading /> : null}
       </div>
       <div className="flex items-center gap-1.5">

@@ -37,7 +37,8 @@ function writeCollapsed(ids: Set<string>) {
   }
 }
 
-export const ProjectsSidebar: FC = () => {
+// `canClearAll` is off in the phone app: deleting everything is a desktop action.
+export const ProjectsSidebar: FC<{ canClearAll?: boolean }> = ({ canClearAll = true }) => {
   const { library, actions } = useJarvis()
   const threadIds = useAuiState((s) => s.threads.threadIds)
   const [query, setQuery] = useState("")
@@ -148,7 +149,7 @@ export const ProjectsSidebar: FC = () => {
             New project
           </button>
         )}
-        <DeleteEverything />
+        {canClearAll ? <DeleteEverything /> : null}
       </div>
     </nav>
   )

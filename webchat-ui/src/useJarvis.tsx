@@ -42,6 +42,24 @@ export type JarvisActions = {
   chooseCloudModel: (model: string, effort?: string) => Promise<void>
   clearHistory: () => Promise<void>
   dismissToast: () => void
+  /**
+   * A request made outside the composer (the phone's spoken one): show it at once as a thinking bubble,
+   * then say whether the PC took it. The reply arrives through the poll like any other.
+   */
+  beginSend: (text: string) => void
+  sendAccepted: () => void
+  sendFailed: () => void
+  showToast: (message: string) => void
+}
+
+/** What the phone app adds to the page's behaviour; the web chat passes none. */
+export type JarvisHooks = {
+  /** Every poll snapshot as it arrives. */
+  onSnapshot?: (snapshot: Snapshot) => void
+  /** Whether a typed reply is to be spoken to this device. */
+  speakReplies?: () => boolean
+  /** A typed request was taken, with the query id the PC gave it and whether its reply is to be spoken. */
+  onSent?: (queryId: number, speak: boolean) => void
 }
 
 export type JarvisView = {
@@ -81,7 +99,9 @@ function textOf(message: AppendMessage): string {
 // A busy or unready Jarvis arrives as a notice from the server, so it is not also told as an error.
 const toldByNotice = (error: unknown) => error instanceof ApiError && ["busy", "unavailable"].includes(error.code)
 
-export function JarvisProvider({ children }: { children: ReactNode }) {
+export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks?: JarvisHooks }) {
+  const hooksRef = useRef<JarvisHooks | undefined>(hooks)
+  hooksRef.current = hooks
   const [library, setLibrary] = useState<Library>(EMPTY_LIBRARY)
   const [chat, setChat] = useState<Chat | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -109,6 +129,7 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
   const [sync] = useState(
     () =>
       new ChatSync(api, {
+        snapshot: (snapshot) => hooksRef.current?.onSnapshot?.(snapshot),
         library: setLibrary,
         chat: setChat,
         messages: setMessages,
@@ -250,6 +271,10 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
         })()
       },
       dismissToast: () => setToast(null),
+      beginSend: (text) => sync.beginSend(text),
+      sendAccepted: () => sync.sendAccepted(),
+      sendFailed: () => sync.sendFailed(),
+      showToast: setToast,
     }
   }, [fail, meta.mode, meta.model.current, refreshLibrary, refreshModels, sync])
 
@@ -268,8 +293,10 @@ export function JarvisProvider({ children }: { children: ReactNode }) {
       if (!text) return forget()
       sync.beginSend(text, attached.map(({ kind, size }) => ({ kind, size })))
       try {
-        await api.send(text, attached.map((a) => a.serverId))
+        const speak = hooksRef.current?.speakReplies?.() ?? false
+        const sent = await api.send(text, attached.map((a) => a.serverId), speak)
         sync.sendAccepted()
+        hooksRef.current?.onSent?.(sent.query_id, speak)
       } catch (error) {
         sync.sendFailed()
         forget()
