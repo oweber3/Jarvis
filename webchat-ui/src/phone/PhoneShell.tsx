@@ -22,8 +22,10 @@ import { useJarvis } from "@/useJarvis"
 // with the phone-only pieces around it. The orb shrinks while the keyboard is up or a confirmation waits, so
 // the conversation keeps its room.
 
+const PhoneStart: FC = () => <StartScreen limit={4} />
+
 const THREAD_COMPONENTS = {
-  Welcome: StartScreen,
+  Welcome: PhoneStart,
   ComposerLeading: ModelPicker,
   ComposerTrailing: PhoneMicButton,
   // The PC's screen is not the phone's to attach.
