@@ -3,6 +3,8 @@ import type { SpokenReply } from "@/phone/voiceSession"
 
 // The phone-only part of the API (remote/remote.spec.md, HTTP API); the chat routes are the shared client's.
 
+const AUDIO_PATH = /^\/api\/audio\/[0-9a-f]{32}$/
+
 export const phoneApi = {
   pair: (code: string, name: string) =>
     request<{ token: string; device_id: string }>("POST", "/api/pair", { code, name }),
@@ -17,8 +19,11 @@ export const phoneApi = {
     }
     throw new ApiError(502, "bad_reply")
   },
-  /** The reply audio, from its one-shot address. */
-  replyAudio: (url: string) => getBytes(url),
+  /** The reply audio, from its one-shot address. Only the PC's own audio path is ever fetched with the token. */
+  replyAudio(url: string): Promise<ArrayBuffer> {
+    if (!AUDIO_PATH.test(url)) return Promise.reject(new ApiError(502, "bad_reply"))
+    return getBytes(url)
+  },
 }
 
 // What the pairing screen says when the code is refused.

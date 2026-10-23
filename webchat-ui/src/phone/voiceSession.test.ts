@@ -360,3 +360,33 @@ describe("the shortest recording", () => {
     expect(MIN_RECORDING_BYTES).toBe(9600)
   })
 })
+
+describe("a microphone that is slow to open", () => {
+  it("is let go when the owner taps again before it arrives", async () => {
+    const w = world()
+    let arrive: (mic: MicPort) => void = () => undefined
+    w.ports.openMic = () => new Promise<MicPort>((resolve) => (arrive = resolve))
+    w.session.tap()
+    await tick()
+    w.session.tap()
+    await tick()
+    expect(w.session.view.phase).toBe("idle")
+    arrive(w.mic)
+    await tick()
+    expect(w.mic.closed).toBe(1)
+    expect(w.mic.onChunk).toBeNull()
+    expect(w.session.view.phase).toBe("idle")
+  })
+
+  it("is let go when the page is left before it arrives", async () => {
+    const w = world()
+    let arrive: (mic: MicPort) => void = () => undefined
+    w.ports.openMic = () => new Promise<MicPort>((resolve) => (arrive = resolve))
+    w.session.tap()
+    await tick()
+    w.session.stop()
+    arrive(w.mic)
+    await tick()
+    expect(w.mic.closed).toBe(1)
+  })
+})

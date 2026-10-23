@@ -76,6 +76,12 @@ class AudioStore:
                 self._clips.popitem(last=False)
             return token
 
+    def has(self, token: str) -> bool:
+        """Whether a clip for ``token`` is still waiting (not fetched, expired or let go)."""
+        with self._lock:
+            self._sweep_locked()
+            return token in self._clips
+
     def take(self, token: str, device_id: str) -> Optional[bytes]:
         """The clip for ``token`` if it was made for ``device_id`` and has not expired, removing it; else ``None``."""
         with self._lock:
@@ -117,6 +123,7 @@ class PhoneVoice:
         self._lock = threading.Lock()
         self._entries: Dict[Tuple[str, int], Dict[str, Any]] = {}
         self._listening = threading.Lock()   # one transcription at a time
+        self._stopped = False                # Stop was pressed while a request was being transcribed
         self._jobs: "queue.Queue" = queue.Queue()
         self._worker: Optional[threading.Thread] = None
 
@@ -131,10 +138,17 @@ class PhoneVoice:
 
     # -- a spoken request ---------------------------------------------------------------
 
-    def handle_audio(self, device_id: str, pcm: bytes, *, secure: bool) -> Tuple[int, Dict[str, Any]]:
+    def cancel(self) -> None:
+        """Stop was pressed: a request being transcribed right now is dropped when its words are ready."""
+        if self._listening.locked():
+            self._stopped = True
+
+    def handle_audio(self, device_id: str, pcm: bytes, *, secure: bool,
+                     alive: Optional[Callable[[], bool]] = None) -> Tuple[int, Dict[str, Any]]:
         """Transcribe ``pcm`` and send the words as a spoken phone request: ``(status, payload)``.
 
-        The words appear only in this answer and in the redacted turn the chat stores."""
+        ``alive`` says whether the phone is still waiting for the answer. The words appear only in this answer
+        and in the redacted turn the chat stores."""
         if len(pcm) > MAX_VOICE_BYTES:
             return 413, {"error": "too_large"}
         if len(pcm) % 2:
@@ -148,6 +162,7 @@ class PhoneVoice:
         if self._backend.is_busy() or not self._listening.acquire(blocking=False):
             debug_log("remote: voice refused (busy)", "remote")
             return 409, {"error": "busy"}
+        self._stopped = False
         try:
             seconds = len(pcm) / (2 * RATE)
             debug_log(f"remote: voice upload of {len(pcm)} bytes ({seconds:.1f}s)", "remote")
@@ -156,6 +171,13 @@ class PhoneVoice:
             debug_log(f"remote: transcribed {len(text)} characters in {time.monotonic() - started:.1f}s", "remote")
         finally:
             self._listening.release()
+        if self._stopped:
+            self._stopped = False
+            debug_log("remote: a spoken request was stopped before it started", "remote")
+            return 200, {"status": "stopped", "text": ""}
+        if alive is not None and not alive():
+            debug_log("remote: a spoken request was abandoned by the phone before it started", "remote")
+            return 400, {"error": "cancelled"}
         if not text:
             return 200, {"status": "nothing_heard", "text": ""}
         tracker = self.track(device_id)
@@ -228,6 +250,8 @@ class PhoneVoice:
         with self._lock:
             entry = self._entries.setdefault((device_id, query_id), {"created": self._clock()})
             entry["status"], entry["token"] = status, token
+            if status == "ready":
+                entry["created"] = self._clock()   # the entry lives as long as its clip, not its request
         self._poke()
 
     def _sweep_locked(self) -> None:
@@ -243,6 +267,8 @@ class PhoneVoice:
             for (device, query_id), entry in self._entries.items():
                 if device != device_id:
                     continue
+                if entry["status"] == "ready" and not self.store.has(entry["token"]):
+                    entry["status"], entry["token"] = "none", None   # the store let the clip go
                 item: Dict[str, Any] = {"status": entry["status"]}
                 if entry["status"] == "ready":
                     item["url"] = AUDIO_URL + entry["token"]

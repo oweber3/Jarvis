@@ -60,7 +60,8 @@ class ReloadingContext:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         try:
-            context.load_cert_chain(self._cert, self._key)
+            # An empty passphrase, so a key that needs one fails here instead of asking on the console.
+            context.load_cert_chain(self._cert, self._key, password=lambda: b"")
         except (ssl.SSLError, OSError, ValueError):
             raise TLSError("The HTTPS certificate and key could not be loaded "
                            "(they must be a matching pair in PEM format).") from None

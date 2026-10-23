@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import select
 import socket
 import ssl
 import threading
@@ -217,6 +218,11 @@ def _make_handler(server: RemoteServer):
                 self.close_connection = True
                 return
             limit = self._limit(urlsplit(self.path).path)
+            if limit > MAX_BODY_BYTES and length > MAX_BODY_BYTES and not self._may_send_large():
+                # Only a paired phone on a private network may make the server hold megabytes.
+                self._body_error = _Refused(401, "unpaired")
+                self.close_connection = True
+                return
             if length > limit:
                 self._body_error = _Refused(413, "too_large")
                 remaining = min(length, limit + DRAIN_LIMIT_BYTES)
@@ -230,11 +236,33 @@ def _make_handler(server: RemoteServer):
             if length > 0:
                 self._raw_body = self.rfile.read(length)
 
+        def _may_send_large(self) -> bool:
+            if not server._client_filter(self.client_address[0]):
+                return False
+            header = self.headers.get("Authorization") or ""
+            token = header[7:].strip() if header.startswith("Bearer ") else ""
+            return server.store.authenticate(token) is not None
+
+        def _client_gone(self) -> bool:
+            """Whether the phone has hung up (an abandoned spoken request is not run). Reads nothing the request
+            still needs: the whole body was read before the route ran."""
+            connection = self.connection
+            try:
+                if not select.select([connection], [], [], 0)[0]:
+                    return False
+                if isinstance(connection, ssl.SSLSocket):
+                    return connection.recv(1) == b""
+                return connection.recv(1, socket.MSG_PEEK) == b""
+            except (OSError, ValueError):
+                return True
+
         def _body(self) -> dict:
             if self._body_error is not None:
                 raise self._body_error
             if not self._raw_body:
                 return {}
+            if not _declares(self.headers.get("Content-Type"), "application/json"):
+                raise _Refused(415, "json_required")
             try:
                 data = json.loads(self._raw_body.decode("utf-8"))
             except (UnicodeDecodeError, ValueError):
@@ -302,8 +330,12 @@ def _make_handler(server: RemoteServer):
             elif (command, path) == ("POST", "/api/voice"):
                 if self._body_error is not None:
                     raise self._body_error
-                status, payload = server.voice.handle_audio(device.id, self._raw_body, secure=tls)
+                status, payload = server.voice.handle_audio(device.id, self._raw_body, secure=tls,
+                                                            alive=lambda: not self._client_gone())
                 self._json(status, payload)
+            elif (command, path) == ("POST", "/api/stop"):
+                server.voice.cancel()   # a spoken request still being transcribed is dropped too
+                return False
             elif command == "GET" and _AUDIO_PATH.match(path):
                 clip = server.voice.fetch(_AUDIO_PATH.match(path).group(1), device.id)
                 if clip is None:

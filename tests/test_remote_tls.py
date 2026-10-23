@@ -88,3 +88,13 @@ class TestReloadingContext:
         later = time.time() + 5
         os.utime(cert, (later, later))
         assert holder.context() is first
+
+
+@pytest.mark.unit
+def test_a_key_that_needs_a_passphrase_is_refused_instead_of_asking_on_the_console(tmp_path):
+    from tls_fixtures import make_encrypted_certificate
+    cert, key = make_encrypted_certificate(tmp_path)
+    started = time.monotonic()
+    with pytest.raises(TLSError, match="could not be loaded"):
+        ReloadingContext(str(cert), str(key))
+    assert time.monotonic() - started < 5   # never waits for someone to type at a console

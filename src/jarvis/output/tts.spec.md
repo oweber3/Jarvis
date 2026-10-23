@@ -54,7 +54,7 @@ Piper is the default for everyone. Nothing changes the engine or a default becau
 
 ## Rendering for another device
 
-Phone Access plays replies on the phone (`remote/remote.spec.md`, Reply audio). It uses the engine Jarvis already speaks with: the daemon's live engine renders the reply with `render(text)` (Piper, or Kokoro with its fall-back to Piper), without playing it, without ducking, interrupting or feeding the PC's voice outputs, and the samples become a WAV in memory. An engine without `render` (Chatterbox) is replaced for this purpose by a Piper voice built from the same Piper settings. No voice file is downloaded for a render: a voice that is not on disk gives no audio and the phone shows that nothing was spoken. The audio goes to the phone only and is never written to disk.
+Phone Access plays replies on the phone (`remote/remote.spec.md`, Reply audio). It uses the engine Jarvis already speaks with: the daemon's live engine renders the reply with `render(text)` (Piper, or Kokoro with its fall-back to Piper), without playing it, without ducking, interrupting or feeding the PC's voice outputs, and the samples become a WAV in memory. An engine without `render` (Chatterbox) is replaced for this purpose by a Piper voice built from the same Piper settings. No voice file is downloaded for a render: a voice that is not on disk gives no audio and the phone shows that nothing was spoken. The audio goes to the phone only and is never written to disk. A render runs beside whatever the PC is saying, as a Settings preview does, so the espeak-ng caveat under Preview applies to it as well.
 
 ## Preview
 

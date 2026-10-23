@@ -288,3 +288,27 @@ class TestPrivacy:
         monkeypatch.setattr("builtins.open", spy)
         voice.handle_audio("dev", ONE_SECOND, secure=True)
         assert [path for path in written if not path.endswith(".db") and "jarvis.db" not in path] == []
+
+
+@pytest.mark.unit
+class TestAudioStatusFollowsTheClip:
+    def test_an_entry_lives_as_long_as_its_clip_not_as_long_as_its_request(self, backend, hub):
+        clock = Clock()
+        voice = PhoneVoice(backend, hub, inline=True, clock=clock)
+        original = backend.render_speech
+
+        def slow_render(text):
+            clock.now += AUDIO_TTL_SEC - 20   # a long reply: nearly the whole window passes while it is made
+            return original(text)
+
+        backend.render_speech = slow_render
+        _status, payload = voice.handle_audio("dev", ONE_SECOND, secure=True)
+        clock.now += 60   # the clip is 60 s old and still fetchable
+        assert voice.audio_status("dev")[str(payload["query_id"])]["status"] == "ready"
+
+    def test_a_clip_the_store_let_go_reads_as_nothing_to_play(self, voice, backend):
+        queries = [voice.handle_audio("dev", ONE_SECOND, secure=True)[1]["query_id"]
+                   for _ in range(MAX_CLIPS_PER_DEVICE + 2)]
+        status = voice.audio_status("dev")
+        assert status[str(queries[0])] == {"status": "none"}
+        assert status[str(queries[-1])]["status"] == "ready"

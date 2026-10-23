@@ -31,3 +31,16 @@ def make_certificate(folder: Path, name: str = "localhost") -> Tuple[Path, Path]
 def client_context(cert: Path) -> ssl.SSLContext:
     """A client that trusts exactly ``cert``."""
     return ssl.create_default_context(cafile=str(cert))
+
+
+def make_encrypted_certificate(folder: Path) -> Tuple[Path, Path]:
+    """Like ``make_certificate`` but the key is protected by a passphrase (which nothing here supplies)."""
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        pytest.skip("openssl is not installed")
+    cert, key = folder / "locked.crt", folder / "locked.key"
+    subprocess.run(
+        [openssl, "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+         "-keyout", str(key), "-out", str(cert), "-days", "2", "-subj", "/CN=localhost", "-passout", "pass:secret"],
+        check=True, capture_output=True, timeout=60)
+    return cert, key

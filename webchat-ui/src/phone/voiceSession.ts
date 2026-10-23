@@ -178,7 +178,8 @@ export class VoiceSession {
     try {
       await unlocked
       const mic = this.mic ?? (await this.ports.openMic())
-      if (epoch !== this.epoch) {
+      if (epoch !== this.epoch || this.phase !== "listening") {
+        // The owner tapped again, or left, while the microphone was still opening.
         if (mic !== this.mic) mic.close()
         return
       }
@@ -208,7 +209,14 @@ export class VoiceSession {
   private async finish(): Promise<void> {
     if (this.phase !== "listening") return
     const epoch = this.epoch
-    if (this.mic) this.mic.onChunk = null
+    if (!this.mic) {
+      // Still opening: nothing was recorded. The microphone, when it arrives, is let go (see `start`).
+      this.epoch++
+      this.phase = "idle"
+      this.emit()
+      return
+    }
+    this.mic.onChunk = null
     if (!this.conversation) this.releaseMic()
     const bytes = pcm16ToBytes(this.recorded)
     this.recorded = []

@@ -7,6 +7,7 @@ import http.client
 import io
 import json
 import socket
+import threading
 import ssl
 import time
 import wave
@@ -619,3 +620,94 @@ class TestNothingSensitiveIsLogged:
         assert lines
         for secret in ("confidential", "bank", "Alex-private-phone", body["token"], code, url.rsplit("/", 1)[1]):
             assert secret not in joined
+
+
+@pytest.mark.unit
+class TestReviewFindings:
+    """Edge cases a fresh-eyes review found: what an unauthenticated client may make the server read, a request
+    the phone gave up on, and the content type of every method."""
+
+    def raw_post(self, server, path, length, headers=None, send=0):
+        """A POST that declares ``length`` bytes and sends ``send`` of them, returning the status line's code."""
+        sock = socket.create_connection(("127.0.0.1", server.port), timeout=5)
+        head = (f"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{server.port}\r\n"
+                f"Content-Type: application/octet-stream\r\nContent-Length: {length}\r\n"
+                + "".join(f"{k}: {v}\r\n" for k, v in (headers or {}).items()) + "\r\n")
+        sock.sendall(head.encode() + b"x" * send)
+        sock.settimeout(5)
+        try:
+            data = sock.recv(200)
+        finally:
+            sock.close()
+        return int(data.split(b" ", 2)[1]) if data.startswith(b"HTTP/") else None
+
+    @pytest.mark.parametrize("path,length", [("/api/voice", MAX_VOICE_BYTES), ("/api/attachments", 10 * 1024 * 1024)])
+    def test_an_unpaired_client_cannot_make_the_server_read_a_large_body(self, server, path, length):
+        started = time.monotonic()
+        status = self.raw_post(server, path, length, send=1000)   # the rest is never sent
+        assert status == 401
+        assert time.monotonic() - started < 3   # answered at once, without waiting for the body
+
+    def test_a_client_outside_private_networks_is_refused_before_a_large_body_is_read(
+            self, chat_backend, chat_store, backend, store, static_dir):
+        server = make_server(chat_backend, chat_store, backend, store, static_dir, client_filter=lambda a: False)
+        try:
+            assert self.raw_post(server, "/api/voice", MAX_VOICE_BYTES, send=1000) == 403
+        finally:
+            server.stop()
+
+    def test_a_paired_phone_may_still_send_a_large_body(self, secure_server, store, backend):
+        client = pair(secure_server, store, secure_server.context)
+        status, body, _ = client.request("POST", "/api/voice", raw=SECOND, headers={"Content-Type": "application/octet-stream"})
+        assert status == 202
+
+    @pytest.mark.parametrize("method,path", [("PATCH", "/api/chats/{chat}"), ("PATCH", "/api/projects/{project}")])
+    def test_every_method_with_a_body_must_declare_json(self, server, store, method, path):
+        client = paired_client(server, store)
+        _, project, _ = client.request("POST", "/api/projects", {"name": "Home"})
+        _, library, _ = client.request("GET", "/api/library")
+        target = path.format(chat=library["active_chat_id"], project=project["id"])
+        assert client.request(method, target, raw=b'{"title": "x", "name": "x"}', headers={"Content-Type": "text/plain"})[0] == 415
+        assert client.request(method, target, raw=b'{"title": "x", "name": "x"}', headers={"Content-Type": ""})[0] == 415
+        assert client.request(method, target, {"title": "x", "name": "x"})[0] == 200
+
+    def test_a_phone_that_hung_up_while_its_words_were_being_written_out_starts_nothing(
+            self, secure_server, store, backend, chat_backend):
+        client = pair(secure_server, store, secure_server.context)
+        release, started = threading.Event(), threading.Event()
+        original = backend.transcribe
+
+        def slow(samples):
+            started.set()
+            release.wait(5)
+            return original(samples)
+
+        backend.transcribe = slow
+        raw = socket.create_connection(("127.0.0.1", secure_server.port), timeout=5)
+        tls = secure_server.context.wrap_socket(raw, server_hostname="127.0.0.1")
+        tls.sendall((f"POST /api/voice HTTP/1.1\r\nHost: 127.0.0.1:{secure_server.port}\r\n"
+                     f"Authorization: Bearer {client.token}\r\nContent-Type: application/octet-stream\r\n"
+                     f"Content-Length: {len(SECOND)}\r\n\r\n").encode() + SECOND)
+        assert started.wait(5)   # the PC is transcribing now
+        tls.close()
+        time.sleep(0.2)
+        release.set()
+        time.sleep(0.5)
+        assert chat_backend.submitted == []
+
+    def test_stop_ends_a_spoken_request_still_being_written_out(self, secure_server, store, backend, chat_backend):
+        client = pair(secure_server, store, secure_server.context)
+        release, started = threading.Event(), threading.Event()
+        original = backend.transcribe
+        backend.transcribe = lambda samples: (started.set(), release.wait(5), original(samples))[2]
+        result = {}
+        thread = threading.Thread(target=lambda: result.update(
+            zip(("status", "body"), client.request("POST", "/api/voice", raw=SECOND,
+                                                   headers={"Content-Type": "application/octet-stream"})[:2])))
+        thread.start()
+        assert started.wait(5)
+        assert client.request("POST", "/api/stop")[0] == 200
+        release.set()
+        thread.join(timeout=5)
+        assert result["body"]["status"] == "stopped"
+        assert chat_backend.submitted == []
