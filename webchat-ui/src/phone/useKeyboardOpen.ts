@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react"
+import { createContext, useContext, useEffect, useState } from "react"
 import { KeyboardTracker } from "@/phone/keyboard"
 
 // Follows the visual viewport: tells whether the on-screen keyboard is up and keeps `--vvh` (the visible
-// height in pixels) current, so the page's height is what the owner can actually see.
+// height in pixels) current, so the page's height is what the owner can actually see. The phone shell calls it
+// once and shares the answer through `KeyboardOpen`, since the hook owns `--vvh`.
 
 export function useKeyboardOpen(): boolean {
   const [open, setOpen] = useState(false)
@@ -28,4 +29,11 @@ export function useKeyboardOpen(): boolean {
     }
   }, [])
   return open
+}
+
+export const KeyboardOpen = createContext(false)
+
+/** Whether the on-screen keyboard is up, as the phone shell sees it. */
+export function useKeyboardIsOpen(): boolean {
+  return useContext(KeyboardOpen)
 }

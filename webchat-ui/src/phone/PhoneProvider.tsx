@@ -4,17 +4,20 @@ import { PhonePlayer, sharedAudioContext } from "@/phone/audioPlayer"
 import { openMic } from "@/phone/micCapture"
 import { phoneApi } from "@/phone/phoneApi"
 import { readPrefs, storePrefs, type PhonePrefs } from "@/phone/storage"
+import { leaveWhenHidden, VoiceMode } from "@/phone/voiceMode"
 import { VoiceSession, type VoicePorts, type VoiceView } from "@/phone/voiceSession"
 import { JarvisProvider, useJarvis, type JarvisHooks } from "@/useJarvis"
 
 // What only the phone has, around the shared page: the poll's `phone` part (confirmation, PC statistics, quick
-// actions, voice availability and reply audio), the owner's switch, and the voice session. The chat itself is
-// the shared JarvisProvider's.
+// actions, voice availability and reply audio), the owner's switch, the voice session and voice mode. The chat
+// itself is the shared JarvisProvider's.
 
 export type PhoneView = {
   phone: PhoneSnapshot | null
   /** The PC's own assistant state, from the last poll. */
   pcState: string
+  /** A request is running on the PC. */
+  busy: boolean
   prefs: PhonePrefs
   setSpeakReplies: (on: boolean) => void
   /** Answer the desktop confirmation. Returns a plain sentence when it could not be answered, else null. */
@@ -28,6 +31,12 @@ export type VoiceControls = {
   level: () => number | null
   tap: () => void
   setConversation: (on: boolean) => void
+  /** Voice mode, the full-screen view for talking hands-free, is open. */
+  voiceMode: boolean
+  /** Open voice mode; call it inside the owner's tap. */
+  enterVoiceMode: () => void
+  /** Close voice mode: recording and playback stop and the microphone is released. */
+  leaveVoiceMode: () => void
 }
 
 const PhoneContext = createContext<PhoneView | null>(null)
@@ -50,15 +59,18 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 export const PhoneProvider: FC<{ onUnpaired: () => void; children: ReactNode }> = ({ onUnpaired, children }) => {
   const [phone, setPhone] = useState<PhoneSnapshot | null>(null)
   const [pcState, setPcState] = useState("asleep")
+  const [busy, setBusy] = useState(false)
   const [prefs, setPrefs] = useState<PhonePrefs>(() => readPrefs())
   const prefsRef = useRef(prefs)
   prefsRef.current = prefs
   const sessionRef = useRef<VoiceSession | null>(null)
+  const voiceModeRef = useRef<VoiceMode | null>(null)
 
   const hooks = useMemo<JarvisHooks>(
     () => ({
       onSnapshot: (snapshot: Snapshot) => {
         setPcState(snapshot.state)
+        setBusy(snapshot.busy)
         setPhone(snapshot.phone ?? null)
         if (snapshot.phone) sessionRef.current?.audioChanged(snapshot.phone.voice.audio)
       },
@@ -88,7 +100,7 @@ export const PhoneProvider: FC<{ onUnpaired: () => void; children: ReactNode }> 
   }, [])
 
   const unpair = useCallback(async () => {
-    sessionRef.current?.stop()
+    voiceModeRef.current?.leave()
     try {
       await phoneApi.unpair()
     } catch {
@@ -98,21 +110,27 @@ export const PhoneProvider: FC<{ onUnpaired: () => void; children: ReactNode }> 
   }, [onUnpaired])
 
   const view = useMemo<PhoneView>(
-    () => ({ phone, pcState, prefs, setSpeakReplies, answer, unpair }),
-    [phone, pcState, prefs, setSpeakReplies, answer, unpair],
+    () => ({ phone, pcState, busy, prefs, setSpeakReplies, answer, unpair }),
+    [phone, pcState, busy, prefs, setSpeakReplies, answer, unpair],
   )
 
   return (
     <PhoneContext.Provider value={view}>
       <JarvisProvider hooks={hooks}>
-        <VoiceBridge sessionRef={sessionRef}>{children}</VoiceBridge>
+        <VoiceBridge sessionRef={sessionRef} voiceModeRef={voiceModeRef}>
+          {children}
+        </VoiceBridge>
       </JarvisProvider>
     </PhoneContext.Provider>
   )
 }
 
-// Builds the voice session inside the shared provider, where the chat's actions are, and shares it.
-const VoiceBridge: FC<{ sessionRef: { current: VoiceSession | null }; children: ReactNode }> = ({ sessionRef, children }) => {
+// Builds the voice session and voice mode inside the shared provider, where the chat's actions are, and shares them.
+const VoiceBridge: FC<{
+  sessionRef: { current: VoiceSession | null }
+  voiceModeRef: { current: VoiceMode | null }
+  children: ReactNode
+}> = ({ sessionRef, voiceModeRef, children }) => {
   const { actions } = useJarvis()
   const { phone } = usePhone()
   const actionsRef = useRef(actions)
@@ -120,6 +138,7 @@ const VoiceBridge: FC<{ sessionRef: { current: VoiceSession | null }; children: 
   const phoneRef = useRef(phone)
   phoneRef.current = phone
   const [voiceView, setVoiceView] = useState<VoiceView>({ phase: "idle", message: null, conversation: false })
+  const [voiceModeOpen, setVoiceModeOpen] = useState(false)
 
   const session = useMemo(() => {
     let player: PhonePlayer | null = null
@@ -146,21 +165,18 @@ const VoiceBridge: FC<{ sessionRef: { current: VoiceSession | null }; children: 
     return new VoiceSession(ports, setVoiceView)
   }, [])
   sessionRef.current = session
+  const voiceMode = useMemo(() => new VoiceMode(session, setVoiceModeOpen), [session])
+  voiceModeRef.current = voiceMode
 
-  // Backgrounding the page, or leaving it, lets go of the microphone and the audio.
+  // Backgrounding the page, or leaving it, ends voice mode and lets go of the microphone and the audio.
   useEffect(() => {
-    const leave = () => session.stop()
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") leave()
-    }
-    document.addEventListener("visibilitychange", onVisibility)
-    window.addEventListener("pagehide", leave)
+    const leave = () => voiceMode.leave()
+    const unwatch = leaveWhenHidden(document, window, leave)
     return () => {
-      document.removeEventListener("visibilitychange", onVisibility)
-      window.removeEventListener("pagehide", leave)
+      unwatch()
       leave()
     }
-  }, [session])
+  }, [voiceMode])
 
   const controls = useMemo<VoiceControls>(
     () => ({
@@ -168,8 +184,11 @@ const VoiceBridge: FC<{ sessionRef: { current: VoiceSession | null }; children: 
       level: () => session.level(),
       tap: () => session.tap(),
       setConversation: (on) => session.setConversation(on),
+      voiceMode: voiceModeOpen,
+      enterVoiceMode: () => voiceMode.enter(),
+      leaveVoiceMode: () => voiceMode.leave(),
     }),
-    [session, voiceView],
+    [session, voiceMode, voiceView, voiceModeOpen],
   )
   return <VoiceContext.Provider value={controls}>{children}</VoiceContext.Provider>
 }

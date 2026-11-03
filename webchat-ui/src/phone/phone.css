@@ -1,5 +1,6 @@
 /*
- * The phone app's touch and screen-edge rules, on top of the page's shared styles (../index.css).
+ * The phone app's touch and screen-edge rules, on top of the page's shared styles (../index.css). Only the phone
+ * build loads this file, so its global rules never reach the web chat.
  * `--vvh` is the visible height in pixels (set from the visual viewport while the keyboard is up).
  */
 
@@ -19,14 +20,28 @@ body {
   touch-action: manipulation;
 }
 
+/* The keyboard covers the home indicator, so its inset would only push the message box away from the keyboard. */
+.phone-root[data-keyboard="open"] {
+  padding-bottom: 0;
+}
+
+/* The message box is pinned to the bottom on every screen, the empty chat included. */
+.phone-root .aui-thread-viewport-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  padding-bottom: 8px;
+  gap: 8px;
+}
+
 /* Fingers, not pointers: every control is at least 44 px. */
 .phone-root header button,
 .phone-root .aui-composer-send,
 .phone-root .aui-composer-cancel,
 .phone-root .aui-composer-add-attachment,
 .phone-root [data-slot="aui_composer-add-attachment"],
-.phone-root nav button,
-.phone-root nav a {
+.phone-drawer nav button,
+.phone-drawer nav a {
   min-width: 44px;
   min-height: 44px;
 }
@@ -36,22 +51,37 @@ body {
   border-radius: 9999px;
 }
 
-/* 16 px stops iOS zooming into the message box when it is focused. */
-.phone-root textarea,
-.phone-root input {
+/* 16 px stops iOS zooming into a field when it is focused. */
+textarea,
+input {
   font-size: 16px;
 }
 
-.no-scrollbar {
-  scrollbar-width: none;
+/* Sheets and drawers sit on the visible area, clear of the notch and the home indicator. */
+.phone-sheet {
+  max-height: calc(var(--vvh, 100dvh) - env(safe-area-inset-top) - 24px);
 }
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
+.phone-sheet-body {
+  padding-bottom: max(env(safe-area-inset-bottom), 16px);
+}
+.phone-drawer {
+  height: var(--vvh, 100dvh);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+.phone-voice-mode {
+  height: var(--vvh, 100dvh);
+  padding: max(env(safe-area-inset-top), 8px) env(safe-area-inset-right) max(env(safe-area-inset-bottom), 16px)
+    env(safe-area-inset-left);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .phone-root * {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
 }

@@ -890,7 +890,7 @@ Details: [`src/jarvis/accounts/accounts.spec.md`](../src/jarvis/accounts/account
 
 ## Phone access
 
-An opt-in web app the daemon serves to paired phones: the web chat's conversation and projects under the orb, quick actions, desktop confirmations and, over HTTPS, voice. It is off by default; restart Jarvis after turning it on.
+An opt-in web app the daemon serves to paired phones: the web chat's conversation and projects in a phone chat layout, quick actions, desktop confirmations and, over HTTPS, voice (one request from the microphone button, or a full-screen voice mode with the orb). It is off by default; restart Jarvis after turning it on.
 
 ```json
 {

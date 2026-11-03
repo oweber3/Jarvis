@@ -1,119 +1,81 @@
-import { PanelLeftIcon, XIcon } from "lucide-react"
+import { MenuIcon } from "lucide-react"
 import { useEffect, useState, type FC } from "react"
-import { ModelPicker } from "@/components/ModelPicker"
-import { ProjectsSidebar } from "@/components/ProjectsSidebar"
 import { StartScreen } from "@/components/StartScreen"
-import { ThemeSwitch } from "@/components/ThemeSwitch"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Thread } from "@/components/thread.aui"
 import { chatTitle } from "@/conversion"
-import { useNarrow } from "@/layout"
-import { ConfirmCard } from "@/phone/ConfirmCard"
-import { PhoneMicButton } from "@/phone/PhoneMicButton"
-import { PhoneOrb } from "@/phone/PhoneOrb"
-import { usePhone } from "@/phone/PhoneProvider"
+import { ChatsDrawer } from "@/phone/ChatsDrawer"
+import { ConnectionStatus } from "@/phone/ConnectionStatus"
+import { PhoneComposerVoice } from "@/phone/PhoneMicButton"
+import { PhoneDock } from "@/phone/PhoneDock"
 import { PhoneSettings } from "@/phone/PhoneSettings"
-import { QuickActions } from "@/phone/QuickActions"
-import { StatusLine } from "@/phone/StatusBar"
-import { useKeyboardOpen } from "@/phone/useKeyboardOpen"
+import { QuickActionChips, QuickActionsButton } from "@/phone/QuickActions"
+import { KeyboardOpen, useKeyboardOpen } from "@/phone/useKeyboardOpen"
+import { VoiceModeDialog } from "@/phone/VoiceModeDialog"
 import { useJarvis } from "@/useJarvis"
 
-// The phone's page: the shared chat (thread, tool steps, projects, model picker, start screen) under the orb,
-// with the phone-only pieces around it. The orb shrinks while the keyboard is up or a confirmation waits, so
-// the conversation keeps its room.
+// The phone's page, chat first: a slim header (chats, title, connection dot, settings), the conversation in all
+// the remaining height, and the message box pinned to the bottom above the keyboard and the safe area, with the
+// dock (voice indicator, confirmation, toast) just above it. The orb lives in voice mode, a full-screen view
+// opened from the button by the message box. The chats are a drawer; settings and quick actions are sheets.
 
-const PhoneStart: FC = () => <StartScreen limit={4} />
+const PhoneStart: FC = () => (
+  <div className="my-auto flex flex-col gap-5 pb-4">
+    <StartScreen limit={4} />
+    <div className="px-2">
+      <QuickActionChips />
+    </div>
+  </div>
+)
 
 const THREAD_COMPONENTS = {
   Welcome: PhoneStart,
-  ComposerLeading: ModelPicker,
-  ComposerTrailing: PhoneMicButton,
+  ComposerLeading: QuickActionsButton,
+  ComposerTrailing: PhoneComposerVoice,
+  ComposerAbove: PhoneDock,
   // The PC's screen is not the phone's to attach.
   ComposerScreenshotButton: null,
 }
 
 export const PhoneShell: FC = () => {
-  const { toast, chat, actions } = useJarvis()
-  const { phone } = usePhone()
-  const narrow = useNarrow()
+  const { chat } = useJarvis()
   const keyboardOpen = useKeyboardOpen()
-  const [sidebarOpen, setSidebarOpen] = useState(() => !narrow)
-  const [seenNarrow, setSeenNarrow] = useState(narrow)
-  if (seenNarrow !== narrow) {
-    setSeenNarrow(narrow)
-    setSidebarOpen(!narrow)
-  }
-  const overlay = narrow && sidebarOpen
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
-  // An overlay closes once a chat has been chosen, and with Esc on a hardware keyboard.
+  // The drawer closes once a chat has been chosen.
   const openId = chat?.id
-  useEffect(() => {
-    if (narrow) setSidebarOpen(false)
-  }, [openId, narrow])
-  useEffect(() => {
-    if (!overlay) return
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSidebarOpen(false)
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [overlay])
-
-  const compact = keyboardOpen || !!(phone?.allow_confirm && phone.confirmation)
+  useEffect(() => setDrawerOpen(false), [openId])
 
   return (
-    <TooltipProvider>
-      <div data-phone className="phone-root bg-background text-foreground relative flex w-full overflow-hidden">
-        {overlay && (
-          <div
-            data-testid="sidebar-backdrop"
-            aria-hidden
-            className="fixed inset-0 z-30 bg-black/50"
-            onClick={() => setSidebarOpen(false)}
-          />
-        )}
-        <aside
-          aria-label="Chats"
-          className={`border-border bg-card w-72 max-w-[85vw] shrink-0 border-e max-md:fixed max-md:inset-y-0 max-md:start-0 max-md:z-40 max-md:shadow-xl md:bg-card/60 ${sidebarOpen ? "" : "hidden"}`}
+    <KeyboardOpen.Provider value={keyboardOpen}>
+      <TooltipProvider>
+        <div
+          data-phone
+          data-keyboard={keyboardOpen ? "open" : "closed"}
+          className="phone-root bg-background text-foreground relative flex w-full flex-col overflow-hidden"
         >
-          <div className="phone-sidebar h-full">
-            <ProjectsSidebar canClearAll={false} />
-          </div>
-        </aside>
-        <main className="flex min-w-0 flex-1 flex-col">
-          <header className="border-border flex h-12 shrink-0 items-center gap-2 border-b px-3">
+          <header className="border-border bg-background/95 flex h-14 shrink-0 items-center gap-1 border-b px-1.5">
             <button
               type="button"
-              onClick={() => setSidebarOpen((open) => !open)}
-              aria-label="Show or hide chats"
-              className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-8 items-center justify-center rounded-md"
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Chats"
+              aria-haspopup="dialog"
+              aria-expanded={drawerOpen}
+              className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-11 shrink-0 items-center justify-center rounded-full"
             >
-              <PanelLeftIcon className="size-4" />
+              <MenuIcon className="size-5" aria-hidden />
             </button>
-            <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{chat ? chatTitle(chat) : "Jarvis"}</h1>
+            <h1 className="min-w-0 flex-1 truncate px-1 text-base font-semibold">{chat ? chatTitle(chat) : "Jarvis"}</h1>
+            <ConnectionStatus />
             <PhoneSettings />
-            <ThemeSwitch />
           </header>
-          <PhoneOrb compact={compact} />
-          <StatusLine />
-          <ConfirmCard />
-          {!keyboardOpen && <QuickActions />}
-          <div className="min-h-0 flex-1">
+          <main className="min-h-0 flex-1">
             <Thread components={THREAD_COMPONENTS} autoFocus={false} />
-          </div>
-        </main>
-        {toast && (
-          <div
-            role="alert"
-            className="bg-popover text-popover-foreground border-border absolute bottom-28 left-1/2 z-40 flex w-[min(90vw,28rem)] -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-2 text-sm shadow-lg"
-          >
-            <span className="min-w-0 flex-1">{toast}</span>
-            <button type="button" aria-label="Dismiss" onClick={actions.dismissToast} className="text-muted-foreground hover:text-foreground size-8">
-              <XIcon className="mx-auto size-4" />
-            </button>
-          </div>
-        )}
-      </div>
-    </TooltipProvider>
+          </main>
+        </div>
+        <ChatsDrawer open={drawerOpen} onOpenChange={setDrawerOpen} />
+        <VoiceModeDialog />
+      </TooltipProvider>
+    </KeyboardOpen.Provider>
   )
 }
