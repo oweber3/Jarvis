@@ -117,7 +117,7 @@ def _phone_access(enabled: bool):
         from desktop_app import phone_access_dialog
         cfg = SimpleNamespace(remote_access_enabled=enabled, remote_access_port=8765,
                               db_path=str(Path(os.environ["XDG_DATA_HOME"]) / "jarvis.db"))
-        with patch.object(phone_access_dialog, "phone_links", lambda port: [f"http://192.168.1.20:{port}/"]):
+        with patch.object(phone_access_dialog, "phone_links", lambda cfg: ["http://192.168.1.20:8765/"]):
             return phone_access_dialog.PhoneAccessDialog(cfg)
     return build
 

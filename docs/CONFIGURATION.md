@@ -890,7 +890,7 @@ Details: [`src/jarvis/accounts/accounts.spec.md`](../src/jarvis/accounts/account
 
 ## Phone access
 
-An opt-in web app the daemon serves to paired phones: the orb, the shared conversation, quick actions and desktop confirmations. It is off by default; restart Jarvis after turning it on.
+An opt-in web app the daemon serves to paired phones: the web chat's conversation and projects under the orb, quick actions, desktop confirmations and, over HTTPS, voice. It is off by default; restart Jarvis after turning it on.
 
 ```json
 {
@@ -898,7 +898,10 @@ An opt-in web app the daemon serves to paired phones: the orb, the shared conver
   "remote_access_host": "0.0.0.0",
   "remote_access_port": 8765,
   "remote_access_allow_confirm": true,
-  "remote_access_quick_actions": ["Pause the music", "Next song", "Volume up", "Volume down"]
+  "remote_access_quick_actions": ["Pause the music", "Next song", "Volume up", "Volume down"],
+  "remote_access_tls_cert": "",
+  "remote_access_tls_key": "",
+  "remote_access_tls_host": ""
 }
 ```
 
@@ -906,6 +909,8 @@ An opt-in web app the daemon serves to paired phones: the orb, the shared conver
 - `remote_access_port` must be from 1024 to 65535. If it is taken, Jarvis prints a warning and runs without phone access.
 - `remote_access_allow_confirm` lets a paired phone approve or deny the desktop confirmation dialog.
 - `remote_access_quick_actions` are sent as typed requests; an empty list hides the buttons.
+- `remote_access_tls_cert`, `remote_access_tls_key` and `remote_access_tls_host` turn the same port into HTTPS (needed for the phone's microphone). Leave them to `python -m jarvis.remote cert`, which gets a certificate from your local Tailscale, saves it next to `config.json` and fills the three keys in. A certificate or key that cannot be loaded stops phone access from starting (it never falls back to plain HTTP); renewing the files needs no restart.
+- Voice from the phone uses the local Whisper model of dictation (so `dictation_enabled` must be on) and the voice you chose in Settings (`tts_engine`); nothing is sent to any service.
 - Pair phones from the tray (**Phone Access**) or with `python -m jarvis.remote pair`. Paired phones are kept in `remote_devices.json` next to the database, as hashed keys.
 
 Details: [`src/jarvis/remote/remote.spec.md`](../src/jarvis/remote/remote.spec.md).

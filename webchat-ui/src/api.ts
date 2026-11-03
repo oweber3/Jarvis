@@ -1,5 +1,6 @@
-// The page's only door to Jarvis: the JSON API served beside it (jarvis/webchat/server.py).
-// Everything is relative to the page's own origin, so nothing here can reach another host.
+// The page's only door to Jarvis: the JSON API served beside it (jarvis/webchat/server.py, or phone access's
+// jarvis/remote/server.py for the phone app). Everything is relative to the page's own origin, so nothing here
+// can reach another host.
 
 export type Project = { id: string; name: string; position: number }
 
@@ -62,6 +63,17 @@ export type CloudModel = { id: string; name: string; is_default: boolean; descri
 
 export type Library = { projects: Project[]; chats: Chat[]; active_chat_id: string | null }
 
+// What phone access adds to every poll (remote/remote.spec.md, Long poll). Absent in the web chat.
+export type Confirmation = { id: string; tool: string; action: string; target: string; consequence: string; expires_in: number }
+export type VoiceAudio = { status: "pending" | "ready" | "none"; url?: string }
+export type PhoneSnapshot = {
+  confirmation: Confirmation | null
+  pc?: { cpu: number; ram: number } | null
+  quick_actions: string[]
+  allow_confirm: boolean
+  voice: { available: boolean; reason: string | null; audio: Record<string, VoiceAudio> }
+}
+
 export type Snapshot = {
   rev: number
   library_rev: number
@@ -76,6 +88,7 @@ export type Snapshot = {
   mode: ReplyModes | null
   model: LocalModelState
   cloud: CloudState | null
+  phone?: PhoneSnapshot
 }
 
 export type ModelsResponse = {
@@ -97,8 +110,21 @@ export class ApiError extends Error {
   }
 }
 
+// The phone app signs every request with its device token; the web chat has none (it is loopback only).
+let credentials: { token: string | null; onUnauthorized: (() => void) | null } = { token: null, onUnauthorized: null }
+
+/** Sign requests with `token` (null to stop). `onUnauthorized` runs when the PC refuses the token. */
+export function setCredentials(token: string | null, onUnauthorized: (() => void) | null = null): void {
+  credentials = { token, onUnauthorized }
+}
+
+function signed(headers: Record<string, string>): Record<string, string> {
+  if (credentials.token) headers["Authorization"] = `Bearer ${credentials.token}`
+  return headers
+}
+
 export async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  const headers: Record<string, string> = {}
+  const headers = signed({})
   const init: RequestInit = { method, headers }
   if (signal) init.signal = signal
   if (body !== undefined || method !== "GET") {
@@ -108,9 +134,27 @@ export async function request<T>(method: string, path: string, body?: unknown, s
   return answer<T>(await fetch(path, init))
 }
 
-// A file travels as its raw bytes: the server decides what it is from the bytes, so no name or path is sent.
-async function upload<T>(path: string, file: Blob): Promise<T> {
-  return answer<T>(await fetch(path, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file }))
+// Bytes travel raw: the server decides what a file is from its bytes, so no name or path is sent.
+export async function postBytes<T>(path: string, bytes: Blob | Uint8Array, signal?: AbortSignal): Promise<T> {
+  const init: RequestInit = {
+    method: "POST",
+    headers: signed({ "Content-Type": "application/octet-stream" }),
+    body: bytes as BodyInit,
+  }
+  if (signal) init.signal = signal
+  return answer<T>(await fetch(path, init))
+}
+
+/** A binary answer (the reply audio), signed like every other request. */
+export async function getBytes(path: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+  const init: RequestInit = { method: "GET", headers: signed({}) }
+  if (signal) init.signal = signal
+  const response = await fetch(path, init)
+  if (!response.ok) {
+    if (response.status === 401 && credentials.token) credentials.onUnauthorized?.()
+    throw new ApiError(response.status, `http_${response.status}`)
+  }
+  return response.arrayBuffer()
 }
 
 async function answer<T>(response: Response): Promise<T> {
@@ -122,6 +166,7 @@ async function answer<T>(response: Response): Promise<T> {
     data = {}
   }
   if (!response.ok) {
+    if (response.status === 401 && credentials.token) credentials.onUnauthorized?.()
     const code = (data as { error?: string }).error ?? `http_${response.status}`
     throw new ApiError(response.status, code)
   }
@@ -148,10 +193,14 @@ export const api = {
   createProject: (name: string) => request<Project>("POST", "/api/projects", { name }),
   renameProject: (id: string, name: string) => request<unknown>("PATCH", `/api/projects/${id}`, { name }),
   deleteProject: (id: string) => request<unknown>("DELETE", `/api/projects/${id}`),
-  send: (text: string, attachments: readonly string[] = []) =>
-    request<{ query_id: number; status: string }>("POST", "/api/chat", { text, ...(attachments.length ? { attachments } : {}) }),
+  send: (text: string, attachments: readonly string[] = [], speak = false) =>
+    request<{ query_id: number; status: string }>("POST", "/api/chat", {
+      text,
+      ...(attachments.length ? { attachments } : {}),
+      ...(speak ? { speak: true } : {}),
+    }),
   attachmentSupport: () => request<AttachmentSupport>("GET", "/api/attachments/support"),
-  uploadAttachment: (file: Blob) => upload<UploadInfo>("/api/attachments", file),
+  uploadAttachment: (file: Blob) => postBytes<UploadInfo>("/api/attachments", file),
   captureScreenshot: () => request<UploadInfo>("POST", "/api/attachments/screenshot"),
   discardAttachment: (id: string) => request<unknown>("DELETE", `/api/attachments/${id}`),
   stop: () => request<unknown>("POST", "/api/stop"),

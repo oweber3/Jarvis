@@ -1,5 +1,5 @@
 import { useAui, useAuiState } from "@assistant-ui/react"
-import { KeyboardIcon, MicIcon, MoonIcon, PanelLeftIcon, SunIcon, XIcon } from "lucide-react"
+import { KeyboardIcon, MicIcon, PanelLeftIcon, XIcon } from "lucide-react"
 import { useEffect, useState, type FC } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { fieldOf, resolveShortcut, SHORTCUTS } from "@/shortcuts"
@@ -12,7 +12,7 @@ import { StartScreen } from "@/components/StartScreen"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { chatTitle } from "@/conversion"
 import { chatValue, currentValue, describeValue } from "@/models"
-import { applyTheme, nextTheme, readStoredTheme, storeTheme, type Theme } from "@/theme"
+import { ThemeSwitch } from "@/components/ThemeSwitch"
 import { JarvisProvider, useJarvis } from "@/useJarvis"
 
 export const App: FC = () => (
@@ -178,29 +178,6 @@ const ShortcutsDialog: FC<{ open: boolean; onOpenChange: (open: boolean) => void
     </DialogContent>
   </Dialog>
 )
-
-// Light or dark, remembered in the browser. Dark is the Jarvis look.
-const ThemeSwitch: FC = () => {
-  const [theme, setTheme] = useState<Theme>(() => readStoredTheme())
-  useEffect(() => {
-    applyTheme(theme)
-    storeTheme(theme)
-  }, [theme])
-  const light = theme === "light"
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={light}
-      aria-label="Light mode"
-      title={light ? "Switch to dark mode" : "Switch to light mode"}
-      onClick={() => setTheme(nextTheme(theme))}
-      className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-8 shrink-0 items-center justify-center rounded-md"
-    >
-      {light ? <SunIcon className="size-4" /> : <MoonIcon className="size-4" />}
-    </button>
-  )
-}
 
 const StatusBanner: FC<{ reachable: boolean; ready: boolean }> = ({ reachable, ready }) => {
   if (reachable && ready) return null

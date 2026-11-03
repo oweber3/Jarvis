@@ -103,6 +103,13 @@ cannot be opened.
   post-processing pipeline. Audio shorter than 0.3 s or empty gives an empty
   transcript without calling Whisper.
 
+### Transcribing audio for a caller
+
+A caller that records elsewhere (Phone Access: the phone's microphone, `remote/remote.spec.md`, Voice) hands the engine finished audio: `transcribe_samples(samples, rate)` takes mono float32 samples in -1..1 at 16 kHz and returns the transcript, and `transcribe_blocker()` says why it could not now (`unavailable` without numpy, `not_ready` while the Whisper model is loading), otherwise `None`.
+
+- It is the transcription half of a capture and nothing else: no microphone, no listener pause, no face change, no beeps, no session, so it can run while the PC listens. It takes the engine's transcribe lock, applies the same speech gate, no-speech filter, custom dictionary and filler removal as a capture, and returns an empty transcript for audio shorter than 0.3 s or without speech.
+- The audio and the text are never stored, pasted, added to the history, passed to `on_dictation_result` or logged. Debug logs record only the audio's length in seconds and whether text came back.
+
 ## Silence and Whisper's invented phrases
 
 Whisper turns silence and room noise into stock phrases ("Thanks for watching!"). Every

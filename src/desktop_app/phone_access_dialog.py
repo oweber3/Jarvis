@@ -26,6 +26,7 @@ from jarvis.config import update_config_values
 from jarvis.debug import debug_log
 from jarvis.remote.pairing import DeviceStore
 from jarvis.remote.runtime import devices_directory, phone_links
+from jarvis.remote.tls import tls_config
 
 from .themes import apply_theme, divider, eyebrow, hud_heading, set_role
 
@@ -107,6 +108,9 @@ class PhoneAccessDialog(QDialog):
         links_layout.addWidget(self.links_label)
         links_layout.addWidget(_plain("The phone must be on your home network or your VPN (such as Tailscale).",
                                       muted=True))
+        self.https_hint = _plain("Talking to Jarvis from the phone needs HTTPS. In a terminal on this PC run: "
+                                 "python -m jarvis.remote cert", muted=True, selectable=True)
+        links_layout.addWidget(self.https_hint)
         layout.addWidget(links)
 
         pairing = self._card()
@@ -170,7 +174,8 @@ class PhoneAccessDialog(QDialog):
         else:
             self.status_label.setText("Phone access is off. Turn it on, then restart Jarvis.")
         self.turn_on_button.setHidden(enabled)
-        self.links_label.setText("\n".join(phone_links(int(self._cfg.remote_access_port))))
+        self.links_label.setText("\n".join(phone_links(self._cfg)))
+        self.https_hint.setHidden(tls_config(self._cfg) is not None)
         self._render_devices()
 
     def _render_devices(self) -> None:

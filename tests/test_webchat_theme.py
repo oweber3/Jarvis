@@ -14,6 +14,7 @@ from desktop_app.themes import FONT_MONO, FONT_UI, HUD_COLORS, HUD_COLORS_LIGHT
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATED = ROOT / "webchat-ui" / "src" / "generated" / "theme.css"
+GENERATED_ORB = ROOT / "webchat-ui" / "src" / "generated" / "orbPalette.ts"
 
 
 def block(css: str, selector: str) -> dict:
@@ -93,3 +94,44 @@ def test_the_send_button_and_the_owners_bubble_are_readable(theme):
     ink = web_chat_theme.INK_ON_ACCENT[theme]
     for accent in ("accent_primary", "accent_secondary", "accent_deep"):
         assert contrast(ink if ink.startswith("#") else palette[ink], palette[accent]) >= 4.5, (theme, accent)
+
+
+# -- the orb's colours and looks, for the phone's canvas orb ------------------------------------------
+
+
+def orb_constants() -> dict:
+    """The generated TypeScript as {name: value}: ``ORB_PALETTE`` and each state's look."""
+    import json
+    text = web_chat_theme.orb_ts()
+    palette = re.search(r"export const ORB_PALETTE = (\{.*?\}) as const", text, re.S)
+    looks = re.search(r"export const ORB_LOOKS = (\{.*?\}) as const", text, re.S)
+    assert palette and looks
+    return {"palette": json.loads(palette.group(1)), "looks": json.loads(looks.group(1))}
+
+
+def test_the_orb_palette_is_generated_with_every_colour_unchanged():
+    from desktop_app.themes import ORB_PALETTE
+    assert orb_constants()["palette"] == dict(ORB_PALETTE)
+
+
+def test_every_orb_state_look_is_generated_from_the_desktop_orb():
+    from desktop_app.orb_widget import _LOOKS
+    looks = orb_constants()["looks"]
+    assert set(looks) == {state.value for state in _LOOKS}
+    for state, look in _LOOKS.items():
+        generated = looks[state.value]
+        assert generated == {"glow": look.glow, "spin": look.spin, "think": look.think, "voiceGain": look.voice_gain,
+                             "stir": look.stir, "colour": look.colour, "accent": look.accent, "label": look.label,
+                             "swell": look.swell}, state
+
+
+def test_the_committed_orb_file_is_current():
+    committed = GENERATED_ORB.read_text(encoding="utf-8")
+    assert committed.replace(chr(13) + chr(10), chr(10)) == web_chat_theme.orb_ts(), (
+        "run: python -m desktop_app.web_chat_theme")
+
+
+def test_the_generator_writes_both_files(tmp_path):
+    written = web_chat_theme.write(tmp_path / "theme.css", orb_target=tmp_path / "orbPalette.ts")
+    assert written == tmp_path / "theme.css"
+    assert (tmp_path / "orbPalette.ts").read_text(encoding="utf-8") == web_chat_theme.orb_ts()

@@ -17,6 +17,8 @@ export type SyncApi = {
 export type Meta = Pick<Snapshot, "ready" | "busy" | "busy_query" | "mode" | "model" | "cloud">
 
 export type SyncView = {
+  /** Every snapshot as it arrives, before it is applied (the phone app reads its own part of it). */
+  snapshot?: (snapshot: Snapshot) => void
   library: (library: Library) => void
   chat: (chat: Chat | null) => void
   messages: (messages: ChatMessage[]) => void
@@ -88,6 +90,7 @@ export class ChatSync {
   // answered, which can be before something the owner did since that poll was sent.
   private async apply(snap: Snapshot, poll: number): Promise<void> {
     this.refetch = false
+    this.view.snapshot?.(snap)
     this.view.meta({
       ready: snap.ready,
       busy: snap.busy,

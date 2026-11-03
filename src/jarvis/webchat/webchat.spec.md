@@ -21,16 +21,18 @@ The server runs in the daemon process, like Phone Access (`remote/remote.spec.md
 | `jarvis/utils/local_guard.py` | `refusal(host, origin, sec_fetch_site, host_allowed=...)`: the Host, Origin and cross-site fetch checks shared with the Memory Viewer and phone access |
 | `jarvis/tools/step_log.py` | `StepLog`: the in-memory record of tool steps that `run_tool_with_retries` fills and the hub reads (see **Tool steps**) |
 | `jarvis/webchat/backend.py` | `DaemonBackend`: the only module that touches `jarvis.daemon`, `bridge.modes` and the LLM backend. Tests replace it with a fake |
-| `jarvis/webchat/hub.py` | `ChatHub`: the open chat, mirroring of the dialogue memory into it, query tracking, notices, change notification for long polls, the uploads waiting for a request |
+| `jarvis/webchat/hub.py` | `ChatHub`: the open chat, mirroring of the dialogue memory into it, query tracking (the request's origin and source, a completion callback), notices, change notification for long polls (and extra change signals from `watch`), the uploads waiting for a request. Phone access shares it (`remote/remote.spec.md`, One hub, two servers) |
+| `jarvis/webchat/api.py` | `ChatApi`: every route of the HTTP API below as a function of method, path, query and body, with the surface it serves (`web` or `phone`). The web chat's server and phone access's server both serve it, each behind its own guards |
 | `jarvis/webchat/suggestions.py` | The start screen's cards: `build_cards`, the generic examples, the card wording read from the fast path's locale file. Pure |
 | `jarvis/webchat/mic.py` | `MicSessions`: the page's one microphone recording, its session id, heartbeat watch and release. Records through the dictation engine |
 | `jarvis/webchat/uploads.py` | Attachments: telling an upload apart by its content, preparing it for a model, `UploadStore` (in memory only) |
 | `jarvis/reply/attachments.py` | `RequestAttachment`: what a request carries, the fence around file text, the note a model reads, the kind-and-size summary that is stored |
 | `jarvis/webchat/server.py` | Threaded HTTP server (standard library), routing, guards, static files |
 | `jarvis/webchat/identity.py` | The server's per-run identity token and the HMAC proof the desktop window checks |
-| `jarvis/webchat/runtime.py` | `start(cfg)` / `stop()`: called by the daemon; starts nothing when disabled |
+| `jarvis/webchat/runtime.py` | `start(cfg)` / `stop()`: called by the daemon; starts nothing when disabled. `acquire_hub(cfg)` / `release_hub()`: the one hub and store the web chat and phone access share, started by the first user and stopped by the last |
 | `jarvis/webchat/static/` | The built React app. Committed, so a source checkout needs no Node |
-| `webchat-ui/` (repository root) | The JavaScript project: sources, `package.json`, `package-lock.json`, `README.md` with the build steps. Python never imports it and Python tests never need Node |
+| `jarvis/remote/static/` | The same React app built in its `phone` mode for phone access (`remote/remote.spec.md`, The phone app). Committed |
+| `webchat-ui/` (repository root) | The JavaScript project: sources, `package.json`, `package-lock.json`, `README.md` with the build steps. It builds two apps from one set of components: the web chat and the phone app (`src/phone/`). Python never imports it and Python tests never need Node |
 | `desktop_app/web_chat_theme.py` | Writes `webchat-ui/src/generated/theme.css` from `HUD_COLORS`; a test fails when the committed file is stale |
 | `desktop_app/web_chat_window.py` | `WebChatWindow`: the window holding the `QWebEngineView`, status page while the daemon is not running |
 
@@ -141,6 +143,10 @@ All JSON. Errors are `{"error": "<code>"}`.
 A `session` is the 32-character lowercase hex id `start` returned (`400 bad_session` otherwise).
 
 The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`, `steps`, `attachments`; never the private flag), `notices` (the ones not yet overtaken by a newer stored turn, each with its `ts`), `mode`, `model` and `cloud`.
+
+### Two surfaces
+
+`ChatApi` serves the routes above to two callers. The **web** surface is this server: every route, the loopback guards and no tokens. The **phone** surface is Phone Access's server (`remote/remote.spec.md`): the same routes behind its private-network, Host, Origin and device-token checks, with origin `phone` on every request, and without `POST /api/clear`, `POST /api/attachments/screenshot`, `GET /api/identity` and the `/api/mic/*` routes, which answer `404`. Its `POST /api/chat` also takes `"speak": true`, and its poll snapshot carries the extra `phone` object. A route changes in one place for both.
 
 ## The page
 
@@ -285,7 +291,7 @@ A refused send (`no_vision`, `cloud_no_images`, `cloud_not_ready`) keeps the upl
 - Streaming: the engine returns whole replies.
 - Sharing.
 - Attachments that outlast their message: a file or image belongs to the one message that carried it, so a follow-up that needs it attaches it again (**Attachments**).
-- Phone access: the phone app keeps its own conversation view. A request from a paired phone joins the open chat like any other turn and shows as a spoken one, because the dialogue memory does not record where a turn came from.
+- Phone access has its own server, guards and pairing (`remote/remote.spec.md`) but shares this page's components, chats, projects and hub. A request from a paired phone joins the open chat like any other turn, typed or spoken as the owner made it.
 
 ## Known limits
 

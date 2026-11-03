@@ -41,9 +41,10 @@ class DaemonBackend:
         from .. import daemon
         return daemon.get_dialogue_memory() is not None and daemon.get_settings() is not None
 
-    def submit(self, text: str, *, on_start, on_complete, on_busy, attachments: tuple = ()) -> None:
+    def submit(self, text: str, *, on_start, on_complete, on_busy, attachments: tuple = (),
+               origin: str = "chat") -> None:
         from .. import daemon
-        daemon.submit_text_query(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy, origin="chat",
+        daemon.submit_text_query(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy, origin=origin,
                                  attachments=attachments)
 
     def cancel(self) -> None:

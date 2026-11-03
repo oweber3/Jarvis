@@ -38,6 +38,8 @@ datas = [
     (str(src_path / 'jarvis' / 'output' / 'piper_voices.json'), 'jarvis/output'),
     # The built web chat page, served by the daemon (webchat/webchat.spec.md)
     (str(src_path / 'jarvis' / 'webchat' / 'static'), 'jarvis/webchat/static'),
+    # The built phone app, served by the daemon to paired phones (remote/remote.spec.md)
+    (str(src_path / 'jarvis' / 'remote' / 'static'), 'jarvis/remote/static'),
 ]
 
 # Collect Piper TTS data files (espeak-ng-data is required for phonemization)

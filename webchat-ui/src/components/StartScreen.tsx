@@ -13,7 +13,8 @@ const ICONS: Record<Card["kind"], FC<{ className?: string }>> = {
   example: MessageSquareIcon,
 }
 
-export const StartScreen: FC = () => {
+// `limit` caps the cards shown (the phone has room for fewer).
+export const StartScreen: FC<{ limit?: number }> = ({ limit = Infinity }) => {
   const aui = useAui()
   const unavailable = useAuiState((s) => s.thread.isDisabled || s.thread.isRunning)
   const [cards, setCards] = useState<Card[]>([])
@@ -47,7 +48,7 @@ export const StartScreen: FC = () => {
       </div>
       {cards.length > 0 && (
         <ul aria-label="Suggestions" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {cards.map((card) => {
+          {cards.slice(0, limit).map((card) => {
             const Icon = ICONS[card.kind] ?? MessageSquareIcon
             const blocked = unavailable && card.action === "send"
             return (

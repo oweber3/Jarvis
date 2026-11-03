@@ -19,8 +19,15 @@ BROWSER_AUDIO = (
 )
 
 
+PHONE = SOURCE / "phone"
+STATIC = Path(__file__).resolve().parents[1] / "src" / "jarvis" / "webchat" / "static"
+
+
 def page_sources():
-    return [p for p in SOURCE.rglob("*") if p.suffix in {".ts", ".tsx"} and not p.name.endswith(".test.ts")]
+    """The web chat page's sources: everything except the phone app's own folder, which records with the
+    phone's own microphone (``remote/remote.spec.md``, Voice) and is built into a separate bundle."""
+    return [p for p in SOURCE.rglob("*")
+            if p.suffix in {".ts", ".tsx"} and not p.name.endswith(".test.ts") and PHONE not in p.parents]
 
 
 @pytest.mark.parametrize("path", page_sources(), ids=lambda p: p.name)
@@ -45,3 +52,15 @@ def test_every_response_denies_the_microphone_to_the_page(parts):  # noqa: F811
         _status, _body, response = call(parts, "GET", path)
         policy = response.getheader("Permissions-Policy") or ""
         assert "microphone=()" in policy and "camera=()" in policy, path
+
+
+def test_nothing_shared_with_the_web_chat_imports_the_phone_app():
+    importing = [p.name for p in page_sources() if re.search(r"""from\s+["'](@/phone|\./phone|\.\./phone)""", p.read_text(
+        encoding="utf-8", errors="replace"))]
+    assert importing == []
+
+
+@pytest.mark.parametrize("path", sorted((STATIC / "assets").glob("*.js")), ids=lambda p: p.name)
+def test_the_built_web_chat_has_no_browser_audio_either(path):
+    text = path.read_text(encoding="utf-8", errors="replace")
+    assert [word for word in BROWSER_AUDIO if word in text] == []
