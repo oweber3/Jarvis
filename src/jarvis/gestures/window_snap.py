@@ -38,6 +38,12 @@ GRAB_HOLD_SEC = 0.3
 # The comfort box is centred again only on a hand that has been out of view at least this long: a fast-moving
 # hand drops out of detection for a moment and comes back where it is.
 RECENTRE_AFTER_SEC = 1.0
+# How far, in palm lengths (wrist to the middle finger's base), the palm centre keeps from the image's edges so the
+# whole hand stays in view: the thumb to the side, the fingertips above and the wrist below. The comfort box is
+# kept inside these margins.
+REACH_SIDE = 0.85
+REACH_ABOVE = 1.2
+REACH_BELOW = 0.9
 # After a gesture change the pointer's distance from the palm's place fades with this time constant.
 CATCH_UP_SEC = 0.15
 _PALM = (Landmark.WRIST, Landmark.INDEX_MCP, Landmark.MIDDLE_MCP, Landmark.RING_MCP, Landmark.PINKY_MCP)
@@ -284,12 +290,14 @@ class WindowSnap:
         left, right = min(m[0] for m in self._monitors), max(m[2] for m in self._monitors)
         top, bottom = min(m[1] for m in self._monitors), max(m[3] for m in self._monitors)
         self._desktop_width = right - left
+        self._desktop_height = bottom - top
         self._centre = ((left + right) / 2, (top + bottom) / 2)
         self._fx = OneEuroFilter(settings.min_cutoff, settings.beta)
         self._fy = OneEuroFilter(settings.min_cutoff, settings.beta)
         self._state = _IDLE
         self._drift: Tuple[float, float] = (0.0, 0.0)
-        self._box: Optional[Tuple[float, float]] = None  # the camera position the comfort box is centred on
+        # The comfort box: the image position it is centred on and its gain (desktop pixels per camera pixel).
+        self._box: Optional[Tuple[float, float, float]] = None
         self._last_t: Optional[float] = None
         self._last_palm: Optional[Tuple[float, float]] = None
         self._last_hand: Optional[float] = None
@@ -356,15 +364,14 @@ class WindowSnap:
             if self._last_hand is not None and arrived - self._last_hand >= RECENTRE_AFTER_SEC:
                 self._box = None
             self._last_hand = arrived
-            # Absolute: the comfort box, centred where the palm was when the hand started driving, spans the
-            # desktop's bounding rectangle.
+            # Absolute: the comfort box, centred where the palm was when the hand started driving and kept where
+            # the whole hand stays in view, spans the desktop's bounding rectangle.
             px, py = palm_centre(chosen)
             if self._box is None:
-                self._box = (px, py)
-                debug_log("gesture snapping: comfort box centred on the hand", "gestures")
-            gain = self._desktop_width / (self._s.comfort_box * max(frame.width, 1))
-            position = (self._fx(self._centre[0] + (px - self._box[0]) * frame.width * gain, frame.time),
-                        self._fy(self._centre[1] + (py - self._box[1]) * frame.height * gain, frame.time))
+                self._box = self._place_box(chosen, frame)
+            bx, by, gain = self._box
+            position = (self._fx(self._centre[0] + (px - bx) * frame.width * gain, frame.time),
+                        self._fy(self._centre[1] + (py - by) * frame.height * gain, frame.time))
             shape = self._shape(chosen)
             seconds = [h for h in frame.hands if h is not chosen]
             second = max(seconds, key=lambda h: h.score) if seconds and self._s.two_hands else None
@@ -482,6 +489,29 @@ class WindowSnap:
         if self._zoom_ref is not None:
             self._end_zoom()
         self._grab_blocked = self._second_in_view = False
+
+    def _place_box(self, hand: Hand, frame: HandFrame) -> Tuple[float, float, float]:
+        """The comfort box for a hand starting to drive: its centre (image position) and gain. It is centred on
+        the palm, shrunk when it is larger than the part of the view where the whole hand stays visible, and moved
+        as little as needed to lie inside that part, so every edge of the desktop is within reach."""
+        width, height = max(frame.width, 1), max(frame.height, 1)
+        px, py = palm_centre(hand)
+        palm = math.dist(_pixels(hand, Landmark.WRIST, width, height),
+                         _pixels(hand, Landmark.MIDDLE_MCP, width, height))
+        gain = self._desktop_width / (self._s.comfort_box * width)
+        left, right = REACH_SIDE * palm, width - REACH_SIDE * palm
+        top, bottom = REACH_ABOVE * palm, height - REACH_BELOW * palm
+        if right <= left or bottom <= top:  # a hand too close to the camera: no part of the view keeps it whole
+            debug_log("gesture snapping: comfort box centred on the hand (hand too close to fit it)", "gestures")
+            return px, py, gain
+        gain *= max(1.0, self._desktop_width / gain / (right - left), self._desktop_height / gain / (bottom - top))
+        half_w, half_h = self._desktop_width / gain / 2, self._desktop_height / gain / 2
+        cx = min(max(px * width, left + half_w), right - half_w)
+        cy = min(max(py * height, top + half_h), bottom - half_h)
+        moved = abs(cx - px * width) > 0.5 or abs(cy - py * height) > 0.5
+        debug_log("gesture snapping: comfort box centred on the hand"
+                  + (", moved to keep the hand in view" if moved else ""), "gestures")
+        return cx / width, cy / height, gain
 
     # -- the state machine -----------------------------------------------------------------------
 
