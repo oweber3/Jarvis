@@ -129,11 +129,21 @@ export class ChatSync {
       cloud: snap.cloud,
     })
     this.view.notices(snap.notices)
-    // Remembered only once the library was fetched, so a failed fetch is retried with the same snapshot.
-    if (snap.library_rev !== this.libraryRev) {
-      await this.refreshLibrary()
-      this.libraryRev = snap.library_rev
-    }
+    // Remembered only once the library was fetched, so a failed fetch is retried with the same snapshot. It is
+    // fetched while the chat loads, not before.
+    const libraryRev = snap.library_rev
+    let libraryFailure: { error: unknown } | null = null
+    const library =
+      libraryRev !== this.libraryRev
+        ? this.refreshLibrary().then(
+            () => {
+              this.libraryRev = libraryRev
+            },
+            (error: unknown) => {
+              libraryFailure = { error }
+            },
+          )
+        : null
     // Messages were taken back (a rewind, here or on another page): what is shown may hold them.
     const rewound = snap.history_rev !== undefined && this.historyRev !== null && snap.history_rev !== this.historyRev
     if (snap.history_rev !== undefined) this.historyRev = snap.history_rev
@@ -154,6 +164,10 @@ export class ChatSync {
     } else {
       if (snap.chat) this.view.chat(snap.chat)
       if (!this.hasLater) this.showMessages(mergeMessages(this.shown, snap.messages))
+    }
+    if (library) {
+      await library
+      if (libraryFailure) throw (libraryFailure as { error: unknown }).error
     }
     if (this.stopping && !snap.busy_query) {
       this.stopping = false

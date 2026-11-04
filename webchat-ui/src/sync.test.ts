@@ -134,8 +134,10 @@ describe("a failed library refresh", () => {
     await settle()
     t.libraries[0]!.reject(new Error("offline"))
     await settle()
+    t.answerChat("A") // the chat loads meanwhile
+    await settle()
 
-    // the same state is asked for again straight away, and the library is fetched again
+    // the same state is asked for again, and the library is fetched again
     expect(t.polls).toHaveLength(2)
     expect(t.polls[1]!.rev).toBe(-1)
     expect(t.shown.library).toBeNull()
@@ -143,8 +145,6 @@ describe("a failed library refresh", () => {
     await settle()
     expect(t.api.library).toHaveBeenCalledTimes(2)
     t.libraries[1]!.resolve(library())
-    await settle()
-    t.answerChat("A")
     await settle()
     expect(t.shown.library?.chats).toHaveLength(2)
 
