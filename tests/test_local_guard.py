@@ -43,3 +43,48 @@ def test_a_cross_site_fetch_is_refused(site):
 @pytest.mark.parametrize("site", [None, "same-origin", "none"])
 def test_a_same_origin_or_typed_fetch_is_served(site):
     assert refusal("127.0.0.1:8766", None, site) is None
+
+
+# -- built asset names ---------------------------------------------------------------------------
+
+WINDOWS_PATH_NAMES = [
+    "//evil.example/share/x.js",       # UNC: Windows would open an SMB connection to evil.example
+    "\\\\evil.example\\share\\x.js",   # the same with backslashes (%5C in a URL)
+    "evil.example@80/x.js",            # harmless alone, but never a built file name
+    "C:/Windows/win.ini", "C:win.ini", # drive paths
+    "sub\\..\\..\\secret.txt", "../secret.txt", "./app.js", "", "/app.js", "app.js\x00.png", "a//b.js",
+]
+
+
+@pytest.mark.parametrize("name", WINDOWS_PATH_NAMES)
+def test_an_asset_name_that_is_not_a_plain_built_file_never_reaches_the_file_system(name, tmp_path, monkeypatch):
+    import pathlib
+    from jarvis.utils.local_guard import asset_file
+    touched = []
+    real_resolve = pathlib.Path.resolve
+    monkeypatch.setattr(pathlib.Path, "resolve", lambda self, *a, **k: touched.append(str(self)) or real_resolve(self, *a, **k))
+    monkeypatch.setattr(pathlib.Path, "is_file", lambda self: touched.append(str(self)) or False)
+    assert asset_file(tmp_path, name) is None
+    assert not any("evil" in path or "win.ini" in path or "secret" in path for path in touched)
+
+
+def test_a_built_asset_is_found(tmp_path):
+    from jarvis.utils.local_guard import asset_file
+    (tmp_path / "index-BcvYZyEM.js").write_text("x")
+    (tmp_path / "fonts").mkdir()
+    (tmp_path / "fonts" / "inter_v4.woff2").write_text("x")
+    assert asset_file(tmp_path, "index-BcvYZyEM.js") == (tmp_path / "index-BcvYZyEM.js").resolve()
+    assert asset_file(tmp_path, "fonts/inter_v4.woff2") == (tmp_path / "fonts" / "inter_v4.woff2").resolve()
+    assert asset_file(tmp_path, "missing.js") is None
+
+
+def test_an_asset_symlinked_out_of_the_folder_is_not_served(tmp_path):
+    from jarvis.utils.local_guard import asset_file
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (tmp_path / "secret.txt").write_text("do not serve")
+    try:
+        (assets / "link.js").symlink_to(tmp_path / "secret.txt")
+    except OSError:
+        pytest.skip("symlinks are not available")
+    assert asset_file(assets, "link.js") is None

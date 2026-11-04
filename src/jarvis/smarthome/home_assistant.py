@@ -208,22 +208,64 @@ def _websocket():
     return websocket
 
 
-def _endpoint(url: str) -> network.Endpoint:
+class _Deadline:
+    """One overall bound for opening a connection and reading the device list: each step gets only the time
+    left, and a watchdog shuts the socket down when it runs out, so a hub that answers a byte at a time (each
+    read inside its own timeout) still cannot hold the caller past it."""
+
+    def __init__(self, seconds: float):
+        self.at = time.monotonic() + seconds
+        self._timer: Optional[threading.Timer] = None
+
+    def left(self) -> float:
+        remaining = self.at - time.monotonic()
+        if remaining <= 0:
+            raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE)
+        return remaining
+
+    def expired(self) -> bool:
+        return time.monotonic() >= self.at
+
+    def watch(self, sock) -> None:
+        self.release()
+        timer = threading.Timer(max(0.0, self.at - time.monotonic()), _shut_down, args=(sock,))
+        timer.daemon = True
+        timer.start()
+        self._timer = timer
+
+    def release(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+
+
+def _shut_down(sock) -> None:
+    """Unblock any read on ``sock`` from another thread (the plain socket's shutdown, also for TLS)."""
     try:
-        return network.validate_endpoint(url, default_port=8123)
+        socket.socket.shutdown(sock, socket.SHUT_RDWR)
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def _endpoint(url: str, deadline: _Deadline) -> network.Endpoint:
+    try:
+        return network.validate_endpoint(url, default_port=8123,
+                                         resolve_timeout=min(network.RESOLVE_TIMEOUT_SEC, deadline.left()))
     except network.SmartHomeNotFound:
         raise HomeAssistantNotFound(NOT_FOUND_MESSAGE) from None
     except network.SmartHomeAddressError as exc:
         raise HomeAssistantError(f"The Home Assistant address was refused: {exc}") from None
 
 
-def _socket(endpoint: network.Endpoint, verify_tls: bool, timeout: float):
-    """A socket to the resolved address (TLS named after the host the user typed), never through a proxy."""
+def _socket(endpoint: network.Endpoint, verify_tls: bool, deadline: _Deadline):
+    """A socket to the resolved address (TLS named after the host the user typed), never through a proxy,
+    watched by ``deadline``."""
     network.check_connect(endpoint.ip)
     try:
-        sock = socket.create_connection((endpoint.ip, endpoint.port), timeout=timeout)
+        sock = socket.create_connection((endpoint.ip, endpoint.port), timeout=deadline.left())
     except OSError:
         raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE) from None
+    deadline.watch(sock)
     if endpoint.scheme != "https":
         return sock
     context = ssl.create_default_context()
@@ -231,25 +273,40 @@ def _socket(endpoint: network.Endpoint, verify_tls: bool, timeout: float):
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
     try:
-        return context.wrap_socket(sock, server_hostname=endpoint.host)
+        tls = context.wrap_socket(sock, server_hostname=endpoint.host, do_handshake_on_connect=False)
     except (ssl.SSLError, OSError):
         sock.close()
+        raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE) from None
+    deadline.watch(tls)
+    try:
+        tls.settimeout(deadline.left())
+        tls.do_handshake()
+        return tls
+    except (ssl.SSLError, OSError):
+        tls.close()
+        if deadline.expired():
+            raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE) from None
         raise HomeAssistantUnreachable(
             "Home Assistant's certificate was not accepted. For a self-signed certificate, turn off certificate "
             "checking in Settings > Smart Home.") from None
 
 
-def _open(url: str, token: str, verify_tls: bool, timeout: float):
-    """An authenticated WebSocket, or a ``HomeAssistantError``. Never follows a redirect or a proxy."""
-    endpoint = _endpoint(url)
+def _open(url: str, token: str, verify_tls: bool, deadline: _Deadline):
+    """An authenticated WebSocket within ``deadline``, or a ``HomeAssistantError``. Never follows a redirect
+    or a proxy. The caller releases ``deadline`` once it has finished with the connection's set-up."""
+    endpoint = _endpoint(url, deadline)
     websocket = _websocket()
-    sock = _socket(endpoint, verify_tls, timeout)
+    sock = _socket(endpoint, verify_tls, deadline)
     scheme = "wss" if endpoint.scheme == "https" else "ws"
     ws = websocket.WebSocket(skip_utf8_validation=False)
     try:
+        sock.settimeout(deadline.left())
         ws.connect(f"{scheme}://{endpoint.host_for_url}:{endpoint.port}/api/websocket", socket=sock,
-                   timeout=timeout, host=f"{endpoint.host_for_url}:{endpoint.port}", suppress_origin=True,
-                   redirect_limit=0)
+                   timeout=deadline.left(), host=f"{endpoint.host_for_url}:{endpoint.port}",
+                   suppress_origin=True, redirect_limit=0)
+    except HomeAssistantUnreachable:
+        _close(ws, sock)
+        raise
     except websocket.WebSocketBadStatusException:
         _close(ws, sock)
         raise HomeAssistantError("Home Assistant did not accept the connection at that address.") from None
@@ -265,10 +322,12 @@ def _open(url: str, token: str, verify_tls: bool, timeout: float):
         _close(ws, sock)
         raise HomeAssistantError(_REDIRECT_MESSAGE)
     try:
+        ws.settimeout(deadline.left())
         first = _read(ws)
         if first.get("type") != "auth_required":
             raise HomeAssistantError("That address is not a Home Assistant server.")
         ws.send(json.dumps({"type": "auth", "access_token": token}))
+        ws.settimeout(deadline.left())
         answer = _read(ws)
     except HomeAssistantError:
         _close(ws, sock)
@@ -384,12 +443,15 @@ def test_connection(url: str, token: str, *, verify_tls: bool = True) -> int:
     devices Jarvis can use."""
     if not token:
         raise HomeAssistantAuthError("Paste a Home Assistant access token first.")
-    deadline = time.monotonic() + LOAD_TIMEOUT_SEC
-    ws = _open(url, token, verify_tls, LOAD_TIMEOUT_SEC)
+    deadline = _Deadline(LOAD_TIMEOUT_SEC)
     try:
-        found = _load(_sync_requester(ws, itertools.count(1), deadline))
+        ws = _open(url, token, verify_tls, deadline)
+        try:
+            found = _load(_sync_requester(ws, itertools.count(1), deadline.at))
+        finally:
+            _close(ws)
     finally:
-        _close(ws)
+        deadline.release()
     debug_log(f"Home Assistant test: {len(found)} exposed devices", _TAG)
     return len(found)
 
@@ -489,12 +551,15 @@ class HomeAssistantConnector:
             self._registry.mark_unavailable(SOURCE)
 
     def _session(self) -> None:
-        deadline = time.monotonic() + LOAD_TIMEOUT_SEC
-        ws = _open(self._url, self._token, self._verify_tls, LOAD_TIMEOUT_SEC)
-        self._ws = ws
-        if self._stop.is_set():
-            return
-        devices = _load(_sync_requester(ws, self._ids, deadline))
+        deadline = _Deadline(LOAD_TIMEOUT_SEC)
+        try:
+            ws = _open(self._url, self._token, self._verify_tls, deadline)
+            self._ws = ws
+            if self._stop.is_set():
+                return
+            devices = _load(_sync_requester(ws, self._ids, deadline.at))
+        finally:
+            deadline.release()
         self._registry.replace_source(SOURCE, devices)
         states_sub, registry_sub = next(self._ids), next(self._ids)
         ws.send(json.dumps({"id": states_sub, "type": "subscribe_events", "event_type": "state_changed"}))

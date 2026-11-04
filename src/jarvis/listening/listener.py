@@ -1491,13 +1491,15 @@ class VoiceListener(threading.Thread):
         store.clear_pending()
         return False
 
-    def _deliver_confirmed_result(self, reply: str, success: bool) -> None:
+    def _deliver_confirmed_result(self, reply: str, success: bool, private_sources=frozenset()) -> None:
         """Report a confirmed action's outcome through the normal output path.
 
         Runs on the confirmed-action worker thread (or the listener for
         cancellations); TTS and console output are queue-based and thread-safe.
+        An outcome that quoted ``private_sources`` is spoken but withheld from the console.
         """
-        print(f"  {'✅' if success else '❌'} {reply}", flush=True)
+        from ..tools.confirmation import withheld_text
+        print(f"  {'✅' if success else '❌'} {withheld_text(reply, private_sources)}", flush=True)
         self._speak_reply(reply)
 
     def speak_announcement(self, text: str) -> None:

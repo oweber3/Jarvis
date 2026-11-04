@@ -154,7 +154,7 @@ def test_an_approved_dialog_routine_runs_its_dialog_step(tools, mock_config):
     from jarvis.tools.confirmation import ORIGIN_VOICE, set_result_handler
     shown, delivered, finished = [], [], threading.Event()
     set_dialog_callback(lambda request, resolve: shown.append(resolve) or object())
-    set_result_handler(lambda reply, success: (delivered.append((reply, success)), finished.set()), ORIGIN_VOICE)
+    set_result_handler(lambda reply, success, *_: (delivered.append((reply, success)), finished.set()), ORIGIN_VOICE)
     try:
         uninstaller = tools("uninstaller", tier=SafetyTier.CONFIRM_DIALOG)
         define(clean_pc=[("uninstaller", {"action": "remove", "target": "Game"})])

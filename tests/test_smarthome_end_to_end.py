@@ -133,7 +133,7 @@ def test_the_command_line_never_prints_the_token(hubs, monkeypatch, capsys):
 @pytest.mark.unit
 def test_building_never_resolves_names_so_a_hub_not_up_yet_is_retried(monkeypatch):
     from jarvis.smarthome import network
-    monkeypatch.setattr(network, "_resolve", lambda host: pytest.fail("resolved on the start-up thread"))
+    monkeypatch.setattr(network, "_resolve", lambda host, timeout: pytest.fail("resolved on the start-up thread"))
     credentials.set_secret("smarthome.ha_token", TOKEN)
     warnings = []
     home = service.build(cfg(smarthome_ha_url="http://homeassistant.local:8123", smarthome_mqtt_host="broker.local"),

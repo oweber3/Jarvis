@@ -30,6 +30,7 @@ NOTES = {
                   "in Settings > Calendar & Email.",
     "not_a_calendar": "The address did not return a calendar. Use the secret iCal (ICS) address.",
     "too_large": "The calendar file is too large to read.",
+    "too_complex": "The calendar file takes too long to read (its repeating events are too costly to work out).",
     "not_signed_in": "The sign-in for this calendar has expired or was removed. Sign in again in Settings > "
                      "Calendar & Email.",
     "server_error": "The calendar service returned an error.",
@@ -82,6 +83,8 @@ def _parse_day_or_time(text: str, *, end: bool) -> datetime:
 
 class CalendarTool(Tool):
     returns_outside_content = True
+    # Arguments are private (ranges and search words are the user's own): consoles and logs show only their names.
+    log_arguments = False
 
     @property
     def name(self) -> str:

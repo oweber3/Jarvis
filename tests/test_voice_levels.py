@@ -65,6 +65,7 @@ class TestLevelChannel:
         assert LevelChannel(path).current(now=1000.1) == pytest.approx(0.7)
 
 
+    @pytest.mark.slow
     def test_a_reader_in_another_process_never_sees_half_a_write(self, path):
         src = os.path.join(os.path.dirname(__file__), "..", "src")
         code = ("import sys, time; sys.path.insert(0, sys.argv[2]); from jarvis.voice_levels import LevelChannel, Voice; "

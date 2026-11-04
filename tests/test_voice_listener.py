@@ -1101,7 +1101,15 @@ class TestSampleRateFallback:
                             mock_cfg.endpoint_silence_ms = 40
                             mock_cfg.whisper_min_audio_duration = 0.3
                             listener._check_query_timeout = MagicMock()
+                            # The warm-up decode runs on the loading thread and may land after the speech.
+                            warmup = np.random.default_rng(0).standard_normal(listener._samplerate).astype(np.float32) * 0.01
+
+                            def heard():
+                                return [call[0][0] for call in mock_whisper_model.transcribe.call_args_list
+                                        if not (len(call[0][0]) == len(warmup) and np.array_equal(call[0][0], warmup))]
+
                             get_calls = [0]
+                            stop_by = time.monotonic() + 5.0
                             def fake_get(timeout=0.2):
                                 get_calls[0] += 1
                                 if get_calls[0] == 1:
@@ -1110,6 +1118,10 @@ class TestSampleRateFallback:
                                     return audio
                                 if get_calls[0] == 2:
                                     return np.zeros((4410, input_channels), dtype=np.float32)
+                                # Stopping drops queued speech, so stop once the worker thread has transcribed it.
+                                if not heard() and time.monotonic() < stop_by:
+                                    time.sleep(0.01)
+                                    raise q.Empty()
                                 listener._should_stop = True
                                 raise q.Empty()
 
@@ -1130,8 +1142,10 @@ class TestSampleRateFallback:
                             assert listener._stream_samplerate == 44100
                             assert listener._frame_samples == 44100 * mock_cfg.vad_frame_ms // 1000
                             assert capture_kwargs['blocksize'] == listener._frame_samples
-                            assert len(mock_whisper_model.transcribe.call_args[0][0]) == 6400
-                            np.testing.assert_allclose(mock_whisper_model.transcribe.call_args[0][0], .1, atol=.001)
+                            speech = heard()
+                            assert len(speech) == 1
+                            assert len(speech[0]) == 6400
+                            np.testing.assert_allclose(speech[0], .1, atol=.001)
 
                             captured = capsys.readouterr()
                             assert "44100" in captured.out

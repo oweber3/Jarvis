@@ -219,3 +219,48 @@ def test_a_calendar_without_a_charset_is_read_as_utf8(tmp_path):
     finally:
         fake.stop()
     assert result.occurrences[0].title == "Café Grüße"
+
+
+# -- bounded reads -----------------------------------------------------------------------------------
+
+def test_a_calendar_too_costly_to_expand_is_reported_not_raised(server, tmp_path, monkeypatch):
+    from jarvis.agenda import ics
+
+    def too_complex(*args, **kwargs):
+        raise ics.CalendarTooComplex("too complex")
+    monkeypatch.setattr(ics, "occurrences", too_complex)
+    result = _ics(server, tmp_path, Clock()).read(*DAY)
+    assert not result.ok and result.error == "too_complex"
+
+
+def test_the_download_is_bounded_as_a_whole_not_per_read(tmp_path):
+    # A host that sends a byte at a time, each well inside the per-read timeout, still ends the GET.
+    import socket
+    import threading
+    import time
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    stop = threading.Event()
+
+    def serve():
+        conn, _ = listener.accept()
+        conn.recv(4096)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/calendar\r\nContent-Length: 100000\r\n\r\n")
+        while not stop.is_set():
+            try:
+                conn.sendall(b"B")
+            except OSError:
+                break
+            time.sleep(0.1)
+        conn.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(sources.FetchError):
+            sources.fetch_text(f"http://127.0.0.1:{listener.getsockname()[1]}/cal.ics", timeout_sec=0.5)
+        assert time.monotonic() - started < 2
+    finally:
+        stop.set()
+        listener.close()

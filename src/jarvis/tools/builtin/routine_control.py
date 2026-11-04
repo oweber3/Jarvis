@@ -21,6 +21,9 @@ _MAX_NAME_CHARS = 60
 _UNTRUSTED = ("Routines can only be changed by a direct request. Please ask for this change again on its own, "
               "without reading anything first.")
 _NOTHING_DONE = "I have not done anything in this conversation to save yet."
+# The label of a saved step whose tool a background bridge's provider may not use (a gated tool whose cloud
+# switch is off): its tool and arguments never reach the provider.
+_NOT_SHARED = "(a step not shared with this reply mode)"
 
 
 @dataclass(frozen=True)
@@ -222,17 +225,21 @@ class RoutineControlTool(Tool):
         return ToolExecutionResult(success=False, reply_text=None, error_message=text)
 
     def _list(self, cfg) -> ToolExecutionResult:
-        from ...routines import runner, store
+        from ..request_scope import current_call
+        from ...routines import store
         routines = store.current(cfg)
         if not routines:
             return ToolExecutionResult(success=True, reply_text=_available(routines))
-        listing = {"routines": [self._listed(routine, cfg) for routine in routines.values()]}
+        allowed = current_call().allowed_tools
+        listing = {"routines": [self._listed(routine, cfg, allowed) for routine in routines.values()]}
         return ToolExecutionResult(success=True, reply_text=redact(json.dumps(listing, ensure_ascii=False)))
 
     @staticmethod
-    def _listed(routine, cfg) -> dict:
+    def _listed(routine, cfg, allowed) -> dict:
         from ...routines import runner
-        entry = {"name": routine.name, "aliases": list(routine.aliases), "steps": runner.labels(routine, cfg)}
+        steps = [label if allowed is None or step.tool in allowed else _NOT_SHARED
+                 for step, label in zip(routine.steps, runner.labels(routine, cfg))]
+        entry = {"name": routine.name, "aliases": list(routine.aliases), "steps": steps}
         if routine.schedule is not None:
             entry["schedule"] = routine.schedule.as_config()
         if routine.report == "results":
@@ -242,7 +249,12 @@ class RoutineControlTool(Tool):
     def _recent(self, cfg) -> ToolExecutionResult:
         from ...routines import runner
         from ...routines.journal import get_journal
-        entries = get_journal().recent(_window(cfg))
+        from ..request_scope import current_call
+        allowed = current_call().allowed_tools
+        # Through a bridge, a call to a tool outside its snapshot (made locally, perhaps in a private turn) is
+        # left out: its words are as private as its result.
+        entries = [entry for entry in get_journal().recent(_window(cfg))
+                   if allowed is None or entry.tool in allowed]
         if not entries:
             return ToolExecutionResult(success=True, reply_text=_NOTHING_DONE)
         labels = runner.entry_labels(list(reversed(entries)), cfg)

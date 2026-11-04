@@ -658,14 +658,15 @@ class TestGetHotWindowMessages:
         assert messages[0]["content"] == "what is the weather"
         assert messages[1]["content"] == "It is sunny."
 
-    def test_empty_when_hot_window_has_aged_out(self):
+    def test_empty_when_hot_window_has_aged_out(self, monkeypatch):
         """Turns older than the recent window are not replayed."""
-        import time as _time
+        import dialogue_clock
+        clock = dialogue_clock.install(monkeypatch)
         dm = _install_dialogue_memory()
-        # A 1-second recent window makes anything added now age out after sleep.
+        # A 1-second recent window makes anything added now age out once the clock moves past it.
         dm.RECENT_WINDOW_SEC = 1
         dm.add_message("user", "old turn")
-        _time.sleep(1.2)
+        clock.advance(1.2)
 
         assert daemon.get_hot_window_messages() == []
 

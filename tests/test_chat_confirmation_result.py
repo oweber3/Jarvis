@@ -185,7 +185,7 @@ def test_result_is_posted_exactly_once(qapp, chat, dialogs, tool):
 
 def test_voice_origin_still_uses_the_voice_path(qapp, chat, dialogs, tool):
     spoken, done = [], threading.Event()
-    set_result_handler(lambda reply, ok: (spoken.append((reply, ok)), done.set()),
+    set_result_handler(lambda reply, ok, *_: (spoken.append((reply, ok)), done.set()),
                        origin=confirmation.ORIGIN_VOICE)
     run_tool_with_retries(
         db=None, cfg=Cfg(), tool_name="uninstallTool", tool_args={"target": "App"},
@@ -248,3 +248,75 @@ def test_closing_the_chat_window_before_completion_keeps_the_result(qapp, chat, 
     dialogs.resolves[0](True)
 
     assert _pump(qapp, lambda: "Uninstalled App." in _assistant_texts(chat))
+
+
+class PrivateUninstallTool(UninstallTool):
+    """An approved action whose output quotes a private source (as a briefing routine with a calendar step)."""
+
+    @property
+    def name(self):
+        return "privateUninstallTool"
+
+    def classify_safety(self, args, cfg):
+        return ConfirmationRequest(self.name, SafetyTier.CONFIRM_DIALOG, "uninstall", "App", dict(args or {}))
+
+    def run(self, args, context):
+        from jarvis.memory.activity_log import mark_turn_private
+        mark_turn_private("calendar")
+        return ToolExecutionResult(success=True, reply_text="Dentist at 9 with Dr Example.")
+
+
+@pytest.fixture
+def private_tool():
+    t = PrivateUninstallTool()
+    BUILTIN_TOOLS[t.name] = t
+    yield t
+    BUILTIN_TOOLS.pop(t.name, None)
+
+
+def _run_private(quiet):
+    return run_tool_with_retries(
+        db=None, cfg=Cfg(), tool_name="privateUninstallTool", tool_args={},
+        system_prompt="", original_prompt="", redacted_text="", quiet=quiet,
+    )
+
+
+def test_an_approved_chat_action_that_quotes_private_data_is_stored_as_a_private_turn(dialogs, private_tool, memory):
+    daemon.install_chat_result_delivery()
+    _run_private(quiet=True)
+    dialogs.resolves[0](True)
+
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and not memory.all_messages():
+        time.sleep(0.01)
+    stored = memory.all_messages()[-1]
+    assert stored["content"] == "Dentist at 9 with Dr Example."
+    assert stored.get("diary") is False and stored.get("private_sources") == ["calendar"]
+
+
+def test_an_approved_voice_action_that_quotes_private_data_stays_off_the_console(dialogs, private_tool, capsys):
+    from jarvis.listening.listener import VoiceListener
+    done = threading.Event()
+    listener = VoiceListener.__new__(VoiceListener)
+    listener._speak_reply = lambda text: done.set()
+    set_result_handler(listener._deliver_confirmed_result, origin=confirmation.ORIGIN_VOICE)
+    _run_private(quiet=False)
+    dialogs.resolves[0](True)
+
+    assert done.wait(5)
+    assert "Dentist" not in capsys.readouterr().out
+
+
+def test_a_private_mark_from_an_approved_action_never_reaches_the_next_one(dialogs, private_tool, tool, memory):
+    daemon.install_chat_result_delivery()
+    _run_private(quiet=True)
+    dialogs.resolves[0](True)
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and not memory.all_messages():
+        time.sleep(0.01)
+    _chat_request()
+    dialogs.resolves[1](True)
+    while time.monotonic() < deadline + 3 and len(memory.all_messages()) < 2:
+        time.sleep(0.01)
+    assert memory.all_messages()[-1]["content"] == "Uninstalled App."
+    assert "diary" not in memory.all_messages()[-1]

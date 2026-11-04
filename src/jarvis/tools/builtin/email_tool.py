@@ -66,6 +66,8 @@ def _full(msg: MailMessage) -> Dict[str, Any]:
 
 class EmailTool(Tool):
     returns_outside_content = True
+    # Arguments are private (sender filters and search words name people): consoles and logs show only their names.
+    log_arguments = False
 
     @property
     def name(self) -> str:

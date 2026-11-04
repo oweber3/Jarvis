@@ -162,7 +162,8 @@ class TestStaticApp:
 
     def test_paths_outside_the_app_are_not_served(self, server):
         for path in ["/../secret.txt", "/%2e%2e/secret.txt", "/assets/../../secret.txt", "/assets/%2e%2e/index.html",
-                     "/static/../server.py", "/nope.txt", "/assets/"]:
+                     "/static/../server.py", "/nope.txt", "/assets/", "/assets/%5C%5Cevil.example%5Cshare%5Cx.js",
+                     "/assets//evil.example/share/x.js", "/assets/C:%5CWindows%5Cwin.ini"]:
             status, _, _ = Client(server).request("GET", path)
             assert status == 404, path
 
@@ -739,3 +740,38 @@ class TestReviewFindings:
         thread.join(timeout=5)
         assert result["body"]["status"] == "stopped"
         assert chat_backend.submitted == []
+
+
+@pytest.mark.unit
+class TestOutsideClients:
+    def test_an_outside_client_is_answered_before_its_request_is_read(
+            self, chat_backend, chat_store, backend, store, static_dir):
+        # A client trickling its request line (slowloris over an accidental port forward) must not hold a
+        # thread until the 60-second read timeout: it is refused before a byte is parsed.
+        server = make_server(chat_backend, chat_store, backend, store, static_dir, client_filter=lambda a: False)
+        try:
+            started = time.monotonic()
+            sock = socket.create_connection(("127.0.0.1", server.port), timeout=5)
+            try:
+                sock.sendall(b"GET / HT")   # never finished
+                data = sock.recv(200)
+            finally:
+                sock.close()
+            assert data.split(b" ", 2)[1] == b"403"
+            assert time.monotonic() - started < 3
+        finally:
+            server.stop()
+
+
+@pytest.mark.unit
+def test_the_port_is_bound_for_exclusive_use_where_windows_offers_it(chat_backend, chat_store, backend, store,
+                                                                     static_dir, monkeypatch):
+    # On Windows another program of the same user could bind the same port more specifically and take the
+    # phone's connections (and their device tokens) unless the server asks for exclusive use. Linux has no
+    # such option, so a harmless stand-in shows that it is asked for.
+    monkeypatch.setattr(socket, "SO_EXCLUSIVEADDRUSE", socket.SO_KEEPALIVE, raising=False)
+    server = make_server(chat_backend, chat_store, backend, store, static_dir)
+    try:
+        assert server._httpd.socket.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+    finally:
+        server.stop()

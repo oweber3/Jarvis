@@ -98,6 +98,7 @@ class TestRoundTrip:
         def script(model):
             script.model = model
             model.answer("completed", "ok")
+            model.finish()
 
         service, server, _, _ = build(script)
         run(service, text="email alice@example.com the report", context=[{"role": "user", "content": "earlier"}])
@@ -122,6 +123,7 @@ class TestRoundTrip:
         def script(model):
             script.model = model
             model.answer("completed", "ok")
+            model.finish()
 
         service, _, _, _ = build(script)
         run(service, context=[])

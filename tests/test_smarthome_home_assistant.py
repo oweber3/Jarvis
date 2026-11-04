@@ -161,7 +161,7 @@ class TestFailures:
 
     def test_the_connection_is_made_to_the_resolved_address(self, fake, monkeypatch):
         from jarvis.smarthome import network
-        monkeypatch.setattr(network, "_resolve", lambda host: ["127.0.0.1"])
+        monkeypatch.setattr(network, "_resolve", lambda host, timeout: ["127.0.0.1"])
         assert ha.test_connection(f"http://homeassistant.local:{fake.port}", "good-token") == 6
         assert fake.handshake_headers[-1]["host"].startswith("homeassistant.local")
 
@@ -198,6 +198,7 @@ class TestRobustness:
 
     def test_two_unanswered_pings_reconnect(self, fake, monkeypatch):
         monkeypatch.setattr(ha, "PING_AFTER_SEC", 0.2)
+        monkeypatch.setattr(ha, "BACKOFF_START_SEC", 0.1)
         registry = Registry()
         conn = ha.HomeAssistantConnector(registry, fake.url, "good-token")
         conn.start()
@@ -216,6 +217,28 @@ class TestRobustness:
         with pytest.raises(ha.HomeAssistantUnreachable):
             ha.test_connection(fake.url, "good-token")
         assert time.monotonic() - started < 3
+
+    def test_one_deadline_covers_a_server_that_answers_the_upgrade_a_byte_at_a_time(self, fake, monkeypatch):
+        # Every read returns well inside its own timeout, so only one overall deadline can end the test.
+        monkeypatch.setattr(ha, "LOAD_TIMEOUT_SEC", 0.5)
+        fake.handshake_byte_delay = 0.05
+        started = time.monotonic()
+        with pytest.raises(ha.HomeAssistantUnreachable):
+            ha.test_connection(fake.url, "good-token")
+        assert time.monotonic() - started < 1.5
+
+    def test_one_deadline_covers_a_slow_name_lookup(self, fake, monkeypatch):
+        import socket as socket_module
+        monkeypatch.setattr(ha, "LOAD_TIMEOUT_SEC", 0.5)
+        answer = [(socket_module.AF_INET, socket_module.SOCK_STREAM, 6, "", ("127.0.0.1", 0))]
+        monkeypatch.setattr(socket_module, "getaddrinfo", lambda *a, **k: time.sleep(2) or answer)
+        started = time.monotonic()
+        with pytest.raises(ha.HomeAssistantError):
+            ha.test_connection(f"http://homeassistant.local:{fake.port}", "good-token")
+        assert time.monotonic() - started < 1.5
+
+    def test_a_working_hub_still_passes_within_the_deadline(self, fake):
+        assert ha.test_connection(fake.url, "good-token") == 6
 
     def test_a_rejection_keeps_the_hubs_words_apart_from_the_summary(self, connector, fake):
         conn, registry = connector
@@ -237,7 +260,7 @@ class TestRobustness:
     def test_a_hostname_that_is_not_found_yet_is_retried(self, fake, monkeypatch):
         from jarvis.smarthome import network
         answers = iter([[], [], ["127.0.0.1"]])
-        monkeypatch.setattr(network, "_resolve", lambda host: next(answers, ["127.0.0.1"]))
+        monkeypatch.setattr(network, "_resolve", lambda host, timeout: next(answers, ["127.0.0.1"]))
         monkeypatch.setattr(ha, "BACKOFF_START_SEC", 0.05)
         registry = Registry()
         conn = ha.HomeAssistantConnector(registry, f"http://homeassistant.local:{fake.port}", "good-token")

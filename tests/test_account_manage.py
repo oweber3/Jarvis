@@ -288,3 +288,43 @@ def test_an_unexpected_failure_after_sign_in_leaves_no_sign_in_behind(env, monke
     with pytest.raises(AttributeError):
         store.connect_oauth("microsoft", calendar=True, mail=True)
     assert memory.items == {} and "calendar_sources" not in _config(path)
+
+
+def test_a_mailbox_whose_settings_cannot_be_written_leaves_no_password_behind(env, monkeypatch):
+    store, server, memory, path = env
+    monkeypatch.setattr(store, "_save", lambda *a, **k: False)
+    assert not store.add_imap("me@gmail.test", "abcd abcd abcd abcd").ok
+    assert memory.items == {}
+
+
+def test_updating_a_mailbox_whose_settings_cannot_be_written_keeps_the_old_password(env, monkeypatch):
+    store, server, memory, path = env
+    assert store.add_imap("me@gmail.test", "abcd abcd abcd abcd").ok
+    box_password = memory.items[("jarvis", "email_password:Gmail")]
+    monkeypatch.setattr(store, "_check_mail", lambda entry: (True, "ok"))
+    monkeypatch.setattr(store, "_save", lambda *a, **k: False)
+    assert not store.add_imap("me@gmail.test", "efgh efgh efgh efgh").ok
+    assert memory.items[("jarvis", "email_password:Gmail")] == box_password
+
+
+def test_an_unexpected_error_during_a_mailbox_test_leaves_no_password_behind(env, monkeypatch):
+    store, server, memory, path = env
+
+    def broken(entry):
+        raise RuntimeError("unexpected")
+    monkeypatch.setattr(store, "_check_mail", broken)
+    with pytest.raises(RuntimeError):
+        store.add_imap("me@gmail.test", "abcd abcd abcd abcd")
+    assert memory.items == {}
+
+
+def test_a_calendar_link_whose_settings_cannot_be_written_leaves_no_link_behind(env, monkeypatch):
+    store, server, memory, path = env
+    start, end = _soon(2), _soon(3)
+    ics = FakeIcsServer(CALENDAR.format(start=start.strftime("%Y%m%dT%H%M%SZ"), end=end.strftime("%Y%m%dT%H%M%SZ")))
+    try:
+        monkeypatch.setattr(store, "_save", lambda *a, **k: False)
+        assert not store.add_ics("Uni", ics.url).ok
+        assert memory.items == {}
+    finally:
+        ics.stop()
