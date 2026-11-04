@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import socket
 import ssl
 import threading
 import time
@@ -24,6 +25,7 @@ LOAD_TIMEOUT_SEC = 10.0
 BACKOFF_START_SEC = 2.0
 BACKOFF_MAX_SEC = 300.0
 PING_AFTER_SEC = 60.0
+MAX_MISSED_PINGS = 2
 MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 MAX_ERROR_CHARS = 200
 SOURCE = "ha"
@@ -53,13 +55,24 @@ class HomeAssistantUnreachable(HomeAssistantError):
     pass
 
 
+class HomeAssistantNotFound(HomeAssistantUnreachable):
+    """The address is a hostname that does not resolve yet."""
+
+
 class HomeAssistantCommandRejected(HomeAssistantError):
-    pass
+    """``summary`` is Jarvis's own words; ``detail`` is Home Assistant's reason, untrusted text."""
+
+    def __init__(self, summary: str, detail: str = ""):
+        super().__init__(f"{summary} {detail}".strip() if detail else summary)
+        self.summary = summary
+        self.detail = detail
 
 
 AUTH_MESSAGE = "Home Assistant refused the access token, create a new one."
 UNREACHABLE_MESSAGE = "Home Assistant did not answer. Check that it is running and the address is right."
 _REDIRECT_MESSAGE = "Home Assistant redirected the connection elsewhere; Jarvis does not follow redirects."
+NOT_FOUND_MESSAGE = ("Home Assistant's address could not be found on the network yet (it may still be starting). "
+                     "Jarvis keeps trying.")
 NOT_CONNECTED_MESSAGE = "Jarvis is not connected to Home Assistant right now."
 
 
@@ -192,46 +205,61 @@ def _websocket():
     return websocket
 
 
-def _open(url: str, token: str, verify_tls: bool, timeout: float):
-    """An authenticated WebSocket, or a ``HomeAssistantError``. Never follows a redirect or a proxy."""
+def _endpoint(url: str) -> network.Endpoint:
     try:
-        endpoint = network.validate_endpoint(url, default_port=8123)
+        return network.validate_endpoint(url, default_port=8123)
+    except network.SmartHomeNotFound:
+        raise HomeAssistantNotFound(NOT_FOUND_MESSAGE) from None
     except network.SmartHomeAddressError as exc:
         raise HomeAssistantError(f"The Home Assistant address was refused: {exc}") from None
+
+
+def _socket(endpoint: network.Endpoint, verify_tls: bool, timeout: float):
+    """A socket to the resolved address (TLS named after the host the user typed), never through a proxy."""
     network.check_connect(endpoint.ip)
-    websocket = _websocket()
-    scheme = "wss" if endpoint.scheme == "https" else "ws"
-    options: Dict[str, Any] = {
-        "timeout": timeout, "host": f"{endpoint.host}:{endpoint.port}" if ":" not in endpoint.host
-        else f"[{endpoint.host}]:{endpoint.port}",
-        "suppress_origin": True, "http_no_proxy": [endpoint.ip], "redirect_limit": 0,
-        "skip_utf8_validation": False,
-    }
-    if scheme == "wss":
-        options["sslopt"] = ({"cert_reqs": ssl.CERT_REQUIRED, "check_hostname": True,
-                              "server_hostname": endpoint.host} if verify_tls
-                             else {"cert_reqs": ssl.CERT_NONE, "check_hostname": False})
-    ws = websocket.WebSocket(**{k: options.pop(k) for k in ("sslopt", "skip_utf8_validation") if k in options})
     try:
-        ws.connect(f"{scheme}://{endpoint.ip_for_url}:{endpoint.port}/api/websocket", **options)
-    except ssl.SSLError:
-        _close(ws)
+        sock = socket.create_connection((endpoint.ip, endpoint.port), timeout=timeout)
+    except OSError:
+        raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE) from None
+    if endpoint.scheme != "https":
+        return sock
+    context = ssl.create_default_context()
+    if not verify_tls:
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    try:
+        return context.wrap_socket(sock, server_hostname=endpoint.host)
+    except (ssl.SSLError, OSError):
+        sock.close()
         raise HomeAssistantUnreachable(
             "Home Assistant's certificate was not accepted. For a self-signed certificate, turn off certificate "
             "checking in Settings > Smart Home.") from None
+
+
+def _open(url: str, token: str, verify_tls: bool, timeout: float):
+    """An authenticated WebSocket, or a ``HomeAssistantError``. Never follows a redirect or a proxy."""
+    endpoint = _endpoint(url)
+    websocket = _websocket()
+    sock = _socket(endpoint, verify_tls, timeout)
+    scheme = "wss" if endpoint.scheme == "https" else "ws"
+    ws = websocket.WebSocket(skip_utf8_validation=False)
+    try:
+        ws.connect(f"{scheme}://{endpoint.host_for_url}:{endpoint.port}/api/websocket", socket=sock,
+                   timeout=timeout, host=f"{endpoint.host_for_url}:{endpoint.port}", suppress_origin=True,
+                   redirect_limit=0)
     except websocket.WebSocketBadStatusException:
-        _close(ws)
+        _close(ws, sock)
         raise HomeAssistantError("Home Assistant did not accept the connection at that address.") from None
     except websocket.WebSocketException as exc:
-        _close(ws)
+        _close(ws, sock)
         if "redirect" in str(exc).casefold():
             raise HomeAssistantError(_REDIRECT_MESSAGE) from None
         raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE) from None
     except OSError:
-        _close(ws)
+        _close(ws, sock)
         raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE) from None
     if getattr(ws, "status", 101) != 101:  # a redirect is answered, never followed
-        _close(ws)
+        _close(ws, sock)
         raise HomeAssistantError(_REDIRECT_MESSAGE)
     try:
         first = _read(ws)
@@ -240,13 +268,13 @@ def _open(url: str, token: str, verify_tls: bool, timeout: float):
         ws.send(json.dumps({"type": "auth", "access_token": token}))
         answer = _read(ws)
     except HomeAssistantError:
-        _close(ws)
+        _close(ws, sock)
         raise
     if answer.get("type") == "auth_invalid":
-        _close(ws)
+        _close(ws, sock)
         raise HomeAssistantAuthError(AUTH_MESSAGE)
     if answer.get("type") != "auth_ok":
-        _close(ws)
+        _close(ws, sock)
         raise HomeAssistantError("That address is not a Home Assistant server.")
     return ws
 
@@ -255,10 +283,12 @@ def _read(ws) -> dict:
     websocket = _websocket()
     try:
         raw = ws.recv()
-    except websocket.WebSocketTimeoutException:
-        raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE) from None
     except (OSError, websocket.WebSocketException):
         raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE) from None
+    return _parse(raw)
+
+
+def _parse(raw) -> dict:
     if not raw or len(raw) > MAX_MESSAGE_BYTES:
         raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE)
     try:
@@ -270,31 +300,53 @@ def _read(ws) -> dict:
     return message
 
 
-def _close(ws) -> None:
-    try:
-        ws.close()
-    except Exception:  # noqa: BLE001 - closing a broken socket
-        pass
+def _close(ws, sock=None) -> None:
+    for closer in (getattr(ws, "close", None), getattr(sock, "close", None)):
+        try:
+            if closer is not None:
+                closer()
+        except Exception:  # noqa: BLE001 - closing a broken socket
+            pass
 
 
 def _rejected(error: Any) -> HomeAssistantCommandRejected:
     message = error.get("message") if isinstance(error, dict) else ""
     text = " ".join(str(message or "no reason given").split())[:MAX_ERROR_CHARS]
-    return HomeAssistantCommandRejected(f"Home Assistant rejected the command: {text}")
+    return HomeAssistantCommandRejected("Home Assistant rejected the command.", detail=text)
 
 
-def _load(ws, ids) -> List[Device]:
-    """Read everything the device list needs, one request after another (before any subscription)."""
+def _sync_requester(ws, ids, deadline: float) -> Callable[..., Any]:
+    """Requests answered in order on a socket nobody else reads, all within ``deadline``."""
 
     def request(kind: str, **extra) -> Any:
         mid = next(ids)
         ws.send(json.dumps({"id": mid, "type": kind, **extra}))
         while True:
-            message = _read(ws)
+            if time.monotonic() > deadline:
+                raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE)
+            ws.settimeout(max(0.05, min(1.0, deadline - time.monotonic())))
+            try:
+                message = _read(ws)
+            except HomeAssistantUnreachable:
+                if time.monotonic() > deadline:
+                    raise
+                if not getattr(ws, "connected", True):
+                    raise
+                continue
             if message.get("id") == mid and message.get("type") == "result":
                 if message.get("success") is not True:
                     raise _rejected(message.get("error"))
                 return message.get("result")
+
+    return request
+
+
+def _exposed_ids(request) -> Dict[str, Any]:
+    return (request("homeassistant/expose_entity/list") or {}).get("exposed_entities") or {}
+
+
+def _load(request) -> List[Device]:
+    """Read everything the device list needs through ``request(kind, **fields)``."""
 
     def optional(kind: str, default, **extra):
         try:
@@ -307,7 +359,7 @@ def _load(ws, ids) -> List[Device]:
     entities = request("config/entity_registry/list") or []
     devices = request("config/device_registry/list") or []
     areas = request("config/area_registry/list") or []
-    exposed = (request("homeassistant/expose_entity/list") or {}).get("exposed_entities") or {}
+    exposed = _exposed_ids(request)
     exposed_ids = [eid for eid, settings in exposed.items()
                    if isinstance(settings, dict) and settings.get("conversation") is True]
     extended = optional("config/entity_registry/get_entries", {}, entity_ids=exposed_ids) if exposed_ids else {}
@@ -317,12 +369,14 @@ def _load(ws, ids) -> List[Device]:
 
 
 def test_connection(url: str, token: str, *, verify_tls: bool = True) -> int:
-    """Connect once, read the device list and close: the number of exposed devices Jarvis can use."""
+    """Connect once, read the device list and close, all within ``LOAD_TIMEOUT_SEC``: the number of exposed
+    devices Jarvis can use."""
     if not token:
         raise HomeAssistantAuthError("Paste a Home Assistant access token first.")
+    deadline = time.monotonic() + LOAD_TIMEOUT_SEC
     ws = _open(url, token, verify_tls, LOAD_TIMEOUT_SEC)
     try:
-        found = _load(ws, itertools.count(1))
+        found = _load(_sync_requester(ws, itertools.count(1), deadline))
     finally:
         _close(ws)
     debug_log(f"Home Assistant test: {len(found)} exposed devices", _TAG)
@@ -346,12 +400,22 @@ class HomeAssistantConnector:
         self._pending_lock = threading.Lock()
         self._ids = itertools.count(1)
         self._sleep = sleep or self._stop.wait
+        self._reload_lock = threading.Lock()
+        self._reload_wanted = threading.Event()
         self.connected = False
-        self.status = "starting"   # starting | connected | auth | unreachable | refused | stopped
+        # starting | connected | auth | unreachable | not_found | refused | missing_library | stopped
+        self.status = "starting"
 
     def start(self) -> None:
+        """Start the reader thread. Raises ``ImportError`` when websocket-client is not installed."""
         if self._thread is not None:
             return
+        try:
+            _websocket()
+        except ImportError:
+            self.status = "missing_library"
+            debug_log("Home Assistant connector not started: websocket-client missing", _TAG)
+            raise
         debug_log("Home Assistant connector starting", _TAG)
         self._thread = threading.Thread(target=self._run, name="smarthome-ha", daemon=True)
         self._thread.start()
@@ -378,6 +442,9 @@ class HomeAssistantConnector:
             except HomeAssistantAuthError:
                 self.status = "auth"
                 debug_log("Home Assistant connection failed: token refused", _TAG)
+            except HomeAssistantNotFound:
+                self.status = "not_found"
+                debug_log("Home Assistant connection failed: address not found yet", _TAG)
             except HomeAssistantUnreachable:
                 self.status = "unreachable"
                 debug_log("Home Assistant connection failed: unreachable", _TAG)
@@ -409,44 +476,51 @@ class HomeAssistantConnector:
             self._registry.mark_unavailable(SOURCE)
 
     def _session(self) -> None:
+        deadline = time.monotonic() + LOAD_TIMEOUT_SEC
         ws = _open(self._url, self._token, self._verify_tls, LOAD_TIMEOUT_SEC)
         self._ws = ws
         if self._stop.is_set():
             return
-        devices = _load(ws, self._ids)
+        devices = _load(_sync_requester(ws, self._ids, deadline))
         self._registry.replace_source(SOURCE, devices)
-        subscription = next(self._ids)
-        ws.send(json.dumps({"id": subscription, "type": "subscribe_events", "event_type": "state_changed"}))
-        ws.settimeout(1.0)
+        states_sub, registry_sub = next(self._ids), next(self._ids)
+        ws.send(json.dumps({"id": states_sub, "type": "subscribe_events", "event_type": "state_changed"}))
+        ws.send(json.dumps({"id": registry_sub, "type": "subscribe_events", "event_type": "entity_registry_updated"}))
+        ws.settimeout(min(1.0, PING_AFTER_SEC))
         self.connected = True
         self.status = "connected"
         debug_log(f"Home Assistant connected: {len(devices)} devices", _TAG)
         websocket = _websocket()
         last_heard = time.monotonic()
+        unanswered = 0
         while not self._stop.is_set():
             try:
                 raw = ws.recv()
             except websocket.WebSocketTimeoutException:
                 if time.monotonic() - last_heard > PING_AFTER_SEC:
+                    if unanswered >= MAX_MISSED_PINGS:
+                        raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE)
                     self._send({"id": next(self._ids), "type": "ping"})
-                    last_heard = time.monotonic() - PING_AFTER_SEC + COMMAND_TIMEOUT_SEC * 2
+                    unanswered += 1
+                    last_heard = time.monotonic()
                 continue
             except (OSError, websocket.WebSocketException):
                 raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE) from None
             if not raw:
                 raise HomeAssistantUnreachable(UNREACHABLE_MESSAGE)
             last_heard = time.monotonic()
-            if len(raw) > MAX_MESSAGE_BYTES:
-                continue
+            unanswered = 0
             try:
-                message = json.loads(raw)
-            except ValueError:
+                message = _parse(raw)
+            except HomeAssistantError:
                 continue
-            if isinstance(message, dict):
-                self._dispatch(message, subscription)
+            self._dispatch(message, states_sub, registry_sub)
 
-    def _dispatch(self, message: dict, subscription: int) -> None:
-        if message.get("type") == "event" and message.get("id") == subscription:
+    def _dispatch(self, message: dict, states_sub: int, registry_sub: int) -> None:
+        if message.get("type") == "event" and message.get("id") == registry_sub:
+            self._schedule_reload()
+            return
+        if message.get("type") == "event" and message.get("id") == states_sub:
             data = (message.get("event") or {}).get("data") or {}
             entity_id = data.get("entity_id")
             new_state = data.get("new_state")
@@ -460,14 +534,35 @@ class HomeAssistantConnector:
             self._registry.update_state(device_id, str(new_state.get("state") or ""),
                                         {k: attributes[k] for k in _KEPT_ATTRIBUTES if k in attributes})
             return
-        if message.get("type") == "result":
+        if message.get("type") in ("result", "pong"):
             with self._pending_lock:
                 waiter = self._pending.pop(message.get("id"), None)
             if waiter is not None:
                 waiter[1].append(message)
                 waiter[0].set()
 
-    # -- commands (tool threads) -----------------------------------------------------------------
+    def _schedule_reload(self) -> None:
+        """An entity's registry entry changed (Expose, name, area): read the device list again, off the reader
+        thread, coalescing bursts of events into one reload."""
+        self._reload_wanted.set()
+        if not self._reload_lock.acquire(blocking=False):
+            return
+
+        def reload() -> None:
+            try:
+                while self._reload_wanted.is_set() and not self._stop.is_set():
+                    self._reload_wanted.clear()
+                    devices = _load(self._request)
+                    self._registry.replace_source(SOURCE, devices)
+                    debug_log(f"Home Assistant devices reloaded: {len(devices)}", _TAG)
+            except HomeAssistantError as exc:
+                debug_log(f"Home Assistant reload failed ({type(exc).__name__})", _TAG)
+            finally:
+                self._reload_lock.release()
+
+        threading.Thread(target=reload, name="smarthome-ha-reload", daemon=True).start()
+
+    # -- requests from other threads -------------------------------------------------------------
 
     def _send(self, message: dict) -> None:
         ws = self._ws
@@ -480,21 +575,14 @@ class HomeAssistantConnector:
             except (OSError, websocket.WebSocketException):
                 raise HomeAssistantUnreachable(NOT_CONNECTED_MESSAGE) from None
 
-    def send(self, device: Device, command: Command) -> Outcome:
-        """Run one command; returns once Home Assistant confirms it, raises otherwise."""
-        if not self.connected:
-            raise HomeAssistantUnreachable(NOT_CONNECTED_MESSAGE)
-        try:
-            domain, service, data = service_call(device, command)
-        except ValueError:
-            raise HomeAssistantCommandRejected("That device cannot do that.") from None
+    def _call(self, message: dict) -> dict:
+        """Send one request and wait for its result (``COMMAND_TIMEOUT_SEC``); the reader thread delivers it."""
         mid = next(self._ids)
         event, slot = threading.Event(), []
         with self._pending_lock:
             self._pending[mid] = (event, slot)
         try:
-            self._send({"id": mid, "type": "call_service", "domain": domain, "service": service,
-                        "service_data": data, "target": {"entity_id": [device.id.split(":", 1)[1]]}})
+            self._send({"id": mid, **message})
             if not event.wait(COMMAND_TIMEOUT_SEC):
                 raise HomeAssistantUnreachable("Home Assistant did not confirm the command in time.")
         finally:
@@ -503,6 +591,31 @@ class HomeAssistantConnector:
         reply = slot[0] if slot else None
         if reply is None:
             raise HomeAssistantUnreachable(NOT_CONNECTED_MESSAGE)
+        return reply
+
+    def _request(self, kind: str, **extra) -> Any:
+        reply = self._call({"type": kind, **extra})
+        if reply.get("success") is not True:
+            raise _rejected(reply.get("error"))
+        return reply.get("result")
+
+    def send(self, device: Device, command: Command) -> Outcome:
+        """Run one command on a device that is still exposed; returns once Home Assistant confirms it."""
+        if not self.connected:
+            raise HomeAssistantUnreachable(NOT_CONNECTED_MESSAGE)
+        try:
+            domain, service, data = service_call(device, command)
+        except ValueError:
+            raise HomeAssistantCommandRejected("That device cannot do that.") from None
+        entity_id = device.id.split(":", 1)[1]
+        settings = _exposed_ids(self._request).get(entity_id)
+        if not isinstance(settings, dict) or settings.get("conversation") is not True:
+            self._registry.remove(device.id)
+            debug_log(f"Home Assistant command refused: entity no longer exposed ({device.kind})", _TAG)
+            raise HomeAssistantCommandRejected(
+                "That device is no longer exposed to voice assistants in Home Assistant, so nothing was changed.")
+        reply = self._call({"type": "call_service", "domain": domain, "service": service, "service_data": data,
+                            "target": {"entity_id": [entity_id]}})
         if reply.get("success") is not True:
             raise _rejected(reply.get("error"))
         return Outcome(confirmed=True)

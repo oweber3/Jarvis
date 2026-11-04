@@ -11,6 +11,8 @@ from typing import Any, Dict, Optional
 from ..debug import debug_log
 from .model import Command, Device, Outcome, Registry
 
+_LABELS = {"ha": "Home Assistant", "mqtt": "MQTT"}
+_LIBRARIES = {"ha": "websocket-client", "mqtt": "paho-mqtt"}
 HA_TOKEN_KEY = "smarthome.ha_token"
 MQTT_PASSWORD_KEY = "smarthome.mqtt_password"
 _TAG = "smarthome"
@@ -25,9 +27,19 @@ class SmartHome:
         self.registry = registry or Registry()
         self.connectors: Dict[str, Any] = dict(connectors or {})
 
-    def start(self) -> None:
-        for connector in self.connectors.values():
-            connector.start()
+    def start(self, *, warn=print) -> None:
+        """Start every connector; one that cannot start is reported and the others start anyway."""
+        for source, connector in self.connectors.items():
+            label = _LABELS.get(source, source)
+            try:
+                connector.start()
+            except ImportError:
+                debug_log(f"smart home {source} connector not started: library missing", _TAG)
+                warn(f"  ⚠️ Smart home: {label} needs the {_LIBRARIES.get(source, 'missing')} package. "
+                     f"Install it with: pip install {_LIBRARIES.get(source, '')}".rstrip())
+            except Exception as exc:  # noqa: BLE001 - a bad hub never stops Jarvis starting
+                debug_log(f"smart home {source} connector not started ({type(exc).__name__})", _TAG)
+                warn(f"  ⚠️ Smart home: {label} could not start: {exc}")
 
     def stop(self) -> None:
         for connector in self.connectors.values():
@@ -80,7 +92,9 @@ def build(cfg: Any, *, warn=print) -> Optional[SmartHome]:
     if url:
         token = credentials.get_secret(HA_TOKEN_KEY)
         try:
-            network.validate_endpoint(url, default_port=8123)
+            # Syntax and literal addresses only: names are resolved by the connector, which keeps trying
+            # while the network or the hub is still coming up.
+            network.validate_endpoint(url, default_port=8123, resolve=False)
         except network.SmartHomeAddressError:
             debug_log("Home Assistant address refused: not on the local network", _TAG)
             warn("  ⚠️ Smart home: the Home Assistant address was refused. It must be on your home network.")
@@ -95,7 +109,7 @@ def build(cfg: Any, *, warn=print) -> Optional[SmartHome]:
     if host:
         port = int(getattr(cfg, "smarthome_mqtt_port", 1883) or 1883)
         try:
-            network.validate_endpoint(host, default_port=port, schemes=("mqtt",))
+            network.validate_endpoint(host, default_port=port, schemes=("mqtt",), resolve=False)
         except network.SmartHomeAddressError:
             debug_log("MQTT broker address refused: not on the local network", _TAG)
             warn("  ⚠️ Smart home: the MQTT broker address was refused. It must be on your home network.")
@@ -114,5 +128,5 @@ def configure(cfg: Any, *, start: bool = True, warn=print) -> Optional[SmartHome
     home = build(cfg, warn=warn)
     set_home(home)
     if home is not None and start:
-        home.start()
+        home.start(warn=warn)
     return home

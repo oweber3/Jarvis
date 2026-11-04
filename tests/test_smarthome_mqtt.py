@@ -211,3 +211,70 @@ class TestConnection:
         finally:
             server.close()
         assert "hunter2" not in " ".join(logged) and "127.0.0.1" not in " ".join(logged)
+
+
+@pytest.mark.unit
+class TestRobustness:
+    def test_the_connection_goes_to_the_resolved_address_not_the_name(self, broker, monkeypatch):
+        from jarvis.smarthome import network
+        monkeypatch.setattr(network, "_resolve", lambda host: ["127.0.0.1"])
+        # A name no resolver knows: only the pinned socket override can reach the broker.
+        assert mqtt.test_connection("jarvis-broker.invalid", broker.port) == 5
+        registry = Registry()
+        conn = mqtt.MqttConnector(registry, "jarvis-broker.invalid", broker.port)
+        conn.start()
+        try:
+            assert wait_for(lambda: conn.connected and registry.count() >= 5)
+        finally:
+            conn.stop()
+
+    def test_a_name_not_found_yet_is_retried_without_blocking_start(self, broker, monkeypatch):
+        from jarvis.smarthome import network
+        answers = iter([[], []])
+        monkeypatch.setattr(network, "_resolve", lambda host: next(answers, ["127.0.0.1"]))
+        monkeypatch.setattr(mqtt, "BACKOFF_START_SEC", 0.05)
+        registry = Registry()
+        conn = mqtt.MqttConnector(registry, "broker.local", broker.port)
+        conn.start()
+        try:
+            assert wait_for(lambda: conn.connected)
+        finally:
+            conn.stop()
+
+    def test_a_missing_paho_library_has_its_own_status(self, monkeypatch):
+        def missing():
+            raise ImportError("No module named 'paho'")
+        monkeypatch.setattr(mqtt, "_paho", missing)
+        conn = mqtt.MqttConnector(Registry(), "127.0.0.1", 1883)
+        with pytest.raises(ImportError):
+            conn.start()
+        assert conn.status == "missing_library"
+
+    def test_a_test_with_a_chatty_device_still_ends(self, broker, monkeypatch):
+        import threading
+        monkeypatch.setattr(mqtt, "TEST_MAX_SEC", 1.5)
+        stop = threading.Event()
+
+        def chatter():
+            while not stop.is_set():
+                broker.publish(f"{PREFIX}/sensor/node/temp/config", {
+                    "name": "Shed Temperature", "unique_id": "shed_temp", "state_topic": "shed/sensors"})
+                time.sleep(0.05)
+
+        thread = threading.Thread(target=chatter, daemon=True)
+        thread.start()
+        try:
+            started = time.monotonic()
+            assert mqtt.test_connection("127.0.0.1", broker.port) == 5
+            assert time.monotonic() - started < 4
+        finally:
+            stop.set()
+        assert not {"plug/7/state", "shed/sensors", "home/desk/state"} & set(broker.subscriptions_seen)
+
+    def test_the_same_object_id_under_two_nodes_is_two_devices(self, connector, broker):
+        _conn, registry = connector
+        for node in ("porch", "shed"):
+            broker.publish(f"{PREFIX}/switch/{node}/relay/config", {"name": f"{node} relay",
+                                                                    "command_topic": f"{node}/set"})
+        assert wait_for(lambda: {"mqtt:switch_porch_relay", "mqtt:switch_shed_relay"}
+                        <= {d.id for d in registry.devices()})

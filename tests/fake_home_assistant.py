@@ -44,6 +44,8 @@ class FakeHomeAssistant:
         self.redirect = False
         self.reject_with: Optional[str] = None
         self.no_result_for_calls = False
+        self.answer_pings = True
+        self.stall_after_auth = False
         self.handshake_headers: List[Dict[str, str]] = []
         self._lock = threading.Lock()
         self._clients: List[_Client] = []
@@ -69,6 +71,20 @@ class FakeHomeAssistant:
             ent["attributes"].update(attributes or {})
             new_state = self._state(ent)
         self._broadcast(entity_id, new_state)
+
+    def set_exposed(self, entity_id: str, exposed: bool, *, announce: bool = True) -> None:
+        """Expose or un-expose an entity, as Settings > Voice assistants > Expose does, and tell subscribers
+        to the entity registry."""
+        with self._lock:
+            self.entities[entity_id]["exposed"] = exposed
+            clients = [c for c in self._clients if c.registry_subscription is not None] if announce else []
+        for client in clients:
+            try:
+                client.send({"id": client.registry_subscription, "type": "event", "event": {
+                    "event_type": "entity_registry_updated",
+                    "data": {"action": "update", "entity_id": entity_id, "changes": {"options": {}}}}})
+            except OSError:
+                pass
 
     def drop_connections(self) -> None:
         with self._lock:
@@ -152,8 +168,11 @@ class FakeHomeAssistant:
         self.received_types.append(kind)
         with self._lock:
             ents = [copy.deepcopy(e) for e in self.entities.values()]
+        if self.stall_after_auth:
+            return
         if kind == "ping":
-            client.send({"id": mid, "type": "pong"})
+            if self.answer_pings:
+                client.send({"id": mid, "type": "pong"})
         elif kind == "get_states":
             self._result(client, mid, [self._state(e) for e in ents])
         elif kind == "get_config":
@@ -177,7 +196,10 @@ class FakeHomeAssistant:
             self._result(client, mid, {"exposed_entities": {
                 e["entity_id"]: {"conversation": e["exposed"], "cloud.alexa": False} for e in ents}})
         elif kind == "subscribe_events":
-            client.subscription = mid
+            if message.get("event_type") == "entity_registry_updated":
+                client.registry_subscription = mid
+            else:
+                client.subscription = mid
             self._result(client, mid, None)
         elif kind == "call_service":
             self.calls.append({k: message.get(k) for k in ("domain", "service", "service_data", "target")})
@@ -233,6 +255,7 @@ class _Client:
     def __init__(self, conn: socket.socket):
         self.conn = conn
         self.subscription = None
+        self.registry_subscription = None
         self._send_lock = threading.Lock()
         self._buffer = b""
 

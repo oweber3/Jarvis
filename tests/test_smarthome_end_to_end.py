@@ -128,3 +128,42 @@ def test_the_command_line_never_prints_the_token(hubs, monkeypatch, capsys):
     assert "Lounge Lamp" in out and "Shed Fan" in out
     assert TOKEN not in out and "broker-pw" not in out
     json.dumps(out)
+
+
+@pytest.mark.unit
+def test_building_never_resolves_names_so_a_hub_not_up_yet_is_retried(monkeypatch):
+    from jarvis.smarthome import network
+    monkeypatch.setattr(network, "_resolve", lambda host: pytest.fail("resolved on the start-up thread"))
+    credentials.set_secret("smarthome.ha_token", TOKEN)
+    warnings = []
+    home = service.build(cfg(smarthome_ha_url="http://homeassistant.local:8123", smarthome_mqtt_host="broker.local"),
+                         warn=warnings.append)
+    assert set(home.connectors) == {"ha", "mqtt"} and warnings == []
+
+
+@pytest.mark.unit
+def test_a_connector_that_cannot_start_does_not_stop_the_others(monkeypatch):
+    class Broken:
+        status = "starting"
+
+        def start(self):
+            self.status = "missing_library"
+            raise ImportError("No module named 'paho'")
+
+        def stop(self):
+            pass
+
+    class Fine:
+        status, started = "starting", False
+
+        def start(self):
+            self.started = True
+
+        def stop(self):
+            pass
+
+    warnings, fine = [], Fine()
+    home = service.SmartHome(connectors={"mqtt": Broken(), "ha": fine})
+    home.start(warn=warnings.append)
+    assert fine.started
+    assert len(warnings) == 1 and "pip install" in warnings[0] and "paho-mqtt" in warnings[0]

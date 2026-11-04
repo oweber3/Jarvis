@@ -52,3 +52,10 @@ class TestSmartHomeSettings:
         assert credentials.set_secret("smarthome.mqtt_password", "pw")
         assert credentials.delete_secret("smarthome.mqtt_password")
         assert credentials.get_secret("smarthome.mqtt_password") == ""
+
+
+@pytest.mark.unit
+def test_tls_without_a_port_uses_the_tls_port(tmp_path, monkeypatch):
+    assert load(tmp_path, monkeypatch, {"smarthome_mqtt_tls": True}).smarthome_mqtt_port == 8883
+    assert load(tmp_path, monkeypatch, {"smarthome_mqtt_tls": True,
+                                        "smarthome_mqtt_port": 1883}).smarthome_mqtt_port == 1883

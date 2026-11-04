@@ -58,3 +58,36 @@ class TestAddressValidation:
         with pytest.raises(SmartHomeAddressError) as error:
             validate_endpoint("http://secret-house.example.com:8123", default_port=8123)
         assert "secret-house" not in str(error.value)
+
+
+@pytest.mark.unit
+class TestResolution:
+    def test_a_slow_lookup_is_bounded_and_never_changes_the_process_default_timeout(self, monkeypatch):
+        import socket
+        import time
+        default = socket.getdefaulttimeout()
+        monkeypatch.setattr(network, "RESOLVE_TIMEOUT_SEC", 0.2)
+        monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: time.sleep(3) or [])
+        started = time.monotonic()
+        with pytest.raises(network.SmartHomeNotFound):
+            validate_endpoint("http://homeassistant.local:8123", default_port=8123)
+        assert time.monotonic() - started < 1.5
+        assert socket.getdefaulttimeout() == default
+
+    def test_an_unknown_hostname_is_not_found_yet_rather_than_refused(self, monkeypatch):
+        monkeypatch.setattr(network, "_resolve", resolver())
+        with pytest.raises(network.SmartHomeNotFound) as error:
+            validate_endpoint("http://homeassistant.local:8123", default_port=8123)
+        assert "could not be found" in str(error.value)
+
+    def test_without_resolving_only_syntax_and_literal_addresses_are_checked(self, monkeypatch):
+        monkeypatch.setattr(network, "_resolve", lambda host: pytest.fail("resolved"))
+        assert validate_endpoint("http://homeassistant.local:8123", default_port=8123, resolve=False).ip == ""
+        with pytest.raises(SmartHomeAddressError):
+            validate_endpoint("http://8.8.8.8:8123", default_port=8123, resolve=False)
+        with pytest.raises(SmartHomeAddressError):
+            validate_endpoint("ftp://homeassistant.local", default_port=8123, resolve=False)
+
+    def test_a_link_local_hostname_keeps_its_scope_id(self, monkeypatch):
+        monkeypatch.setattr(network, "_resolve", resolver("fe80::5%eth0"))
+        assert validate_endpoint("http://ha.local:8123", default_port=8123).ip == "fe80::5%eth0"

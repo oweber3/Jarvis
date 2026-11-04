@@ -28,6 +28,9 @@ MAX_TOPIC_CHARS = 256
 CONFIRM_TIMEOUT_SEC = 3.0
 CONNECT_TIMEOUT_SEC = 5.0
 TEST_SETTLE_SEC = 1.0
+TEST_MAX_SEC = 5.0
+BACKOFF_START_SEC = 2.0
+BACKOFF_MAX_SEC = 300.0
 COMPONENTS = {"light": "light", "switch": "switch", "fan": "fan", "cover": "cover", "climate": "climate",
               "lock": "lock", "sensor": "sensor", "binary_sensor": "binary_sensor", "button": "button",
               "scene": "scene"}
@@ -59,7 +62,7 @@ ABBREVIATIONS = {
 }
 _DEVICE_ABBREVIATIONS = {"sa": "suggested_area", "ids": "identifiers", "mf": "manufacturer", "mdl": "model"}
 _TEMPLATE = re.compile(r"^\{\{\s*value_json((?:\.[A-Za-z_]\w*|\[['\"][^'\"]{1,40}['\"]\]){1,4})\s*\}\}$")
-_DISCOVERY = re.compile(r"^(?P<component>[A-Za-z_]+)/(?:[A-Za-z0-9_-]+/)?(?P<object>[A-Za-z0-9_-]+)/config$")
+_DISCOVERY = re.compile(r"^(?P<component>[A-Za-z_]+)/(?:(?P<node>[A-Za-z0-9_-]+)/)?(?P<object>[A-Za-z0-9_-]+)/config$")
 
 
 class MqttError(Exception):
@@ -74,8 +77,13 @@ class MqttUnreachable(MqttError):
     pass
 
 
+class MqttNotFound(MqttUnreachable):
+    """The broker's hostname does not resolve yet."""
+
+
 AUTH_MESSAGE = "The MQTT broker refused the user name or password."
 UNREACHABLE_MESSAGE = "The MQTT broker did not answer. Check that it is running and the address is right."
+NOT_FOUND_MESSAGE = "The MQTT broker's address could not be found on the network yet. Jarvis keeps trying."
 
 
 def valid_topic(topic: Any) -> bool:
@@ -397,9 +405,11 @@ def _make_client(endpoint: network.Endpoint, username: str, password: str, tls: 
     return client
 
 
-def _endpoint(host: str, port: int) -> network.Endpoint:
+def _endpoint(host: str, port: int, *, resolve: bool = True) -> network.Endpoint:
     try:
-        found = network.validate_endpoint(host, default_port=port, schemes=("mqtt",))
+        found = network.validate_endpoint(host, default_port=port, schemes=("mqtt",), resolve=resolve)
+    except network.SmartHomeNotFound:
+        raise MqttNotFound(NOT_FOUND_MESSAGE) from None
     except network.SmartHomeAddressError as exc:
         raise MqttError(f"The MQTT broker address was refused: {exc}") from None
     return network.Endpoint(found.scheme, found.host, found.ip, int(port or found.port))
@@ -410,8 +420,10 @@ class MqttConnector:
 
     def __init__(self, registry: Registry, host: str, port: int = 1883, *, username: str = "",
                  password: str = "", tls: bool = False, verify_tls: bool = True,
-                 discovery_prefix: str = "homeassistant"):
+                 discovery_prefix: str = "homeassistant", follow_states: bool = True):
         self._registry = registry
+        # A connection test only counts announced devices: it never subscribes to state topics.
+        self._follow_states = follow_states
         self._host, self._port = host, int(port or 1883)
         self._username, self._password = username, password
         self._tls, self._verify_tls = tls, verify_tls
@@ -421,34 +433,71 @@ class MqttConnector:
         self._lock = threading.Lock()
         self._specs: Dict[str, _Spec] = {}
         self._routes: Dict[str, List[Tuple[str, str]]] = {}   # topic -> [(device id, role)]
-        self._discovered: Dict[Tuple[str, str], str] = {}     # (component, object id) -> device id
+        self._discovered: Dict[str, str] = {}     # discovery topic key -> device id
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
         self.connected = False
-        self.status = "starting"   # starting | connected | auth | unreachable | refused | stopped
+        # starting | connected | auth | unreachable | not_found | refused | missing_library | stopped
+        self.status = "starting"
 
     @property
     def discovery_topics(self) -> Tuple[str, str]:
         return f"{self._prefix}/+/+/config", f"{self._prefix}/+/+/+/config"
 
     def start(self) -> None:
-        if self._client is not None:
+        """Check the library and the address syntax, then resolve and connect on a background thread that
+        keeps retrying a name that does not resolve yet. Raises ``ImportError`` without paho-mqtt and
+        ``MqttError`` for an address that can never be allowed."""
+        if self._thread is not None:
             return
         try:
-            endpoint = _endpoint(self._host, self._port)
+            _paho()
+        except ImportError:
+            self.status = "missing_library"
+            debug_log("MQTT connector not started: paho-mqtt missing", _TAG)
+            raise
+        try:
+            _endpoint(self._host, self._port, resolve=False)
         except MqttError:
             self.status = "refused"
             debug_log("MQTT connector not started: address refused", _TAG)
             raise
-        client = _make_client(endpoint, self._username, self._password, self._tls, self._verify_tls,
-                              client_id=f"jarvis-{int(time.time() * 1000) % 10_000_000}")
-        client.on_connect = self._on_connect
-        client.on_disconnect = self._on_disconnect
-        client.on_message = self._on_message
-        self._client = client
         debug_log("MQTT connector starting", _TAG)
-        client.connect_async(endpoint.host, endpoint.port, keepalive=60)
-        client.loop_start()
+        self._thread = threading.Thread(target=self._connect_loop, name="smarthome-mqtt", daemon=True)
+        self._thread.start()
+
+    def _connect_loop(self) -> None:
+        delay = BACKOFF_START_SEC
+        while not self._stop.is_set():
+            try:
+                endpoint = _endpoint(self._host, self._port)
+            except MqttNotFound:
+                self.status = "not_found"
+                debug_log("MQTT broker address not found yet", _TAG)
+                self._stop.wait(delay)
+                delay = min(delay * 2, BACKOFF_MAX_SEC)
+                continue
+            except MqttError:
+                self.status = "refused"
+                debug_log("MQTT connector stopped: address refused", _TAG)
+                return
+            client = _make_client(endpoint, self._username, self._password, self._tls, self._verify_tls,
+                                  client_id=f"jarvis-{int(time.time() * 1000) % 10_000_000}")
+            client.on_connect = self._on_connect
+            client.on_disconnect = self._on_disconnect
+            client.on_message = self._on_message
+            if self._stop.is_set():
+                return
+            self._client = client
+            # paho reconnects by itself from here, always to the address resolved now.
+            client.connect_async(endpoint.host, endpoint.port, keepalive=60)
+            client.loop_start()
+            return
 
     def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=3)
         client, self._client = self._client, None
         if client is not None:
             try:
@@ -472,7 +521,7 @@ class MqttConnector:
         for topic in self.discovery_topics:
             client.subscribe(topic, qos=0)
         with self._lock:
-            topics = [t for t in self._routes]
+            topics = [t for t in self._routes] if self._follow_states else []
         for topic in topics:
             client.subscribe(topic, qos=0)
         debug_log("MQTT connected", _TAG)
@@ -499,9 +548,12 @@ class MqttConnector:
         match = _DISCOVERY.match(rest)
         if match is None or len(raw) > MAX_PAYLOAD_BYTES:
             return
-        component, object_id = match.group("component"), match.group("object")
+        component = match.group("component")
+        # The node id is part of the topic's identity: two nodes may both announce "relay".
+        object_id = "_".join(part for part in (match.group("node"), match.group("object")) if part)
+        key = f"{component}/{object_id}"
         if not raw:
-            self._forget(f"mqtt:{component}_{object_id}", (component, object_id))
+            self._forget(f"mqtt:{component}_{object_id}", key)
             return
         try:
             payload = json.loads(raw.decode("utf-8"))
@@ -519,17 +571,17 @@ class MqttConnector:
         new_topics = []
         with self._lock:
             self._specs[device.id] = spec
-            self._discovered[(component, object_id)] = device.id
+            self._discovered[key] = device.id
             for routes in self._routes.values():
                 routes[:] = [r for r in routes if r[0] != device.id]
             for topic, role in spec.state_topics:
                 if topic not in self._routes or not self._routes[topic]:
                     new_topics.append(topic)
                 self._routes.setdefault(topic, []).append((device.id, role))
-        for topic in new_topics:
+        for topic in new_topics if self._follow_states else ():
             client.subscribe(topic, qos=0)
 
-    def _forget(self, fallback_id: str, key: Tuple[str, str]) -> None:
+    def _forget(self, fallback_id: str, key: str) -> None:
         with self._lock:
             device_id = self._discovered.pop(key, fallback_id)
             self._specs.pop(device_id, None)
@@ -596,7 +648,7 @@ def test_connection(host: str, port: int = 1883, *, username: str = "", password
     endpoint = _endpoint(host, port)
     registry = Registry()
     connector = MqttConnector(registry, host, port, username=username, password=password, tls=tls,
-                              verify_tls=verify_tls, discovery_prefix=discovery_prefix)
+                              verify_tls=verify_tls, discovery_prefix=discovery_prefix, follow_states=False)
     client = _make_client(endpoint, username, password, tls, verify_tls, client_id="jarvis-test")
     answered = threading.Event()
     outcome: Dict[str, Any] = {}
@@ -628,7 +680,8 @@ def test_connection(host: str, port: int = 1883, *, username: str = "", password
                 raise MqttAuthError(AUTH_MESSAGE)
             raise MqttError("The MQTT broker refused the connection.")
         outcome["last"] = time.monotonic()
-        while time.monotonic() - outcome["last"] < TEST_SETTLE_SEC:
+        give_up = time.monotonic() + TEST_MAX_SEC
+        while time.monotonic() - outcome["last"] < TEST_SETTLE_SEC and time.monotonic() < give_up:
             time.sleep(0.05)
     finally:
         try:

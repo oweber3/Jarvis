@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import threading
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Sequence
 from urllib.parse import urlsplit
@@ -26,6 +27,10 @@ class SmartHomeAddressError(ValueError):
     """The configured hub address is not on the local network, or is not an address at all."""
 
 
+class SmartHomeNotFound(SmartHomeAddressError):
+    """A hostname that does not resolve right now (the network or the hub may not be up yet)."""
+
+
 @dataclass(frozen=True)
 class Endpoint:
     scheme: str
@@ -34,8 +39,8 @@ class Endpoint:
     port: int
 
     @property
-    def ip_for_url(self) -> str:
-        return f"[{self.ip}]" if ":" in self.ip else self.ip
+    def host_for_url(self) -> str:
+        return f"[{self.host}]" if ":" in self.host else self.host
 
 
 def _allowed(address: ipaddress._BaseAddress) -> bool:
@@ -43,20 +48,33 @@ def _allowed(address: ipaddress._BaseAddress) -> bool:
 
 
 def _resolve(host: str) -> List[str]:
-    previous = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(RESOLVE_TIMEOUT_SEC)
-    try:
-        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except (OSError, UnicodeError):
-        return []
-    finally:
-        socket.setdefaulttimeout(previous)
-    return sorted({info[4][0] for info in infos})
+    """Every address ``host`` resolves to, within ``RESOLVE_TIMEOUT_SEC``; [] when none or too slow.
+
+    The lookup runs on its own daemon thread so a slow resolver cannot hold the caller, and the process-wide
+    socket timeout is never touched (connectors resolve concurrently). A link-local address keeps its scope."""
+    found: List[str] = []
+    done = threading.Event()
+
+    def lookup() -> None:
+        try:
+            infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+            found.extend(sorted({str(info[4][0]) for info in infos}))
+        except (OSError, UnicodeError):
+            pass
+        finally:
+            done.set()
+
+    threading.Thread(target=lookup, name="smarthome-resolve", daemon=True).start()
+    return list(found) if done.wait(RESOLVE_TIMEOUT_SEC) else []
 
 
-def validate_endpoint(value, *, default_port: int, schemes: Sequence[str] = ("http", "https")) -> Endpoint:
+def validate_endpoint(value, *, default_port: int, schemes: Sequence[str] = ("http", "https"),
+                      resolve: bool = True) -> Endpoint:
     """The endpoint to connect to for ``value`` (a URL, or a bare host for a broker), or
-    ``SmartHomeAddressError``."""
+    ``SmartHomeAddressError`` (``SmartHomeNotFound`` for a hostname that does not resolve now).
+
+    With ``resolve`` false only the syntax and a literal address are checked (``ip`` is empty for a
+    hostname): connectors resolve inside their retry loops."""
     if not isinstance(value, str) or not value.strip():
         raise SmartHomeAddressError("No address is set.")
     text = value.strip()
@@ -74,16 +92,22 @@ def validate_endpoint(value, *, default_port: int, schemes: Sequence[str] = ("ht
     host = parts.hostname or ""
     if not host or "%" in host or any(c.isspace() for c in host):
         raise SmartHomeAddressError("The address is not valid.")
+    if port is None:
+        port = {"https": 443, "mqtts": 8883}.get(parts.scheme, default_port)
+    if not 0 < port < 65536:
+        raise SmartHomeAddressError("The port is not valid.")
     try:
         literal = ipaddress.ip_address(host)
     except ValueError:
         literal = None
     if literal is not None:
         candidates = [str(literal)]
+    elif not resolve:
+        return Endpoint(parts.scheme, host, "", port)
     else:
         candidates = _resolve(host)
         if not candidates:
-            raise SmartHomeAddressError("The address could not be found on this network.")
+            raise SmartHomeNotFound("The address could not be found on this network yet. Jarvis keeps trying.")
     for candidate in candidates:
         try:
             address = ipaddress.ip_address(candidate.split("%", 1)[0])
@@ -92,11 +116,7 @@ def validate_endpoint(value, *, default_port: int, schemes: Sequence[str] = ("ht
         if not _allowed(address):
             raise SmartHomeAddressError(
                 "The address must be on your home network (a private address such as 192.168.x.x, or this PC).")
-    if port is None:
-        port = {"https": 443, "mqtts": 8883}.get(parts.scheme, default_port)
-    if not 0 < port < 65536:
-        raise SmartHomeAddressError("The port is not valid.")
-    return Endpoint(parts.scheme, host, str(ipaddress.ip_address(candidates[0].split("%", 1)[0])), port)
+    return Endpoint(parts.scheme, host, candidates[0], port)
 
 
 def check_connect(ip: str) -> None:
