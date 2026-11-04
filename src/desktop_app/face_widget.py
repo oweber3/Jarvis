@@ -121,13 +121,28 @@ def get_jarvis_state() -> JarvisStateManager:
 def follow_assistant_state() -> Callable[[], None]:
     """Show every assistant state change of a daemon running in this process on the face.
 
-    Returns a function that stops following."""
+    Returns a function that stops following. Once it returns, no further state reaches the face,
+    even from a change that another thread was already announcing."""
+    import threading
+
     from jarvis import assistant_state
 
-    def forward(state) -> None:
-        get_jarvis_state().set_state(JarvisState(state.value))
+    lock = threading.Lock()
+    following = [True]
 
-    return assistant_state.subscribe(forward)
+    def forward(state) -> None:
+        with lock:
+            if following[0]:
+                get_jarvis_state().set_state(JarvisState(state.value))
+
+    unsubscribe = assistant_state.subscribe(forward)
+
+    def stop() -> None:
+        unsubscribe()
+        with lock:
+            following[0] = False
+
+    return stop
 
 
 class FaceWindow(QWidget):

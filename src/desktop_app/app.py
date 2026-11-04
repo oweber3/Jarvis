@@ -3192,6 +3192,7 @@ class JarvisSystemTray:
 
         if relay is None:
             relay = getattr(self, "_confirm_relay", None)
+        process = self.daemon_process
         try:
             while True:
                 line = self.daemon_process.stdout.readline()
@@ -3217,7 +3218,9 @@ class JarvisSystemTray:
                 elif web_chat_at >= 0:
                     self._take_web_chat_announcement(line[web_chat_at:])
                 face_state = _face_state_from_line(line)
-                if face_state is not None:
+                # Lines still buffered from a daemon that was stopped or replaced must not wake the
+                # face the tray has already put to sleep.
+                if face_state is not None and self.is_listening and self.daemon_process is process:
                     from desktop_app.face_widget import get_jarvis_state
                     get_jarvis_state().set_state(face_state)
                 self._on_reply_mode_ipc_line(line)

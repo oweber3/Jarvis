@@ -41,6 +41,20 @@ def test_in_process_the_face_shows_each_state_change_until_it_stops_following(fa
     assert face.shown == [JarvisState.LISTENING, JarvisState.THINKING]
 
 
+def test_a_change_already_being_announced_never_reaches_the_face_after_it_stops_following(face, monkeypatch):
+    # Another thread copied the subscriber list just before the tray stopped following, so the
+    # face's callback still runs once afterwards; it must not overwrite the asleep face.
+    from desktop_app.face_widget import follow_assistant_state
+    captured = []
+    real_subscribe = assistant_state.subscribe
+    monkeypatch.setattr(assistant_state, "subscribe",
+                        lambda callback: captured.append(callback) or real_subscribe(callback))
+    stop = follow_assistant_state()
+    stop()
+    captured[0](AssistantState.THINKING)
+    assert face.shown == []
+
+
 def test_a_broken_face_never_blocks_other_subscribers(monkeypatch):
     import desktop_app.face_widget as face_widget
 

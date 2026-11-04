@@ -149,16 +149,6 @@ class FakeTTS:
         return next((when for when, event in self.events if event == name), None)
 
 
-class _FaceRecorder:
-    """Stands in for the orb state singleton and records state names."""
-
-    def __init__(self, sink: list) -> None:
-        self._sink = sink
-
-    def set_state(self, state: Any) -> None:
-        self._sink.append(getattr(state, "value", str(state)))
-
-
 class ListenerHarness:
     """A ``VoiceListener`` fed from arrays.
 
@@ -192,6 +182,7 @@ class ListenerHarness:
         self.listener = None
         self._job = None
         self._patched: list[tuple[Any, str, Any]] = []
+        self._face_unsubscribe: Optional[Callable[[], None]] = None
 
     # -- lifecycle -------------------------------------------------------
     def __enter__(self) -> "ListenerHarness":
@@ -203,12 +194,13 @@ class ListenerHarness:
 
         for module in (listener_mod, state_mod, latency_mod, echo_mod):
             self._patch(module, "time", self.clock)
-        try:
-            import desktop_app.face_widget as face_widget
-        except Exception:
-            face_widget = None
-        if face_widget is not None:
-            self._patch(face_widget, "get_jarvis_state", lambda: _FaceRecorder(self.face_states))
+        from jarvis import assistant_state
+
+        # Start from asleep so the first change of this run is recorded even if an
+        # earlier run left the shared state somewhere else.
+        assistant_state.set_state(assistant_state.AssistantState.ASLEEP)
+        self._face_unsubscribe = assistant_state.subscribe(
+            lambda state: self.face_states.append(state.value))
 
         self._config_dir = tempfile.TemporaryDirectory(prefix="jarvis-harness-")
         config_path = Path(self._config_dir.name) / "config.json"
@@ -247,6 +239,9 @@ class ListenerHarness:
     def __exit__(self, *exc) -> None:
         if self.listener is not None:
             self.listener.state_manager.stop()
+        if self._face_unsubscribe is not None:
+            self._face_unsubscribe()
+            self._face_unsubscribe = None
         for module, name, value in reversed(self._patched):
             setattr(module, name, value)
         self._patched.clear()
