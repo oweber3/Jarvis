@@ -356,6 +356,22 @@ class TestOllamaBackendWarmUp:
         assert sent["keep_alive"] == "1m"
 
 
+class TestOllamaBackendEmbedResidency:
+    """Embedding requests keep the embedding model resident like every other request."""
+
+    @patch("jarvis.llm.requests.post")
+    def test_embed_sends_backend_keep_alive(self, mock_post):
+        from jarvis.llm import OllamaBackend
+
+        mock_post.return_value = _make_response(json_data={"embedding": [0.1, 0.2]})
+        backend = OllamaBackend("http://localhost:11434", keep_alive="2h")
+
+        assert backend.embed("ping", "nomic-embed-text") == [0.1, 0.2]
+
+        sent = mock_post.call_args.kwargs["json"]
+        assert sent["keep_alive"] == "2h"
+
+
 # ---------------------------------------------------------------------------
 # OllamaBackend — direct edge cases
 # ---------------------------------------------------------------------------
