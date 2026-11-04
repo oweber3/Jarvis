@@ -309,6 +309,7 @@ class ChatterboxTTS:
         # Lazy initialization flags
         self._initialized = False
         self._init_lock = threading.Lock()
+        self._start_lock = threading.Lock()  # a reply's lazy start waits for a start already loading the model
 
     def _initialize_with_logging(self) -> None:
         """Initialize Chatterbox with proper logging."""
@@ -370,10 +371,13 @@ class ChatterboxTTS:
     def start(self) -> None:
         if not self.enabled or self._thread is not None:
             return
-        # Initialize on first actual start
-        self._ensure_initialized()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        with self._start_lock:
+            if self._thread is not None:
+                return
+            # Initialize on first actual start
+            self._ensure_initialized()
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
 
     def stop(self) -> None:
         if self._thread is None:
@@ -750,6 +754,7 @@ class PiperTTS:
         self._sample_rate: int = 22050  # Piper default, updated on model load
         self._initialized = False
         self._init_lock = threading.Lock()
+        self._start_lock = threading.RLock()  # one start at a time; re-entrant for KokoroTTS.start
         self._init_error: Optional[str] = None
 
         # Audio stream for interruption
@@ -865,15 +870,20 @@ class PiperTTS:
     def start(self) -> None:
         if not self.enabled or self._thread is not None:
             return
-        # Initialize model eagerly at startup (downloads if needed)
-        # This provides better UX - download happens during startup, not first speech
-        self._ensure_initialized()
-        # An output's converter can take a second to load; keep it out of the first reply. It runs here, not
-        # on a thread: a DLL load racing the listener's microphone probe can deadlock on the Windows loader
-        # lock and stall start-up.
-        self._warm_voice_outputs()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        # The daemon starts the voice while Whisper loads, so the first reply's lazy start can arrive
+        # mid-load: it waits here for that start instead of loading and warming a second time.
+        with self._start_lock:
+            if self._thread is not None:
+                return
+            # Initialize model eagerly at startup (downloads if needed)
+            # This provides better UX - download happens during startup, not first speech
+            self._ensure_initialized()
+            # An output's converter can take a second to load; keep it out of the first reply. It runs here,
+            # not on a thread: a DLL load racing the listener's microphone probe can deadlock on the Windows
+            # loader lock and stall start-up.
+            self._warm_voice_outputs()
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
 
     def _warm_voice_outputs(self) -> None:
         """Let each output load its converter here: off the starting thread, DLL loads can deadlock."""
@@ -1215,11 +1225,14 @@ class KokoroTTS(PiperTTS):
     def start(self) -> None:
         if not self.enabled or self._thread is not None:
             return
-        super().start()
-        downloading = self._download_thread is not None and self._download_thread.is_alive()
-        if self.engine_in_use != "kokoro" and not downloading                 and not kokoro.kokoro_files_present(self.kokoro_model_dir):
-            self._download_thread = threading.Thread(target=self._download, daemon=True, name="kokoro-download")
-            self._download_thread.start()
+        with self._start_lock:
+            if self._thread is not None:
+                return
+            super().start()
+            downloading = self._download_thread is not None and self._download_thread.is_alive()
+            if self.engine_in_use != "kokoro" and not downloading                 and not kokoro.kokoro_files_present(self.kokoro_model_dir):
+                self._download_thread = threading.Thread(target=self._download, daemon=True, name="kokoro-download")
+                self._download_thread.start()
 
     def _download(self) -> None:
         print(f"📥 Downloading the Kokoro voice files ({kokoro.KOKORO_DOWNLOAD_MB} MB, one time)", flush=True)

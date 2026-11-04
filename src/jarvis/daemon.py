@@ -184,8 +184,10 @@ def _start_listener_then_tts(listener, tts, check_timeout_sec: float) -> None:
     """Start the voice listener, then load the voice on this thread while Whisper loads on the listener's.
 
     The voice waits for the listener's microphone check first: a DLL load racing that check can deadlock on
-    the Windows loader lock. Loading the voice on the starting thread also keeps voice outputs' ``warm`` there
-    (extensions/extensions.spec.md).
+    the Windows loader lock. A check that hangs past its own 5 s timeout is given up on, as the listener does
+    before loading Whisper. Loading the voice on the starting thread also keeps voice outputs' ``warm`` there
+    (extensions/extensions.spec.md). A reply that arrives while the voice is still loading waits for it
+    (the engines' start lock).
     """
     listener.start()
     if tts is None:
