@@ -340,6 +340,21 @@ def _isolate_file_search(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _never_look_up_the_public_address(request, monkeypatch):
+    """Keep unit tests from asking the router (UPnP discovery) or OpenDNS for this PC's public address.
+
+    Location detection falls back to both when a test reaches it without a configured IP (the setup
+    wizard's location check does); each waits seconds for an answer and sends packets off the PC.
+    Integration tests may still look it up."""
+    if request.node.get_closest_marker("integration"):
+        return
+    from jarvis.utils import location
+
+    monkeypatch.setattr(location, "_get_external_ip_via_upnp", lambda: None)
+    monkeypatch.setattr(location, "_resolve_public_ip_via_opendns", lambda timeout=1.5: None)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_orb_state_file(_test_sandbox, monkeypatch):
     """Keep tests from writing the state file a running Jarvis's orb reads."""
     try:
