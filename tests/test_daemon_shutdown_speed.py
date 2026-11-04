@@ -74,3 +74,10 @@ def test_a_stop_that_hangs_does_not_hold_up_shutdown_past_the_bound(daemon):
 
     assert time.monotonic() - started < 1.0
     release.set()
+
+
+def test_the_engine_stop_bound_outlasts_the_mcp_runtimes_own_worst_case(daemon):
+    """The daemon never gives up on the MCP runtime before it has killed every stuck server."""
+    from jarvis.tools.external import mcp_runtime
+
+    assert daemon._engine_stop_timeout_sec() > mcp_runtime.SHUTDOWN_WORST_CASE_SEC

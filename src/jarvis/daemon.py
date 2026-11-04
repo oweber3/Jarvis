@@ -199,9 +199,18 @@ def _start_listener_then_tts(listener, tts, check_timeout_sec: float) -> None:
     debug_log(f"voice loaded alongside speech recognition in {time.monotonic() - started:.2f}s", "jarvis")
 
 
-# Bound for stopping TTS, the MCP runtime and the reply bridge together: above each one's own
-# worst case (the Codex child gets 5 s, then terminate and kill at 2 s each).
-ENGINE_STOP_TIMEOUT_SEC = 10.0
+# Margin over the slowest engine's own worst case when stopping them together.
+ENGINE_STOP_MARGIN_SEC = 2.0
+# The Codex child's worst case: 5 s to exit, then terminate and kill at 2 s each. TTS is quicker.
+_REPLY_BRIDGE_STOP_WORST_CASE_SEC = 9.0
+
+
+def _engine_stop_timeout_sec() -> float:
+    """Bound for stopping TTS, the MCP runtime and the reply bridge together: above each one's own worst
+    case, so none is given up on before it has ended its child processes."""
+    from .tools.external.mcp_runtime import SHUTDOWN_WORST_CASE_SEC as mcp_worst_case
+
+    return max(mcp_worst_case, _REPLY_BRIDGE_STOP_WORST_CASE_SEC) + ENGINE_STOP_MARGIN_SEC
 
 
 def _stop_engines_side_by_side(tts) -> None:
@@ -217,7 +226,7 @@ def _stop_engines_side_by_side(tts) -> None:
     if tts is not None:
         steps["tts"] = tts.stop
     started = time.monotonic()
-    _stop_side_by_side(steps, timeout_sec=ENGINE_STOP_TIMEOUT_SEC)
+    _stop_side_by_side(steps, timeout_sec=_engine_stop_timeout_sec())
     debug_log(f"engines stopped side by side in {time.monotonic() - started:.2f}s", "jarvis")
 
 

@@ -38,7 +38,7 @@ resident for the daemon's lifetime.
 | Server config changes | Old worker is shut down; a fresh worker replaces it. |
 | Worker raises `_WorkerDeadError` | Runtime drops it and retries the call once with a new worker. Second failure surfaces as `MCPServerSessionError` to the public layer. |
 | `idle_timeout_sec` set on a server config | Worker self-terminates after that long without activity. Next call spawns a new worker. |
-| Daemon shutdown calls `shutdown_runtime()` | Each worker is asked to exit (sentinel `None`); any wedged task is cancelled. The loop is stopped, the thread is joined with a 5s timeout. |
+| Daemon shutdown calls `shutdown_runtime()` | All workers stop at the same time: each is asked to exit (sentinel `None`), any wedged task is cancelled, and each is waited for as above, its process tree killed after `_STOP_WAIT_SEC`. The loop is then stopped and the thread joined with a 5s timeout. However many servers there are, shutdown takes at most `SHUTDOWN_WORST_CASE_SEC` (the 2 s sentinel enqueue, the stop window and the join), and the daemon waits longer than that before giving up on it. |
 
 ## Invariants
 

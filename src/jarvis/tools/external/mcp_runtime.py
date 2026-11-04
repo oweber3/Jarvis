@@ -61,6 +61,10 @@ _SHUTDOWN_THREAD_JOIN_SEC = 5.0
 # How long a stopping session may take to end its subprocess before the
 # runtime kills the process tree itself.
 _STOP_WAIT_SEC = 5.0
+# Longest a full runtime shutdown takes, whatever the number of servers (they
+# stop in parallel): the sentinel enqueue (2 s), the stop window, then the
+# loop thread's join.
+SHUTDOWN_WORST_CASE_SEC = 2.0 + _STOP_WAIT_SEC + _SHUTDOWN_THREAD_JOIN_SEC
 
 
 def _settle(fut: concurrent.futures.Future, *, result: Any = None,
@@ -372,17 +376,30 @@ class _PersistentMCPRuntime:
         with self._workers_lock:
             workers = list(self._workers.values())
             self._workers.clear()
-        # Ask every worker to exit cleanly first; cancel the task if the
-        # graceful path stalls (e.g. a hung call_tool).
-        for w in workers:
+        # Every worker stops at the same time: each is asked to exit cleanly
+        # (its task cancelled if the graceful path stalls, e.g. a hung
+        # call_tool) and waited for, its process tree killed after
+        # _STOP_WAIT_SEC. Stopping them one after another would add those
+        # windows together and outlast the daemon's bounded shutdown.
+        def _stop(w: "_ServerWorker") -> None:
             try:
                 w.shutdown()
             except Exception as e:  # noqa: BLE001
                 debug_log(
                     f"MCP worker '{w._server_name}' shutdown error: {e}", "mcp"
                 )
-        for w in workers:
             w.wait_stopped()
+
+        stoppers = [
+            threading.Thread(target=_stop, args=(w,), name=f"mcp-stop-{w._server_name}", daemon=True)
+            for w in workers
+        ]
+        for t in stoppers:
+            t.start()
+        for t in stoppers:
+            t.join()
+        if workers:
+            debug_log(f"MCP runtime stopped {len(workers)} worker(s) in parallel", "mcp")
         loop = self._loop
         if loop is not None:
             try:
