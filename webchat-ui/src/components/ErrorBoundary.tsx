@@ -6,6 +6,20 @@ import { Component, type ErrorInfo, type ReactNode } from "react"
 
 type State = { broken: boolean }
 
+/** One piece of the page that cannot be drawn (a reply's Markdown) shows ``fallback`` in its place; the rest of the
+ * page carries on. Give it a ``key`` that changes with what it draws, so new content gets a fresh try. */
+export class PartBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, State> {
+  override state: State = { broken: false }
+
+  static getDerivedStateFromError(): State {
+    return { broken: true }
+  }
+
+  override render(): ReactNode {
+    return this.state.broken ? this.props.fallback : this.props.children
+  }
+}
+
 export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   override state: State = { broken: false }
 

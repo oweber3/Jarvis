@@ -75,4 +75,66 @@ describe("a reply's Markdown", () => {
     const page = draw("# Title\n\nBody")
     expect(page.querySelector("h1")!.hasAttribute("id")).toBe(false)
   })
+
+  it("gives footnotes no ids either, and keeps their text", () => {
+    const page = draw("A claim.[^src]\n\n[^src]: Where it came from.")
+    expect(page.querySelector("[id]")).toBeNull()
+    expect(page.textContent).toContain("Where it came from.")
+  })
+
+  it("draws a GitHub alert as a quote with its label", () => {
+    const page = draw("Before.\n\n> [!NOTE]\n> Jarvis keeps the conversation.\n\nAfter.")
+    const quote = page.querySelector("blockquote")!
+    expect(quote.textContent).toContain("NOTE")
+    expect(quote.textContent).toContain("Jarvis keeps the conversation.")
+    expect(page.textContent).toContain("After.")
+  })
+
+  it("links only web and mail addresses: anything else stays text", () => {
+    const page = draw(
+      [
+        "[a](file:///C:/Windows/System32)",
+        "[b](ms-msdt:/id%20PCWDiagnostic)",
+        "[c](search-ms:query=report)",
+        "[d](intent://scan/#Intent;scheme=zxing;end)",
+        "[e](/api/chats)",
+        "[f](vbscript:msgbox)",
+        "<file:///C:/Users>",
+        "[g](mailto:owner@example.org)",
+        "[h](HTTPS://example.org/x)",
+      ].join(" "),
+    )
+    const links = [...page.querySelectorAll("a")]
+    expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["g", "mailto:owner@example.org"],
+      ["h", "https://example.org/x"],
+    ])
+    for (const word of ["a", "b", "c", "d", "e", "f", "file:///C:/Users"]) expect(page.textContent).toContain(word)
+  })
+
+  it("shows an image at an address it will not link as its description", () => {
+    const page = draw("![the chart](file:///C:/chart.png)")
+    expect(page.querySelector("a, img")).toBeNull()
+    expect(page.textContent).toContain("the chart")
+  })
+
+  it("keeps every backslash of inline code and indented code, and escapes outside code still work", () => {
+    const page = draw("A share `\\\\server\\share`, a pattern `^\\d+\\.\\d+$`, \\*not emphasis\\*\n\n    C:\\\\Temp\\*.log\n")
+    expect([...page.querySelectorAll("p code")].map((c) => c.textContent)).toEqual(["\\\\server\\share", "^\\d+\\.\\d+$"])
+    expect(page.querySelector("pre")!.textContent).toBe("C:\\\\Temp\\*.log")
+    expect(page.querySelector("em")).toBeNull()
+    expect(page.textContent).toContain("*not emphasis*")
+  })
+
+  it("keeps code exactly in lists and links, and an escaped pipe in a table's code is the pipe", () => {
+    const page = draw("- copy `\\\\nas\\backup`\n- see [`a\\*b`](https://example.org)\n\n| Command | Means |\n|---|---|\n| `x \\| y` | either |\n")
+    expect([...page.querySelectorAll("li code")].map((c) => c.textContent)).toEqual(["\\\\nas\\backup", "a\\*b"])
+    expect(page.querySelector("td code")!.textContent).toBe("x | y")
+  })
+
+  it("takes inline code from the reply's text, not from a code block that looks the same", () => {
+    const page = draw("```\n`p\\.q`\n```\n\nThen `p.q` inline.")
+    expect(page.querySelector("pre")!.textContent).toBe("`p\\.q`")
+    expect(page.querySelector("p code")!.textContent).toBe("p.q")
+  })
 })

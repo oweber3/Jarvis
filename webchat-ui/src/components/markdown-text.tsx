@@ -1,22 +1,49 @@
 import { useMessagePartText } from "@assistant-ui/react"
-import Markdown, { type MarkdownToJSX } from "markdown-to-jsx"
+import { compiler, RuleType, type MarkdownToJSX } from "markdown-to-jsx"
 import { CheckIcon, CopyIcon, ImageIcon } from "lucide-react"
-import { Fragment, isValidElement, memo, type ComponentPropsWithoutRef, type FC, type JSX, type ReactNode } from "react"
+import {
+  Children,
+  cloneElement,
+  Fragment,
+  isValidElement,
+  memo,
+  useMemo,
+  type ComponentPropsWithoutRef,
+  type FC,
+  type JSX,
+  type ReactNode,
+} from "react"
 
+import { PartBoundary } from "@/components/ErrorBoundary"
 import { TooltipIconButton } from "@/components/tooltip-icon-button"
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard"
 import { highlight, type TokenKind } from "@/highlight"
 import { cn } from "@/lib/utils"
+import { rawCode } from "@/rawCode"
 
 // A reply's Markdown, drawn as React elements (never as HTML). Written for Jarvis on markdown-to-jsx, in place of
 // assistant-ui's react-markdown component, to keep the page small: the classes are those of assistant-ui's
 // markdown-text (git commit a1b2540).
 //
-// What a reply can carry is model output, so: HTML in it is shown as text, links open outside the chat (and only
-// for safe addresses, the library's sanitiser drops the rest), and an image is shown as a link to it, never fetched,
-// so a reply can make the page contact nothing.
+// What a reply can carry is model output, so: HTML in it is shown as text, only web and mail addresses become links
+// (opening outside the chat), an image is shown as a link to it, never fetched, so a reply can make the page contact
+// nothing, and nothing in it gets an id that could clash with the page's own. Code is kept exactly as written.
 
 type Props<T extends keyof JSX.IntrinsicElements> = ComponentPropsWithoutRef<T>
+
+/** The schemes a link in a reply may have; an image's link is a web address only. Anything else stays text. */
+const LINK_SCHEMES = new Set(["http:", "https:", "mailto:"])
+const IMAGE_SCHEMES = new Set(["http:", "https:"])
+
+/** The address a link or image of a reply may point at, as the browser reads it, or null for none. */
+export function safeAddress(value: string, tag: string): string | null {
+  try {
+    const url = new URL(value.trim())
+    return (tag === "img" ? IMAGE_SCHEMES : LINK_SCHEMES).has(url.protocol) ? url.href : null
+  } catch {
+    return null
+  }
+}
 
 const heading = (Tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6", className: string): FC<Props<"h1">> =>
   // The library gives headings an id from their text; ids from model output could collide with the page's own.
@@ -24,15 +51,20 @@ const heading = (Tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6", className: string
     return <Tag className={cn(className, extra)} {...props} />
   }
 
-const Link: FC<Props<"a">> = ({ className, href, children, ...props }) => (
-  <a
-    {...props}
-    {...(href ? { href, target: "_blank", rel: "noreferrer noopener" } : {})}
-    className={cn("aui-md-a text-primary hover:text-primary/80 underline underline-offset-2", className)}
-  >
-    {children}
-  </a>
-)
+const Link: FC<Props<"a">> = ({ className, href, children, ...props }) =>
+  href ? (
+    <a
+      {...props}
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className={cn("aui-md-a text-primary hover:text-primary/80 underline underline-offset-2", className)}
+    >
+      {children}
+    </a>
+  ) : (
+    <span>{children}</span>
+  )
 
 const Image: FC<Props<"img">> = ({ src, alt }) =>
   src ? (
@@ -45,7 +77,16 @@ const Image: FC<Props<"img">> = ({ src, alt }) =>
       <ImageIcon className="size-3.5 shrink-0" aria-hidden />
       {alt || "Image"}
     </a>
+  ) : alt ? (
+    <span>{alt}</span>
   ) : null
+
+// The library gives each footnote an id from its name, for links to it; a reply's links never point inside the page.
+const Footnotes: FC<Props<"footer">> = ({ children }) => (
+  <footer className="aui-md-footnotes text-muted-foreground border-muted-foreground/20 mt-3 border-t pt-2 text-sm">
+    {Children.map(children, (note) => (isValidElement<{ id?: string }>(note) ? cloneElement(note, { id: undefined }) : note))}
+  </footer>
+)
 
 const InlineCode: FC<Props<"code">> = ({ className, ...props }) => (
   <code
@@ -119,6 +160,8 @@ const styled = <T extends keyof JSX.IntrinsicElements>(Tag: T, className: string
     return <Element className={cn(className, extra)} {...props} />
   }
 
+const Quote = styled("blockquote", "aui-md-blockquote border-muted-foreground/30 text-muted-foreground my-3 border-s-2 ps-4")
+
 const Table: FC<Props<"table">> = ({ className, ...props }) => (
   <div className="aui-md-table-wrapper my-3 overflow-x-auto">
     <table className={cn("aui-md-table w-full border-separate border-spacing-0 text-sm", className)} {...props} />
@@ -140,6 +183,7 @@ const OPTIONS: MarkdownToJSX.Options = {
   forceBlock: true,
   // HTML in a reply is shown as the text it is.
   disableParsingRawHTML: true,
+  sanitizer: safeAddress,
   wrapper: Fragment,
   overrides: {
     h1: heading("h1", "aui-md-h1 mt-5 mb-2 scroll-m-20 text-xl font-semibold first:mt-0 last:mb-0"),
@@ -151,7 +195,7 @@ const OPTIONS: MarkdownToJSX.Options = {
     p: styled("p", "aui-md-p my-3 leading-relaxed first:mt-0 last:mb-0"),
     a: Link,
     img: Image,
-    blockquote: styled("blockquote", "aui-md-blockquote border-muted-foreground/30 text-muted-foreground my-3 border-s-2 ps-4"),
+    blockquote: Quote,
     ul: styled("ul", "aui-md-ul marker:text-muted-foreground my-3 ms-5 list-disc [&>li]:mt-1"),
     ol: styled("ol", "aui-md-ol marker:text-muted-foreground my-3 ms-5 list-decimal [&>li]:mt-1"),
     li: styled("li", "aui-md-li leading-relaxed"),
@@ -171,14 +215,43 @@ const OPTIONS: MarkdownToJSX.Options = {
     pre: CodeBlock,
     code: InlineCode,
     input: TaskBox,
+    footer: Footnotes,
   },
 }
 
-/** Markdown text, drawn once per text: a reply that has not changed is not parsed again. */
+/** The options for drawing ``text``: its code as written (see ``rawCode``), and a GitHub alert ("> [!NOTE]") as a
+ * quote under its label (the library would draw the label with its HTML rule, which is off). */
+function optionsFor(text: string): MarkdownToJSX.Options {
+  const raw = rawCode(text)
+  return {
+    ...OPTIONS,
+    renderRule(next, node, renderChildren, state) {
+      if (node.type === RuleType.codeInline) node.text = raw.inline(node.text)
+      else if (node.type === RuleType.codeBlock && !("attrs" in node)) node.text = raw.block(node.text)
+      else if (node.type === RuleType.blockQuote && node.alert)
+        return (
+          <Quote key={state.key}>
+            <span className="aui-md-alert text-foreground/80 mb-1 block text-xs font-semibold tracking-wide uppercase">
+              {node.alert}
+            </span>
+            {renderChildren(node.children, state)}
+          </Quote>
+        )
+      return next()
+    },
+  }
+}
+
+const Drawn: FC<{ text: string }> = ({ text }) => useMemo(() => compiler(text, optionsFor(text)), [text])
+
+/** Markdown text, drawn once per text: a reply that has not changed is not parsed again. One that cannot be drawn
+ * shows its words as plain text. */
 export const MarkdownContent: FC<{ text: string; className?: string }> = memo(function MarkdownContent({ text, className }) {
   return (
     <div className={cn("aui-md", className)}>
-      <Markdown options={OPTIONS}>{text}</Markdown>
+      <PartBoundary key={text} fallback={<p className="aui-md-p leading-relaxed whitespace-pre-wrap">{text}</p>}>
+        <Drawn text={text} />
+      </PartBoundary>
     </div>
   )
 })
