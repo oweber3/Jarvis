@@ -10,6 +10,7 @@ from ...types import StepNote, ToolExecutionResult
 from ....debug import debug_log
 from ....platform.windows.apps import PartialPlacementError
 from ....platform.windows.files import AmbiguousTargetError
+from ....platform.windows.window_states import normalise_window_word
 from ....utils.redact import redact
 
 PLACEMENT_FIELDS = ('monitor', 'zone', 'state')
@@ -35,7 +36,7 @@ def placement_request(given, always=False):
         raise ValueError('Placement options must be text.')
     if not given and not always:
         return None
-    state = given.get('state', 'restore')
+    state = normalise_window_word(given.get('state', 'restore'))
     if state not in ('restore', 'maximise'):
         raise ValueError('Unsupported state; use restore or maximise.')
     if state == 'maximise' and 'zone' in given:
@@ -183,7 +184,7 @@ class WindowsTool(Tool):
                        else {'target', *(PLACEMENT_FIELDS if self.placement_actions else ())})
             if not isinstance(args, dict) or set(args) - allowed:
                 raise ValueError('Invalid Windows tool arguments.')
-            action = args.get('action')
+            action = normalise_window_word(args.get('action'))
             if self.actions and action not in self.actions:
                 raise ValueError('Unsupported action.')
             target = args.get('target', '')

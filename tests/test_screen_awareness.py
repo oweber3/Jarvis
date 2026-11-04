@@ -224,3 +224,19 @@ def test_on_windows_the_tool_also_needs_the_windows_tools():
         BUILTIN_TOOLS.pop("screenshot", None)
         if saved is not None:
             BUILTIN_TOOLS["screenshot"] = saved
+
+
+def test_a_request_from_the_phone_is_refused_and_captures_nothing():
+    from jarvis.tools.request_scope import request_scope
+    with request_scope("phone"):
+        result, screen = run()
+    assert not result.success and screen.captured == [] and not result.images
+    assert "phone" in result.error_message.casefold()
+
+
+@pytest.mark.parametrize("origin", [None, "chat"])
+def test_a_request_at_the_pc_still_looks_at_the_screen(origin):
+    from jarvis.tools.request_scope import request_scope
+    with request_scope(origin):
+        result, screen = run()
+    assert result.success and screen.captured == [SIDE.bounds]

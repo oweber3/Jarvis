@@ -1,4 +1,4 @@
-"""Assistant state changes reach in-process subscribers and the desktop face, in that order of independence."""
+"""Assistant state changes reach in-process subscribers; core never reaches into the desktop app."""
 import pytest
 
 from jarvis import assistant_state
@@ -50,31 +50,6 @@ class TestAssistantState:
         assistant_state.set_state(AssistantState.SPEAKING)
         assert heard == [AssistantState.SPEAKING]
 
-    def test_the_desktop_face_is_told_even_when_nothing_subscribes(self, monkeypatch):
-        import desktop_app.face_widget as face_widget
-
-        told = []
-
-        class Face:
-            def set_state(self, state):
-                told.append(state)
-
-        monkeypatch.setattr(face_widget, "get_jarvis_state", lambda: Face())
-        assistant_state.set_state(AssistantState.THINKING)
-        assert told == [face_widget.JarvisState.THINKING]
-
-    def test_a_missing_desktop_face_never_blocks_subscribers(self, monkeypatch):
-        import desktop_app.face_widget as face_widget
-
-        def unavailable():
-            raise RuntimeError("no Qt here")
-
-        monkeypatch.setattr(face_widget, "get_jarvis_state", unavailable)
-        heard = []
-        assistant_state.subscribe(heard.append)
-        assistant_state.set_state(AssistantState.LISTENING)
-        assert heard == [AssistantState.LISTENING]
-
     def test_every_state_has_a_desktop_face_equivalent(self):
         from desktop_app.face_widget import JarvisState
         assert {s.value for s in AssistantState} == {s.value for s in JarvisState}
@@ -93,3 +68,19 @@ def test_replace_state_changes_only_from_the_expected_state():
     assert assistant_state.current() is AssistantState.LISTENING
     assert seen == [AssistantState.IDLE, AssistantState.LISTENING]
     assistant_state.reset()
+
+
+@pytest.mark.unit
+def test_no_module_under_jarvis_imports_the_desktop_app():
+    import ast
+    from pathlib import Path
+
+    root = Path(assistant_state.__file__).resolve().parent
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            names = ([alias.name for alias in node.names] if isinstance(node, ast.Import)
+                     else [node.module or ""] if isinstance(node, ast.ImportFrom) and node.level == 0 else [])
+            if any(name == "desktop_app" or name.startswith("desktop_app.") for name in names):
+                offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+    assert offenders == []

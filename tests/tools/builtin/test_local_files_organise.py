@@ -183,6 +183,27 @@ def test_rename_with_a_new_extension_uses_it(home):
     assert data(run({'operation': 'rename', 'path': str(source), 'new_name': 'notes.md'}))['to'].endswith('notes.md')
 
 
+@pytest.mark.parametrize('new_name', ['report v2.1', 'minutes 2026.11.04', 'draft_final.2'])
+def test_rename_keeps_the_extension_when_the_new_name_ends_in_digits_after_a_dot(home, new_name):
+    source = make(home / 'report.docx')
+    result = data(run({'operation': 'rename', 'path': str(source), 'new_name': new_name}))
+    assert result['to'] == str(home / f'{new_name}.docx')
+    assert (home / f'{new_name}.docx').exists()
+
+
+@pytest.mark.parametrize('new_name', ['report.pdf', 'archive.7z', 'song.mp3', 'отчёт.тхт'])
+def test_rename_respects_an_explicit_extension_with_a_letter(home, new_name):
+    source = make(home / 'report.docx')
+    assert data(run({'operation': 'rename', 'path': str(source), 'new_name': new_name}))['to'] == str(home / new_name)
+
+
+def test_renaming_a_folder_never_adds_or_drops_anything(home):
+    (home / 'Project.old').mkdir()
+    result = data(run({'operation': 'rename', 'path': str(home / 'Project.old'), 'new_name': 'Project v2.1'}))
+    assert result['kind'] == 'folder' and result['to'] == str(home / 'Project v2.1')
+    assert (home / 'Project v2.1').is_dir()
+
+
 def test_a_rename_that_only_changes_letter_case_works(home):
     source = make(home / 'report.pdf')
     data(run({'operation': 'rename', 'path': str(source), 'new_name': 'Report.pdf'}))

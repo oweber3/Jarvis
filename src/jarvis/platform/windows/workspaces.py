@@ -15,6 +15,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from . import apps, displays
+from .window_states import normalise_window_word
 from ...debug import debug_log
 from ...utils import names
 
@@ -54,7 +55,7 @@ def _load_item(raw, position: int):
     if zone is not None:
         item['zone'] = zone.strip() if isinstance(zone, str) else list(zone)
     if state is not None:
-        item['state'] = state.strip()
+        item['state'] = normalise_window_word(state.strip())
     if raw['kind'] == 'browser_window':
         urls, browser = raw.get('urls'), raw.get('browser')
         if not (isinstance(urls, list) and urls and all(_text(url) for url in urls)):

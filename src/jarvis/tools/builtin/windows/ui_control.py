@@ -11,6 +11,7 @@ from ...base import Tool
 from ...types import ToolExecutionResult
 from ....debug import debug_log
 from ....utils.redact import redact
+from ...request_scope import from_phone
 from .desktop_control import _redact_data
 
 ACTIONS = ('snapshot', 'click', 'set_text', 'select', 'toggle', 'expand', 'menu', 'read', 'scroll')
@@ -18,6 +19,7 @@ _ALIASES = {'invoke': 'click'}
 _ARGUMENTS = ('action', 'window', 'element', 'value')
 _TIMEOUT_SEC = 12
 _INSPECT_TIMEOUT_SEC = 3
+FROM_PHONE = 'Controls of apps on the PC screen can be used only at the PC, not for a request from the phone.'
 # Actions that commit something when aimed at an irreversible control.
 _COMMITTING = ('click', 'toggle')
 # Actions that change the window and so leave a desktop referent.
@@ -192,7 +194,8 @@ class UiControlTool(Tool):
             action, window, element, value = self._parse(args)
         except ValueError:
             return request(SafetyTier.SAFE)
-        if not getattr(cfg, 'windows_tools_enabled', True):
+        if not getattr(cfg, 'windows_tools_enabled', True) or from_phone():
+            # Nothing on the screen is inspected; run() refuses the call.
             return request(SafetyTier.SAFE)
         if action in ('set_text', 'read') and element.strip():
             info = self._inspect(window, element, lambda _name: False)
@@ -229,6 +232,9 @@ class UiControlTool(Tool):
             if not context.cfg.windows_tools_enabled:
                 raise ValueError("Windows control is disabled; set 'windows_tools_enabled' to true to use it.")
             action, window, element, value = self._parse(args)
+            if from_phone():
+                debug_log(f'{self.name} refused: the request came from a phone.', 'windows')
+                raise ValueError(FROM_PHONE)
             from ....platform.windows import ui_automation as ui
             from ....platform.windows._bounded import run_bounded
             if action == 'snapshot':

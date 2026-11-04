@@ -30,7 +30,7 @@ A workspace is a named desk set-up: a list of items (browser windows, applicatio
 - Every item has `kind`, optional `label` and the placement fields below. `label` is how the item is named in results and in the desktop record; without one it is derived from the kind and position (`browser window 2`), or the application name for `app`.
 - `browser_window`: `urls` (a non-empty list of `http(s)` URLs and/or local file paths, opened as tabs of one new window) and optional `browser`. Local paths may use `%ENVVARS%` and `~`.
 - `app`: `target`, an application name resolved like `appControl open` (aliases from `windows_app_aliases` apply).
-- Placement on every item: `monitor` (required; any value `windowControl place` accepts: device, alias, number, `primary`, `left`, `right`), optional `zone` and optional `state` (`restore`, the default, or `maximise`).
+- Placement on every item: `monitor` (required; any value `windowControl place` accepts: device, alias, number, `primary`, `left`, `right`), optional `zone` and optional `state` (`restore`, the default, or `maximise`; `maximize` in any case is read as `maximise`).
   - `zone` is a name or number (configured zone or FancyZones zone for that display) or an inline `[x, y, width, height]` of fractions of the work area for when no named zone fits. `maximise` cannot be combined with a zone.
 - Loading drops, with counts only logged, a workspace that is not an object, has no usable name, has no items, or has an item of unknown kind or the wrong shape (a missing or non-text `monitor`, an empty `urls`, a `zone` that is neither text nor four numbers). It is a structural check; whether files exist and displays resolve is decided when the workspace is opened.
 - `folder` and `file` items are not part of this version.

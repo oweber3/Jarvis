@@ -7,6 +7,7 @@ import time
 
 from .apps import name_tokens
 from . import displays
+from .window_states import normalise_window_word
 from ...debug import debug_log
 
 # Native frame rounding and DWM shadows make exact pixel agreement unrealistic.
@@ -215,6 +216,7 @@ def _close_window(hwnd: int):
 
 
 def control_window(action: str, target: str = '', *, process_only: bool = False) -> dict:
+    action = normalise_window_word(action)
     if action not in {'list', 'close', 'focus', 'minimise', 'maximise', 'restore'}:
         raise ValueError(f'Unsupported window action: {action}')
     windows = list_windows()
@@ -282,6 +284,7 @@ def _close_to(actual, expected, tolerance=PLACEMENT_TOLERANCE_PX) -> bool:
 
 def validate_placement(monitor: displays.Monitor, rectangle, state: str) -> displays.Rectangle | None:
     """Reject impossible placements before anything is launched or moved."""
+    state = normalise_window_word(state)
     if state not in ('restore', 'maximise'):
         raise ValueError(f'Unsupported placement state: {state}')
     if state == 'maximise' and rectangle is not None:
@@ -362,6 +365,7 @@ def place_window(hwnd: int, monitor: displays.Monitor, rectangle: displays.Recta
     window keeps its size, clamped into the work area. ``state='maximise'`` fills the work area
     of ``monitor``. ``deadline`` is a ``time.monotonic()`` instant shared with the caller.
     """
+    state = normalise_window_word(state)
     target = validate_placement(monitor, rectangle, state)
     if deadline is None:
         deadline = time.monotonic() + _PLACEMENT_BUDGET_SEC

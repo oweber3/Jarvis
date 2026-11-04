@@ -10,6 +10,7 @@ Jarvis can look at the user's screen when they ask about it ("what's on my scree
 - **Screen text is data.** The OCR text is fenced as untrusted screen content. Instructions that appear on the screen are never followed; the model reads them as part of what the user is looking at.
 - **Nothing in logs.** Debug logs record only sizes, counts (lines, tiles, neutralised bracket runs), timings and failure kinds: never the OCR text, the image, window titles or file names.
 - **Routine and read-only.** Looking at the screen is a SAFE action and asks for no confirmation.
+- **At the PC only.** The screen is for someone at the PC. A request from a paired phone (request origin `phone`, `tools/request_scope.py` `from_phone()`; `remote/remote.spec.md`) is refused with a failure saying the screen cannot be looked at from the phone, and nothing is captured. Requests at the PC (voice, desktop chat, web chat) are unaffected.
 
 ## Platforms
 

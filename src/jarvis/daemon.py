@@ -120,6 +120,8 @@ ACTIVITY_IPC_PREFIX = "__ACTIVITY__:"
 # Web chat (subprocess mode): once the server is up the daemon tells the desktop app its port and the
 # identity token the server proves it holds, so the chat window never shows another program on the port.
 WEB_CHAT_EVENT_PREFIX = "__WEB_CHAT__:"
+# Daemon -> desktop app: the assistant state after each change, e.g. ``__ASSISTANT_STATE__:listening``.
+ASSISTANT_STATE_IPC_PREFIX = "__ASSISTANT_STATE__:"
 # Document search (subprocess mode): the tray asks to rebuild or delete the index, and Settings to stop
 # cloud sharing, with ``{"action": "rebuild" | "delete" | "stop_sharing"}``.
 DOCUMENTS_IPC_PREFIX = "__DOCUMENTS__:"
@@ -509,6 +511,29 @@ def _desktop_owns_stdio() -> bool:
 
 def _write_stdout_line(line: str) -> None:
     print(line, flush=True)
+
+
+def _emit_assistant_state(state: AssistantState) -> None:
+    _write_stdout_line(f"{ASSISTANT_STATE_IPC_PREFIX}{state.value}")
+
+
+def open_assistant_state_channel():
+    """Start this run asleep and, when the desktop app started this daemon, send it every state change.
+
+    A run starting asleep means the state a previous in-process run left behind never swallows this run's
+    first change. Returns a function that stops sending and leaves the state asleep.
+    """
+    from . import assistant_state
+    set_state(AssistantState.ASLEEP)
+    unsubscribe = assistant_state.subscribe(_emit_assistant_state) if _desktop_owns_stdio() else None
+    debug_log(f"assistant state channel opened (desktop pipe: {unsubscribe is not None})", "state")
+
+    def close() -> None:
+        set_state(AssistantState.ASLEEP)
+        if unsubscribe is not None:
+            unsubscribe()
+
+    return close
 
 
 def _emit_confirmed_chat_event(reply: str) -> None:
@@ -1452,6 +1477,7 @@ def main(smoke_test: bool = False) -> None:
     _global_stop_requested = False
 
     _install_signal_handlers()
+    close_state_channel = open_assistant_state_channel()
 
     cfg = load_settings()
     configure_windows_tools(cfg)
@@ -1733,6 +1759,7 @@ def main(smoke_test: bool = False) -> None:
             except Exception:
                 pass
 
+        close_state_channel()
         if tts is not None:
             try:
                 tts.stop()
@@ -1862,6 +1889,7 @@ def main(smoke_test: bool = False) -> None:
             except Exception:
                 pass
             debug_log("voice thread stopped", "jarvis")
+        close_state_channel()
 
         # A chat worker that started just before the stop request is still
         # inside run_reply_engine, holding the database connection the

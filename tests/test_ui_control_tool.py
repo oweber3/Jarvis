@@ -247,3 +247,25 @@ def test_os_failures_are_reported_not_raised(registry, cfg, monkeypatch):
     monkeypatch.setattr(ui, 'act', broken)
     result = _run(registry, cfg, {'action': 'click', 'element': 'Apply'})
     assert not result.success and '0x80004005' in result.error_message
+
+
+@pytest.mark.parametrize('args', [{'action': 'snapshot'}, {'action': 'click', 'element': 'Apply'},
+                                  {'action': 'read', 'element': 'Subject'}])
+def test_a_request_from_the_phone_is_refused_and_touches_nothing(registry, cfg, monkeypatch, args):
+    from jarvis.tools.request_scope import request_scope
+    fake = FakeUi(monkeypatch)
+    inspected = []
+    monkeypatch.setattr(ui, 'inspect', lambda *a, **k: inspected.append(a) or dict(fake.info))
+    with request_scope('phone'):
+        result = _run(registry, cfg, args)
+    assert not result.success and 'phone' in result.error_message.casefold()
+    assert fake.calls == [] and inspected == []
+
+
+def test_a_request_at_the_pc_still_controls_the_window(registry, cfg, monkeypatch):
+    from jarvis.tools.request_scope import request_scope
+    fake = FakeUi(monkeypatch)
+    with request_scope('chat'):
+        result = _run(registry, cfg, {'action': 'click', 'element': 'Apply'})
+    assert result.success, result.error_message
+    assert fake.calls == [('click', '', 'Apply', '')]

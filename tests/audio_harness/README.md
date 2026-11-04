@@ -44,8 +44,9 @@ Inside the `with` block the harness:
   latency modules) with `SimClock`;
 - loads settings from defaults in a throwaway config
   (`JARVIS_CONFIG_PATH` is restored on exit), never the user's file;
-- records face states instead of writing the state file a running
-  Jarvis's orb reads.
+- records the assistant states the listener sets (`face_states`) by
+  subscribing to `jarvis.assistant_state`, so a running Jarvis's orb is
+  never touched.
 
 It is safe to use from scripts as well as tests. Hot-window timers still
 run on real `threading.Timer`s; drive TTS-dependent paths explicitly.
