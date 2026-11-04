@@ -40,6 +40,12 @@ def announce(broker):
         "name": "Chime", "unique_id": "chime_1", "command_topic": "chime/press"})
 
 
+@pytest.fixture(autouse=True)
+def _short_test_settle(monkeypatch):
+    """A loopback broker delivers retained messages at once, so a connection test settles in far less than a second."""
+    monkeypatch.setattr(mqtt, "TEST_SETTLE_SEC", 0.3)
+
+
 @pytest.fixture
 def broker():
     server = FakeBroker()
@@ -143,8 +149,9 @@ class TestCommands:
         assert ("plug/7/set", b"ON", False) in broker.published
         assert registry.get("mqtt:plug_7").state == "on"
 
-    def test_json_schema_lights_get_json_commands(self, connector, broker):
+    def test_json_schema_lights_get_json_commands(self, connector, broker, monkeypatch):
         conn, registry = connector
+        monkeypatch.setattr(mqtt, "CONFIRM_TIMEOUT_SEC", 0.2)   # this light never reports back
         conn.send(registry.get("mqtt:desk_light_1"), Command("set", "colour", "red"))
         topic, payload, retain = broker.published[-1]
         assert topic == "home/desk/set" and not retain
