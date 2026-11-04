@@ -298,6 +298,8 @@ export function describeError(error: unknown): string {
       return "This chat changed since the page last showed it, so nothing was taken back. Have a look and try again."
     case "out_of_step":
       return "That message can't be asked again just now. Send it as a new message instead."
+    case "not_taken_back":
+      return "Jarvis couldn't take those messages back, so nothing changed. Try again in a moment."
     case "not_user":
     case "unknown":
       return "That message is no longer in this chat."

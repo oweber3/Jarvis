@@ -464,8 +464,9 @@ class ChatHub:
         asking holds, so it has shown the owner everything that would go. Besides a request's outcomes the status
         can be ``unknown`` (no such chat or message), ``not_open``, ``not_user`` (a reply, not the owner's
         message), ``changed`` (the chat's newest message is not ``newest_id``: it gained or lost messages the page
-        has not shown) or ``out_of_step`` (the conversation does not hold the chat's newest turns); neither of the
-        last two changes anything."""
+        has not shown), ``out_of_step`` (the conversation does not hold the chat's newest turns) or
+        ``not_taken_back`` (the store could not remove them, so the conversation was put back); none of the last
+        three changes anything."""
         with self._sync_lock:
             self.sync()
             if self._store.get_chat(chat_id) is None:
@@ -488,18 +489,25 @@ class ChatHub:
             history = [self._turn_payload(m) for m in stored]
             query_id = self._register(source, on_finish)
 
-            def on_rewind(cursor: Optional[float]) -> None:
+            def on_rewind(cursor: Optional[float]) -> bool:
                 if cursor is None:
                     self._finish(query_id, "out_of_step")
-                    return
+                    return False
                 # Still inside this call and the sync lock, so no mirror pass can run between the swap and here.
-                self._store.delete_messages_from(chat_id, message_id)
+                try:
+                    self._store.delete_messages_from(chat_id, message_id)
+                except Exception as exc:  # the daemon puts the conversation back: nothing changed anywhere
+                    debug_log(f"webchat: query {query_id} could not take messages back: {type(exc).__name__}",
+                              "webchat")
+                    self._finish(query_id, "not_taken_back")
+                    return False
                 self._cursor = cursor
                 self._drop_steps()
                 with self._cond:
                     self._notices.clear()
                     self._history_rev += 1
                     self._bump_locked()
+                return True
 
             debug_log(f"webchat: query {query_id} asks a stored message again", "webchat")
             return self._send(query_id, lambda **callbacks: self._backend.rewind(
@@ -550,7 +558,7 @@ class ChatHub:
         with self._cond:
             self._submitting.discard(query_id)
             outcome = self._outcomes.pop(query_id, "accepted")
-        refused = outcome in ("busy", "unavailable", "out_of_step")
+        refused = outcome in ("busy", "unavailable", "out_of_step", "not_taken_back")
         return SubmitResult(status=outcome if refused else "accepted", query_id=query_id)
 
     def _check_images(self, held: Sequence[RequestAttachment]) -> None:

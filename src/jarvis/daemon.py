@@ -1034,18 +1034,22 @@ def rewind_chat_conversation(
     turns taken back never get a diary pass of their own.
 
     ``on_rewind(cursor)`` reports first: the mirror cursor for ``DialogueMemory.messages_after`` once the rewind
-    applied (followed by the usual ``start`` / ``complete``), or ``None`` when memory and chat disagree or the
-    daemon is not running, which changes nothing. A query already running answers ``busy``."""
+    applied, or ``None`` when memory and chat disagree or the daemon is not running, which changes nothing. Given
+    a cursor, it answers whether to go on: when it returns False or raises (the chat could not take its messages
+    back), the conversation is put back as it was and nothing is asked; otherwise the usual ``start`` /
+    ``complete`` follow. A query already running answers ``busy``."""
     callbacks = {"on_start": on_start, "on_token": on_token, "on_tool_call": on_tool_call,
                  "on_complete": on_complete, "on_busy": on_busy}
     dm, cfg, db = _global_dialogue_memory, _global_cfg, _global_db
 
-    def report(cursor) -> None:
-        if on_rewind is not None:
-            try:
-                on_rewind(cursor)
-            except Exception as exc:
-                debug_log(f"chat rewind callback failed: {type(exc).__name__}", "chat")
+    def report(cursor) -> bool:
+        if on_rewind is None:
+            return True
+        try:
+            return on_rewind(cursor) is not False
+        except Exception as exc:
+            debug_log(f"chat rewind callback failed: {type(exc).__name__}", "chat")
+            return False
 
     if (not text or not text.strip() or dm is None or cfg is None or db is None or is_stop_requested()
             or not 0 <= keep <= len(history)):
@@ -1056,39 +1060,40 @@ def rewind_chat_conversation(
         debug_log("chat rewind rejected: a query is in flight", "chat")
         return
     try:
-        cursor = _rewind_memory(dm, history, keep)
+        taken = _rewind_memory(dm, history, keep)
     except Exception as exc:
         debug_log(f"chat rewind failed: {type(exc).__name__}", "chat")
-        cursor = None
-    report(cursor)
-    if cursor is None:
+        taken = None
+    if taken is None:
+        report(None)
         debug_log("chat rewind refused: the conversation and the chat disagree", "chat")
+        _chat_query_lock.release()
+        return
+    if not report(taken.cursor):
+        dm.put_back(taken)
+        debug_log("chat rewind undone: the chat could not take its messages back", "chat")
         _chat_query_lock.release()
         return
     debug_log(f"chat rewind applied ({len(history) - keep} turns taken back), asking again", "chat")
     _start_text_query_worker(text, dm, cfg, db, callbacks=callbacks, use_ipc=False, origin=origin)
 
 
-def _rewind_memory(dm, history: list, keep: int) -> Optional[float]:
-    """Drop what follows ``history[keep - 1]`` from ``dm``; the caller holds the query lock. None when memory's
-    turns are not the chat's newest ones. Some of memory's turns stay: memory loses the rest. None of them stay:
-    memory gets the chat's turns before the point instead."""
+def _rewind_memory(dm, history: list, keep: int):
+    """Take ``dm`` back to before ``history[keep]`` (``DialogueMemory.take_back``); the caller holds the query lock.
+    A turn memory holds may be the chat's redacted once more. When memory holds nothing from before the point it
+    gets the chat's turns before it, as opening the chat does. None when memory's turns are not the chat's newest
+    ones."""
     from .utils.redact import redact
-
-    held = dm.all_messages()
-    if len(held) > len(history):
-        return None
-    for turn, stored in zip(held, history[len(history) - len(held):]):
-        content = str(stored.get("content", "")).strip()
-        if turn["role"] != stored.get("role") or turn["content"] not in (content, redact(content).strip()):
-            return None
-    taken_back = len(history) - keep
-    if taken_back < len(held):
-        dm.drop_last_turns(taken_back)
-        return dm.last_timestamp()
-    # Memory held nothing from before the point: it gets the chat's turns before it, as opening the chat does.
     from .webchat.hub import RESTORE_TURNS
 
+    # Only the chat's newest turns can line up with memory's, so only as many as it holds are redacted. Meanwhile
+    # memory can only lose its oldest turns (a diary pass) or gain a newest one (an announcement, which then does
+    # not line up anyway).
+    newest = len(history) - len(dm.all_messages())
+    chat_turns = []
+    for index, stored in enumerate(history):
+        content = str(stored.get("content", "")).strip()
+        chat_turns.append((stored.get("role"), (content, redact(content).strip()) if index >= newest else (content,)))
     restored = []
     for m in history[max(0, keep - RESTORE_TURNS):keep]:
         turn = {"role": m["role"], "content": redact(str(m["content"]))}
@@ -1096,7 +1101,7 @@ def _rewind_memory(dm, history: list, keep: int) -> Optional[float]:
             turn["diary"] = False
             turn["private_sources"] = [str(s) for s in (m.get("private_sources") or ())]
         restored.append(turn)
-    return dm.set_messages(restored, saved=True)
+    return dm.take_back(chat_turns, keep, restored)
 
 
 def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc: bool, origin: str,

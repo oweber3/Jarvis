@@ -1069,3 +1069,65 @@ class TestWebChatRewind:
         _wait_for_complete(events)
 
         assert seen[0][2] == "phone"
+
+    def test_an_announcement_landing_while_the_rewind_checks_is_never_taken_back_in_its_place(self, monkeypatch):
+        """A timer or reminder adds its turn without the query lock. Landing while the rewind compares the chat
+        with the conversation, it must not be dropped in place of a turn taken back."""
+        import jarvis.utils.redact as redact_module
+
+        history = self._chat("one", "1", "two", "2")
+        dm = self._memory_of(history)
+        seen, events = [], []
+        self._engine(monkeypatch, seen)
+        real_redact = redact_module.redact
+        landed = []
+
+        def redact_while_a_timer_fires(text, *args, **kwargs):
+            if not landed:
+                landed.append(True)
+                dm.add_message("assistant", "Your timer is done.")
+            return real_redact(text, *args, **kwargs)
+
+        monkeypatch.setattr(redact_module, "redact", redact_while_a_timer_fires)
+        self._rewind(history, 2, "two, reworded", events)
+
+        assert landed
+        assert [m["content"] for m in dm.all_messages()] == ["one", "1", "two", "2", "Your timer is done."]
+        assert events == [("rewind", None)] and seen == []
+        assert not daemon.is_query_running()
+
+    def test_when_the_chat_cannot_take_its_messages_back_the_conversation_is_put_back(self, monkeypatch):
+        history = self._chat("one", "1", "two", "2")
+        dm = self._memory_of(history)
+        unsaved = [m["content"] for m in dm.detach_unsaved().all_messages()]
+        seen, events = [], []
+        self._engine(monkeypatch, seen)
+
+        def store_fails(cursor):
+            events.append(("rewind", cursor))
+            dm.add_message("assistant", "Your timer is done.")  # lands after the rewind, before the store fails
+            raise OSError("the chat could not take its messages back")
+
+        daemon.rewind_chat_conversation(history, 2, "two, reworded", on_rewind=store_fails,
+                                        on_complete=lambda reply: events.append(("complete", reply)))
+
+        assert [m["content"] for m in dm.all_messages()] == ["one", "1", "two", "2", "Your timer is done."]
+        assert [m.content for m in dm.messages_after(events[0][1])] == ["Your timer is done."]
+        assert [m["content"] for m in dm.detach_unsaved().all_messages()] == unsaved + ["Your timer is done."]
+        assert seen == [] and [e[0] for e in events] == ["rewind"]
+        assert not daemon.is_query_running()
+
+    def test_a_refusal_from_the_chat_puts_back_turns_older_than_memory_held(self, monkeypatch):
+        history = self._chat("one", "1", "two", "2", "three", "3")
+        history[5] = {**history[5], "diary": False, "private_sources": ["calendar"]}
+        dm = self._memory_of([])
+        dm.add_message("user", "three")
+        dm.add_message("assistant", "3", diary=False, private_sources=["calendar"])
+        before = dm.all_messages()
+        seen = []
+        self._engine(monkeypatch, seen)
+
+        daemon.rewind_chat_conversation(history, 2, "two again", on_rewind=lambda cursor: False)
+
+        assert dm.all_messages() == before
+        assert seen == [] and not daemon.is_query_running()

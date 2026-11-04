@@ -238,6 +238,27 @@ class TestRewind:
         assert hub.rewind(chat, ids[2], newest_id=ids[-1] + 7).status == "changed"
         assert [m.id for m in store.messages(chat)] == ids
 
+    def test_when_the_chat_cannot_take_its_messages_back_nothing_changes(self, hub, backend, store, monkeypatch):
+        import sqlite3
+
+        chat, ids = self.two_exchanges(hub, store)
+
+        def cannot(*_args):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(store, "delete_messages_from", cannot)
+        before = hub.snapshot(0)["history_rev"]
+        assert hub.rewind(chat, ids[2], "again", newest_id=ids[-1]).status == "not_taken_back"
+        assert [m.id for m in store.messages(chat)] == ids
+        assert [m["content"] for m in backend.memory.all_messages()] == [
+            "first question", "Done.", "second question", "Done."]
+        snap = hub.snapshot(0)
+        assert snap["busy_query"] is False and snap["history_rev"] == before
+        assert backend.submitted == ["first question", "second question"]
+        hub.submit("third question")  # the chat still mirrors the conversation, each turn once
+        assert [m.content for m in store.messages(chat)] == [
+            "first question", "Done.", "second question", "Done.", "third question", "Done."]
+
     def test_every_page_is_told_the_chat_lost_messages(self, hub, store):
         chat, ids = self.two_exchanges(hub, store)
         before = hub.snapshot(0)["history_rev"]

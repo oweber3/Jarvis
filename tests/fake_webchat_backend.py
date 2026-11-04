@@ -87,18 +87,14 @@ class FakeWebChatBackend:
         if self.busy or self.mode == "busy":
             on_busy()
             return
-        held = [(m["role"], m["content"]) for m in self.memory.all_messages()]
-        tail = [(m["role"], m["content"]) for m in history[len(history) - len(held):]] if len(held) <= len(history) else None
-        if tail != held:
+        chat_turns = [(m["role"], (m["content"],)) for m in history]
+        taken = self.memory.take_back(chat_turns, keep, history[max(0, keep - 20):keep])
+        if taken is None:
             on_rewind(None)
             return
-        taken_back = len(history) - keep
-        if taken_back < len(held):
-            self.memory.drop_last_turns(taken_back)
-            cursor = self.memory.last_timestamp()
-        else:
-            cursor = self.memory.set_messages(history[max(0, keep - 20):keep], saved=True)
-        on_rewind(cursor)
+        if on_rewind(taken.cursor) is False:
+            self.memory.put_back(taken)
+            return
         self.submit(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy, origin=origin)
 
     def attachment_support(self) -> dict:

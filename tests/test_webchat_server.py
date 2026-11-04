@@ -289,6 +289,22 @@ class TestChats:
                                  {"message_id": reply - 1, "newest_id": parts.store.messages(chat_id)[-1].id})
         assert (status, answer["error"]) == (409, "busy")
 
+    def test_a_rewind_the_chat_cannot_save_changes_nothing(self, parts, monkeypatch):
+        import sqlite3
+
+        call(parts, "POST", "/api/chat", {"text": "hello"})
+        chat_id = parts.store.get_active_chat_id()
+        stored = parts.store.messages(chat_id)
+
+        def cannot(*_args):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(parts.store, "delete_messages_from", cannot)
+        status, answer, _ = call(parts, "POST", f"/api/chats/{chat_id}/rewind",
+                                 {"message_id": stored[0].id, "newest_id": stored[-1].id, "text": "hi"})
+        assert (status, answer["error"]) == (500, "not_taken_back")
+        assert [m.content for m in parts.store.messages(chat_id)] == ["hello", "Done."]
+
     def test_rename_and_move(self, parts):
         project = parts.store.create_project("Work")
         chat_id = parts.store.get_active_chat_id() or call(parts, "GET", "/api/library")[1]["active_chat_id"]

@@ -237,6 +237,33 @@ class TestTakingMessagesBack:
         store.delete_messages_from(chat.id, removed.id)
         assert store.append_message(chat.id, "user", "new", ts=2.0).id > removed.id
 
+    def test_a_removal_that_cannot_be_saved_removes_nothing(self, store):
+        chat = store.create_chat()
+        ids = [store.append_message(chat.id, "user", f"m{i}", ts=float(i)).id for i in range(3)]
+        real = store.conn
+
+        class CommitFails:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def execute(self, *args):
+                return self._conn.execute(*args)
+
+            def commit(self):
+                raise sqlite3.OperationalError("disk I/O error")
+
+            def rollback(self):
+                self._conn.rollback()
+
+        store.conn = CommitFails(real)
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                store.delete_messages_from(chat.id, ids[0])
+        finally:
+            store.conn = real
+        assert [m.id for m in store.messages(chat.id)] == ids
+        assert store.get_chat(chat.id).title == "m0"
+
 
 class TestState:
     def test_the_open_chat_is_remembered_across_restarts(self, tmp_path):

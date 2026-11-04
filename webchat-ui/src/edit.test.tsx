@@ -4,6 +4,7 @@ import type { ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { Thread } from "@/components/thread.aui"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { ApiError, describeError } from "@/api"
 import { FakeJarvis } from "@/test/fakeJarvis"
 import { JarvisProvider, useJarvis } from "@/useJarvis"
 
@@ -156,5 +157,21 @@ describe("asking a sent message again", () => {
 
     await waitFor(() => expect(fake.sent).toContain("Do the other thing"))
     expect(fake.rewinds).toEqual([])
+  })
+})
+
+describe("what the owner is told when a message cannot be asked again", () => {
+  it("explains every reason the server gives", () => {
+    for (const [status, code] of [
+      [409, "not_open"],
+      [409, "changed"],
+      [409, "out_of_step"],
+      [500, "not_taken_back"],
+      [400, "not_user"],
+      [404, "unknown"],
+      [409, "busy"],
+    ] as const) {
+      expect(describeError(new ApiError(status, code)), code).not.toBe("That didn't work.")
+    }
   })
 })

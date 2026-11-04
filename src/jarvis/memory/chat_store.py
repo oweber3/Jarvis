@@ -378,10 +378,15 @@ class ChatStore:
 
     def delete_messages_from(self, chat_id: str, message_id: int) -> int:
         """Remove the message ``message_id`` of a chat and every later one (a Rewind takes them back). Removed rows
-        are overwritten (``secure_delete``). Returns how many went."""
+        are overwritten (``secure_delete``). All or nothing: on an error nothing is removed. Returns how many went."""
         with self._lock:
-            cur = self.conn.execute("DELETE FROM chat_messages WHERE chat_id = ? AND id >= ?", (chat_id, message_id))
-            self.conn.commit()
+            try:
+                cur = self.conn.execute("DELETE FROM chat_messages WHERE chat_id = ? AND id >= ?",
+                                        (chat_id, message_id))
+                self.conn.commit()
+            except sqlite3.Error:
+                self.conn.rollback()
+                raise
         debug_log(f"web chat: {cur.rowcount} messages taken back", "webchat")
         return cur.rowcount
 

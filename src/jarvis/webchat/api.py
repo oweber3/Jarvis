@@ -311,7 +311,7 @@ class ChatApi:
 
     # How a refused rewind answers, beside a request's own refusals.
     _REWIND_STATUS = {"unknown": 404, "not_open": 409, "not_user": 400, "changed": 409, "out_of_step": 409,
-                      "busy": 409}
+                      "busy": 409, "not_taken_back": 500}
 
     def _rewind(self, chat_id, call):
         body = call.body
