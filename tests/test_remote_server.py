@@ -227,6 +227,16 @@ class TestChatThroughTheSharedHub:
         _, library, _ = client.request("GET", "/api/library")
         assert library["active_chat_id"] == chat_store.get_active_chat_id()
 
+    def test_a_phone_can_ask_a_sent_message_again_as_a_phone(self, server, store, chat_backend, chat_store):
+        client = paired_client(server, store)
+        client.request("POST", "/api/chat", {"text": "hello"})
+        chat_id = chat_store.get_active_chat_id()
+        first = chat_store.messages(chat_id)[0].id
+        status, _, _ = client.request("POST", f"/api/chats/{chat_id}/rewind", {"message_id": first, "text": "hi"})
+        assert status == 202
+        assert [m.content for m in chat_store.messages(chat_id)] == ["hi", "Done."]
+        assert chat_backend.origins == ["phone", "phone"]
+
     def test_busy_is_a_conflict(self, server, store, chat_backend):
         chat_backend.mode = "busy"
         assert paired_client(server, store).request("POST", "/api/chat", {"text": "hi"})[0] == 409

@@ -54,7 +54,7 @@ copy, and apply the differences to ours.
 
 | File | Origin |
 |---|---|
-| `components/thread.aui.tsx` | assistant-ui, trimmed (no tool and reasoning groups, feedback, editing, branching, dictation), with a notice line, a slot for the model picker, a slot above the composer (the phone app's dock), message times, day dividers, scroll-to-search-result, and the attachment chips, drop target and buttons wired in |
+| `components/thread.aui.tsx` | assistant-ui, trimmed (no tool and reasoning groups, feedback, branching, dictation), its edit composer kept for Edit with a note of what sending does, Copy, Edit and Ask again actions that stay in the page for the keyboard, load-earlier and back-to-latest controls for long chats, with a notice line, a slot for the model picker, a slot above the composer (the phone app's dock), message times, day dividers, scroll-to-search-result, and the attachment chips, drop target and buttons wired in |
 | `components/attachment.aui.tsx` | assistant-ui's attachment components (commit `a1b2540`), trimmed to a chip with a thumbnail or icon (no preview dialog or avatar), plus the Screenshot button and the send gate notice |
 | `components/thread-list.aui.tsx` | assistant-ui, with "Pin" and "Move to project" items instead of Archive |
 | `components/markdown-text.tsx`, `model-selector.tsx`, `model-selector.aui.tsx`, `tooltip-icon-button.tsx`, `hooks/use-copy-to-clipboard.ts` | assistant-ui, unchanged |

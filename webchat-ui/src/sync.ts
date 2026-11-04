@@ -54,6 +54,7 @@ const sleepFor = (ms: number) => new Promise<void>((resolve) => setTimeout(resol
 export class ChatSync {
   private rev = -1
   private libraryRev = -1
+  private historyRev: number | null = null
   private polls = 0
   private loads = 0
   private switching = 0
@@ -128,9 +129,14 @@ export class ChatSync {
       await this.refreshLibrary()
       this.libraryRev = snap.library_rev
     }
+    // Messages were taken back (a rewind, here or on another page): what is shown may hold them.
+    const rewound = snap.history_rev !== undefined && this.historyRev !== null && snap.history_rev !== this.historyRev
+    if (snap.history_rev !== undefined) this.historyRev = snap.history_rev
     if (this.chatChangedSince(poll)) {
       // The owner switched chats after this poll was sent: it may still name the chat they left.
       this.refetch = true
+    } else if (rewound && snap.active_chat_id !== null && snap.active_chat_id === this.active) {
+      await this.loadChat(snap.active_chat_id)
     } else if (snap.active_chat_id !== this.active) {
       if (snap.active_chat_id) await this.loadChat(snap.active_chat_id)
       else {
@@ -250,6 +256,19 @@ export class ChatSync {
       acceptedAt: 0,
       ...(attachments.length ? { attachments: [...attachments] } : {}),
     })
+  }
+
+  /** A stored message asked again: it and what followed leave the thread at once and it shows as being sent. */
+  beginRewind(messageId: number, text: string): void {
+    this.showMessages(this.shown.filter((m) => m.id < messageId))
+    this.setWindow(this.hasEarlier, false)
+    this.beginSend(text)
+  }
+
+  /** A refused rewind changed nothing on the server: the thread shows the chat as it is again. */
+  async rewindFailed(): Promise<void> {
+    this.setPending(null)
+    if (this.active !== null) await this.loadChat(this.active)
   }
 
   sendAccepted(): void {

@@ -26,6 +26,7 @@ DEFAULT_PAGE_MESSAGES = 50
 _PROJECT_PATH = re.compile(r"^/api/projects/([0-9a-f]+)$")
 _CHAT_PATH = re.compile(r"^/api/chats/([0-9a-f]+)$")
 _CHAT_OPEN_PATH = re.compile(r"^/api/chats/([0-9a-f]+)/open$")
+_CHAT_REWIND_PATH = re.compile(r"^/api/chats/([0-9a-f]+)/rewind$")
 _SESSION = re.compile(r"^[0-9a-f]{32}$")
 _UPLOAD_PATH = re.compile(r"^/api/attachments/([0-9a-f]+)$")
 UPLOAD_ROUTE = ("POST", "/api/attachments")
@@ -100,7 +101,8 @@ class ChatApi:
         if (method, path) in self._FIXED and (self.surface == "web" or (method, path) not in WEB_ONLY):
             return getattr(self, self._FIXED[(method, path)])
         for pattern, table in ((_PROJECT_PATH, self._PROJECT), (_CHAT_PATH, self._CHAT),
-                               (_CHAT_OPEN_PATH, self._OPEN), (_UPLOAD_PATH, self._UPLOAD)):
+                               (_CHAT_OPEN_PATH, self._OPEN), (_CHAT_REWIND_PATH, self._REWIND),
+                               (_UPLOAD_PATH, self._UPLOAD)):
             found = pattern.match(path)
             if found and method in table:
                 identifier = found.group(1)
@@ -134,6 +136,7 @@ class ChatApi:
     _PROJECT = {"PATCH": "_rename_project", "DELETE": "_delete_project"}
     _CHAT = {"GET": "_get_chat", "PATCH": "_patch_chat", "DELETE": "_delete_chat"}
     _OPEN = {"POST": "_open_chat"}
+    _REWIND = {"POST": "_rewind"}
     _UPLOAD = {"DELETE": "_discard_upload"}
 
     # -- state ---------------------------------------------------------------------
@@ -304,6 +307,27 @@ class ChatApi:
             tracker.accepted(result.query_id)
         if result.status != "accepted":
             raise Refused({"busy": 409}.get(result.status, 503), result.status)
+        return 202, {"query_id": result.query_id, "status": result.status}
+
+    # How a refused rewind answers, beside a request's own refusals.
+    _REWIND_STATUS = {"unknown": 404, "not_open": 409, "not_user": 400, "out_of_step": 409, "busy": 409}
+
+    def _rewind(self, chat_id, call):
+        body = call.body
+        message_id = body.get("message_id")
+        if not isinstance(message_id, int) or isinstance(message_id, bool):
+            raise Refused(400, "bad_message")
+        text = body.get("text")
+        if text is not None and (not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS):
+            raise Refused(400, "bad_text")
+        speak = body.get("speak") is True and self.voice is not None
+        tracker = self.voice.track(call.context) if speak else None
+        result = self.hub.rewind(chat_id, message_id, text, origin=self.origin,
+                                 on_finish=tracker.finished if tracker is not None else None)
+        if tracker is not None and result.query_id:
+            tracker.accepted(result.query_id)
+        if result.status != "accepted":
+            raise Refused(self._REWIND_STATUS.get(result.status, 503), result.status)
         return 202, {"query_id": result.query_id, "status": result.status}
 
     def _stop(self, _call):

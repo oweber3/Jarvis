@@ -1023,6 +1023,21 @@ class DialogueMemory:
             self._hot_cache = OrderedDict()
             return True
 
+    def drop_last_turns(self, count: int) -> None:
+        """Drop the newest ``count`` turns (the web chat's Rewind, which knows exactly how many turns follow the
+        message asked again, from the chat it mirrors). Turns the diary has not seen go without a diary pass, as
+        the owner took them back. Conversation-scoped caches and tool carryover are cleared: they describe
+        state after the rewind point."""
+        with self._lock:
+            if count <= 0:
+                return
+            dropped = self._messages[-count:]
+            self._messages = self._messages[:-count]
+            for ts, _role, _content in dropped:
+                self._diary_excluded.pop(ts, None)
+            self._tool_turns = []
+            self._hot_cache = OrderedDict()
+
     def private_context_sources(self, max_tool_turns: int = 2) -> FrozenSet[str]:
         """The private sources the context a reply would see holds (empty when it holds none): those of
         recent messages kept out of the diary and of the last ``max_tool_turns`` tool turns recorded by

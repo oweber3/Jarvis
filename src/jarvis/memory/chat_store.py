@@ -376,6 +376,15 @@ class ChatStore:
             return Message(int(cur.lastrowid), chat_id, role, content, ts, source, private, sources, kept,
                            _parse_markers(markers))
 
+    def delete_messages_from(self, chat_id: str, message_id: int) -> int:
+        """Remove the message ``message_id`` of a chat and every later one (a Rewind takes them back). Removed rows
+        are overwritten (``secure_delete``). Returns how many went."""
+        with self._lock:
+            cur = self.conn.execute("DELETE FROM chat_messages WHERE chat_id = ? AND id >= ?", (chat_id, message_id))
+            self.conn.commit()
+        debug_log(f"web chat: {cur.rowcount} messages taken back", "webchat")
+        return cur.rowcount
+
     _MESSAGE_COLUMNS = "id, chat_id, role, content, ts, source, private, steps, attachments, private_sources"
 
     @staticmethod

@@ -124,6 +124,7 @@ All JSON. Errors are `{"error": "<code>"}`.
 | `PATCH /api/chats/<id>` | `{"title"?, "project_id"?, "pinned"?}` | Rename, move (`null` unfiles), pin or unpin (`pinned` must be a boolean, `400` otherwise); `404` unknown chat or project |
 | `DELETE /api/chats/<id>` | | Delete; `409` when it is the open chat and Jarvis is busy |
 | `POST /api/chats/<id>/open` | | `{"chat"}`; `404` unknown, `409` busy |
+| `POST /api/chats/<id>/rewind` | `{"message_id", "text"?}` | Ask a stored message of the open chat again, as it was or as `text` (**Edit, Ask again and Rewind**): `202 {"query_id"}`; `400` `bad_message` (not a number), `bad_text` (blank or over 4000 characters) or `not_user` (a reply), `404 unknown` chat or message, `409` `not_open`, `busy` or `out_of_step`, `503` not ready |
 | `POST /api/chat` | `{"text", "attachments"?}` | Send to the open chat (starting one when none is open): `202 {"query_id"}`, `409` busy, `503` not ready, `400` empty or over 4000 characters or `bad_attachments`; attachment refusals are listed under **Attachments** |
 | `POST /api/attachments` | raw bytes, `application/octet-stream` | Check and hold an upload for the next message: `201 {"id", "kind", "size"}` (never the content) or a refusal |
 | `POST /api/attachments/screenshot` | `{}` | Capture the screen through the screenshot tool and hold it the same way |
@@ -142,11 +143,11 @@ All JSON. Errors are `{"error": "<code>"}`.
 
 A `session` is the 32-character lowercase hex id `start` returned (`400 bad_session` otherwise).
 
-The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`, `steps`, `attachments`; never the private flag), `notices` (the ones not yet overtaken by a newer stored turn, each with its `ts`), `mode`, `model` and `cloud`.
+The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `history_rev` (bumped when stored messages of the open chat are taken back by a rewind; every page then reloads the chat), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`, `steps`, `attachments`; never the private flag), `notices` (the ones not yet overtaken by a newer stored turn, each with its `ts`), `mode`, `model` and `cloud`.
 
 ### Two surfaces
 
-`ChatApi` serves the routes above to two callers. The **web** surface is this server: every route, the loopback guards and no tokens. The **phone** surface is Phone Access's server (`remote/remote.spec.md`): the same routes behind its private-network, Host, Origin and device-token checks, with origin `phone` on every request, and without `POST /api/clear`, `POST /api/attachments/screenshot`, `GET /api/identity` and the `/api/mic/*` routes, which answer `404`. Its `POST /api/chat` also takes `"speak": true`, and its poll snapshot carries the extra `phone` object. A route changes in one place for both.
+`ChatApi` serves the routes above to two callers. The **web** surface is this server: every route, the loopback guards and no tokens. The **phone** surface is Phone Access's server (`remote/remote.spec.md`): the same routes behind its private-network, Host, Origin and device-token checks, with origin `phone` on every request, and without `POST /api/clear`, `POST /api/attachments/screenshot`, `GET /api/identity` and the `/api/mic/*` routes, which answer `404`. Its `POST /api/chat` and `POST /api/chats/<id>/rewind` also take `"speak": true`, and its poll snapshot carries the extra `phone` object. A route changes in one place for both.
 
 ## The page
 
@@ -161,7 +162,7 @@ The page follows the server. An assistant-ui `ExternalStoreRuntime` holds the op
 - The library revision is recorded only after the library was fetched, so a failed fetch is retried and the sidebar cannot stay stale.
 - The thinking placeholder is cleared on "not busy" only from a poll made after the send was confirmed, or when a reply newer than the message is stored, so a snapshot taken before the server had the request cannot make the owner's message vanish. A poll that cannot be trusted is replaced by a fresh one.
 
-**Source of the chat components.** The thread, composer, thread list, Markdown text and model selector are assistant-ui's own source, copied into `webchat-ui/src/components` with the `assistant-ui` CLI **0.0.121** (`add thread thread-list markdown-text model-selector`) against `@assistant-ui/react` **0.15.25** and `@assistant-ui/react-markdown` **0.14.19**, then edited: trimmed of tool and reasoning groups (a tool call is drawn as a single `ToolStepRow`; the attachment chips are assistant-ui's, trimmed and restyled, and the Screenshot button is ours), feedback, editing and branching, restyled with the HUD palette, with a notice line, a slot for the picker and a "Move to project" menu item. The pristine copy is the git commit `a1b2540`; `git diff a1b2540 -- webchat-ui/src/components` is the local change set to compare with upstream when pulling improvements. Written for Jarvis: the API client, the sync logic, the tool step row and its wording (`steps.ts`, `components/ToolSteps.tsx`), the runtime wiring, the projects sidebar, the confirmation dialog and the model picker. `webchat-ui/README.md` lists every file's origin and the update steps.
+**Source of the chat components.** The thread, composer, thread list, Markdown text and model selector are assistant-ui's own source, copied into `webchat-ui/src/components` with the `assistant-ui` CLI **0.0.121** (`add thread thread-list markdown-text model-selector`) against `@assistant-ui/react` **0.15.25** and `@assistant-ui/react-markdown` **0.14.19**, then edited: trimmed of tool and reasoning groups (a tool call is drawn as a single `ToolStepRow`; the attachment chips are assistant-ui's, trimmed and restyled, and the Screenshot button is ours), feedback and branching, with its edit composer kept for **Edit** and a note of what sending does, restyled with the HUD palette, with a notice line, a slot for the picker and a "Move to project" menu item. The pristine copy is the git commit `a1b2540`; `git diff a1b2540 -- webchat-ui/src/components` is the local change set to compare with upstream when pulling improvements. Written for Jarvis: the API client, the sync logic, the tool step row and its wording (`steps.ts`, `components/ToolSteps.tsx`), the runtime wiring, the projects sidebar, the confirmation dialog and the model picker. `webchat-ui/README.md` lists every file's origin and the update steps.
 
 **Projects.** A sidebar groups the chats under projects (collapsible, remembered in the browser's storage when it allows) with the unfiled chats below. Projects are created, renamed (inline) and deleted (a second tap confirms; chats stay) from the sidebar; deleting a chat from its menu opens a dialog that names the chat and says its messages are removed for good, and "Delete everything" at the foot of the sidebar opens a dialog that says how many chats and projects go, that the diary is kept, and enables its button only once the owner has typed the confirmation word (`POST /api/clear`); Esc, Cancel and the close button leave without deleting; a chat moves with its menu ("Move to ..."); each project has a button for a new chat inside it. A search box filters chats by title.
 
@@ -191,6 +192,24 @@ Browsers keep some combinations for themselves: in an ordinary browser tab Ctrl+
 **No outside calls.** The page calls only its own origin. `tests/test_webchat_bundle.py` fails if the build or the copied source names an outside address, a hosted service (assistant-ui Cloud included) or any analytics, beacon, socket or event-stream use.
 
 Desktop confirmations still appear as the desktop dialog, as in the Qt chat, whether the daemon is bundled in the desktop app or runs as its subprocess (`desktop_app.spec.md`, Action Confirmation Dialog). A daemon the desktop app did not start has no dialog and refuses those actions. The reply reads "Please confirm on your desktop" and the outcome arrives as a normal assistant message.
+
+## Edit, Ask again and Rewind
+
+The desktop chat's Rewind (`desktop_app/chat_window.spec.md`) in the web chat: a message the owner sent is asked again, as it was or reworded, and it and everything after it are replaced by the new exchange.
+
+- **Edit** is on each of the owner's messages, typed or spoken. It opens the message in a box in its place (Enter or **Send** sends, Esc or **Cancel** leaves it as it was) with a line that says what sending does: Jarvis answers the new wording in place of its last answer, or forgets the N messages after this one. A message that was never stored (one whose request failed or was stopped, shown with its notice) is sent as edited as a new message.
+- **Ask again** is on the latest reply when the owner's message before it is stored and carried no attachment (attachments belong to the one message that carried them, **Attachments**). It asks that message again as it was.
+- **Copy** is on every message. The actions stay in the page, so the keyboard reaches them; they are drawn on the latest reply and on any message the pointer is over or that holds focus, and always on a touch screen. None of them works while a request runs or while Jarvis cannot be reached.
+
+**On the server.** `POST /api/chats/<id>/rewind` is refused unless the chat is the open one, the message is in it and is the owner's, Jarvis is ready and no typed request is in flight. The hub passes the chat's stored turns and the point to `jarvis.daemon.rewind_chat_conversation`, which, under one hold of the query lock, so no voice or typed request can slip in between:
+
+1. Checks that the conversation holds the chat's newest turns (the memory mirrors the open chat; a turn the memory holds may be redacted once more, as when a chat is opened again). When it does not, it changes nothing and the request is refused with `out_of_step`; the page then says to send it as a new message.
+2. Drops the turns from the point on. When none of the memory's turns come from before the point (the message is older than the memory holds), the memory gets the chat's last 20 turns before the point instead, redacted again and counted as summarised, with each private turn's sources, as opening the chat does. The turns taken back never get a diary pass of their own; a diary pass that already ran keeps them, as in the desktop chat. Caches and tool carryover are cleared.
+3. Runs the words as a fresh query through the text path (redaction, the fast path, central safety, confirmations), with the request's origin (`phone` from a phone).
+
+The hub then removes the message and every later one from the store (`secure_delete`), mirrors from the cursor the rewind returned, forgets steps and notices of the replies taken back, and bumps `history_rev`. The new turns land as a typed request's do. A stored message holds the redacted text, so asking again sends what the model saw the first time.
+
+**On the page.** The message and what followed leave the thread at once and the words show as being sent; a refused rewind puts them back and says why. Another page or the phone showing the chat reloads it when `history_rev` changes.
 
 ## Tool steps
 
@@ -290,7 +309,6 @@ A refused send (`no_vision`, `cloud_no_images`, `cloud_not_ready`) keeps the upl
 
 ## Not in version 1
 
-- **Rewind** (re-asking a message from the past), which the Qt chat has, until the owner decides the web chat should replace it.
 - Streaming: the engine returns whole replies.
 - Sharing.
 - Attachments that outlast their message: a file or image belongs to the one message that carried it, so a follow-up that needs it attaches it again (**Attachments**).

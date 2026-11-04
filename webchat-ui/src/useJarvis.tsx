@@ -95,6 +95,12 @@ export function useJarvis(): JarvisView {
   return view
 }
 
+// The stored id behind a thread message id ("m<id>"), or null for a notice, a pending message or nothing.
+function storedMessageId(threadId: string | null | undefined): number | null {
+  const found = threadId ? /^m(\d+)$/.exec(threadId) : null
+  return found ? Number(found[1]) : null
+}
+
 function textOf(message: AppendMessage): string {
   return message.content
     .map((part) => (part.type === "text" ? part.text : ""))
@@ -290,6 +296,42 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
     }
   }, [fail, meta.mode, meta.model.current, refreshLibrary, refreshModels, sync])
 
+  const sendNew = async (message: AppendMessage) => {
+    const text = textOf(message)
+    // A message goes below the newest turns, so a window that let go of them comes back first.
+    if (sync.detached) await sync.jumpToLatest()
+    const attached = attachmentAdapter.take((message.attachments ?? []).map((a) => a.id))
+    const forget = () => attached.forEach((a) => void api.discardAttachment(a.serverId).catch(() => undefined))
+    if (!text) return forget()
+    sync.beginSend(text, attached.map(({ kind, size }) => ({ kind, size })))
+    try {
+      const speak = hooksRef.current?.speakReplies?.() ?? false
+      const sent = await api.send(text, attached.map((a) => a.serverId), speak)
+      sync.sendAccepted()
+      hooksRef.current?.onSent?.(sent.query_id, speak)
+    } catch (error) {
+      sync.sendFailed()
+      forget()
+      if (!toldByNotice(error)) fail(error)
+    }
+  }
+
+  // ``text`` is the new wording (undefined asks the stored words again); ``shown`` is what the thread shows meanwhile.
+  const askAgain = async (messageId: number, text: string | undefined, shown: string) => {
+    const chatId = sync.activeId
+    if (chatId === null) return
+    sync.beginRewind(messageId, shown)
+    try {
+      const speak = hooksRef.current?.speakReplies?.() ?? false
+      const sent = await api.rewind(chatId, messageId, text, speak)
+      sync.sendAccepted()
+      hooksRef.current?.onSent?.(sent.query_id, speak)
+    } catch (error) {
+      await sync.rewindFailed().catch(() => undefined)
+      fail(error)
+    }
+  }
+
   // Notices belong to the newest moment of the chat, so a window that stops short of it shows none.
   const shownNotices = history.hasLater ? NO_NOTICES : notices
   const threadMessages = useMemo(
@@ -305,24 +347,20 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
     isDisabled: !meta.ready || !reachable,
     hasEarlier: history.hasEarlier,
     onLoadEarlier: () => sync.loadEarlier(),
-    onNew: async (message) => {
+    onNew: (message) => sendNew(message),
+    // Edit: a stored message is asked again with the new words (it and what followed are replaced). A message that
+    // was never stored (it failed or was stopped) is simply sent again as edited.
+    onEdit: async (message) => {
+      const stored = storedMessageId(message.sourceId)
+      if (stored === null) return sendNew(message)
       const text = textOf(message)
-      // A message goes below the newest turns, so a window that let go of them comes back first.
-      if (sync.detached) await sync.jumpToLatest()
-      const attached = attachmentAdapter.take((message.attachments ?? []).map((a) => a.id))
-      const forget = () => attached.forEach((a) => void api.discardAttachment(a.serverId).catch(() => undefined))
-      if (!text) return forget()
-      sync.beginSend(text, attached.map(({ kind, size }) => ({ kind, size })))
-      try {
-        const speak = hooksRef.current?.speakReplies?.() ?? false
-        const sent = await api.send(text, attached.map((a) => a.serverId), speak)
-        sync.sendAccepted()
-        hooksRef.current?.onSent?.(sent.query_id, speak)
-      } catch (error) {
-        sync.sendFailed()
-        forget()
-        if (!toldByNotice(error)) fail(error)
-      }
+      if (text) await askAgain(stored, text, text)
+    },
+    // Regenerate: the owner's message before a reply is asked again as it was.
+    onReload: async (parentId) => {
+      const stored = storedMessageId(parentId)
+      const original = sync.messages.find((m) => m.id === stored)
+      if (stored !== null && original?.role === "user") await askAgain(stored, undefined, original.text)
     },
     onCancel: async () => {
       try {

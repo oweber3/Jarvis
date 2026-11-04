@@ -115,7 +115,7 @@ Static files need no token; they hold no data: `/` and `/index.html`, `/assets/<
 | `POST /api/unpair` | token | | Revokes the calling device |
 | `POST /api/voice` | token | raw audio (`application/octet-stream`) | A spoken request (**Voice**) |
 | `GET /api/audio/<token>` | device token and audio token | | One reply's audio, once (**Voice**) |
-| The chat routes | token | | `GET /api/state`, `/api/models`, `/api/suggestions`, `/api/library`, `/api/search`, `POST /api/projects`, `PATCH`/`DELETE /api/projects/<id>`, `POST /api/chats`, `GET`/`PATCH`/`DELETE /api/chats/<id>`, `POST /api/chats/<id>/open`, `POST /api/attachments`, `DELETE /api/attachments/<id>`, `GET /api/attachments/support`, `POST /api/model`: exactly as in `webchat/webchat.spec.md` (HTTP API), served by the same `ChatApi` |
+| The chat routes | token | | `GET /api/state`, `/api/models`, `/api/suggestions`, `/api/library`, `/api/search`, `POST /api/projects`, `PATCH`/`DELETE /api/projects/<id>`, `POST /api/chats`, `GET`/`PATCH`/`DELETE /api/chats/<id>`, `POST /api/chats/<id>/open`, `POST /api/chats/<id>/rewind` (with `"speak"` as for `POST /api/chat`), `POST /api/attachments`, `DELETE /api/attachments/<id>`, `GET /api/attachments/support`, `POST /api/model`: exactly as in `webchat/webchat.spec.md` (HTTP API), served by the same `ChatApi` |
 
 Not served to a phone, answered `404`: `POST /api/clear` (deleting everything is a desktop action), `POST /api/attachments/screenshot` (the screen of the PC is not for a phone to ask for), `GET /api/identity` and the `/api/mic/*` routes (the PC's microphone; a phone records with its own).
 
@@ -189,7 +189,7 @@ The conversation is the web chat's: `ChatHub` mirrors the dialogue memory into t
 
 ## The phone app
 
-The phone app is the web chat's React app built in its `phone` mode (`webchat-ui/`, `npm run build:phone`), so the phone and the desktop share one set of components: thread, tool steps, projects sidebar (in a drawer), model picker, start screen, timestamps, search, attachments and light and dark. Its colours are the HUD palettes generated from `desktop_app/themes.py`; the orb's colours are generated from `ORB_PALETTE` (`webchat-ui/src/generated/orbPalette.ts`), and a test fails when the committed file is stale.
+The phone app is the web chat's React app built in its `phone` mode (`webchat-ui/`, `npm run build:phone`), so the phone and the desktop share one set of components: thread, tool steps, Edit and Ask again, long chats a page at a time, projects sidebar (in a drawer), model picker, start screen, timestamps, search, attachments and light and dark. Its colours are the HUD palettes generated from `desktop_app/themes.py`; the orb's colours are generated from `ORB_PALETTE` (`webchat-ui/src/generated/orbPalette.ts`), and a test fails when the committed file is stale.
 
 The phone mode lays the page out as a phone chat app, chat first. What it changes:
 

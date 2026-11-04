@@ -118,7 +118,9 @@ export class FakeJarvis {
   // -- the page's door -----------------------------------------------------------------------------------
 
   readonly fetch = async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
-    const url = new URL(String(input), "http://127.0.0.1:8766")
+    // The page only ever asks its own origin, by path.
+    const [pathname = "", search = ""] = String(input).split("?")
+    const url = { pathname, search: search ? `?${search}` : "", searchParams: new URLSearchParams(search) }
     const method = (init.method ?? "GET").toUpperCase()
     const body = typeof init.body === "string" && init.body ? JSON.parse(init.body) : undefined
     this.requests.push({ method, path: url.pathname + url.search, body })
@@ -237,7 +239,7 @@ export class FakeJarvis {
     return this.send({ text }, json, refuse)
   }
 
-  private async poll(url: URL, signal: AbortSignal | undefined): Promise<Snapshot> {
+  private async poll(url: { searchParams: URLSearchParams }, signal: AbortSignal | undefined): Promise<Snapshot> {
     const rev = Number(url.searchParams.get("rev"))
     const after = Number(url.searchParams.get("after"))
     const newer = () => (this.messages.get(this.active ?? "") ?? []).some((m) => m.id > after)

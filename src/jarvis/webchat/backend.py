@@ -47,6 +47,13 @@ class DaemonBackend:
         daemon.submit_text_query(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy, origin=origin,
                                  attachments=attachments)
 
+    def rewind(self, history: list, keep: int, text: str, *, on_rewind, on_start, on_complete, on_busy,
+               origin: str = "chat") -> None:
+        """Take the conversation back to before ``history[keep]`` and ask ``text`` (``rewind_chat_conversation``)."""
+        from .. import daemon
+        daemon.rewind_chat_conversation(history, keep, text, on_rewind=on_rewind, on_start=on_start,
+                                        on_complete=on_complete, on_busy=on_busy, origin=origin)
+
     def cancel(self) -> None:
         from .. import daemon
         daemon.cancel_active_chat_query()

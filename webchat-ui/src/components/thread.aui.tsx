@@ -34,7 +34,9 @@ import {
   CheckIcon,
   CopyIcon,
   MicIcon,
+  PencilIcon,
   PhoneIcon,
+  RefreshCwIcon,
   SquareIcon,
 } from "lucide-react";
 import {
@@ -257,11 +259,14 @@ const ThreadMessage: FC = () => {
   const role = useAuiState((s) => s.message.role);
   const isSpoken = useAuiState((s) => s.message.metadata.modality === "voice");
   const isNotice = useAuiState((s) => s.message.metadata.custom?.["notice"] === true);
+  const isEditing = useAuiState((s) => s.message.composer.isEditing);
 
   return (
     <>
       <DayStart />
-      {isNotice ? (
+      {isEditing ? (
+        <EditComposer />
+      ) : isNotice ? (
         <NoticeLine />
       ) : isSpoken ? (
         <SpokenMessage />
@@ -424,21 +429,104 @@ const SpokenMessage: FC = () => {
 const SpokenActionBar: FC = () => {
   return (
     <ActionBarPrimitive.Root
-      hideWhenRunning
-      autohide="always"
-      className="aui-spoken-action-bar text-muted-foreground flex shrink-0 gap-1"
+      autohide="never"
+      className="aui-spoken-action-bar aui-message-actions text-muted-foreground flex shrink-0 gap-0.5"
     >
-      <ActionBarPrimitive.Copy asChild>
-        <TooltipIconButton tooltip="Copy" className="size-6">
-          <AuiIf condition={(s) => s.message.isCopied}>
-            <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
-          </AuiIf>
-          <AuiIf condition={(s) => !s.message.isCopied}>
-            <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
-          </AuiIf>
-        </TooltipIconButton>
-      </ActionBarPrimitive.Copy>
+      <CopyAction className="size-6" />
+      <EditAction className="size-6" />
+      <AskAgainAction className="size-6" />
     </ActionBarPrimitive.Root>
+  );
+};
+
+// -- what can be done with a message ------------------------------------------------------------------------
+// The actions stay in the page, so the keyboard reaches them; they are drawn on the last message and on any message
+// the pointer is over or that holds focus, and always on a touch screen (index.css, .aui-message-actions).
+
+const isStored = (id: string) => /^m\d+$/.test(id);
+// The owner's own message: one stored in the chat, or one that was not answered (shown with its notice).
+const canEdit = (s: AssistantState) =>
+  !s.thread.isRunning &&
+  !s.thread.isDisabled &&
+  s.message.role === "user" &&
+  (isStored(s.message.id) || s.message.id.endsWith("-request"));
+// The latest reply, to a stored message of the owner's that carried nothing attached (attachments are not kept).
+const canAskAgain = (s: AssistantState) => {
+  if (s.thread.isRunning || s.thread.isDisabled || !s.message.isLast || s.message.role !== "assistant") return false;
+  if (!isStored(s.message.id)) return false;
+  const asked = s.thread.messages[s.message.index - 1];
+  return !!asked && asked.role === "user" && isStored(asked.id) && (asked.attachments?.length ?? 0) === 0;
+};
+
+const CopyAction: FC<{ className?: string }> = ({ className }) => (
+  <ActionBarPrimitive.Copy asChild>
+    <TooltipIconButton tooltip="Copy" className={className}>
+      <AuiIf condition={(s) => s.message.isCopied}>
+        <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
+      </AuiIf>
+      <AuiIf condition={(s) => !s.message.isCopied}>
+        <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
+      </AuiIf>
+    </TooltipIconButton>
+  </ActionBarPrimitive.Copy>
+);
+
+const EditAction: FC<{ className?: string }> = ({ className }) => (
+  <AuiIf condition={canEdit}>
+    <ActionBarPrimitive.Edit asChild>
+      <TooltipIconButton tooltip="Edit" className={className}>
+        <PencilIcon />
+      </TooltipIconButton>
+    </ActionBarPrimitive.Edit>
+  </AuiIf>
+);
+
+const AskAgainAction: FC<{ className?: string }> = ({ className }) => (
+  <AuiIf condition={canAskAgain}>
+    <ActionBarPrimitive.Reload asChild>
+      <TooltipIconButton tooltip="Ask again" className={className}>
+        <RefreshCwIcon />
+      </TooltipIconButton>
+    </ActionBarPrimitive.Reload>
+  </AuiIf>
+);
+
+// Editing a message the owner sent: Enter sends, Esc leaves it as it was. What sending does is said beside the box,
+// because a stored message takes everything after it with it.
+const EditComposer: FC = () => {
+  const note = useAuiState((s) => {
+    if (!isStored(s.message.id)) return "Sends the new wording as a new message.";
+    const after = s.thread.messages.length - 1 - s.message.index;
+    const kept = (s.message.attachments?.length ?? 0) > 0 ? " Its attachments are not sent again." : "";
+    if (after <= 1) return `Jarvis answers the new wording in place of its last answer.${kept}`;
+    return `Jarvis forgets the ${after} messages after this one and answers the new wording.${kept}`;
+  });
+  return (
+    <MessagePrimitive.Root
+      data-slot="aui_edit-composer-wrapper"
+      className="flex flex-col px-2"
+    >
+      <ComposerPrimitive.Root className="aui-edit-composer-root border-ring/40 focus-within:border-ring ms-auto flex w-full max-w-[85%] cursor-text flex-col gap-1 rounded-(--composer-radius) border bg-(--composer-bg) transition-[border-color]">
+        <ComposerPrimitive.Input
+          className="aui-edit-composer-input text-foreground min-h-14 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-none"
+          aria-label="Edit message"
+          autoFocus
+        />
+        <p className="text-muted-foreground px-4 text-xs">{note}</p>
+        <div className="aui-edit-composer-footer mx-2.5 mb-2.5 flex items-center gap-1.5 self-end">
+          <ComposerPrimitive.Cancel asChild>
+            <Button variant="ghost" size="sm" className="h-8 px-3">
+              Cancel
+            </Button>
+          </ComposerPrimitive.Cancel>
+          <ComposerPrimitive.Send asChild>
+            <Button size="sm" className="h-8 px-3">
+              Send
+            </Button>
+          </ComposerPrimitive.Send>
+        </div>
+      </ComposerPrimitive.Root>
+    </MessagePrimitive.Root>
   );
 };
 
@@ -554,6 +642,7 @@ const MessageError: FC = () => {
 const noGroups = () => [] as const;
 
 const AssistantMessage: FC = () => {
+  const isLast = useAuiState((s) => s.message.isLast);
   const ACTION_BAR_PT = "pt-1.5";
   // Keep the action bar inside the contained root's paint box, then cancel its reserved space in flow.
   const ACTION_BAR_HEIGHT = `min-h-7.5 ${ACTION_BAR_PT}`;
@@ -562,6 +651,7 @@ const AssistantMessage: FC = () => {
     <MessagePrimitive.Root
       data-slot="aui_assistant-message-root"
       data-role="assistant"
+      data-last-message={isLast ? "" : undefined}
       className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 pb-7.5 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto]"
     >
       <div
@@ -607,20 +697,23 @@ const AssistantMessage: FC = () => {
 const AssistantActionBar: FC = () => {
   return (
     <ActionBarPrimitive.Root
-      hideWhenRunning
-      autohide="not-last"
-      className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in col-start-3 row-start-2 -ms-1 flex gap-1 duration-200"
+      autohide="never"
+      className="aui-assistant-action-bar-root aui-message-actions text-muted-foreground -ms-1 flex gap-0.5"
     >
-      <ActionBarPrimitive.Copy asChild>
-        <TooltipIconButton tooltip="Copy">
-          <AuiIf condition={(s) => s.message.isCopied}>
-            <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
-          </AuiIf>
-          <AuiIf condition={(s) => !s.message.isCopied}>
-            <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
-          </AuiIf>
-        </TooltipIconButton>
-      </ActionBarPrimitive.Copy>
+      <CopyAction />
+      <AskAgainAction />
+    </ActionBarPrimitive.Root>
+  );
+};
+
+const UserActionBar: FC = () => {
+  return (
+    <ActionBarPrimitive.Root
+      autohide="never"
+      className="aui-user-action-bar-root aui-message-actions text-muted-foreground flex gap-0.5"
+    >
+      <EditAction />
+      <CopyAction />
     </ActionBarPrimitive.Root>
   );
 };
@@ -637,7 +730,10 @@ const UserMessage: FC = () => {
         <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
           <MessagePrimitive.Parts />
         </div>
-        <MessageTime className="mt-1 block text-end" />
+        <div className="mt-1 flex items-center justify-end gap-1.5">
+          <UserActionBar />
+          <MessageTime className="block text-end" />
+        </div>
       </div>
     </MessagePrimitive.Root>
   );

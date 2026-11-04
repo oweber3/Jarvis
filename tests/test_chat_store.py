@@ -221,6 +221,23 @@ class TestPages:
         assert page.has_later is False
 
 
+class TestTakingMessagesBack:
+    def test_a_message_and_everything_after_it_can_be_removed(self, store):
+        chat = store.create_chat()
+        ids = [store.append_message(chat.id, "user", f"m{i}", ts=float(i)).id for i in range(5)]
+        other = store.create_chat()
+        store.append_message(other.id, "user", "elsewhere", ts=9.0)
+        assert store.delete_messages_from(chat.id, ids[2]) == 3
+        assert [m.content for m in store.messages(chat.id)] == ["m0", "m1"]
+        assert [m.content for m in store.messages(other.id)] == ["elsewhere"]
+
+    def test_new_messages_after_a_removal_are_newer_than_any_removed(self, store):
+        chat = store.create_chat()
+        removed = store.append_message(chat.id, "user", "gone", ts=1.0)
+        store.delete_messages_from(chat.id, removed.id)
+        assert store.append_message(chat.id, "user", "new", ts=2.0).id > removed.id
+
+
 class TestState:
     def test_the_open_chat_is_remembered_across_restarts(self, tmp_path):
         path = str(tmp_path / "jarvis.db")

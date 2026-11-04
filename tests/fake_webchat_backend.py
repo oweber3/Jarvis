@@ -21,6 +21,7 @@ class FakeWebChatBackend:
         self.cancelled = 0
         self.submitted: List[str] = []
         self.origins: List[str] = []
+        self.rewinds: List[tuple] = []
         # What came with each typed request (a tuple of ``RequestAttachment``), and what attaching can do now.
         self.attachments_received: List[tuple] = []
         self.support = {"images": {"ok": True, "reason": None}, "screenshot": {"ok": True, "reason": None}}
@@ -77,6 +78,28 @@ class FakeWebChatBackend:
             self._held = (text, on_complete)
             return
         self._answer(text, on_complete)
+
+    def rewind(self, history: list, keep: int, text: str, *, on_rewind, on_start, on_complete, on_busy,
+               origin: str = "chat") -> None:
+        """As the daemon's ``rewind_chat_conversation``: refused while busy, refused (``None``) when memory is not
+        the chat's newest turns; otherwise memory goes back to before ``history[keep]`` and ``text`` is asked."""
+        self.rewinds.append((len(history), keep, text, origin))
+        if self.busy or self.mode == "busy":
+            on_busy()
+            return
+        held = [(m["role"], m["content"]) for m in self.memory.all_messages()]
+        tail = [(m["role"], m["content"]) for m in history[len(history) - len(held):]] if len(held) <= len(history) else None
+        if tail != held:
+            on_rewind(None)
+            return
+        taken_back = len(history) - keep
+        if taken_back < len(held):
+            self.memory.drop_last_turns(taken_back)
+            cursor = self.memory.last_timestamp()
+        else:
+            cursor = self.memory.set_messages(history[max(0, keep - 20):keep], saved=True)
+        on_rewind(cursor)
+        self.submit(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy, origin=origin)
 
     def attachment_support(self) -> dict:
         return self.support

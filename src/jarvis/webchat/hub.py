@@ -38,7 +38,8 @@ NOTICE_TEXT = {
 
 @dataclass(frozen=True)
 class SubmitResult:
-    status: str  # "accepted", "busy" or "unavailable"
+    # "accepted", "busy" or "unavailable"; a rewind can also be "unknown", "not_open", "not_user" or "out_of_step"
+    status: str
     query_id: int
 
 
@@ -85,6 +86,8 @@ class ChatHub:
         self._sync_lock = threading.RLock()
         self._rev = 0
         self._library_rev = 0
+        # Bumped when stored messages of the open chat are taken back (a Rewind), so every page reloads it.
+        self._history_rev = 0
         self._notices: deque = deque(maxlen=MAX_NOTICES)
         self._next_notice_id = 1
         self._next_query_id = 1
@@ -251,9 +254,13 @@ class ChatHub:
         self._step_cursor = self._steps.latest()
 
     def _restore_payload(self, chat_id: str) -> List[dict]:
-        return [{"role": m.role, "content": m.content,
-                 **({"diary": False, "private_sources": list(m.private_sources)} if m.private else {})}
-                for m in self._store.last_messages(chat_id, self._restore_turns)]
+        return [self._turn_payload(m) for m in self._store.last_messages(chat_id, self._restore_turns)]
+
+    @staticmethod
+    def _turn_payload(m: Message) -> dict:
+        """A stored message as the daemon takes a conversation's turn: a private one keeps its sources."""
+        return {"role": m.role, "content": m.content,
+                **({"diary": False, "private_sources": list(m.private_sources)} if m.private else {})}
 
     def _typed_in_flight(self) -> bool:
         with self._cond:
@@ -420,12 +427,7 @@ class ChatHub:
             if attachment_ids:
                 self._check_images(self._uploads.peek(attachment_ids))
             # Registered before the lock is released, so no chat can be opened between here and the daemon.
-            with self._cond:
-                query_id = self._next_query_id
-                self._next_query_id += 1
-                self._pending[query_id] = {"display": None, "started": False, "cancel": False, "status": "pending",
-                                           "source": source, "on_finish": on_finish}
-                self._bump_locked()
+            query_id = self._register(source, on_finish)
             attachments: List[RequestAttachment] = []
             if attachment_ids:
                 try:
@@ -439,6 +441,68 @@ class ChatHub:
                     self._pending[query_id]["attachments"] = attachment_summary(attachments)
         debug_log(f"webchat: query {query_id} submitted" + (f" with {len(attachments)} attachment(s)"
                                                             if attachments else ""), "webchat")
+        extra = {"attachments": tuple(attachments)} if attachments else {}
+        if origin != "chat":
+            extra["origin"] = origin
+        return self._send(query_id, lambda **callbacks: self._backend.submit(text, **callbacks, **extra))
+
+    def rewind(self, chat_id: str, message_id: int, text: Optional[str] = None, *, origin: str = "chat",
+               source: str = "typed", on_finish: Optional[Callable[[int, str, Optional[str]], None]] = None
+               ) -> SubmitResult:
+        """Ask a stored message of the open chat again, as it was or as ``text`` (edit and regenerate). It and every
+        message after it leave the chat and the conversation, under the daemon's query lock, before the request
+        runs; the new turns then land as a typed request's do. Besides a request's outcomes the status can be
+        ``unknown`` (no such chat or message), ``not_open``, ``not_user`` (a reply, not the owner's message) or
+        ``out_of_step`` (the conversation does not hold the chat's newest turns, so nothing is changed)."""
+        with self._sync_lock:
+            self.sync()
+            if self._store.get_chat(chat_id) is None:
+                return SubmitResult("unknown", 0)
+            if self._store.get_active_chat_id() != chat_id:
+                return SubmitResult("not_open", 0)
+            stored = self._store.messages(chat_id)
+            index = next((i for i, m in enumerate(stored) if m.id == message_id), None)
+            if index is None:
+                return SubmitResult("unknown", 0)
+            if stored[index].role != "user":
+                return SubmitResult("not_user", 0)
+            if not self._backend.is_ready():
+                return SubmitResult("unavailable", 0)
+            if self._typed_in_flight():
+                return SubmitResult("busy", 0)
+            words = stored[index].content if text is None else text
+            history = [self._turn_payload(m) for m in stored]
+            query_id = self._register(source, on_finish)
+
+            def on_rewind(cursor: Optional[float]) -> None:
+                if cursor is None:
+                    self._finish(query_id, "out_of_step")
+                    return
+                # Still inside this call and the sync lock, so no mirror pass can run between the swap and here.
+                self._store.delete_messages_from(chat_id, message_id)
+                self._cursor = cursor
+                self._drop_steps()
+                with self._cond:
+                    self._notices.clear()
+                    self._history_rev += 1
+                    self._bump_locked()
+
+            debug_log(f"webchat: query {query_id} asks a stored message again", "webchat")
+            return self._send(query_id, lambda **callbacks: self._backend.rewind(
+                history, index, words, on_rewind=on_rewind, origin=origin, **callbacks))
+
+    def _register(self, source: str, on_finish) -> int:
+        """Track a request from the moment it is accepted: typed turns are claimed for it from here on."""
+        with self._cond:
+            query_id = self._next_query_id
+            self._next_query_id += 1
+            self._pending[query_id] = {"display": None, "started": False, "cancel": False, "status": "pending",
+                                       "source": source, "on_finish": on_finish}
+            self._bump_locked()
+        return query_id
+
+    def _send(self, query_id: int, start: Callable[..., None]) -> SubmitResult:
+        """Run ``start(on_start=, on_complete=, on_busy=)`` for a registered request and say how it was taken."""
 
         def on_start(display: str) -> None:
             with self._cond:
@@ -465,17 +529,15 @@ class ChatHub:
         with self._cond:
             self._submitting.add(query_id)
         try:
-            extra = {"attachments": tuple(attachments)} if attachments else {}
-            if origin != "chat":
-                extra["origin"] = origin
-            self._backend.submit(text, on_start=on_start, on_complete=on_complete, on_busy=on_busy, **extra)
+            start(on_start=on_start, on_complete=on_complete, on_busy=on_busy)
         except Exception as exc:
             debug_log(f"webchat: query {query_id} could not be submitted: {type(exc).__name__}", "webchat")
             self._finish(query_id, "unavailable")
         with self._cond:
             self._submitting.discard(query_id)
             outcome = self._outcomes.pop(query_id, "accepted")
-        return SubmitResult(status=outcome if outcome in ("busy", "unavailable") else "accepted", query_id=query_id)
+        refused = outcome in ("busy", "unavailable", "out_of_step")
+        return SubmitResult(status=outcome if refused else "accepted", query_id=query_id)
 
     def _check_images(self, held: Sequence[RequestAttachment]) -> None:
         """Refuse an image the active route cannot see. A local model without vision still gets a screenshot's
@@ -618,10 +680,11 @@ class ChatHub:
             if newest:  # a notice older than a stored turn belongs to the past and goes
                 self._notices = deque((n for n in self._notices if n["ts"] >= newest[0].ts), maxlen=MAX_NOTICES)
             notices = [dict(n) for n in self._notices]
-            rev, library_rev = self._rev, self._library_rev
+            rev, library_rev, history_rev = self._rev, self._library_rev, self._history_rev
         return {
             "rev": rev,
             "library_rev": library_rev,
+            "history_rev": history_rev,
             "ready": bool(self._backend.is_ready()),
             "state": self._effective_state(),
             "busy": bool(self._backend.is_busy()),

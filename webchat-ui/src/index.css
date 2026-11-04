@@ -117,3 +117,22 @@
   border-radius: 0.75rem;
   transition: background-color 0.4s;
 }
+
+/*
+ * What can be done with a message (copy, edit, ask again) stays in the page so the keyboard reaches it. It is drawn on
+ * the latest reply and on any message the pointer is over or that holds focus, and always on a touch screen.
+ */
+.aui-message-actions {
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+[data-message-id]:hover .aui-message-actions,
+[data-message-id]:focus-within .aui-message-actions,
+[data-last-message] .aui-message-actions {
+  opacity: 1;
+}
+@media (hover: none) {
+  .aui-message-actions {
+    opacity: 1;
+  }
+}

@@ -77,6 +77,8 @@ export type PhoneSnapshot = {
 export type Snapshot = {
   rev: number
   library_rev: number
+  /** Bumped when stored messages of the open chat are taken back (a rewind), so every page reloads it. */
+  history_rev?: number
   ready: boolean
   state: string
   busy: boolean
@@ -212,6 +214,13 @@ export const api = {
       ...(attachments.length ? { attachments } : {}),
       ...(speak ? { speak: true } : {}),
     }),
+  /** Ask a stored message of the open chat again, as it was or edited; it and every later message are replaced. */
+  rewind: (chatId: string, messageId: number, text?: string, speak = false) =>
+    request<{ query_id: number; status: string }>("POST", `/api/chats/${chatId}/rewind`, {
+      message_id: messageId,
+      ...(text !== undefined ? { text } : {}),
+      ...(speak ? { speak: true } : {}),
+    }),
   attachmentSupport: () => request<AttachmentSupport>("GET", "/api/attachments/support"),
   uploadAttachment: (file: Blob) => postBytes<UploadInfo>("/api/attachments", file),
   captureScreenshot: () => request<UploadInfo>("POST", "/api/attachments/screenshot"),
@@ -279,6 +288,13 @@ export function describeError(error: unknown): string {
       return "Screen awareness is off. Turn it on in Settings to let me look at your screen."
     case "screenshot_unavailable":
       return "I couldn't capture the screen just now."
+    case "not_open":
+      return "That chat isn't the open one any more."
+    case "out_of_step":
+      return "That message can't be asked again just now. Send it as a new message instead."
+    case "not_user":
+    case "unknown":
+      return "That message is no longer in this chat."
     default:
       return "That didn't work."
   }

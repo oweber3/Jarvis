@@ -220,6 +220,36 @@ class TestChats:
         status, body, _ = call(parts, "GET", f"/api/chats/{chat.id}?{query}")
         assert status == 400 and body["error"] == "bad_page"
 
+    def test_a_sent_message_can_be_asked_again_edited(self, parts):
+        call(parts, "POST", "/api/chat", {"text": "hello"})
+        chat_id = parts.store.get_active_chat_id()
+        first = parts.store.messages(chat_id)[0].id
+        status, body, _ = call(parts, "POST", f"/api/chats/{chat_id}/rewind", {"message_id": first, "text": "hi"})
+        assert status == 202 and isinstance(body["query_id"], int)
+        assert [m.content for m in parts.store.messages(chat_id)] == ["hi", "Done."]
+
+    @pytest.mark.parametrize("body,code", [({}, "bad_message"), ({"message_id": "1"}, "bad_message"),
+                                           ({"message_id": True}, "bad_message"),
+                                           ({"message_id": 1, "text": "  "}, "bad_text"),
+                                           ({"message_id": 1, "text": "x" * 4001}, "bad_text")])
+    def test_a_malformed_rewind_is_refused(self, parts, body, code):
+        call(parts, "POST", "/api/chat", {"text": "hello"})
+        chat_id = parts.store.get_active_chat_id()
+        status, answer, _ = call(parts, "POST", f"/api/chats/{chat_id}/rewind", body)
+        assert (status, answer["error"]) == (400, code)
+        assert len(parts.store.messages(chat_id)) == 2
+
+    def test_rewinding_says_why_it_cannot(self, parts):
+        call(parts, "POST", "/api/chat", {"text": "hello"})
+        chat_id = parts.store.get_active_chat_id()
+        reply = parts.store.messages(chat_id)[1].id
+        assert call(parts, "POST", f"/api/chats/{chat_id}/rewind", {"message_id": reply})[1]["error"] == "not_user"
+        assert call(parts, "POST", f"/api/chats/{chat_id}/rewind", {"message_id": 999})[0] == 404
+        assert call(parts, "POST", "/api/chats/abc123/rewind", {"message_id": reply})[0] == 404
+        parts.backend.busy = True
+        status, answer, _ = call(parts, "POST", f"/api/chats/{chat_id}/rewind", {"message_id": reply - 1})
+        assert (status, answer["error"]) == (409, "busy")
+
     def test_rename_and_move(self, parts):
         project = parts.store.create_project("Work")
         chat_id = parts.store.get_active_chat_id() or call(parts, "GET", "/api/library")[1]["active_chat_id"]

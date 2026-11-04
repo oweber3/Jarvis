@@ -1009,6 +1009,96 @@ def regenerate_chat_reply(
     _start_text_query_worker(text, dm, cfg, db, callbacks=callbacks, use_ipc=use_ipc, origin="chat")
 
 
+def rewind_chat_conversation(
+    history: list,
+    keep: int,
+    text: str,
+    *,
+    on_rewind=None,
+    on_start=None,
+    on_token=None,
+    on_tool_call=None,
+    on_complete=None,
+    on_busy=None,
+    origin: str = "chat",
+) -> None:
+    """Take the conversation back to just before a stored message of the web chat's open chat and ask ``text``
+    (the message as it was, or edited) as a fresh query, under one hold of the query lock (``webchat.spec.md``,
+    Edit, regenerate and Rewind).
+
+    ``history`` is the open chat's stored turns, oldest first, as ``{"role", "content"}`` dicts (a private turn
+    carries ``"diary": False`` and its ``private_sources``); the first ``keep`` of them stay and the rest are taken
+    back. The memory mirrors the chat, so the point is found by position: the memory's turns must be the chat's
+    newest turns (memory may hold them redacted once more, as a chat opened again does). When memory holds fewer
+    turns than are taken back, it is replaced by the chat's turns before the point, counted as summarised. The
+    turns taken back never get a diary pass of their own.
+
+    ``on_rewind(cursor)`` reports first: the mirror cursor for ``DialogueMemory.messages_after`` once the rewind
+    applied (followed by the usual ``start`` / ``complete``), or ``None`` when memory and chat disagree or the
+    daemon is not running, which changes nothing. A query already running answers ``busy``."""
+    callbacks = {"on_start": on_start, "on_token": on_token, "on_tool_call": on_tool_call,
+                 "on_complete": on_complete, "on_busy": on_busy}
+    dm, cfg, db = _global_dialogue_memory, _global_cfg, _global_db
+
+    def report(cursor) -> None:
+        if on_rewind is not None:
+            try:
+                on_rewind(cursor)
+            except Exception as exc:
+                debug_log(f"chat rewind callback failed: {type(exc).__name__}", "chat")
+
+    if (not text or not text.strip() or dm is None or cfg is None or db is None or is_stop_requested()
+            or not 0 <= keep <= len(history)):
+        report(None)
+        return
+    if not _chat_query_lock.acquire(blocking=False):
+        _notify_chat("busy", None, callbacks=callbacks, use_ipc=False)
+        debug_log("chat rewind rejected: a query is in flight", "chat")
+        return
+    try:
+        cursor = _rewind_memory(dm, history, keep)
+    except Exception as exc:
+        debug_log(f"chat rewind failed: {type(exc).__name__}", "chat")
+        cursor = None
+    report(cursor)
+    if cursor is None:
+        debug_log("chat rewind refused: the conversation and the chat disagree", "chat")
+        _chat_query_lock.release()
+        return
+    debug_log(f"chat rewind applied ({len(history) - keep} turns taken back), asking again", "chat")
+    _start_text_query_worker(text, dm, cfg, db, callbacks=callbacks, use_ipc=False, origin=origin)
+
+
+def _rewind_memory(dm, history: list, keep: int) -> Optional[float]:
+    """Drop what follows ``history[keep - 1]`` from ``dm``; the caller holds the query lock. None when memory's
+    turns are not the chat's newest ones. Some of memory's turns stay: memory loses the rest. None of them stay:
+    memory gets the chat's turns before the point instead."""
+    from .utils.redact import redact
+
+    held = dm.all_messages()
+    if len(held) > len(history):
+        return None
+    for turn, stored in zip(held, history[len(history) - len(held):]):
+        content = str(stored.get("content", "")).strip()
+        if turn["role"] != stored.get("role") or turn["content"] not in (content, redact(content).strip()):
+            return None
+    taken_back = len(history) - keep
+    if taken_back < len(held):
+        dm.drop_last_turns(taken_back)
+        return dm.last_timestamp()
+    # Memory held nothing from before the point: it gets the chat's turns before it, as opening the chat does.
+    from .webchat.hub import RESTORE_TURNS
+
+    restored = []
+    for m in history[max(0, keep - RESTORE_TURNS):keep]:
+        turn = {"role": m["role"], "content": redact(str(m["content"]))}
+        if m.get("diary") is False:
+            turn["diary"] = False
+            turn["private_sources"] = [str(s) for s in (m.get("private_sources") or ())]
+        restored.append(turn)
+    return dm.set_messages(restored, saved=True)
+
+
 def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc: bool, origin: str,
                              attachments: tuple = ()) -> None:
     """Run one text query on a worker thread. The caller holds ``_chat_query_lock``; the worker releases it

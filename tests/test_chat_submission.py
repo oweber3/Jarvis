@@ -932,3 +932,140 @@ class TestTurnLine:
         lines = capsys.readouterr().out.splitlines()
         assert lines[0] == f"{daemon.TURN_LINE_PREFIX}{origin}"
         assert "private" not in lines[0]
+
+
+@pytest.mark.unit
+class TestWebChatRewind:
+    """The web chat's Rewind (``webchat/webchat.spec.md``, Edit, regenerate and Rewind): the conversation goes back
+    to just before a stored message of the open chat and the message (as it was, or edited) is asked again, under
+    one hold of the query lock. The chat is the record, so the point is found by position, never by matching text,
+    and a turn older than memory holds can be asked again too."""
+
+    def setup_method(self, _method):
+        _reset_daemon_globals()
+
+    def teardown_method(self, _method):
+        _reset_daemon_globals()
+
+    @staticmethod
+    def _chat(*texts):
+        return [{"role": "user" if i % 2 == 0 else "assistant", "content": t} for i, t in enumerate(texts)]
+
+    @staticmethod
+    def _memory_of(history):
+        dm = _install_dialogue_memory(cfg=object(), db=object())
+        for turn in history:
+            dm.add_message(turn["role"], turn["content"])
+        return dm
+
+    def _engine(self, monkeypatch, seen):
+        def fake_engine(db, cfg, tts, text, dialogue_memory, language=None, **kwargs):
+            seen.append((text, [m["content"] for m in dialogue_memory.all_messages()], kwargs.get("origin")))
+            return "fresh reply"
+        monkeypatch.setattr("jarvis.reply.engine.run_reply_engine", fake_engine)
+
+    def _rewind(self, history, keep, text, events, **extra):
+        daemon.rewind_chat_conversation(
+            history, keep, text,
+            on_rewind=lambda cursor: events.append(("rewind", cursor)),
+            on_complete=lambda reply: events.append(("complete", reply)),
+            on_busy=lambda: events.append(("busy", None)), **extra)
+
+    def test_the_message_is_asked_again_with_the_conversation_before_it(self, monkeypatch):
+        history = self._chat("buy oat milk", "Noted.", "and eggs?", "Eggs too.")
+        self._memory_of(history)
+        seen, events = [], []
+        self._engine(monkeypatch, seen)
+
+        self._rewind(history, 2, "and bread?", events)
+        _wait_for_complete(events)
+
+        assert seen == [("and bread?", ["buy oat milk", "Noted."], "chat")]
+        assert events[0][0] == "rewind" and isinstance(events[0][1], float)
+        assert events[-1] == ("complete", "fresh reply")
+
+    def test_a_message_older_than_memory_holds_brings_back_the_turns_before_it(self, monkeypatch):
+        history = self._chat("one", "1", "two", "2", "three", "3")
+        self._memory_of(history[4:])  # memory kept only the last exchange
+        seen, events = [], []
+        self._engine(monkeypatch, seen)
+
+        self._rewind(history, 2, "two again", events)
+        _wait_for_complete(events)
+
+        assert seen[0][:2] == ("two again", ["one", "1"])
+
+    def test_turns_memory_holds_redacted_again_still_line_up_with_the_chat(self, monkeypatch):
+        from jarvis.utils.redact import redact
+
+        history = self._chat("write to test@example.com", "Done.", "and again", "Again.")
+        dm = _install_dialogue_memory(cfg=object(), db=object())
+        dm.set_messages([{"role": t["role"], "content": redact(t["content"])} for t in history], saved=True)
+        seen, events = [], []
+        self._engine(monkeypatch, seen)
+
+        self._rewind(history, 2, "and again", events)
+        _wait_for_complete(events)
+
+        assert seen[0][1] == [redact("write to test@example.com"), "Done."]
+
+    def test_the_turns_taken_back_never_reach_the_diary(self, monkeypatch):
+        history = self._chat("keep this", "Kept.", "forget this", "Forgotten.")
+        dm = self._memory_of(history)
+        events = []
+        self._engine(monkeypatch, [])
+
+        self._rewind(history, 2, "something else", events)
+        _wait_for_complete(events)
+
+        assert [m["content"] for m in dm.detach_unsaved().all_messages()] == ["keep this", "Kept."]
+
+    def test_a_conversation_that_disagrees_with_the_chat_changes_nothing(self, monkeypatch):
+        history = self._chat("one", "1", "two", "2")
+        dm = self._memory_of(self._chat("one", "1", "something the chat never had", "?"))
+        seen, events = [], []
+        self._engine(monkeypatch, seen)
+
+        self._rewind(history, 2, "two", events)
+
+        assert events == [("rewind", None)]
+        assert seen == [] and len(dm.all_messages()) == 4
+        assert not daemon.is_query_running(), "a refused rewind must release the query lock"
+
+    def test_a_query_already_running_answers_busy_and_changes_nothing(self, monkeypatch):
+        history = self._chat("one", "1")
+        dm = self._memory_of(history)
+        events = []
+        self._engine(monkeypatch, [])
+        daemon._chat_query_lock.acquire()
+        try:
+            self._rewind(history, 0, "one", events)
+        finally:
+            daemon._chat_query_lock.release()
+
+        assert events == [("busy", None)]
+        assert len(dm.all_messages()) == 2
+
+    def test_private_turns_brought_back_stay_private_with_their_sources(self, monkeypatch):
+        history = self._chat("what's on today?", "A dentist at 3.", "and tomorrow?", "Nothing.")
+        history[1] = {**history[1], "diary": False, "private_sources": ["calendar"]}
+        dm = self._memory_of(history[2:])
+        events = []
+        self._engine(monkeypatch, [])
+
+        self._rewind(history, 2, "and tomorrow?", events)
+        _wait_for_complete(events)
+
+        restored = dm.all_messages()
+        assert restored[1]["diary"] is False and restored[1]["private_sources"] == ["calendar"]
+
+    def test_a_phone_request_keeps_its_origin(self, monkeypatch):
+        history = self._chat("one", "1")
+        self._memory_of(history)
+        seen, events = [], []
+        self._engine(monkeypatch, seen)
+
+        self._rewind(history, 0, "one", events, origin="phone")
+        _wait_for_complete(events)
+
+        assert seen[0][2] == "phone"

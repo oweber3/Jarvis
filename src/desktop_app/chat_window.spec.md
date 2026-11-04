@@ -310,6 +310,11 @@ nothing changes and the usual busy notice shows.
 Rewind is disabled while a query is in flight and when the daemon is not
 running. Rewinding rolls back the voice context too (same shared memory).
 
+The web chat has the same Rewind as Edit and Ask again (`src/jarvis/webchat/webchat.spec.md`, Edit, Ask again
+and Rewind). Its chats are stored, so it is anchored on the stored chat by position
+(`jarvis.daemon.rewind_chat_conversation`) rather than on the message text, and works for a message older than
+the memory holds.
+
 ### Tray integration
 
 A `Chat` entry (with a chat line icon) is added to the tray menu, below the existing
