@@ -20,7 +20,6 @@ The contract under test:
 
 from __future__ import annotations
 
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -30,11 +29,15 @@ from jarvis.memory.conversation import rewrite_all_diary_summaries
 from jarvis.memory.db import Database
 
 
-def _seed(db: Database, rows: list[tuple[str, str, str | None]]) -> None:
-    """Seed (date_utc, summary, topics) tuples into the DB."""
+# A write time well before any test runs: a pass that stomped ts_utc with "now" is always detectable.
+_AUTHORED_EARLIER = "2026-04-01T08:00:00+00:00"
+
+
+def _seed(db: Database, rows: list[tuple[str, str, str | None]], ts_utc: str | None = None) -> None:
+    """Seed (date_utc, summary, topics) tuples into the DB, written at ``ts_utc`` (default: now)."""
     for date_utc, summary, topics in rows:
         db.upsert_conversation_summary(
-            date_utc=date_utc, summary=summary, topics=topics, source_app="jarvis",
+            date_utc=date_utc, summary=summary, topics=topics, source_app="jarvis", ts_utc=ts_utc,
         )
 
 
@@ -92,11 +95,8 @@ class TestRewriteSweepBehaviour:
         db = Database(tmp_path / "jarvis.db")
         _seed(db, [
             ("2026-04-10", "User asked X. The assistant could not help.", None),
-        ])
+        ], ts_utc=_AUTHORED_EARLIER)
         original_ts = db.get_all_conversation_summaries()[0]["ts_utc"]
-
-        # Sleep so a stomped ts_utc would be detectably different.
-        time.sleep(1.1)
 
         monkeypatch.setattr(
             cmod, "_direct_llm",
@@ -205,10 +205,8 @@ class TestRewriteSweepBehaviour:
         db = Database(tmp_path / "jarvis.db")
         _seed(db, [
             ("2026-04-15", "The user prefers Celsius.", None),
-        ])
+        ], ts_utc=_AUTHORED_EARLIER)
         original_ts = db.get_all_conversation_summaries()[0]["ts_utc"]
-
-        time.sleep(1.1)
 
         monkeypatch.setattr(
             cmod, "_direct_llm",
@@ -325,10 +323,8 @@ class TestRewriteSweepBehaviour:
         db = Database(tmp_path / "jarvis.db")
         _seed(db, [
             ("2026-04-15", "The user prefers Celsius.", None),
-        ])
+        ], ts_utc=_AUTHORED_EARLIER)
         original_ts = db.get_all_conversation_summaries()[0]["ts_utc"]
-
-        time.sleep(1.1)
 
         monkeypatch.setattr(
             cmod, "_direct_llm",
