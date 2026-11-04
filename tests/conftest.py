@@ -206,6 +206,23 @@ def _never_touch_a_real_tv(request, monkeypatch):
     monkeypatch.setattr(roku, "_SEND_GUARD", guard)
 
 
+@pytest.fixture(autouse=True)
+def _never_touch_a_real_hub(request, monkeypatch):
+    """Automated runs reach only loopback fakes of Home Assistant and MQTT brokers (smarthome.spec.md).
+
+    Checks against the user's real hub are ``interactive`` and run by hand."""
+    import ipaddress
+    from jarvis.smarthome import network
+
+    def guard(ip):
+        if request.node.get_closest_marker("interactive"):
+            return
+        if not ipaddress.ip_address(ip).is_loopback:
+            raise AssertionError("Automated tests must not connect to a real smart home hub")
+
+    monkeypatch.setattr(network, "_CONNECT_GUARD", guard)
+
+
 @pytest.fixture
 def fake_tv(monkeypatch):
     """A fake Roku TV on loopback (``tests/fake_roku.py``) with the client pointed at it.

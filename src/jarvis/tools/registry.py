@@ -185,6 +185,21 @@ def configure_tv_tool(cfg, *, warm=True):
         threading.Thread(target=device.warm_up, name='roku-warm-up', daemon=True).start()
 
 
+def configure_home_tool(cfg, *, start=True):
+    """Offer ``homeControl`` only while ``smarthome_enabled`` is on (smarthome/smarthome.spec.md).
+
+    Builds the smart home from the settings; with ``start`` its connectors connect in the background. While
+    it is off nothing is built, so no socket opens."""
+    from ..smarthome import service
+    BUILTIN_TOOLS.pop('homeControl', None)
+    if getattr(cfg, 'smarthome_enabled', False) is not True:
+        service.set_home(None)
+        return
+    service.configure(cfg, start=start)
+    from .builtin.home_control import HomeControlTool
+    BUILTIN_TOOLS['homeControl'] = HomeControlTool()
+
+
 def configure_apple_music_tool(cfg, *, platform=None):
     """Offer ``playMusic`` only on Windows, with the Windows tools on, when ``apple_music_enabled`` is true."""
     BUILTIN_TOOLS.pop('playMusic', None)

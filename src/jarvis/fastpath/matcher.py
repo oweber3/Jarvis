@@ -57,6 +57,8 @@ class _Context:
     rule: dict
     tv_apps: tuple[FastTarget, ...] = ()
     routines: tuple[FastTarget, ...] = ()
+    home_devices: tuple[FastTarget, ...] = ()
+    home_areas: tuple[FastTarget, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -113,6 +115,36 @@ def _app(value: str, ctx: _Context):
 def _tv_app(value: str, ctx: _Context):
     app = _resolve_target(value, ctx.tv_apps, False)
     return None if app is None else ({'app': app.open_target}, app.display)
+
+
+def _home_target(value: str, ctx: _Context):
+    """One smart home device by the exact-then-unique rule of ``smarthome.model``; the device's own capabilities
+    (``window_target``) must allow the rule's action. Several candidates, none, or a device that cannot do it
+    reject the rule."""
+    from ..smarthome.model import Capability, Device, pick, supports
+    name = _strip_articles(value, ctx.data)
+    chosen, _candidates = pick(name, [((*t.names, t.open_target), t) for t in ctx.home_devices])
+    if len(chosen) != 1:
+        return None
+    target = chosen[0]
+    try:
+        capabilities = frozenset(Capability(c) for c in target.window_target.split(',') if c)
+    except ValueError:
+        return None
+    prop = next((p for p in ('brightness', 'level') if p in ctx.args or p in ctx.rule.get('slot_args', {}).values()),
+                '')
+    probe = Device(target.open_target, target.display, '', '', capabilities=capabilities)
+    if not supports(probe, ctx.args.get('action', ''), prop):
+        return None
+    return {'target': target.open_target}, target.display
+
+
+def _home_area(value: str, ctx: _Context):
+    """A room by its exact name (after case folding), never a guess."""
+    from ..smarthome.model import tokens
+    wanted = tokens(_strip_articles(value, ctx.data))
+    found = [t for t in ctx.home_areas if any(tokens(name) == wanted for name in t.names)]
+    return ({'area': found[0].open_target}, found[0].display) if wanted and len(found) == 1 else None
 
 
 def _routine(value: str, ctx: _Context):
@@ -308,6 +340,8 @@ SLOTS: dict[str, _Slot] = {
     'tv_app': _Slot(_free_text, _tv_app),
     'page_number': _Slot(_page_number_expression, _page_number),
     'routine': _Slot(_free_text, _routine),
+    'home_target': _Slot(_free_text, _home_target),
+    'area': _Slot(_free_text, _home_area),
     'duration': _Slot(_duration_expression, _duration),
     'label': _Slot(lambda _data: r'.{1,40}?', _label),
     'expression': _Slot(_free_text, _expression),
@@ -404,12 +438,16 @@ def _resolve_target(query: str, targets: tuple[FastTarget, ...], window: bool):
 
 def match(text: str, language: str | None = 'en', *, targets: tuple[FastTarget, ...] = (),
           workspaces: tuple[FastTarget, ...] = (), tv_apps: tuple[FastTarget, ...] = (),
-          routines: tuple[FastTarget, ...] = (), available_tools=()) -> FastMatch | None:
+          routines: tuple[FastTarget, ...] = (), home_devices: tuple[FastTarget, ...] = (),
+          home_areas: tuple[FastTarget, ...] = (), available_tools=()) -> FastMatch | None:
     """Return exactly one high-confidence call, with no discovery or execution.
 
     ``targets`` are application names; ``workspaces`` are configured workspace names and aliases
     (``open_target`` is the canonical workspace name); ``tv_apps`` are the apps the TV reported;
-    ``routines`` are the names and aliases of the user's routines (``open_target`` is the canonical name)."""
+    ``routines`` are the names and aliases of the user's routines (``open_target`` is the canonical name);
+    ``home_devices`` are smart home devices (``open_target`` the device id, ``window_target`` its capabilities,
+    comma-separated) and
+    ``home_areas`` their rooms."""
     lang = (language or 'en').casefold().replace('_', '-').split('-')[0]
     locale = _locale(lang)
     if locale is None or any(marker in text for marker in (';', '&', '\n')):
@@ -437,7 +475,7 @@ def match(text: str, language: str | None = 'en', *, targets: tuple[FastTarget, 
         if found is None:
             continue
         args, slots = dict(rule['args']), found.groupdict()
-        context = _Context(data, targets, workspaces, args, rule, tv_apps, routines)
+        context = _Context(data, targets, workspaces, args, rule, tv_apps, routines, home_devices, home_areas)
         for name, value in list(slots.items()):
             resolved = SLOTS[name].resolve(value, context)
             if resolved is None:

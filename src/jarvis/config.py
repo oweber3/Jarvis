@@ -363,6 +363,21 @@ class Settings:
     windows_fancyzones_enabled: bool = True
     # The TV's address on the home network (a private IP). Empty leaves the tvControl tool unregistered.
     roku_host: str = ""
+    # Smart home control through the user's own Home Assistant and/or MQTT broker (smarthome/smarthome.spec.md).
+    # Off by default. The Home Assistant token and MQTT password live in the credential store, never here.
+    smarthome_enabled: bool = False
+    smarthome_ha_url: str = ""
+    smarthome_ha_verify_tls: bool = True
+    smarthome_mqtt_host: str = ""
+    smarthome_mqtt_port: int = 1883
+    smarthome_mqtt_username: str = ""
+    smarthome_mqtt_tls: bool = False
+    smarthome_mqtt_discovery_prefix: str = "homeassistant"
+    # MQTT device ids (mqtt:<unique_id>) Jarvis never lists, names or controls.
+    smarthome_mqtt_hidden: list[str] = field(default_factory=list)
+    # Device ids that always ask before any change.
+    smarthome_confirm_devices: list[str] = field(default_factory=list)
+    smarthome_share_with_cloud: bool = False
     # Play songs, albums, artists and library playlists in the Apple Music app (Windows). Off by default:
     # catalogue searches send the search text to Apple's public iTunes Search API.
     apple_music_enabled: bool = False
@@ -1015,6 +1030,17 @@ def get_default_config() -> Dict[str, Any]:
         "routines": {},
         "windows_fancyzones_enabled": True,
         "roku_host": "",
+        "smarthome_enabled": False,
+        "smarthome_ha_url": "",
+        "smarthome_ha_verify_tls": True,
+        "smarthome_mqtt_host": "",
+        "smarthome_mqtt_port": 1883,
+        "smarthome_mqtt_username": "",
+        "smarthome_mqtt_tls": False,
+        "smarthome_mqtt_discovery_prefix": "homeassistant",
+        "smarthome_mqtt_hidden": [],
+        "smarthome_confirm_devices": [],
+        "smarthome_share_with_cloud": False,
         "apple_music_enabled": False,
         "apple_music_country": "",
         "tts_pc_speakers_enabled": True,
@@ -1644,6 +1670,18 @@ def load_settings() -> Settings:
         routines=merged.get("routines") if isinstance(merged.get("routines"), dict) else {},
         windows_fancyzones_enabled=bool(merged.get("windows_fancyzones_enabled", True)),
         roku_host=merged.get("roku_host", "").strip() if isinstance(merged.get("roku_host", ""), str) else "",
+        smarthome_enabled=merged.get("smarthome_enabled") is True,
+        smarthome_ha_url=_text(merged.get("smarthome_ha_url"), "").strip(),
+        smarthome_ha_verify_tls=merged.get("smarthome_ha_verify_tls", True) is not False,
+        smarthome_mqtt_host=_text(merged.get("smarthome_mqtt_host"), "").strip(),
+        smarthome_mqtt_port=_port(cfg_json.get("smarthome_mqtt_port"), defaults["smarthome_mqtt_port"]),
+        smarthome_mqtt_username=_text(merged.get("smarthome_mqtt_username"), "").strip(),
+        smarthome_mqtt_tls=merged.get("smarthome_mqtt_tls") is True,
+        smarthome_mqtt_discovery_prefix=(_text(merged.get("smarthome_mqtt_discovery_prefix"), "").strip().strip("/")
+                                         or defaults["smarthome_mqtt_discovery_prefix"]),
+        smarthome_mqtt_hidden=_string_list(merged.get("smarthome_mqtt_hidden"), []),
+        smarthome_confirm_devices=_string_list(merged.get("smarthome_confirm_devices"), []),
+        smarthome_share_with_cloud=merged.get("smarthome_share_with_cloud") is True,
         apple_music_enabled=merged.get("apple_music_enabled") is True,
         apple_music_country=_store_country(merged.get("apple_music_country")),
         tts_pc_speakers_enabled=bool(merged.get("tts_pc_speakers_enabled", True)),

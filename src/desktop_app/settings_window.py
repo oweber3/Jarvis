@@ -72,6 +72,7 @@ CATEGORIES = [
     ("cloud", "Cloud Modes"),
     ("privacy", "Privacy"),
     ("accounts", "Calendar & Email"),
+    ("smarthome", "Smart Home"),
     ("memory", "Memory & Dictation"),
     ("extras", "Extras"),
     ("mcps", "MCP Servers"),
@@ -81,6 +82,8 @@ CATEGORIES = [
 ADVANCED_CATEGORY = "advanced"
 # The Calendar & Email page: the account list (accounts_page.py) above its switches.
 ACCOUNTS_CATEGORY = "accounts"
+# The Smart Home page: its fields above the token, password, Test buttons and device list (smart_home_page.py).
+SMART_HOME_CATEGORY = "smarthome"
 # Window preference kept in config.json, written only while on.
 SHOW_ADVANCED_KEY = "settings_show_advanced"
 
@@ -642,6 +645,46 @@ def _build_field_metadata() -> List[FieldMeta]:
       "Off by default: your email is available only to the local model. Turn on to let the Codex and Claude "
       "reply modes read it, which sends the messages they ask for to OpenAI or Anthropic.",
       "accounts", "bool", shown_when=email_on)
+    heading("Smart home")
+    smart_home = _on("smarthome_enabled")
+    f("smarthome_enabled", "Control My Smart Home",
+      "Let Jarvis control lights, plugs, fans, blinds, thermostats, locks and sensors through your own Home "
+      "Assistant or MQTT broker on your home network (\"turn off the kitchen lights\"). Jarvis never contacts a "
+      "device maker. It always asks before unlocking, disarming, opening a garage door or gate, running a script "
+      "or changing more than 10 devices. Restart Jarvis after changing it.",
+      "smarthome", "bool")
+    heading("Home Assistant")
+    f("smarthome_ha_url", "Home Assistant Address",
+      "Your Home Assistant's address on your home network, such as http://192.168.1.50:8123 or "
+      "http://homeassistant.local:8123. Only home-network addresses and this PC are accepted. Paste an access "
+      "token below and press Test connection before saving.",
+      "smarthome", "str", nullable=True, shown_when=smart_home)
+    f("smarthome_ha_verify_tls", "Check Home Assistant's Certificate",
+      "For an https:// address. Leave on unless your Home Assistant uses its own self-signed certificate, which "
+      "Jarvis can only accept with checking turned off.",
+      "smarthome", "bool", advanced=True, shown_when=smart_home)
+    heading("MQTT")
+    f("smarthome_mqtt_host", "MQTT Broker Address",
+      "Your MQTT broker's address on your home network, for devices that announce themselves in Home Assistant's "
+      "MQTT discovery format (ESPHome, Tasmota, WLED, Zigbee2MQTT). Leave empty if you use only Home Assistant.",
+      "smarthome", "str", nullable=True, shown_when=smart_home)
+    f("smarthome_mqtt_port", "MQTT Broker Port",
+      "Usually 1883, or 8883 with TLS.",
+      "smarthome", "int", min_val=1024, max_val=65535, step=1, shown_when=smart_home)
+    f("smarthome_mqtt_username", "MQTT User Name",
+      "Leave empty if the broker needs no login. The password goes in the box below.",
+      "smarthome", "str", nullable=True, shown_when=smart_home)
+    f("smarthome_mqtt_tls", "Use TLS",
+      "Encrypt the connection to the broker.",
+      "smarthome", "bool", shown_when=smart_home)
+    f("smarthome_mqtt_discovery_prefix", "Discovery Prefix",
+      "The topic devices announce themselves under. Home Assistant's default is homeassistant.",
+      "smarthome", "str", advanced=True, shown_when=smart_home)
+    heading("Sharing")
+    f("smarthome_share_with_cloud", "Share Smart Home With Codex and Claude",
+      "Off by default: your devices are available only to the local model. Turn on to let the Codex and Claude "
+      "reply modes control them, which sends device names, rooms and states to OpenAI or Anthropic.",
+      "smarthome", "bool", shown_when=smart_home)
     heading("Location")
     located = _on("location_enabled")
     f("location_enabled", "Use Location",
@@ -1138,6 +1181,8 @@ class SettingsWindow(QDialog):
                     footer = self._build_voice_panel()
                 elif cat_key == ACCOUNTS_CATEGORY:
                     header = self._build_accounts_page()
+                elif cat_key == SMART_HOME_CATEGORY:
+                    footer = self._build_smart_home_page()
                 page = self._build_category_tab(cat_fields, footer, header)
                 if cat_key == "general":
                     self._wire_windows_status()
@@ -1733,6 +1778,12 @@ class SettingsWindow(QDialog):
         self.accounts_page = AccountsPage(AccountStore(self._config_path), on_changed=self._on_accounts_changed)
         return self.accounts_page
 
+    def _build_smart_home_page(self) -> QWidget:
+        """The Home Assistant token, MQTT password, Test buttons and device list (``smart_home_page.py``)."""
+        from desktop_app.smart_home_page import SmartHomePage
+        self.smart_home_page = SmartHomePage(self._current, dict(self._merged))
+        return self.smart_home_page
+
     def done(self, result: int) -> None:
         """Closing (Save, Cancel or the title bar) stops a sign-in still waiting in the browser."""
         page = getattr(self, "accounts_page", None)
@@ -1967,6 +2018,17 @@ class SettingsWindow(QDialog):
                                 f"{blank[0].label} cannot be empty. Enter a value, then save again.")
             return
 
+        # Smart home connection settings are saved only once a test with those values has passed.
+        smart_home = getattr(self, "smart_home_page", None)
+        untested = smart_home.save_problem() if smart_home is not None else None
+        if untested:
+            item = self._page_items.get(SMART_HOME_CATEGORY)
+            if item is not None:
+                self._sidebar.setCurrentItem(item)
+            debug_log("settings not saved: smart home connection untested", "settings")
+            QMessageBox.warning(self, "Settings not saved", untested)
+            return
+
         # Start from the file as it is now (keys the UI does not show, and values written while the
         # window was open by voice or the tray), and apply only the fields the user changed.
         config = _load_json(self._config_path) or {}
@@ -1990,6 +2052,9 @@ class SettingsWindow(QDialog):
                 config.pop(fm.key, None)
             else:
                 config[fm.key] = val
+
+        if smart_home is not None:
+            smart_home.apply(config)
 
         if self._show_advanced:
             config[SHOW_ADVANCED_KEY] = True

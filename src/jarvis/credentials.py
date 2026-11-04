@@ -17,6 +17,9 @@ from .debug import debug_log
 
 SERVICE = "jarvis"
 SECRET_KEYS = ("llm_api_key", "embedding_api_key", "brave_search_api_key")
+# Secrets of the smart home hubs (smarthome/smarthome.spec.md): the Home Assistant access token and the MQTT
+# password. Never settings in ``config.json``.
+DEVICE_SECRET_KEYS = ("smarthome.ha_token", "smarthome.mqtt_password")
 # Per-account secrets: ``<kind>:<account name>``.
 ACCOUNT_SECRET_KINDS = ("calendar_url", "email_password", "oauth_login")
 # Windows Credential Manager holds at most 2560 bytes (1280 UTF-16 characters) per entry.
@@ -52,7 +55,7 @@ def account_key(kind: str, name: str) -> str:
 
 
 def _check(key: str) -> None:
-    if key in SECRET_KEYS:
+    if key in SECRET_KEYS or key in DEVICE_SECRET_KEYS:
         return
     kind, _, name = key.partition(":")
     if kind not in ACCOUNT_SECRET_KINDS or not name.strip() or "#" in name:
