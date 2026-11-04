@@ -186,21 +186,25 @@ class _SlowSession(FakeSession):
 class TestSpareStartedWithOldSettings:
     """A spare session or thread started with the old model or effort is closed and never used."""
 
-    @pytest.mark.slow
-    def test_a_late_claude_spare_is_closed_and_the_next_request_uses_the_new_model(self):
+    def test_a_late_claude_spare_is_closed_and_the_next_request_uses_the_new_model(self, monkeypatch):
+        from jarvis.claude_bridge import service as claude_service
+
+        monkeypatch.setattr(claude_service, "_CLOSE_TIMEOUT_SEC", 0.2)
         claude = _SlowStartClaude(scripted(("answer", "completed", "Done.")))
         service, _ = build_claude(cfg=make_cfg(claude_model="sonnet"), factory=claude)
         try:
             original_prestart = service._prestart
 
             def slow_prestart():
-                claude.delay_next_sec = 3.0  # longer than reconfigure waits for a starting spare
+                claude.delay_next_sec = 0.6  # longer than reconfigure waits for a starting spare
                 original_prestart()
 
             service._prestart = slow_prestart
             assert run(service, "hello").kind == "reply"
             service._prestart = original_prestart
-            late_spare = claude.sessions[-1]
+            # The spare starts on a background thread: it is the session created with the slow handshake.
+            assert wait_for(lambda: any(session._delay for session in claude.sessions))
+            late_spare = next(session for session in claude.sessions if session._delay)
 
             assert service.reconfigure(make_cfg(claude_model="haiku"))
             assert run(service, "hello again").kind == "reply"
