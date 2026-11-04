@@ -32,6 +32,8 @@ Piper is the default for everyone. Nothing changes the engine or a default becau
 - **Kokoro** (`KokoroTTS`, a `PiperTTS` with a different voice loader): Kokoro-82M v1.0 on ONNX Runtime, using Piper's bundled espeak-ng for phonemes. It adds no Python package and no PyTorch. `KokoroVoice.synthesize` has the shape of `PiperVoice.synthesize`, so the same player streams it, with the same ducking, interruption and voice outputs.
 - **Chatterbox** (`ChatterboxTTS`): voice cloning on PyTorch, synthesising the whole reply before playing. It feeds no voice outputs. The Settings row for the recording says to clone only your own voice or someone's who has consented.
 
+**Starting.** The daemon starts the engine once the voice listener's microphone check is over, on the starting thread, while Whisper loads on the listener's thread (`listening/listening.spec.md`, Startup & Model Warmup). `start` loads the voice and warms any voice outputs before the speaking thread runs. The listener can be ready before the voice is, so a reply can arrive while `start` is still loading: its own lazy start in `speak` waits for that start to finish (one start lock per engine) and then queues the reply. The voice is never loaded or warmed twice and only one speaking thread exists.
+
 ### Kokoro
 
 - Only English voices are offered (`a` American and `b` British; espeak voices `en-us` and `en`), matching the reply engine's English-only instruction, which applies to every engine.
