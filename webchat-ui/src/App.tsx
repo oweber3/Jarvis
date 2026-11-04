@@ -2,7 +2,7 @@ import { useAui, useAuiState } from "@assistant-ui/react"
 import { KeyboardIcon, MicIcon, PanelLeftIcon, XIcon } from "lucide-react"
 import { useEffect, useState, type FC } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { fieldOf, resolveShortcut, SHORTCUTS } from "@/shortcuts"
+import { COMPOSER_KEYS, fieldOf, resolveShortcut, SHORTCUTS } from "@/shortcuts"
 import { presence } from "@/presence"
 import { useNarrow } from "@/layout"
 import { MicButton } from "@/components/MicButton"
@@ -47,10 +47,18 @@ const Shell: FC = () => {
         overlayOpen: overlay,
         dialogOpen: document.querySelector("[role='dialog'], [role='menu'], [role='listbox']") !== null,
         field: fieldOf(document.activeElement),
+        composerEmpty: aui.composer().getState().text.trim() === "",
       })
       if (!action) return
+      if (action === "edit-last" && !editLastMessage()) return
       event.preventDefault()
-      if (action === "focus-search") {
+      if (action === "toggle-chats") {
+        setSidebarOpen((open) => !open)
+      } else if (action === "focus-composer") {
+        document.querySelector<HTMLTextAreaElement>('[aria-label="Message input"]')?.focus()
+      } else if (action === "edit-last") {
+        /* started above */
+      } else if (action === "focus-search") {
         setSidebarOpen(true)
         window.requestAnimationFrame(() => {
           const box = document.querySelector<HTMLInputElement>("[data-chat-search]")
@@ -64,6 +72,18 @@ const Shell: FC = () => {
       } else {
         setHelpOpen(true)
       }
+    }
+    // The up arrow in an empty message box: the owner's last stored message opens for editing.
+    const editLastMessage = (): boolean => {
+      const messages = aui.thread().getState().messages
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i]!
+        if (message.role === "user" && /^m\d+$/.test(message.id)) {
+          aui.thread().message({ id: message.id }).composer().beginEdit()
+          return true
+        }
+      }
+      return false
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
@@ -190,10 +210,10 @@ const ShortcutsDialog: FC<{ open: boolean; onOpenChange: (open: boolean) => void
         <DialogDescription>On a Mac, use Cmd in place of Ctrl.</DialogDescription>
       </DialogHeader>
       <ul className="flex flex-col gap-2 text-sm">
-        {SHORTCUTS.map((shortcut) => (
-          <li key={shortcut.action} className="flex items-center justify-between gap-4">
+        {[...SHORTCUTS, ...COMPOSER_KEYS].map((shortcut) => (
+          <li key={shortcut.label} className="flex items-center justify-between gap-4">
             <span>{shortcut.label}</span>
-            <span className="flex gap-1">
+            <span className="flex shrink-0 gap-1">
               {shortcut.keys.map((name) => (
                 <kbd key={name} className="bg-muted text-muted-foreground rounded border px-1.5 py-0.5 font-mono text-xs">
                   {name}

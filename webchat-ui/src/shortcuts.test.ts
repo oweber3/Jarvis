@@ -11,7 +11,7 @@ const key = (k: string, extra: Partial<KeyLike> = {}): KeyLike => ({
   isComposing: false,
   ...extra,
 })
-const idle: KeyContext = { running: false, overlayOpen: false, dialogOpen: false, field: "none" }
+const idle: KeyContext = { running: false, overlayOpen: false, dialogOpen: false, field: "none", composerEmpty: true }
 
 describe("resolveShortcut", () => {
   it("Ctrl+K and Cmd+K focus the search, even while typing a message", () => {
@@ -66,11 +66,39 @@ describe("resolveShortcut", () => {
   })
 })
 
+describe("the shortcuts that reach the chat itself", () => {
+  it("Ctrl+B and Cmd+B show or hide the chat list, also from the message box", () => {
+    expect(resolveShortcut(key("b", { ctrlKey: true }), idle)).toBe("toggle-chats")
+    expect(resolveShortcut(key("B", { metaKey: true }), { ...idle, field: "composer" })).toBe("toggle-chats")
+  })
+
+  it("/ goes to the message box only outside text fields", () => {
+    expect(resolveShortcut(key("/"), idle)).toBe("focus-composer")
+    expect(resolveShortcut(key("/"), { ...idle, field: "composer" })).toBeNull()
+    expect(resolveShortcut(key("/"), { ...idle, field: "search" })).toBeNull()
+    expect(resolveShortcut(key("/"), { ...idle, dialogOpen: true })).toBeNull()
+  })
+
+  it("the up arrow in an empty message box edits the last message sent", () => {
+    expect(resolveShortcut(key("ArrowUp"), { ...idle, field: "composer" })).toBe("edit-last")
+    expect(resolveShortcut(key("ArrowUp"), { ...idle, field: "composer", composerEmpty: false })).toBeNull()
+    expect(resolveShortcut(key("ArrowUp"), { ...idle, field: "composer", running: true })).toBeNull()
+    expect(resolveShortcut(key("ArrowUp"), idle)).toBeNull()
+    expect(resolveShortcut(key("ArrowUp", { shiftKey: true }), { ...idle, field: "composer" })).toBeNull()
+  })
+
+  it("Ctrl+/ shows the shortcut list from anywhere", () => {
+    expect(resolveShortcut(key("/", { ctrlKey: true }), { ...idle, field: "composer" })).toBe("show-help")
+  })
+})
+
 describe("SHORTCUTS", () => {
   it("lists every action once, for the help", () => {
     const actions = SHORTCUTS.map((s) => s.action)
     expect(new Set(actions).size).toBe(actions.length)
-    expect(actions).toEqual(expect.arrayContaining(["focus-search", "new-chat", "stop", "show-help"]))
+    expect(actions).toEqual(
+      expect.arrayContaining(["focus-search", "new-chat", "toggle-chats", "focus-composer", "edit-last", "stop", "show-help"]),
+    )
     for (const shortcut of SHORTCUTS) expect(shortcut.keys.length).toBeGreaterThan(0)
   })
 })

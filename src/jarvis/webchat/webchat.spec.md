@@ -176,14 +176,17 @@ The page follows the server. An assistant-ui `ExternalStoreRuntime` holds the op
 
 **Search.** The sidebar search box matches chat titles immediately (from the library) and message text through `GET /api/search` once typing has paused (250 ms, at least two characters). Results are chats, each with a short snippet around the newest matching message and the match marked; a title match with no message match shows the title alone. Opening a result opens the chat on the stretch around that message (`?around=`) and scrolls to it, marking it for a moment. Server side, `ChatStore.search_messages` compares the text as a plain, case-insensitive substring in any script (the query is a bound parameter, so `%`, `_` and quotes mean themselves), returns one hit per chat, most recently active chats first, at most 30, and logs only the number of chats found, never the text searched. The search sees only what the store holds, which is already redacted.
 
-**Keyboard shortcuts.** `shortcuts.ts` decides, the page performs; no plain letter is ever taken, so typing is never captured. They work with focus in the message box too.
+**Keyboard shortcuts.** `shortcuts.ts` decides, the page performs; no plain letter is ever taken, so typing is never captured (`?` and `/` only outside text fields, the up arrow only in an empty message box). The Ctrl (Cmd) ones work with focus in the message box too.
 
 | Keys | Action |
 |------|--------|
 | Ctrl+K (Cmd+K) | Open the chat list if hidden and focus the search box |
 | Ctrl+N (Cmd+N) | New chat |
+| Ctrl+B (Cmd+B) | Show or hide the chat list |
+| / | Go to the message box, only when focus is not in a text field |
+| ↑ | In an empty message box: edit the last message the owner sent (**Edit, Ask again and Rewind**) |
 | Esc | Stop a running reply. Not taken while a dialog, menu or the narrow chat list overlay is open, or while focus is in the search box (where it clears the search, then leaves it) or another text field. The message box stops the reply itself and marks the key as handled |
-| ? | Show the list of shortcuts, only when focus is not in a text field. The keyboard button in the header opens it too |
+| ? | Show the list of shortcuts, only when focus is not in a text field. Ctrl+/ (Cmd+/) and the keyboard button in the header open it from anywhere. The list also names the message box's own keys: Enter sends, Shift+Enter starts a new line |
 
 Browsers keep some combinations for themselves: in an ordinary browser tab Ctrl+N opens a new window before the page sees it. In the desktop app's window (`QWebEngineView`) the page receives it.
 
