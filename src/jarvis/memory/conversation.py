@@ -861,14 +861,13 @@ class DialogueMemory:
         messages = self.get_recent_messages()
         return [f"{msg['role'].title()}: {msg['content']}" for msg in messages]
 
-    def get_recent_messages(self, include_private: bool = True, flag_private: bool = False) -> List[dict]:
+    def get_recent_messages(self, flag_private: bool = False) -> List[dict]:
         """
         Get the turns in context (the dialogue window and any kept turns, see ``keep_last_turns``)
         formatted for LLM API.
 
-        ``include_private=False`` leaves out messages added with ``diary=False`` (they quote
-        a private source: the activity log, documents, a calendar or email). ``flag_private=True`` adds a
-        ``private`` key to each message saying whether it is one of those and a ``private_sources`` key
+        ``flag_private=True`` adds a ``private`` key to each message saying whether it was added with
+        ``diary=False`` (it quotes a private source: the activity log, documents, a calendar or email) and a ``private_sources`` key
         with the sources it quoted (empty when it is not private), for contexts that leave the PC.
 
         Returns:
@@ -878,8 +877,7 @@ class DialogueMemory:
             if not self._messages:
                 return []
 
-            recent_messages = [msg for msg in self._context_turns()
-                               if include_private or msg[0] not in self._diary_excluded]
+            recent_messages = self._context_turns()
 
             return [{"role": role, "content": content,
                      **({"private": ts in self._diary_excluded,

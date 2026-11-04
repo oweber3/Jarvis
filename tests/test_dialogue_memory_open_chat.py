@@ -87,7 +87,7 @@ class TestKeptTurns:
         dm.set_messages([{"role": "user", "content": "what did I work on"},
                          {"role": "assistant", "content": "You were in Word.", "diary": False}], saved=True)
         dm.keep_last_turns(20)
-        assert contents(dm.get_recent_messages(include_private=False)) == ["what did I work on"]
+        assert contents([m for m in dm.get_recent_messages(flag_private=True) if not m["private"]]) == ["what did I work on"]
         assert contents(build_dialogue_context(dm, BridgeSettings())) == ["what did I work on"]
 
     def test_private_turns_follow_the_dialogue_window_as_before(self, clock):
