@@ -1,7 +1,10 @@
 // Measures the web chat page served by fixture.py: first load (also at 4x CPU slowdown), opening the long chat, and
 // the cost of one new message arriving in it. Usage: LONG=<fixture's --long> node measure.mjs <port> <controlPort>
 // <label> [runs]; FIRST_ONLY=1 measures the first load alone. Needs Playwright with Chromium. See README.md.
-import { chromium } from "playwright"
+import { createRequire } from "node:module"
+
+// Through require, so a global install is found (NODE_PATH) as well as one in this folder; import would miss it.
+const { chromium } = createRequire(import.meta.url)("playwright")
 
 const [port, controlPort, label, runsArg] = process.argv.slice(2)
 const runs = Number(runsArg ?? 5)

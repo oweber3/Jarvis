@@ -22,4 +22,4 @@ What it reports (medians):
 | `openLongChat` | Opening the long chat from the sidebar until its last message shows: time, heap, DOM nodes, script and layout time |
 | `newMessageInLongChat` | A spoken exchange landing while the long chat is open, until it shows, and the script, layout and style time it cost |
 
-Needs Playwright for Node with Chromium (`npm i -g playwright && npx playwright install chromium`).
+Needs Playwright for Node with Chromium where Node's `require` finds it: installed in this folder, or globally (`npm i -g playwright && npx playwright install chromium`) with `NODE_PATH` set to `npm root -g`.
