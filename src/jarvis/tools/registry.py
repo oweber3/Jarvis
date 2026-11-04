@@ -277,7 +277,7 @@ def start_mcp_discovery(
             debug_log(f"MCP tools cached: {len(tools)} total", "mcp")
         except Exception as exc:
             errors = {"_global": str(exc)}
-            debug_log(f"MCP discovery failed: {exc}", "mcp")
+            debug_log(f"MCP discovery failed: {type(exc).__name__}", "mcp")
         try:
             if on_done is not None:
                 on_done(tools, errors)
@@ -384,14 +384,17 @@ def discover_mcp_tools(mcps_config: Dict[str, Any]) -> Tuple[Dict[str, ToolSpec]
                 cause = e
                 if hasattr(e, "exceptions") and e.exceptions:
                     cause = e.exceptions[0]
-                debug_log(f"Failed to discover tools from MCP server '{server_name}': {cause}", "mcp")
+                # The message can name the server's command (a home folder path): the debug log, which an
+                # issue report may include, gets its type only; the console summary shows the user the rest.
+                debug_log(f"Failed to discover tools from MCP server '{server_name}': {type(cause).__name__}",
+                          "mcp")
                 errors[server_name] = str(cause)
                 continue
 
         return discovered_tools, errors
 
     except Exception as e:
-        debug_log(f"Failed to discover MCP tools: {e}", "mcp")
+        debug_log(f"Failed to discover MCP tools: {type(e).__name__}", "mcp")
         return {}, {"_global": str(e)}
 
 
