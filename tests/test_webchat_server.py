@@ -122,7 +122,7 @@ class TestStaticFiles:
     def test_text_files_travel_compressed_to_a_browser_that_takes_gzip(self, parts):
         import gzip
         script = "console.log('a fairly long line of a built bundle');\n" * 200
-        (parts.server.settings.static_dir / "assets" / "big.js").write_text(script)
+        (parts.server.settings.static_dir / "assets" / "big.js").write_bytes(script.encode())
         status, body, response = call(parts, "GET", "/assets/big.js", headers={"Accept-Encoding": "gzip, br"})
         assert status == 200 and response.getheader("Content-Encoding") == "gzip"
         assert gzip.decompress(body).decode() == script

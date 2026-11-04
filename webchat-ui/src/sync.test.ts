@@ -320,6 +320,7 @@ describe("a long chat", () => {
     t.stop()
   })
 
+  // Takes about 25 s on Windows, past the default 5 s limit.
   it("lets go of the newest messages once the window is full, and follows them again on the way back", async () => {
     const t = setup()
     await openedWith(t, run(10_001, 50), { has_earlier: true })
@@ -349,7 +350,7 @@ describe("a long chat", () => {
     expect(t.shown.window).toEqual({ hasEarlier: true, hasLater: false })
     expect(t.shown.messages.at(-1)!.id).toBe(20_000)
     t.stop()
-  })
+  }, 60_000)
 
   it("keeps the newest messages while a message is being sent", async () => {
     const t = setup()

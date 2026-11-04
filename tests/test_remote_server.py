@@ -214,7 +214,7 @@ class TestStaticFilesTravelLight:
     def test_built_assets_are_kept_and_compressed_and_the_page_is_asked_for_every_time(self, server, static_dir):
         import gzip
         script = "console.log('a fairly long line of the phone bundle');\n" * 200
-        (static_dir / "assets" / "big.js").write_text(script)
+        (static_dir / "assets" / "big.js").write_bytes(script.encode())
         status, body, headers = Client(server).request("GET", "/assets/big.js", headers={"Accept-Encoding": "gzip"})
         assert status == 200 and headers["Content-Encoding"] == "gzip"
         assert gzip.decompress(body).decode() == script
