@@ -72,6 +72,8 @@ export type JarvisView = {
   chat: Chat | null
   /** How much of the open chat the page holds (a long chat is loaded a page at a time). */
   history: HistoryWindow
+  /** What Jarvis is doing, for the header's presence line (``presence.ts``). */
+  activity: { state: string; busy: boolean; working: boolean }
   mode: ReplyModes | null
   modelState: LocalModelState
   models: LocalModel[]
@@ -119,8 +121,9 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [notices, setNotices] = useState<Notice[]>([])
   const [pending, setPending] = useState<Pending | null>(null)
-  const [meta, setMeta] = useState<Pick<Snapshot, "ready" | "busy" | "busy_query" | "mode" | "model" | "cloud">>({
+  const [meta, setMeta] = useState<Pick<Snapshot, "ready" | "state" | "busy" | "busy_query" | "mode" | "model" | "cloud">>({
     ready: false,
+    state: "idle",
     busy: false,
     busy_query: false,
     mode: null,
@@ -412,6 +415,8 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
   })
 
   runtimeRef.current = runtime
+  const working = !stopping && (pending !== null || meta.busy_query)
+  const activity = useMemo(() => ({ state: meta.state, busy: meta.busy, working }), [meta.state, meta.busy, working])
 
   const view = useMemo<JarvisView>(
     () => ({
@@ -420,6 +425,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
       library,
       chat,
       history,
+      activity,
       mode: meta.mode,
       modelState: meta.model,
       models,
@@ -431,6 +437,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
     }),
     [
       actions,
+      activity,
       attachmentSupport,
       chat,
       cloudModels,

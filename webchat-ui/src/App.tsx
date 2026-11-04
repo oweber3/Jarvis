@@ -3,6 +3,7 @@ import { KeyboardIcon, MicIcon, PanelLeftIcon, XIcon } from "lucide-react"
 import { useEffect, useState, type FC } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { fieldOf, resolveShortcut, SHORTCUTS } from "@/shortcuts"
+import { presence } from "@/presence"
 import { useNarrow } from "@/layout"
 import { MicButton } from "@/components/MicButton"
 import { ModelPicker } from "@/components/ModelPicker"
@@ -131,7 +132,9 @@ const Header: FC<{ onToggleSidebar: () => void; onShowShortcuts: () => void }> =
       >
         <PanelLeftIcon className="size-4" />
       </button>
-      <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{chat ? chatTitle(chat) : "Jarvis"}</h1>
+      <h1 className="min-w-0 truncate text-sm font-medium">{chat ? chatTitle(chat) : "Jarvis"}</h1>
+      <Presence />
+      <span className="flex-1" />
       <span
         className="text-muted-foreground flex shrink-0 items-center gap-1.5 text-xs"
         title="What you say to Jarvis by voice is added to this chat"
@@ -150,6 +153,31 @@ const Header: FC<{ onToggleSidebar: () => void; onShowShortcuts: () => void }> =
       </button>
       <ThemeSwitch />
     </header>
+  )
+}
+
+// Whether Jarvis can be reached and what it is doing, as the desktop chat's contact header says it. Read out
+// politely when it changes.
+const PRESENCE_DOT = {
+  online: "bg-[var(--hud-success)]",
+  working: "bg-[var(--hud-accent-indigo)] motion-safe:animate-pulse",
+  waiting: "bg-warning",
+  offline: "bg-destructive",
+} as const
+
+const Presence: FC = () => {
+  const { reachable, ready, activity } = useJarvis()
+  const now = presence({ reachable, ready, ...activity })
+  return (
+    <span
+      role="status"
+      data-slot="presence"
+      data-tone={now.tone}
+      className="text-muted-foreground flex shrink-0 items-center gap-1.5 text-xs"
+    >
+      <span aria-hidden className={`size-2 rounded-full ${PRESENCE_DOT[now.tone]}`} />
+      <span className="max-sm:sr-only">{now.label}</span>
+    </span>
   )
 }
 

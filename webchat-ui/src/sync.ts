@@ -28,7 +28,7 @@ export const WINDOW_MESSAGES = 300
 // The poll's "newer than" while no window reaches the newest message: the server then sends none.
 const NOTHING_NEWER = Number.MAX_SAFE_INTEGER
 
-export type Meta = Pick<Snapshot, "ready" | "busy" | "busy_query" | "mode" | "model" | "cloud">
+export type Meta = Pick<Snapshot, "ready" | "state" | "busy" | "busy_query" | "mode" | "model" | "cloud">
 
 export type SyncView = {
   /** Every snapshot as it arrives, before it is applied (the phone app reads its own part of it). */
@@ -121,6 +121,7 @@ export class ChatSync {
     this.view.snapshot?.(snap)
     this.view.meta({
       ready: snap.ready,
+      state: snap.state,
       busy: snap.busy,
       busy_query: snap.busy_query,
       mode: snap.mode,
