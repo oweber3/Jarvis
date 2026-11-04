@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, NamedTuple, Optional
+from typing import Any, Dict, FrozenSet, Iterable, List, NamedTuple, Optional
 
 from ..debug import debug_log
 from ..utils.redact import redact
@@ -107,25 +107,39 @@ def _iso(ts: float) -> str:
 
 # ── Per-turn privacy flag ──────────────────────────────────────────────────
 #
-# A reply that quotes activity data must not reach the diary. The tool marks the turn on the thread
-# that owns the request; delivery consumes the mark on the same thread.
+# A reply that quotes an opt-in private source (the activity log, documents, a calendar or email) must not
+# reach the diary. The tool marks the turn on the thread that owns the request, naming its source (the
+# tool's name in ``bridge.tools.CLOUD_GATED_TOOLS``); delivery consumes the mark on the same thread and
+# stores the sources with the turn, so that a private turn reaches a cloud model only while every source
+# it quoted is shared (``bridge.settings.share_private_turn``).
+
+# A private turn whose source is not known (stored before sources were recorded): never shared.
+UNKNOWN_SOURCE = "unknown"
 
 _turn = threading.local()
 
 
-def mark_turn_private() -> None:
-    _turn.private = True
+def private_sources(sources: Iterable[str] = ()) -> FrozenSet[str]:
+    """The sources of a private turn: the given names, or ``UNKNOWN_SOURCE`` when none is given."""
+    names = frozenset(str(s) for s in sources if s)
+    return names or frozenset({UNKNOWN_SOURCE})
+
+
+def mark_turn_private(*sources: str) -> None:
+    """Mark this thread's turn private because it quoted ``sources`` (unknown when none is named)."""
+    _turn.sources = getattr(_turn, "sources", frozenset()) | private_sources(sources)
 
 
 def is_turn_private() -> bool:
     """Whether this thread's current turn is private, without consuming the mark."""
-    return bool(getattr(_turn, "private", False))
+    return bool(getattr(_turn, "sources", frozenset()))
 
 
-def consume_turn_private() -> bool:
-    private = bool(getattr(_turn, "private", False))
-    _turn.private = False
-    return private
+def consume_turn_private() -> FrozenSet[str]:
+    """The sources this thread's turn quoted (empty when it is not private), clearing the mark."""
+    sources = getattr(_turn, "sources", frozenset())
+    _turn.sources = frozenset()
+    return sources
 
 
 # ── Storage ────────────────────────────────────────────────────────────────

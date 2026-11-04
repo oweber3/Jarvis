@@ -5,8 +5,9 @@ import time
 import threading
 from collections import OrderedDict
 from datetime import datetime, timezone
-from typing import Any, Iterator, NamedTuple, Optional, List, Tuple, Union, Callable
+from typing import Any, Dict, FrozenSet, Iterable, Iterator, NamedTuple, Optional, List, Tuple, Union, Callable
 from .db import Database
+from .activity_log import private_sources as _private_sources
 from ..llm import Tier, get_embedding_backend, get_llm_backend, resolve_model
 from ..debug import debug_log
 from ..utils.redact import redact, scrub_secrets
@@ -706,6 +707,8 @@ class StoredTurn(NamedTuple):
     role: str
     content: str
     private: bool
+    # The private sources the turn quoted (empty when it is not private).
+    private_sources: FrozenSet[str] = frozenset()
 
 
 class DialogueMemory:
@@ -733,12 +736,13 @@ class DialogueMemory:
           a diary update (same as the window, since enrichment covers older context)
         """
         self._messages: List[Tuple[float, str, str]] = []  # (timestamp, role, content)
-        # Timestamps of messages that stay in the hot window but are never summarised into the
-        # diary (replies quoting the opt-in activity log or document search).
-        self._diary_excluded: set = set()
-        # Whitespace-normalised text of messages kept out of the diary. A restored chat session
-        # arrives as plain role and content pairs, so privacy is matched on content (in memory only).
-        self._private_texts: "OrderedDict[str, None]" = OrderedDict()
+        # Messages that stay in the hot window but are never summarised into the diary (private turns:
+        # they quote an opt-in source), by timestamp, with the sources they quoted.
+        self._diary_excluded: Dict[float, FrozenSet[str]] = {}
+        # Whitespace-normalised text of messages kept out of the diary, with their sources. A restored
+        # chat session arrives as plain role and content pairs, so privacy is matched on content (in
+        # memory only).
+        self._private_texts: "OrderedDict[str, FrozenSet[str]]" = OrderedDict()
         # Tool carryover: in-loop assistant-with-tool_calls + tool-role messages
         # from prior replies, so follow-up turns within the hot window can reuse
         # the prior tool output instead of re-fetching. Stored as a list of
@@ -746,9 +750,9 @@ class DialogueMemory:
         # tool-related messages. Excluded from `get_pending_chunks` so raw tool
         # payloads never reach the diary summariser.
         self._tool_turns: List[Tuple[float, List[dict]]] = []
-        # Timestamps of tool turns recorded by a private turn (one that read the activity log, documents,
-        # a calendar or email).
-        self._private_tool_turns: set = set()
+        # Tool turns recorded by a private turn (one that read the activity log, documents, a calendar
+        # or email), by timestamp, with the sources it read.
+        self._private_tool_turns: Dict[float, FrozenSet[str]] = {}
         # Conversation-scoped scratch cache: per-key (timestamp, value)
         # entries that survive for the lifetime of the active conversation.
         # The reply engine wipes this on new-conversation entry (when
@@ -811,17 +815,20 @@ class DialogueMemory:
         self._last_ts = now
         return now
 
-    def add_message(self, role: str, content: str, *, diary: bool = True) -> None:
+    def add_message(self, role: str, content: str, *, diary: bool = True,
+                    private_sources: Iterable[str] = ()) -> None:
         """Add a message to recent memory. Thread-safe.
 
-        ``diary=False`` keeps the message in the conversation context but out of the diary.
+        ``diary=False`` keeps the message in the conversation context but out of the diary: a private
+        turn, which quoted ``private_sources`` (unknown when none is given).
         """
         with self._lock:
             timestamp = self._next_ts()
             self._messages.append((timestamp, role.strip(), content.strip()))
             if not diary:
-                self._diary_excluded.add(timestamp)
-                self._private_texts[_private_key(content)] = None
+                sources = _private_sources(private_sources)
+                self._diary_excluded[timestamp] = sources
+                self._private_texts[_private_key(content)] = sources
                 while len(self._private_texts) > _PRIVATE_TEXTS_MAX:
                     self._private_texts.popitem(last=False)
             self._last_activity_time = timestamp
@@ -854,14 +861,14 @@ class DialogueMemory:
         messages = self.get_recent_messages()
         return [f"{msg['role'].title()}: {msg['content']}" for msg in messages]
 
-    def get_recent_messages(self, include_private: bool = True, flag_private: bool = False) -> List[dict]:
+    def get_recent_messages(self, flag_private: bool = False) -> List[dict]:
         """
         Get the turns in context (the dialogue window and any kept turns, see ``keep_last_turns``)
         formatted for LLM API.
 
-        ``include_private=False`` leaves out messages added with ``diary=False`` (they quote
-        a private source: the activity log, documents, a calendar or email), for contexts that leave the PC. ``flag_private=True`` adds a
-        ``private`` key to each message saying whether it is one of those.
+        ``flag_private=True`` adds a ``private`` key to each message saying whether it was added with
+        ``diary=False`` (it quotes a private source: the activity log, documents, a calendar or email) and a ``private_sources`` key
+        with the sources it quoted (empty when it is not private), for contexts that leave the PC.
 
         Returns:
             List of message dictionaries with 'role' and 'content' keys
@@ -870,11 +877,11 @@ class DialogueMemory:
             if not self._messages:
                 return []
 
-            recent_messages = [msg for msg in self._context_turns()
-                               if include_private or msg[0] not in self._diary_excluded]
+            recent_messages = self._context_turns()
 
             return [{"role": role, "content": content,
-                     **({"private": ts in self._diary_excluded} if flag_private else {})}
+                     **({"private": ts in self._diary_excluded,
+                         "private_sources": self._diary_excluded.get(ts, frozenset())} if flag_private else {})}
                     for ts, role, content in recent_messages]
 
     # ------------------------------------------------------------------
@@ -891,11 +898,14 @@ class DialogueMemory:
         Unlike ``get_recent_messages`` this is not bounded by the hot
         window: it is the full in-memory conversation, used to archive a
         session before switching or starting a new one. Content is
-        already redacted (redaction runs before a turn is stored).
+        already redacted (redaction runs before a turn is stored). A
+        private turn carries ``"diary": False`` and its ``private_sources``.
         """
         with self._lock:
             return [
-                {"role": role, "content": content, **({"diary": False} if ts in self._diary_excluded else {})}
+                {"role": role, "content": content,
+                 **({"diary": False, "private_sources": sorted(self._diary_excluded[ts])}
+                    if ts in self._diary_excluded else {})}
                 for ts, role, content in self._messages
             ]
 
@@ -904,17 +914,21 @@ class DialogueMemory:
 
         Timestamps are unique and increasing, so a mirror that keeps the last one it saw (phone
         access) sees each turn once. Content is already redacted. ``private`` marks turns kept out
-        of the diary.
+        of the diary, and ``private_sources`` names the sources they quoted.
         """
         with self._lock:
-            return [StoredTurn(stamp, role, content, stamp in self._diary_excluded)
+            return [StoredTurn(stamp, role, content, stamp in self._diary_excluded,
+                               self._diary_excluded.get(stamp, frozenset()))
                     for stamp, role, content in self._messages if stamp > ts]
 
     def set_messages(self, messages: List[dict], *, saved: bool = False) -> float:
         """Replace the stored conversation with ``messages`` (session restore).
 
         ``messages`` must be ``{"role", "content"}`` dicts as produced by
-        ``all_messages``. Caches and tool carryover are cleared: the
+        ``all_messages``: a private turn carries ``"diary": False`` and its
+        ``private_sources`` (unknown when missing), and a turn whose text
+        matches a private turn this memory has seen keeps that turn's
+        sources. Caches and tool carryover are cleared: the
         restored conversation starts fresh. Timestamps are regenerated
         with a monotonic epsilon so the restored turns count as recent
         and keep their order. ``saved=True`` marks the restored turns as
@@ -925,14 +939,19 @@ class DialogueMemory:
         with self._lock:
             now = time.time()
             fresh: List[Tuple[float, str, str]] = []
-            self._diary_excluded = set()
+            self._diary_excluded = {}
             for i, msg in enumerate(messages):
                 role = str(msg.get("role", "")).strip()
                 content = str(msg.get("content", "")).strip()
                 if role and content:
                     fresh.append((now + i * 0.001, role, content))
-                    if msg.get("diary") is False or _private_key(content) in self._private_texts:
-                        self._diary_excluded.add(now + i * 0.001)
+                    seen = self._private_texts.get(_private_key(content))
+                    if msg.get("diary") is False:
+                        sources = msg.get("private_sources") or ()
+                        self._diary_excluded[now + i * 0.001] = _private_sources(
+                            [sources] if isinstance(sources, str) else sources)
+                    elif seen is not None:
+                        self._diary_excluded[now + i * 0.001] = seen
             self._messages = fresh
             self._last_ts = now + len(fresh) * 0.001
             self._last_activity_time = self._last_ts
@@ -966,7 +985,7 @@ class DialogueMemory:
         """Drop the entire conversation and its caches (new session)."""
         with self._lock:
             self._messages = []
-            self._diary_excluded = set()
+            self._diary_excluded = {}
             self._tool_turns = []
             self._hot_cache = OrderedDict()
             self._last_activity_time = time.time()
@@ -1004,21 +1023,25 @@ class DialogueMemory:
             self._hot_cache = OrderedDict()
             return True
 
-    def has_private_context(self, max_tool_turns: int = 2) -> bool:
-        """Whether the context a reply would see holds private data: a recent message kept out of
-        the diary, or one of the last ``max_tool_turns`` tool turns recorded by a private turn.
+    def private_context_sources(self, max_tool_turns: int = 2) -> FrozenSet[str]:
+        """The private sources the context a reply would see holds (empty when it holds none): those of
+        recent messages kept out of the diary and of the last ``max_tool_turns`` tool turns recorded by
+        a private turn.
 
-        A reply built from that context is as private as the turn that first read the data."""
+        A reply built from that context is as private as the turns that first read the data."""
         with self._lock:
-            if any(ts in self._diary_excluded for ts, _role, _content in self._context_turns()):
-                return True
-            return any(ts in self._private_tool_turns for ts, _msgs in self._tool_turns[-max_tool_turns:])
+            found: FrozenSet[str] = frozenset()
+            for ts, _role, _content in self._context_turns():
+                found |= self._diary_excluded.get(ts, frozenset())
+            for ts, _msgs in self._tool_turns[-max_tool_turns:]:
+                found |= self._private_tool_turns.get(ts, frozenset())
+            return found
 
-    def record_tool_turn(self, tool_msgs: List[dict], private: bool = False) -> None:
+    def record_tool_turn(self, tool_msgs: List[dict], private_sources: Iterable[str] = ()) -> None:
         """Store in-loop tool-call/tool-role messages from a just-finished reply.
 
-        ``private`` marks a turn that read a private source (the activity log, documents, a calendar or email),
-        so follow-ups that reuse it stay private.
+        ``private_sources`` names the private sources the turn read (the activity log, documents, a
+        calendar or email), so follow-ups that reuse it stay private.
 
         Called once per reply with the tool-related messages extracted from the
         engine's messages array. These interleave with text messages on
@@ -1050,15 +1073,17 @@ class DialogueMemory:
         with self._lock:
             ts = self._next_ts()
             self._tool_turns.append((ts, scrubbed))
-            if private:
-                self._private_tool_turns.add(ts)
+            sources = frozenset(private_sources)
+            if sources:
+                self._private_tool_turns[ts] = sources
             # Bound storage to a hard ceiling. Tool turns are NOT pruned
             # by RECENT_WINDOW_SEC age any more; the engine clears them
             # on new-conversation entry so an active session keeps its
             # carryover regardless of how long ago each tool fired.
             if len(self._tool_turns) > self._tool_turns_max_storage:
                 self._tool_turns = self._tool_turns[-self._tool_turns_max_storage:]
-            self._private_tool_turns &= {kept for kept, _msgs in self._tool_turns}
+            kept_turns = {kept for kept, _msgs in self._tool_turns}
+            self._private_tool_turns = {t: s for t, s in self._private_tool_turns.items() if t in kept_turns}
 
     def clear_tool_carryover(self) -> None:
         """Drop all stored tool-turn messages. Text messages are untouched."""
@@ -1327,7 +1352,8 @@ class DialogueMemory:
             (ts, role, content) for i, (ts, role, content) in enumerate(self._messages)
             if ts >= cutoff or (ts not in self._diary_excluded and (i >= kept_from or ts > self._last_saved_timestamp))
         ]
-        self._diary_excluded &= {ts for ts, _, _ in self._messages}
+        kept = {ts for ts, _, _ in self._messages}
+        self._diary_excluded = {ts: s for ts, s in self._diary_excluded.items() if ts in kept}
 
     def clear_pending_updates(self) -> None:
         """Mark all current messages as saved. Thread-safe.

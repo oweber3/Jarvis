@@ -64,7 +64,7 @@ Registered by `registry.configure_email_tool(cfg)` only when `email_enabled` is 
 
 ## Cloud boundary
 
-`email_share_with_cloud` (default false; only a real `true` counts) decides whether Codex and Claude are offered `email` (its entry in `bridge.tools.CLOUD_GATED_TOOLS`). Private dialogue turns are shared with them only when at least one private source is shared and every one that is set up is shared (`bridge.settings.share_private_turns`, see `bridge/bridge.spec.md`); the email counts as set up while it is on or while it still has accounts configured.
+`email_share_with_cloud` (default false; only a real `true` counts) decides whether Codex and Claude are offered `email` (its entry in `bridge.tools.CLOUD_GATED_TOOLS`). A turn that read email records `email` as its private source and is shared with them only while `email_enabled` and `email_share_with_cloud` are both on, and every other source the turn quoted is turned on and shared too (`bridge.settings.share_private_turn`, see `bridge/bridge.spec.md`); turning email off keeps its earlier turns local.
 
 ## Setup command
 

@@ -23,8 +23,8 @@ def memory():
 @pytest.mark.unit
 class TestDialogueMemory:
     def test_private_messages_stay_in_the_hot_window_but_out_of_the_diary(self, memory):
-        memory.add_message("user", "what was I doing this morning?", diary=False)
-        memory.add_message("assistant", SECRET, diary=False)
+        memory.add_message("user", "what was I doing this morning?", diary=False, private_sources={"activityLog"})
+        memory.add_message("assistant", SECRET, diary=False, private_sources={"activityLog"})
         memory.add_message("user", "thanks")
 
         assert [m["content"] for m in memory.get_recent_messages()] == [
@@ -34,8 +34,8 @@ class TestDialogueMemory:
         assert memory.has_pending_chunks()
 
     def test_a_conversation_of_only_private_messages_has_nothing_to_summarise(self, memory):
-        memory.add_message("user", "what was I doing?", diary=False)
-        memory.add_message("assistant", SECRET, diary=False)
+        memory.add_message("user", "what was I doing?", diary=False, private_sources={"activityLog"})
+        memory.add_message("assistant", SECRET, diary=False, private_sources={"activityLog"})
         assert memory.get_pending_chunks() == []
         assert not memory.has_pending_chunks()
         assert not memory.should_update_diary()
@@ -83,8 +83,8 @@ class TestDelivery:
 @pytest.mark.unit
 class TestSessionRestore:
     def test_a_restored_chat_session_keeps_private_messages_out_of_the_diary(self, memory):
-        memory.add_message("user", "what was I doing?", diary=False)
-        memory.add_message("assistant", SECRET, diary=False)
+        memory.add_message("user", "what was I doing?", diary=False, private_sources={"activityLog"})
+        memory.add_message("assistant", SECRET, diary=False, private_sources={"activityLog"})
         memory.add_message("user", "thanks")
         archived = memory.all_messages()
 
@@ -96,7 +96,7 @@ class TestSessionRestore:
         assert fresh.get_pending_chunks() == ["User: thanks"]
 
     def test_private_messages_do_not_pile_up_once_the_window_has_passed(self, memory):
-        memory.add_message("user", "what was I doing?", diary=False)
+        memory.add_message("user", "what was I doing?", diary=False, private_sources={"activityLog"})
         memory.RECENT_WINDOW_SEC = -1  # everything is now outside the window
         memory.mark_saved_up_to(0.0)
         assert memory.all_messages() == []
@@ -110,8 +110,8 @@ class TestRestoreFromTheChatWindowsOwnArchive:
         return [{"role": m["role"], "content": m["content"]} for m in memory.all_messages()]
 
     def test_a_private_exchange_stays_out_of_the_diary_after_a_session_switch(self, memory):
-        memory.add_message("user", "what was I doing?", diary=False)
-        memory.add_message("assistant", SECRET, diary=False)
+        memory.add_message("user", "what was I doing?", diary=False, private_sources={"activityLog"})
+        memory.add_message("assistant", SECRET, diary=False, private_sources={"activityLog"})
         memory.add_message("user", "thanks")
         archived = self.plain(memory)
         memory.clear()
@@ -122,8 +122,8 @@ class TestRestoreFromTheChatWindowsOwnArchive:
 
     def test_the_daemons_restore_path_keeps_it_private(self, memory, monkeypatch):
         from jarvis import daemon
-        memory.add_message("user", "what   was I doing?", diary=False)  # redaction collapses spaces
-        memory.add_message("assistant", SECRET, diary=False)
+        memory.add_message("user", "what   was I doing?", diary=False, private_sources={"activityLog"})  # redaction collapses spaces
+        memory.add_message("assistant", SECRET, diary=False, private_sources={"activityLog"})
         archived = self.plain(memory)
         memory.clear()
         monkeypatch.setattr(daemon, "_global_dialogue_memory", memory)
@@ -148,18 +148,18 @@ class TestFollowUps:
     """A follow-up answered from the activity data already in the context is as private as the first turn."""
 
     def test_private_context_is_reported_while_activity_turns_are_live(self, memory):
-        assert not memory.has_private_context()
-        memory.add_message("user", "what was I doing?", diary=False)
-        assert memory.has_private_context()
+        assert not memory.private_context_sources()
+        memory.add_message("user", "what was I doing?", diary=False, private_sources={"activityLog"})
+        assert memory.private_context_sources() == {"activityLog"}
 
     def test_a_private_tool_result_carried_over_keeps_the_context_private(self, memory):
-        memory.record_tool_turn(_activity_tool_turn(), private=True)
-        assert memory.has_private_context()
+        memory.record_tool_turn(_activity_tool_turn(), private_sources={"activityLog"})
+        assert memory.private_context_sources() == {"activityLog"}
 
     def test_ordinary_tool_results_do_not(self, memory):
         memory.add_message("user", "hello")
         memory.record_tool_turn(_activity_tool_turn()[:1])
-        assert not memory.has_private_context()
+        assert not memory.private_context_sources()
 
     def test_a_follow_up_reply_from_carried_over_activity_data_stays_out_of_the_diary(self, memory, capsys):
         self._follow_up(memory)
@@ -178,9 +178,9 @@ class TestFollowUps:
         from unittest.mock import Mock, patch
         from test_engine_tool_carryover_guard import _mock_cfg
 
-        memory.add_message("user", "what was I doing this afternoon?", diary=False)
-        memory.record_tool_turn(_activity_tool_turn(), private=True)
-        memory.add_message("assistant", "Mostly Excel.", diary=False)
+        memory.add_message("user", "what was I doing this afternoon?", diary=False, private_sources={"activityLog"})
+        memory.record_tool_turn(_activity_tool_turn(), private_sources={"activityLog"})
+        memory.add_message("assistant", "Mostly Excel.", diary=False, private_sources={"activityLog"})
         answer = "About two hours in Budget-2026.xlsx."
         with patch("jarvis.reply.engine.chat_with_messages", return_value={"message": {"content": answer}}), \
                 patch("jarvis.reply.engine.extract_text_from_response", return_value=answer), \
@@ -239,6 +239,7 @@ class TestCloudFollowUps:
         mock_config.claude_recent_dialogue_messages = 6
 
         def ask(memory, sharing, db):
+            mock_config.activity_log_enabled = True
             mock_config.activity_log_share_with_cloud = sharing
             bridge = _FakeBridge("You spent about two hours in Budget-2026.xlsx.")
             modes.start(mock_config, factories={"claude": lambda cfg: bridge}, save=lambda values: True)
@@ -251,8 +252,8 @@ class TestCloudFollowUps:
         get_confirmation_store().clear_pending()
 
     def test_a_cloud_reply_built_on_shared_activity_data_stays_private(self, cloud, memory, db, capsys):
-        memory.add_message("user", "what was I working on this afternoon?", diary=False)
-        memory.add_message("assistant", "Mostly Excel, in Budget-2026.xlsx.", diary=False)
+        memory.add_message("user", "what was I working on this afternoon?", diary=False, private_sources={"activityLog"})
+        memory.add_message("assistant", "Mostly Excel, in Budget-2026.xlsx.", diary=False, private_sources={"activityLog"})
 
         bridge = cloud(memory, True, db)
 
@@ -270,7 +271,7 @@ class TestCloudFollowUps:
 
     def test_an_old_private_tool_result_does_not_make_later_cloud_replies_private(self, cloud, memory, db):
         # A local activity question earlier: its tool result stays in the local carry-over only.
-        memory.record_tool_turn(_activity_tool_turn(), private=True)
+        memory.record_tool_turn(_activity_tool_turn(), private_sources={"activityLog"})
         memory.add_message("user", "what is the capital of France?")
         memory.add_message("assistant", "Paris.")
 
@@ -281,8 +282,8 @@ class TestCloudFollowUps:
 
     def test_nothing_shared_means_nothing_marked(self, cloud, memory, db, mock_config):
         mock_config.claude_recent_dialogue_messages = 0
-        memory.add_message("user", "what was I working on this afternoon?", diary=False)
-        memory.add_message("assistant", "Mostly Excel.", diary=False)
+        memory.add_message("user", "what was I working on this afternoon?", diary=False, private_sources={"activityLog"})
+        memory.add_message("assistant", "Mostly Excel.", diary=False, private_sources={"activityLog"})
 
         bridge = cloud(memory, True, db)
 
@@ -291,8 +292,8 @@ class TestCloudFollowUps:
 
     def test_a_private_turn_older_than_the_shared_messages_does_not_count(self, cloud, memory, db, mock_config):
         mock_config.claude_recent_dialogue_messages = 2
-        memory.add_message("user", "what was I working on this afternoon?", diary=False)
-        memory.add_message("assistant", "Mostly Excel.", diary=False)
+        memory.add_message("user", "what was I working on this afternoon?", diary=False, private_sources={"activityLog"})
+        memory.add_message("assistant", "Mostly Excel.", diary=False, private_sources={"activityLog"})
         memory.add_message("user", "what is the capital of France?")
         memory.add_message("assistant", "Paris.")
 

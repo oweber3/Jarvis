@@ -172,7 +172,7 @@ class CalendarTool(Tool):
             count = len(events)
         # The reply quotes calendar data, so the turn stays out of the diary (activity_log.spec.md mechanism).
         from ...memory.activity_log import mark_turn_private
-        mark_turn_private()
+        mark_turn_private(self.name)
         context.user_print(f"📅 Calendar: {count} event{'s' if count != 1 else ''}")
         text = (json.dumps(header, ensure_ascii=False) + "\n" + FENCE_NOTE + "\n"
                 + fence_json(payload, "calendar"))

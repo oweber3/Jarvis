@@ -377,15 +377,15 @@ class TestAggregates:
 class TestTurnPrivacyFlag:
     def test_marking_is_per_thread_and_consumed_once(self):
         al.consume_turn_private()
-        assert al.consume_turn_private() is False
-        al.mark_turn_private()
+        assert not al.consume_turn_private()
+        al.mark_turn_private("activityLog")
         seen = []
         thread = threading.Thread(target=lambda: seen.append(al.consume_turn_private()))
         thread.start()
         thread.join()
-        assert seen == [False]
-        assert al.consume_turn_private() is True
-        assert al.consume_turn_private() is False
+        assert seen == [frozenset()]
+        assert al.consume_turn_private() == {"activityLog"}
+        assert not al.consume_turn_private()
 
 
 class TestTimeParsing:

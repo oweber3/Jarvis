@@ -257,12 +257,13 @@ class TestOpeningChats:
         assert hub.open_chat("nope").status == "unknown"
 
     def test_opening_sends_the_chats_private_turns_marked_private(self, hub, backend, store):
-        backend.memory.add_message("assistant", "You were in Code", diary=False)
+        backend.memory.add_message("assistant", "You were in Code", diary=False, private_sources={"activityLog"})
         hub.sync()
         chat = open_id(store)
         hub.new_chat()
         hub.open_chat(chat)
-        assert backend.switch_calls[-1] == [{"role": "assistant", "content": "You were in Code", "diary": False}]
+        assert backend.switch_calls[-1] == [{"role": "assistant", "content": "You were in Code", "diary": False,
+                                             "private_sources": ["activityLog"]}]
 
     def test_only_the_latest_turns_of_a_long_chat_are_restored(self, backend, store):
         hub = ChatHub(backend, store, restore_turns=4)

@@ -90,7 +90,7 @@ Low priority and bounded:
 
 - **Cloud boundary.** In Codex and Claude reply modes the tool is withheld from the request's tool snapshot unless `document_search_share_with_cloud` is true (default false; only a real `true` counts) and sharing has not been stopped since start (`runtime.shared_with_cloud`). The gate lives in the shared `bridge.tools.build_tool_snapshot`, so it applies to both modes, and a call for a withheld tool is refused like any name outside the snapshot. When sharing is on, the passages the model asks for (with file names and paths) are sent to the provider like any other tool result; Settings says so. The local model always has the tool while document search is on.
 - **Private turns.** A turn that used `documentSearch` is a private turn, exactly like one that used `activityLog` (`memory/activity_log.spec.md`, Diary and graph): the tool marks it, its messages stay in the hot window for follow-ups but out of the diary and therefore out of the knowledge graph, its reply is not printed to the console log, and follow-ups answered from the carried-over result are private too.
-- **Shared dialogue.** Private turns stay out of the recent dialogue sent to Codex or Claude unless at least one opt-in private source (the activity log, document search, the calendar, email) allows cloud sharing and every one that is set up does (`bridge.settings.share_private_turns`, `bridge/bridge.spec.md`): with document search on and its sharing off, no private turn is shared, whatever the other sources' switches say.
+- **Shared dialogue.** A private turn records the sources it quoted, in memory and in the web chat's rows in the Jarvis database. It is part of the recent dialogue sent to Codex or Claude only while every source it recorded is turned on and shared (`bridge.settings.share_private_turn`, `bridge/bridge.spec.md`): a turn that used `documentSearch` stays local while document search is off or `document_search_share_with_cloud` is off, whatever the other sources' switches say, and turns from other sources are not held back by it.
 - **Logs** record counts and reason codes (files indexed, skipped, removed, passages returned, why a pass stopped), never names, paths, queries or text. The tag is `documents`.
 - Turning document search off stops indexing and removes the tool at the next start. The index stays until deleted from the tray or the CLI.
 
@@ -128,7 +128,7 @@ No language patterns decide anything. Matching is by embedding similarity, so qu
 - `.doc`, `.odt`, `.rtf` and spreadsheets are not indexed.
 - The first pass over a large folder takes as long as embedding every passage on this PC; answers improve as it progresses.
 - Retrieval quality depends on the embedding model.
-- A private turn does not record which source it quoted, and document search or the activity log, once turned off, is not consulted by `share_private_turns`. A web chat reopened from the archive can therefore hold private turns from one of them after it has been turned off, and they are shared when every source still set up is shared.
+- Web chat rows stored before private turns recorded their sources count as of unknown source and are never shared with Codex or Claude, whatever the switches say; they stay usable on the local path.
 
 ## Verification contract
 
@@ -139,6 +139,6 @@ Automated tests (no real documents, no network) assert:
 - Store: own tables beside existing ones, replace and remove, cosine ranking, at most two passages per file, other-length vectors ignored, delete-all leaving no readable text in the file.
 - Indexer with a fake embedder: first pass, unchanged files not reopened, changed files re-embedded, deleted files removed, oversized and empty files skipped, embedding failure stops and resumes, model change rebuilds, busy waits, the total cap, stop between passages, logs without names or text.
 - Tool: registration only when enabled, fenced results with file and page, marker spoofing defanged, empty-index and unavailable-embedding messages, the private-turn mark, limit bounds.
-- Cloud boundary: withheld from the Codex and Claude snapshots by default and for anything but a real `true`; offered when on; runtime stop; shared private turns follow `share_private_turns`.
+- Cloud boundary: withheld from the Codex and Claude snapshots by default and for anything but a real `true`; offered when on; runtime stop; shared private turns follow `share_private_turn` (only while document search is on and shared).
 - Config defaults and bounds; Settings rows; tray items, confirmation default, request paths and IPC lines.
 - Evals (`evals/test_document_search_routing.py`, live local model): document-content questions route to `documentSearch`; finding files by name, web questions and the open PDF route to their own tools.

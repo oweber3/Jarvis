@@ -142,7 +142,7 @@ class EmailTool(Tool):
             return _fail("action must be list or read.")
         # The reply quotes mail, so the turn stays out of the diary (activity_log.spec.md mechanism).
         from ...memory.activity_log import mark_turn_private
-        mark_turn_private()
+        mark_turn_private(self.name)
         text = (json.dumps(header, ensure_ascii=False) + "\n" + FENCE_NOTE + "\n"
                 + fence_json(payload, "email"))
         return ToolExecutionResult(success=True, reply_text=text)

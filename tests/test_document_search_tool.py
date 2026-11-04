@@ -110,12 +110,12 @@ class TestResults:
 
     def test_the_turn_is_private(self, seeded):
         call(seeded, query="cat")
-        assert al.consume_turn_private() is True
+        assert al.consume_turn_private() == {"documentSearch"}
 
     def test_empty_query_fails_and_reads_nothing(self, seeded):
         result = call(seeded, query="  ")
         assert result.success is False and result.error_message
-        assert al.consume_turn_private() is False
+        assert not al.consume_turn_private()
 
     def test_empty_index_says_so(self, cfg):
         result = call(cfg, query="cat")
@@ -202,20 +202,18 @@ class TestCloudBoundary:
         for mode, snapshot in self.snapshots(shared).items():
             assert "documentSearch" not in snapshot, mode
 
-    @pytest.mark.parametrize("activity_on,activity_share,docs_on,docs_share,expected", [
-        (False, False, False, False, False),
-        (True, True, False, False, True),    # activity only, shared
-        (True, False, False, False, False),
-        (False, False, True, True, True),    # documents only, shared
-        (False, False, True, False, False),
-        (True, True, True, False, False),    # documents withhold even when activity shares
-        (True, False, True, True, False),    # and the other way round
-        (True, True, True, True, True),
+    @pytest.mark.parametrize("docs_on,docs_share,expected", [
+        (False, False, False),
+        (False, True, False),   # turned off: its turns stay local however the switch is set
+        (True, False, False),
+        (True, True, True),
     ])
-    def test_private_turns_are_shared_only_when_no_source_withholds(self, cfg, activity_on, activity_share,
-                                                                  docs_on, docs_share, expected):
+    def test_private_document_turns_are_shared_only_while_search_is_on_and_shared(self, cfg, docs_on, docs_share,
+                                                                                 expected):
         from jarvis.bridge.settings import bridge_settings
-        values = SimpleNamespace(activity_log_enabled=activity_on, activity_log_share_with_cloud=activity_share,
+        values = SimpleNamespace(activity_log_enabled=True, activity_log_share_with_cloud=True,
                                  document_search_enabled=docs_on, document_search_share_with_cloud=docs_share)
         for mode in ("codex", "claude"):
-            assert bridge_settings(values, mode).share_private_turns is expected, mode
+            sources = bridge_settings(values, mode).shared_private_sources
+            assert ("documentSearch" in sources) is expected, mode
+            assert "activityLog" in sources, mode  # another source is not held back by document search

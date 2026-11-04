@@ -228,7 +228,8 @@ class ChatHub:
             source = "voice"
         steps = self._take_steps(turn) if turn.role == "assistant" else []
         self._store.append_message(chat_id, turn.role, turn.content, ts=turn.ts, source=source,
-                                   private=bool(turn.private), steps=steps,
+                                   private=bool(turn.private), private_sources=turn.private_sources,
+                                   steps=steps,
                                    attachments=self._claim_attachments() if turn.role == "user" else ())
         if turn.role == "assistant":
             self._remember_model()
@@ -250,7 +251,8 @@ class ChatHub:
         self._step_cursor = self._steps.latest()
 
     def _restore_payload(self, chat_id: str) -> List[dict]:
-        return [{"role": m.role, "content": m.content, **({"diary": False} if m.private else {})}
+        return [{"role": m.role, "content": m.content,
+                 **({"diary": False, "private_sources": list(m.private_sources)} if m.private else {})}
                 for m in self._store.last_messages(chat_id, self._restore_turns)]
 
     def _typed_in_flight(self) -> bool:

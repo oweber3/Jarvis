@@ -124,7 +124,7 @@ class TestSwitchChatConversation:
         daemon.switch_chat_conversation([
             {"role": "assistant", "content": "you spent 2h in Code", "diary": False},
             {"role": "user", "content": "thanks"}])
-        assert [m["content"] for m in memory.get_recent_messages(include_private=False)] == ["thanks"]
+        assert [m["content"] for m in memory.get_recent_messages(flag_private=True) if not m["private"]] == ["thanks"]
 
     def test_refused_while_a_query_is_running(self, memory, diary):
         memory.add_message("user", "keep me")
