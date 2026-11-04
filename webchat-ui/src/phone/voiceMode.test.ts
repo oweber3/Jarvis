@@ -124,6 +124,21 @@ describe("opening voice mode", () => {
     expect(w.state.stopped).toBe(0)
   })
 
+  it("stays hands-free when the owner interrupts Jarvis: playback stops and it listens at once", async () => {
+    const w = world()
+    w.mode.enter()
+    await say(w)
+    w.session.audioChanged(ready)
+    await tick()
+    expect(w.session.view.phase).toBe("speaking")
+    w.session.tap()
+    await tick()
+    expect(w.state.stopped).toBe(1)
+    expect(w.session.view.phase).toBe("listening")
+    expect(w.session.view.conversation).toBe(true)
+    expect(w.mode.open).toBe(true)
+  })
+
   it("keeps conversation mode off when it is turned off inside voice mode", async () => {
     const w = world()
     w.mode.enter()

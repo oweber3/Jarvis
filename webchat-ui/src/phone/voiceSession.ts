@@ -118,9 +118,11 @@ export class VoiceSession {
         this.cancelExchange()
         break
       case "speaking":
-        // Barge-in: Jarvis stops talking, and a conversation ends with it.
-        this.setConversation(false)
+        // Barge-in: Jarvis stops talking. In conversation mode the owner is cutting in to say something, so
+        // listening starts in the same tap (`start` moves to a new exchange, so the stopped reply's ending is
+        // ignored); otherwise the stopped reply simply ends.
         this.ports.stopPlayback()
+        if (this.conversation) void this.start()
         break
     }
   }

@@ -34,6 +34,17 @@ body {
   gap: 8px;
 }
 
+/* The scroll-to-bottom arrow floats over the conversation, so it is a solid, raised button at the end edge,
+   where it covers the least text and never reads as part of a message. */
+.phone-root .aui-thread-scroll-to-bottom {
+  align-self: flex-end;
+  margin-inline-end: 4px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border-color: var(--border);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.25);
+}
+
 /* Fingers, not pointers: every control is at least 44 px. */
 .phone-root header button,
 .phone-root .aui-composer-send,
