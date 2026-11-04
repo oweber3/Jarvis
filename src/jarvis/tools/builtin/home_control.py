@@ -280,6 +280,12 @@ class HomeControlTool(Tool):
         command, problem = self._command(action, args, devices)
         if problem:
             return _fail(problem)
+        from ..request_scope import current_call
+        if current_call().approval is None and self._risk(action, args, devices, context.cfg):
+            # Classified before these devices were known (the hub was still loading its list): a risky change
+            # never runs without the user's yes, so the request is asked again rather than run.
+            debug_log(f"homeControl {action} refused: risky at run time without an approval", _TAG)
+            return _fail("That change needs your confirmation first, so nothing was changed. Please ask again.")
         return self._execute(home, action, devices, command, context)
 
     def _list(self, home, args, context) -> ToolExecutionResult:
