@@ -198,6 +198,7 @@ class TestRobustness:
 
     def test_two_unanswered_pings_reconnect(self, fake, monkeypatch):
         monkeypatch.setattr(ha, "PING_AFTER_SEC", 0.2)
+        monkeypatch.setattr(ha, "BACKOFF_START_SEC", 0.1)
         registry = Registry()
         conn = ha.HomeAssistantConnector(registry, fake.url, "good-token")
         conn.start()

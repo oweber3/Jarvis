@@ -21,6 +21,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 
 CHURN_SCENARIO = r"""
@@ -144,6 +146,7 @@ def _run_scenario() -> str:
     return proc.stdout + proc.stderr
 
 
+@pytest.mark.slow
 def test_startup_and_daemon_worker_churn_survives():
     """Rapidly replacing DaemonThread / startup workers from completion
     slots must never destroy a running QThread (SIGABRT)."""

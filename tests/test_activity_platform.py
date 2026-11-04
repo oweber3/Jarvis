@@ -192,6 +192,7 @@ class TestRealWindowEvents:
         watcher.stop()
         assert time.monotonic() - started < 3.0
 
+    @pytest.mark.slow
     def test_the_whole_pipeline_records_title_changes_as_sessions(self, tmp_path):
         from jarvis.memory import activity_runtime
         from types import SimpleNamespace

@@ -250,6 +250,7 @@ def test_closest_entries_share_more_than_half_the_query_words(textbook):
     assert doc.outline_closest('chapter 6 practice problems', limit=4)[0].page == 8
 
 
+@pytest.mark.slow
 def test_searching_a_large_book_stays_quick(tmp_path):
     from jarvis.utils import pdf_document
     pdf_document.clear_cache()

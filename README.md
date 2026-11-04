@@ -426,6 +426,23 @@ Running from source also enables Chatterbox TTS. Piper works in both packaged an
 
 </details>
 
+<details>
+<summary><strong>Run the tests</strong></summary>
+
+From the repository root, after `pip install -r requirements-dev.txt` (adds pytest-xdist):
+
+```bash
+# Full run, on every core
+PYTHONPATH=src python -m pytest -q -n auto
+
+# Quick run: leaves out the few tests marked slow (real subprocesses, real waits)
+PYTHONPATH=src python -m pytest -q -n auto --quick
+```
+
+Drop `-n auto` to run on one core. Evals and performance tests are separate: see [EVALS.md](EVALS.md).
+
+</details>
+
 **Adding a capability?** Start with the [extension checklist](.agents/skills/new-tool/SKILL.md). It helps you choose between a routine, a workspace, an MCP server, a fast command and a new built-in tool, and lists everything a new tool needs. AI coding agents are pointed to it by `AGENTS.md`.
 
 <details>

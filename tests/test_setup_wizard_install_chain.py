@@ -20,6 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 
 SCENARIO = r"""
@@ -61,6 +63,7 @@ print(f"CHAIN_OK after {{N}} replacements")
 """
 
 
+@pytest.mark.slow
 def test_chained_worker_replacement_does_not_abort():
     """Rapidly replacing CommandWorkers (the wizard install loop) must not SIGABRT."""
     result = subprocess.run(

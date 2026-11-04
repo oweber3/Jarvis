@@ -154,6 +154,7 @@ def _in_background(fn):
     return fut
 
 
+@pytest.mark.slow
 def test_server_recovers_after_a_timed_out_call(tmp_path, runtime_cleanup):
     """A call past ``timeout_sec`` raises TimeoutError; the stuck session is
     replaced (its subprocess ends) and the next call gets a fresh one."""
@@ -169,6 +170,7 @@ def test_server_recovers_after_a_timed_out_call(tmp_path, runtime_cleanup):
     assert _wait_for(lambda: not _alive(first_pid), timeout=10), "the stuck server was left running"
 
 
+@pytest.mark.slow
 def test_call_that_timed_out_while_queued_never_runs(tmp_path, runtime_cleanup):
     """A request that waited behind a slow call and timed out is reported as
     failed, so it must not run when the server becomes free."""
@@ -189,6 +191,7 @@ def test_call_that_timed_out_while_queued_never_runs(tmp_path, runtime_cleanup):
     assert _logged(tmp_path) == []
 
 
+@pytest.mark.slow
 def test_call_queued_behind_a_hung_call_runs_once_on_a_fresh_session(tmp_path, runtime_cleanup):
     """When the call in flight times out, a request still waiting behind it
     (whose caller is still waiting) runs exactly once, on a fresh session,
@@ -223,6 +226,7 @@ def _timed_out_server_then_next_call(tmp_path, cfg):
     return old_pid, _alive(old_pid), answer
 
 
+@pytest.mark.slow
 def test_a_timed_out_call_never_acts_alongside_or_after_the_next_call(tmp_path, runtime_cleanup):
     """The replacement session starts only once the stuck one has ended, so
     the timed-out call's side effect can never land after the next call's."""
@@ -236,6 +240,7 @@ def test_a_timed_out_call_never_acts_alongside_or_after_the_next_call(tmp_path, 
     assert _logged(tmp_path) == ["fast"]
 
 
+@pytest.mark.slow
 def test_a_session_that_will_not_stop_is_killed_before_its_replacement_starts(
     tmp_path, monkeypatch, runtime_cleanup
 ):
@@ -273,6 +278,7 @@ def _start_decoy(tmp_path, cfg):
     return decoy
 
 
+@pytest.mark.slow
 def test_the_stop_kill_reaches_only_our_own_server_never_another_programs(
     tmp_path, monkeypatch, runtime_cleanup
 ):
@@ -296,6 +302,7 @@ def test_the_stop_kill_reaches_only_our_own_server_never_another_programs(
     assert _alive(decoy)
 
 
+@pytest.mark.slow
 def test_a_recorded_process_id_reused_by_another_process_is_never_killed():
     """The kill checks the recorded start time, so a PID reused since the session started is left alone."""
     import subprocess
@@ -371,6 +378,7 @@ def test_a_caller_cancelling_during_the_drain_never_stops_it(monkeypatch, runtim
     assert isinstance(waiting.exception(timeout=5), mcp_runtime._WorkerDeadError)
 
 
+@pytest.mark.slow
 def test_setup_timeout_does_not_leave_server_processes(tmp_path, monkeypatch, runtime_cleanup):
     """A server that misses the handshake window fails the call and its
     half-started subprocess is stopped, on every attempt."""
@@ -389,6 +397,7 @@ def test_setup_timeout_does_not_leave_server_processes(tmp_path, monkeypatch, ru
     assert [p for p in _spawned_pids(tmp_path) if _alive(p)] == []
 
 
+@pytest.mark.slow
 def test_shutdown_runtime_stops_server_process(tmp_path, runtime_cleanup):
     """Daemon shutdown asks each worker to exit and its subprocess ends."""
     from jarvis.tools.external.mcp_client import MCPClient
@@ -405,6 +414,7 @@ def test_shutdown_runtime_stops_server_process(tmp_path, runtime_cleanup):
     assert [p for p in pids if _alive(p)] == []
 
 
+@pytest.mark.slow
 def test_several_stuck_servers_are_all_ended_within_one_stop_window(tmp_path, monkeypatch, runtime_cleanup):
     """Shutdown stops every worker at the same time: three servers stuck inside a call are killed after one
     stop window, not one window after another, so the daemon's bounded shutdown never leaves one running."""

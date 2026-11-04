@@ -122,6 +122,13 @@ class _Hands:
         return (_hand_for(frame),) if self.present.is_set() else ()
 
 
+def _wait_until(condition, timeout=3.0):
+    deadline = time.perf_counter() + timeout
+    while not condition() and time.perf_counter() < deadline:
+        time.sleep(0.01)
+    return condition()
+
+
 def _idle_tracker(hands, **kwargs):
     camera = FakeCamera()
     tracker = HandTracker(0, hands_factory=lambda: hands, camera_factory=lambda index: camera,
@@ -150,8 +157,7 @@ class TestTrackerIdling:
         tracker.subscribe(got)
         tracker.start()
         try:
-            time.sleep(0.6)
-            assert tracker.idle
+            assert _wait_until(lambda: tracker.idle)
             hands.present.set()
             deadline = time.perf_counter() + 2.0
             while not any(f.hands for f in got.frames) and time.perf_counter() < deadline:
@@ -173,9 +179,9 @@ class TestTrackerIdling:
         tracker, camera = _idle_tracker(hands, idle_fps=5, idle_after=0.1)
         tracker.start()
         try:
-            time.sleep(0.6)
+            assert _wait_until(lambda: tracker.idle)
             hands.present.set()
-            time.sleep(0.4)
+            assert _wait_until(lambda: not tracker.idle)
         finally:
             tracker.stop()
         assert logged and not any("hand" in m.casefold() and ("idl" in m or "awake" in m or "view" in m)
@@ -185,8 +191,7 @@ class TestTrackerIdling:
         hands = _Hands()
         tracker, camera = _idle_tracker(hands, idle_fps=5, idle_after=0.05)
         tracker.start()
-        time.sleep(0.4)
-        assert tracker.idle
+        assert _wait_until(lambda: tracker.idle)
         tracker.stop()
         assert not tracker.idle
 

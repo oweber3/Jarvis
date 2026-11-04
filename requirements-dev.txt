@@ -1,0 +1,5 @@
+# Development-only tools, never needed to run Jarvis: pip install -r requirements-dev.txt
+-r requirements.txt
+
+# Runs the test suite on every core: python -m pytest -q -n auto
+pytest-xdist==3.8.0
