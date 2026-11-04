@@ -173,11 +173,24 @@ async function answer<T>(response: Response): Promise<T> {
   return data as T
 }
 
+// What a chat's page holds (``GET /api/chats/<id>``): oldest first, with whether the chat goes on either side.
+export type ChatPage = { chat: Chat; messages: ChatMessage[]; has_earlier?: boolean; has_later?: boolean }
+
+function pageQuery(page: { limit: number; before?: number; around?: number } | undefined): string {
+  if (!page) return ""
+  const parts = [`limit=${page.limit}`]
+  if (page.before !== undefined) parts.push(`before=${page.before}`)
+  if (page.around !== undefined) parts.push(`around=${page.around}`)
+  return `?${parts.join("&")}`
+}
+
 export const api = {
   library: () => request<Library>("GET", "/api/library"),
   models: () => request<ModelsResponse>("GET", "/api/models"),
   suggestions: () => request<unknown>("GET", "/api/suggestions"),
-  chat: (id: string) => request<{ chat: Chat; messages: ChatMessage[] }>("GET", `/api/chats/${id}`),
+  /** A chat's messages: all of them, or a page (the newest ``limit``, those ``before`` a message, or ``around`` one). */
+  chat: (id: string, page?: { limit: number; before?: number; around?: number }) =>
+    request<ChatPage>("GET", `/api/chats/${id}${pageQuery(page)}`),
   poll: (rev: number, after: number, signal: AbortSignal) =>
     request<Snapshot>("GET", `/api/poll?rev=${rev}&after=${after}`, undefined, signal),
   createChat: (projectId: string | null) =>

@@ -24,6 +24,7 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
   type TextMessagePartComponent,
+  useAui,
   useAuiState,
 } from "@assistant-ui/react";
 import {
@@ -40,9 +41,11 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   type ComponentType,
   type FC,
 } from "react";
+import { useJarvis } from "@/useJarvis";
 import { messageSelector, scrollTarget, useScrollTarget } from "@/scrollTarget";
 import { dayDividerLabel, startsNewDay } from "@/time";
 
@@ -158,6 +161,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
             <ThreadHistorySkeleton />
           </AuiIf>
 
+          <ThreadLoadEarlier />
           <div
             data-slot="aui_message-group"
             className="mb-14 flex flex-col gap-y-6 empty:hidden"
@@ -175,12 +179,75 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
             )}
           >
             <ThreadScrollToBottom />
+            <ThreadBackToLatest />
             {ComposerAbove ? <ComposerAbove /> : null}
             <Composer autoFocus={autoFocus} />
           </ThreadPrimitive.ViewportFooter>
         </div>
       </ThreadPrimitive.Viewport>
     </ThreadPrimitive.Root>
+  );
+};
+
+// A long chat is loaded a page at a time: earlier messages arrive as the top of the conversation comes into view
+// (the button does the same from the keyboard). The runtime keeps the rows in place while a page is put in front.
+const ThreadLoadEarlier: FC = () => {
+  const aui = useAui();
+  const visible = useAuiState(
+    (s) => s.thread.hasEarlier || s.thread.isLoadingEarlier,
+  );
+  const loading = useAuiState((s) => s.thread.isLoadingEarlier);
+  const sentinel = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const element = sentinel.current;
+    if (!visible || !element) return;
+    const root = element.closest("[data-slot='aui_thread-viewport']");
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void aui.thread().loadEarlier();
+      },
+      { root, rootMargin: "600px 0px 0px 0px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [aui, visible]);
+
+  return (
+    <div ref={sentinel} data-slot="aui_thread-load-earlier" className="flex justify-center">
+      <span role="status" className="sr-only">
+        {loading ? "Loading earlier messages" : ""}
+      </span>
+      {visible && (
+        <ThreadPrimitive.LoadEarlier asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="aui-thread-load-earlier text-muted-foreground mb-6 rounded-full"
+          >
+            {loading ? "Loading earlier messages…" : "Load earlier messages"}
+          </Button>
+        </ThreadPrimitive.LoadEarlier>
+      )}
+    </div>
+  );
+};
+
+// After scrolling far back in a long chat the page lets go of the newest turns; this brings them back.
+const ThreadBackToLatest: FC = () => {
+  const { history, actions } = useJarvis();
+  if (!history.hasLater) return null;
+  return (
+    <div
+      data-slot="aui_thread-back-to-latest"
+      role="status"
+      className="bg-popover text-popover-foreground border-border flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm shadow-sm"
+    >
+      <span className="min-w-0">You're reading earlier messages.</span>
+      <Button size="sm" variant="secondary" className="shrink-0" onClick={() => void actions.jumpToLatest()}>
+        Back to the latest
+      </Button>
+    </div>
   );
 };
 

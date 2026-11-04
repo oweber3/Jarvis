@@ -236,7 +236,7 @@ const SearchResults: FC<{ rows: SearchRow[]; query: string; searching: boolean }
           <button
             type="button"
             onClick={() => {
-              void actions.openChat(chat.id)
+              void actions.openChat(chat.id, messageId ?? undefined)
               scrollTarget.set(messageId)
             }}
             className="hover:bg-muted focus-visible:bg-muted flex w-full flex-col items-start gap-0.5 rounded-md px-2.5 py-1.5 text-start outline-none"

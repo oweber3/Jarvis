@@ -192,6 +192,34 @@ class TestChats:
         assert [m["text"] for m in body["messages"]] == ["hello", "Done."]
         assert body["chat"]["id"] == chat_id
 
+    def test_a_long_chat_comes_back_a_page_at_a_time(self, parts):
+        chat = parts.store.create_chat(title="Long")
+        ids = [parts.store.append_message(chat.id, "user", f"m{i}", ts=float(i)).id for i in range(30)]
+        status, body, _ = call(parts, "GET", f"/api/chats/{chat.id}?limit=10")
+        assert status == 200
+        assert [m["text"] for m in body["messages"]] == [f"m{i}" for i in range(20, 30)]
+        assert (body["has_earlier"], body["has_later"]) == (True, False)
+        status, body, _ = call(parts, "GET", f"/api/chats/{chat.id}?limit=10&before={ids[20]}")
+        assert [m["text"] for m in body["messages"]] == [f"m{i}" for i in range(10, 20)]
+        assert (body["has_earlier"], body["has_later"]) == (True, True)
+        status, body, _ = call(parts, "GET", f"/api/chats/{chat.id}?limit=4&around={ids[5]}")
+        assert [m["text"] for m in body["messages"]] == ["m3", "m4", "m5", "m6"]
+
+    def test_without_a_page_the_whole_chat_comes_back(self, parts):
+        chat = parts.store.create_chat(title="Short")
+        for i in range(3):
+            parts.store.append_message(chat.id, "user", f"m{i}", ts=float(i))
+        status, body, _ = call(parts, "GET", f"/api/chats/{chat.id}")
+        assert [m["text"] for m in body["messages"]] == ["m0", "m1", "m2"]
+        assert (body["has_earlier"], body["has_later"]) == (False, False)
+
+    @pytest.mark.parametrize("query", ["limit=0", "limit=201", "limit=ten", "before=x", "around=1&before=2",
+                                       "limit=5&around=-"])
+    def test_a_malformed_page_is_refused(self, parts, query):
+        chat = parts.store.create_chat(title="Short")
+        status, body, _ = call(parts, "GET", f"/api/chats/{chat.id}?{query}")
+        assert status == 400 and body["error"] == "bad_page"
+
     def test_rename_and_move(self, parts):
         project = parts.store.create_project("Work")
         chat_id = parts.store.get_active_chat_id() or call(parts, "GET", "/api/library")[1]["active_chat_id"]

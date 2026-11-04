@@ -23,14 +23,17 @@ import {
 } from "@/api"
 import { JarvisAttachmentAdapter } from "@/attachmentAdapter"
 import { buildThreadMessages, chatTitle, convertThreadMessage, type Pending } from "@/conversion"
-import { ChatSync } from "@/sync"
+import { ChatSync, type HistoryWindow } from "@/sync"
 
 // All of the page's state. The server owns the conversation (voice and typed turns land in the open chat
 // the same way), so this follows it with a long poll and sends only what the owner does.
 
 export type JarvisActions = {
   newChat: (projectId?: string | null) => Promise<void>
-  openChat: (id: string) => Promise<void>
+  /** Opens a chat on its newest messages, or on the stretch around ``messageId`` (a search result). */
+  openChat: (id: string, messageId?: number) => Promise<void>
+  /** Back to the newest messages after scrolling far back in a long chat. */
+  jumpToLatest: () => Promise<void>
   moveChat: (id: string, projectId: string | null) => Promise<void>
   pinChat: (id: string, pinned: boolean) => Promise<void>
   createProject: (name: string) => Promise<void>
@@ -67,6 +70,8 @@ export type JarvisView = {
   reachable: boolean
   library: Library
   chat: Chat | null
+  /** How much of the open chat the page holds (a long chat is loaded a page at a time). */
+  history: HistoryWindow
   mode: ReplyModes | null
   modelState: LocalModelState
   models: LocalModel[]
@@ -79,6 +84,7 @@ export type JarvisView = {
 }
 
 const EMPTY_LIBRARY: Library = { projects: [], chats: [], active_chat_id: null }
+const NO_NOTICES: Notice[] = []
 const NO_MODEL: LocalModelState = { current: null, switchable: false }
 
 const JarvisContext = createContext<JarvisView | null>(null)
@@ -120,6 +126,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
   const [attachmentSupport, setAttachmentSupport] = useState<AttachmentSupport | null>(null)
   const [reachable, setReachable] = useState(true)
   const [loadingChat, setLoadingChat] = useState(true)
+  const [history, setHistory] = useState<HistoryWindow>({ hasEarlier: false, hasLater: false })
   const [toast, setToast] = useState<string | null>(null)
 
   const chatRef = useRef<Chat | null>(null)
@@ -138,6 +145,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
         loading: setLoadingChat,
         pending: setPending,
         reachable: setReachable,
+        window: setHistory,
       }),
   )
 
@@ -213,8 +221,12 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
         }
         await guarded(() => sync.newChat(projectId))()
       },
-      async openChat(id) {
-        await guarded(() => sync.openChat(id))()
+      async openChat(id, messageId) {
+        if (messageId !== undefined && id === sync.activeId && sync.messages.some((m) => m.id === messageId)) return
+        await guarded(() => sync.openChat(id, messageId))()
+      },
+      async jumpToLatest() {
+        await guarded(() => sync.jumpToLatest())()
       },
       async moveChat(id, projectId) {
         await guarded(async () => {
@@ -278,7 +290,12 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
     }
   }, [fail, meta.mode, meta.model.current, refreshLibrary, refreshModels, sync])
 
-  const threadMessages = useMemo(() => buildThreadMessages(messages, notices, pending), [messages, notices, pending])
+  // Notices belong to the newest moment of the chat, so a window that stops short of it shows none.
+  const shownNotices = history.hasLater ? NO_NOTICES : notices
+  const threadMessages = useMemo(
+    () => buildThreadMessages(messages, shownNotices, pending),
+    [messages, shownNotices, pending],
+  )
 
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
     messages: threadMessages,
@@ -286,8 +303,12 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
     isRunning: pending !== null || meta.busy_query,
     isLoading: loadingChat,
     isDisabled: !meta.ready || !reachable,
+    hasEarlier: history.hasEarlier,
+    onLoadEarlier: () => sync.loadEarlier(),
     onNew: async (message) => {
       const text = textOf(message)
+      // A message goes below the newest turns, so a window that let go of them comes back first.
+      if (sync.detached) await sync.jumpToLatest()
       const attached = attachmentAdapter.take((message.attachments ?? []).map((a) => a.id))
       const forget = () => attached.forEach((a) => void api.discardAttachment(a.serverId).catch(() => undefined))
       if (!text) return forget()
@@ -343,6 +364,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
       reachable,
       library,
       chat,
+      history,
       mode: meta.mode,
       modelState: meta.model,
       models,
@@ -357,6 +379,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
       attachmentSupport,
       chat,
       cloudModels,
+      history,
       library,
       meta.cloud,
       meta.mode,

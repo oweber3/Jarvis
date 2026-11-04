@@ -19,6 +19,9 @@ from .uploads import UploadRefused
 
 MAX_TEXT_CHARS = 4000
 POLL_TIMEOUT_SEC = 25.0
+# A long chat is read a page at a time (``GET /api/chats/<id>?limit=``); the page asks for no more than this.
+MAX_PAGE_MESSAGES = 200
+DEFAULT_PAGE_MESSAGES = 50
 
 _PROJECT_PATH = re.compile(r"^/api/projects/([0-9a-f]+)$")
 _CHAT_PATH = re.compile(r"^/api/chats/([0-9a-f]+)$")
@@ -215,11 +218,35 @@ class ChatApi:
             raise Refused(self._answer_for(result.status), result.status)
         return 200, {"chat": chat_dict(result.chat)}
 
-    def _get_chat(self, chat_id, _call):
+    @staticmethod
+    def _page(query: dict) -> Optional[dict]:
+        """The page of a chat a request asks for: ``limit`` and one of ``before`` or ``around`` (message ids), or
+        None for the whole chat. Raises ``Refused`` for anything else."""
+        names = [name for name in ("limit", "before", "around") if name in query]
+        if not names:
+            return None
+        try:
+            values = {name: int(query[name][0]) for name in names}
+        except (TypeError, ValueError):
+            raise Refused(400, "bad_page")
+        limit = values.get("limit", DEFAULT_PAGE_MESSAGES)
+        if not 1 <= limit <= MAX_PAGE_MESSAGES or ("before" in values and "around" in values):
+            raise Refused(400, "bad_page")
+        return {"limit": limit, "before": values.get("before"), "around": values.get("around")}
+
+    def _get_chat(self, chat_id, call):
         chat = self.store.get_chat(chat_id)
         if chat is None:
             raise Refused(404, "unknown")
-        return 200, {"chat": chat_dict(chat), "messages": [message_dict(m) for m in self.store.messages(chat_id)]}
+        page = self._page(call.query)
+        if page is None:
+            found = self.store.messages(chat_id)
+            earlier = later = False
+        else:
+            window = self.store.messages_page(chat_id, page["limit"], before=page["before"], around=page["around"])
+            found, earlier, later = window.messages, window.has_earlier, window.has_later
+        return 200, {"chat": chat_dict(chat), "messages": [message_dict(m) for m in found],
+                     "has_earlier": earlier, "has_later": later}
 
     def _patch_chat(self, chat_id, call):
         body = call.body

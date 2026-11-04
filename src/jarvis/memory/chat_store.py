@@ -103,6 +103,14 @@ class SearchHit:
 
 
 @dataclass(frozen=True)
+class MessagePage:
+    """A stretch of one chat's messages, oldest first, and whether the chat goes on before and after it."""
+    messages: List["Message"]
+    has_earlier: bool
+    has_later: bool
+
+
+@dataclass(frozen=True)
 class Message:
     id: int
     chat_id: str
@@ -391,6 +399,35 @@ class ChatStore:
                 f"SELECT {self._MESSAGE_COLUMNS} FROM chat_messages WHERE chat_id = ? AND id > ? ORDER BY id",
                 (chat_id, after_id)).fetchall()
         return [self._message(r) for r in rows]
+
+    def messages_page(self, chat_id: str, limit: int, *, before: Optional[int] = None,
+                      around: Optional[int] = None) -> MessagePage:
+        """At most ``limit`` messages of a chat, oldest first: the newest ones, the ones just before the
+        message ``before``, or the stretch around the message ``around`` (it and its neighbours, filled from
+        the other side near either end). A long chat is read this way a page at a time."""
+        limit = max(1, int(limit))
+        columns = self._MESSAGE_COLUMNS
+        with self._lock:
+            if around is None:
+                bound, value = ("AND id < ?", (before,)) if before is not None else ("", ())
+                earlier = self.conn.execute(
+                    f"SELECT {columns} FROM chat_messages WHERE chat_id = ? {bound} ORDER BY id DESC LIMIT ?",
+                    (chat_id, *value, limit + 1)).fetchall()
+                later = [] if before is None else self.conn.execute(
+                    f"SELECT {columns} FROM chat_messages WHERE chat_id = ? AND id >= ? ORDER BY id LIMIT 1",
+                    (chat_id, before)).fetchall()
+                kept = earlier[:limit]
+                return MessagePage([self._message(r) for r in reversed(kept)], len(earlier) > limit, bool(later))
+            earlier = self.conn.execute(
+                f"SELECT {columns} FROM chat_messages WHERE chat_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
+                (chat_id, around, limit + 1)).fetchall()
+            later = self.conn.execute(
+                f"SELECT {columns} FROM chat_messages WHERE chat_id = ? AND id >= ? ORDER BY id LIMIT ?",
+                (chat_id, around, limit + 1)).fetchall()
+        take_later = min(len(later), limit - min(len(earlier), limit // 2))
+        take_earlier = min(len(earlier), limit - take_later)
+        rows = list(reversed(earlier[:take_earlier])) + later[:take_later]
+        return MessagePage([self._message(r) for r in rows], len(earlier) > take_earlier, len(later) > take_later)
 
     def last_messages(self, chat_id: str, limit: int) -> List[Message]:
         """The newest ``limit`` messages, oldest first."""
