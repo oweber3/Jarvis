@@ -133,6 +133,26 @@ class MockConfig:
             self.embedding_model = self.ollama_embed_model
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _quick_server_shutdown():
+    """Loopback HTTP servers in tests (fakes and Jarvis's own) notice ``shutdown()`` within 10 ms.
+
+    ``serve_forever`` checks for shutdown once per poll interval (0.5 s by default, 0.25 s for the web
+    chat and phone servers), and ``shutdown()`` blocks until it does, so every server a test stopped cost
+    up to that long. The interval changes nothing else these servers do.
+    """
+    import socketserver
+
+    original = socketserver.BaseServer.serve_forever
+
+    def serve_forever(self, poll_interval=0.5):
+        return original(self, poll_interval=min(poll_interval, 0.01))
+
+    socketserver.BaseServer.serve_forever = serve_forever
+    yield
+    socketserver.BaseServer.serve_forever = original
+
+
 @pytest.fixture(scope="session")
 def _sandbox_root(tmp_path_factory):
     return tmp_path_factory.mktemp("jarvis_test_sandboxes")
