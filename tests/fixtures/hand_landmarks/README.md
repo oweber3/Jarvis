@@ -6,7 +6,7 @@
 
 The hands come from **HaGRID, the HAnd Gesture Recognition Image Dataset**, by Alexander Kapitanov, Karina Kvanchiani, Alexander Nagaev, Roman Kraynov and Andrei Makhliarchuk (SberDevices): <https://github.com/hukenovs/hagrid>.
 
-> Kapitanov, A., Kvanchiani, K., Nagaev, A., Kraynov, R. and Makhliarchuk, A. HaGRID – HAnd Gesture Recognition Image Dataset. *IEEE/CVF Winter Conference on Applications of Computer Vision (WACV)*, 2024. arXiv:2206.08219.
+> Kapitanov, A., Kvanchiani, K., Nagaev, A., Kraynov, R. and Makhliarchuk, A. HaGRID - HAnd Gesture Recognition Image Dataset. *IEEE/CVF Winter Conference on Applications of Computer Vision (WACV)*, 2024. arXiv:2206.08219.
 
 The photos used are the 384-pixel sample of HaGRID published by Christian J. Mills as `hagrid-sample-30k-384p` (about 1,700 photos per gesture, with HaGRID's annotations), read from a public copy of it on GitHub.
 
