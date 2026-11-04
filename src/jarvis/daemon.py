@@ -263,7 +263,7 @@ def switch_chat_conversation(messages: list) -> Optional[float]:
     The outgoing turns the diary has not seen get a diary pass of their own on a worker
     thread, so nothing is lost and the switch does not wait for the summary. The incoming
     turns are redacted and count as already summarised. Turns flagged ``"diary": False``
-    stay private. Returns the cursor for ``DialogueMemory.messages_after`` (every turn stored
+    stay private, with the ``private_sources`` they quoted (unknown when missing). Returns the cursor for ``DialogueMemory.messages_after`` (every turn stored
     after the swap is newer than it), or None, changing nothing, when a query is running or
     the daemon has not booted.
     """
@@ -283,6 +283,9 @@ def switch_chat_conversation(messages: list) -> Optional[float]:
                 turn = {"role": m["role"], "content": redact(m["content"])}
                 if m.get("diary") is False:
                     turn["diary"] = False
+                    sources = m.get("private_sources")
+                    if isinstance(sources, (list, tuple)):
+                        turn["private_sources"] = [str(s) for s in sources]
                 incoming.append(turn)
         cursor = dm.set_messages(incoming, saved=True)
     finally:

@@ -76,6 +76,6 @@ class ActivityLogTool(Tool):
         finally:
             store.close()
         # The reply quotes this data, so the turn must stay out of the diary.
-        activity_log.mark_turn_private()
+        activity_log.mark_turn_private(self.name)
         debug_log(f"activityLog {action}: {count} entries", "activity")
         return ToolExecutionResult(success=True, reply_text=json.dumps(result, ensure_ascii=False))

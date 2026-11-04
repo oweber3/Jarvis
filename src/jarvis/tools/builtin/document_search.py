@@ -85,7 +85,7 @@ class DocumentSearchTool(Tool):
         if not result.hits:
             return ToolExecutionResult(success=True, reply_text=f"No matching passages.\n{_status_line(result)}")
         # The reply quotes document text, so the turn must stay out of the diary.
-        mark_turn_private()
+        mark_turn_private(self.name)
         blocks = []
         for number, hit in enumerate(result.hits, start=1):
             where = Path(hit.path).name + (f", page {hit.page}" if hit.page else "")

@@ -6,13 +6,13 @@ local model. See ``bridge.spec.md``.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
 
 from ..debug import debug_log
 from ..llm.errors import RequestCancelled
 from ..utils.redact import redact
 from . import runtime
-from .settings import BridgeSettings, bridge_settings
+from .settings import BridgeSettings, bridge_settings, share_private_turn
 
 _MESSAGE_CHARS = 1000
 MODE_LABELS = {"codex": "Codex", "claude": "Claude"}
@@ -27,29 +27,36 @@ def build_dialogue_context(dialogue_memory: Any, settings: BridgeSettings) -> Li
     """Bounded, redacted recent user and assistant messages shared with the bridge.
 
     Turns kept out of the diary because they quote a private source (the activity log, the user's
-    documents, a calendar or email) stay local unless ``settings.share_private_turns`` allows them
-    (``bridge.spec.md``)."""
+    documents, a calendar or email) stay local unless every source they quoted is turned on and shared
+    (``share_private_turn``, ``bridge.spec.md``)."""
     return _shared_dialogue(dialogue_memory, settings)[0]
 
 
-def _shared_dialogue(dialogue_memory: Any, settings: BridgeSettings) -> Tuple[List[Dict[str, str]], bool]:
-    """The dialogue shared with the bridge, and whether any shared message is a private turn."""
+def _shared_dialogue(dialogue_memory: Any, settings: BridgeSettings) -> Tuple[List[Dict[str, str]], FrozenSet[str]]:
+    """The dialogue shared with the bridge, and the private sources its shared messages quoted."""
     if not settings.share_recent_dialogue or dialogue_memory is None:
-        return [], False
+        return [], frozenset()
     limit = settings.recent_dialogue_messages
     if not limit:
-        return [], False
+        return [], frozenset()
     try:
-        messages = (dialogue_memory.get_recent_messages(include_private=settings.share_private_turns,
-                                                        flag_private=True)
+        messages = (dialogue_memory.get_recent_messages(flag_private=True)
                     if dialogue_memory.has_recent_messages() else [])
     except Exception as exc:
         debug_log(f"dialogue context unavailable: {type(exc).__name__}", "bridge")
-        return [], False
-    kept = [m for m in messages
+        return [], frozenset()
+    allowed = [m for m in messages
+               if m.get("private") is not True or share_private_turn(settings, m.get("private_sources") or ())]
+    if len(allowed) != len(messages):
+        debug_log(f"{len(messages) - len(allowed)} private message(s) kept local", "bridge")
+    kept = [m for m in allowed
             if m.get("role") in ("user", "assistant") and str(m.get("content") or "").strip()][-limit:]
     shared = [{"role": m["role"], "content": redact(str(m.get("content") or ""))[:_MESSAGE_CHARS]} for m in kept]
-    return shared, any(m.get("private") is True for m in kept)
+    sources: FrozenSet[str] = frozenset()
+    for m in kept:
+        if m.get("private") is True:
+            sources |= frozenset(m.get("private_sources") or ())
+    return shared, sources
 
 
 def build_desktop_context(cfg: Any, settings: BridgeSettings, origin: str,
@@ -119,7 +126,7 @@ def run_bridge_reply(mode: str, db: Any, cfg: Any, tts: Any, redacted: str, dial
         # A reply built on shared private data is as private as the turn that read it
         # (memory/activity_log.spec.md): out of the diary and the console log.
         from ..memory.activity_log import mark_turn_private
-        mark_turn_private()
+        mark_turn_private(*shared_private)
         debug_log("shared dialogue held private data; reply kept private", "bridge")
     try:
         return deliver(outcome.text, redacted, cfg, tts, dialogue_memory, quiet)

@@ -344,7 +344,9 @@ class TestRequestContext:
         assert build_dialogue_context(dialogue_memory, bridge_settings(codex_cfg, mode)) == []
 
     def test_activity_turns_are_shared_when_the_owner_allows_it(self, mode, codex_cfg, activate, dialogue_memory):
-        dialogue_memory.add_message("assistant", "Proposal.docx - Word for two hours", diary=False)
+        dialogue_memory.add_message("assistant", "Proposal.docx - Word for two hours", diary=False,
+                                    private_sources={"activityLog"})
+        codex_cfg.activity_log_enabled = True
         codex_cfg.activity_log_share_with_cloud = True
         ctx = build_dialogue_context(dialogue_memory, bridge_settings(codex_cfg, mode))
         assert [m["content"] for m in ctx] == ["Proposal.docx - Word for two hours"]

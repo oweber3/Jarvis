@@ -960,7 +960,7 @@ def _deliver_reply(reply, redacted, cfg, tts, dialogue_memory, quiet, *,
     safe_reply = reply.strip()
     # A reply that quoted an opt-in private source (the activity log, documents, a calendar or email) stays out
     # of the diary and the console log.
-    private = consume_turn_private()
+    private = consume_turn_private()  # the private sources the turn quoted; empty when it is not private
     try:
         if not quiet:
             icon = '⚠️' if error else '🤖'
@@ -972,10 +972,10 @@ def _deliver_reply(reply, redacted, cfg, tts, dialogue_memory, quiet, *,
         tts.speak(safe_reply)
     if dialogue_memory is not None:
         try:
-            dialogue_memory.add_message('user', redacted, diary=not private)
+            dialogue_memory.add_message('user', redacted, diary=not private, private_sources=private)
             if record_tools is not None:
                 record_tools(private)
-            dialogue_memory.add_message('assistant', safe_reply, diary=not private)
+            dialogue_memory.add_message('assistant', safe_reply, diary=not private, private_sources=private)
             debug_log('interaction added to dialogue memory', 'memory')
         except Exception as exc:
             debug_log(f'dialogue memory error: {exc}', 'memory')
@@ -1132,9 +1132,11 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
             recent_messages = dialogue_memory.get_recent_messages()
         # A follow-up answered from private data already in the context is as private as the turn
         # that read it (memory/activity_log.spec.md), even when the tool does not run again.
-        has_private = getattr(dialogue_memory, "has_private_context", None)
-        if callable(has_private) and has_private(max_tool_turns=getattr(cfg, "tool_carryover_max_turns", 2)) is True:
-            mark_turn_private()
+        context_sources = getattr(dialogue_memory, "private_context_sources", None)
+        sources = (context_sources(max_tool_turns=getattr(cfg, "tool_carryover_max_turns", 2))
+                   if callable(context_sources) else frozenset())
+        if isinstance(sources, frozenset) and sources:
+            mark_turn_private(*sources)
             debug_log("turn context holds private data; reply kept private", "memory")
 
     # Refresh MCP tools on new conversation (memory expired)
@@ -1844,7 +1846,7 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
     # Per-reply memo for the time/location context line (see _get_context_string).
     _context_cache: Optional[str] = None
 
-    def _maybe_record_tool_carryover(private: bool = False) -> None:
+    def _maybe_record_tool_carryover(private: frozenset = frozenset()) -> None:
         if _carryover_state["recorded"]:
             return
         _carryover_state["recorded"] = True
@@ -1856,7 +1858,7 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
                 m for m in messages[user_msg_index + 1:] if is_tool_message(m)
             ]
             if tool_msgs:
-                dialogue_memory.record_tool_turn(tool_msgs, private=private)
+                dialogue_memory.record_tool_turn(tool_msgs, private_sources=private)
         except Exception as exc:  # noqa: BLE001
             debug_log(f"tool-carryover record failed: {exc}", "reply")
 

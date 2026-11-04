@@ -12,9 +12,10 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..debug import debug_log
+from .activity_log import UNKNOWN_SOURCE, private_sources as _private_sources
 
 NAME_MAX_CHARS = 80
 TITLE_MAX_CHARS = 60
@@ -61,7 +62,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   source  TEXT NOT NULL DEFAULT 'typed',
   private INTEGER NOT NULL DEFAULT 0,
   steps   TEXT NOT NULL DEFAULT '',
-  attachments TEXT NOT NULL DEFAULT ''
+  attachments TEXT NOT NULL DEFAULT '',
+  private_sources TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_chat ON chat_messages(chat_id, id);
 CREATE TABLE IF NOT EXISTS chat_state (
@@ -109,6 +111,9 @@ class Message:
     ts: float
     source: str
     private: bool = False
+    # The opt-in sources a private message quoted (tool names such as ``calendar``), sorted; empty when it
+    # is not private, ``("unknown",)`` for a message stored before sources were recorded.
+    private_sources: Tuple[str, ...] = ()
     # The tool steps taken for this reply, each ``{"tool", "status", "label", "summary"}`` (tools/step_log.py).
     steps: Tuple[Dict[str, Any], ...] = ()
     # Kind and size of what was attached to the message, never its content.
@@ -195,6 +200,13 @@ class ChatStore:
             self.conn.execute("ALTER TABLE chat_messages ADD COLUMN steps TEXT NOT NULL DEFAULT ''")
         if "attachments" not in message_columns:
             self.conn.execute("ALTER TABLE chat_messages ADD COLUMN attachments TEXT NOT NULL DEFAULT ''")
+        if "private_sources" not in message_columns:
+            # Private rows from before sources were recorded quoted an unknown source: never shared.
+            self.conn.execute("ALTER TABLE chat_messages ADD COLUMN private_sources TEXT NOT NULL DEFAULT ''")
+            marked = self.conn.execute("UPDATE chat_messages SET private_sources = ? WHERE private = 1",
+                                       (UNKNOWN_SOURCE,)).rowcount
+            debug_log(f"web chat database gained the private_sources column ({marked} private rows unknown)",
+                      "webchat")
 
     def close(self) -> None:
         with self._lock:
@@ -322,12 +334,14 @@ class ChatStore:
     # -- messages ----------------------------------------------------------------------------
 
     def append_message(self, chat_id: str, role: str, content: str, *, ts: float, source: str = "typed",
-                       private: bool = False, steps: Optional[Sequence[Dict[str, Any]]] = None,
+                       private: bool = False, private_sources: Iterable[str] = (),
+                       steps: Optional[Sequence[Dict[str, Any]]] = None,
                        attachments: Sequence[Dict[str, object]] = ()) -> Message:
         """Add a message. The first user message titles a chat that has no title yet.
 
         ``private`` marks a turn that quotes a private source (the activity log, documents, a calendar or email):
-        it stays out of the diary and of any context that leaves the PC, also when the chat is opened again. ``steps`` are the tool steps taken
+        it stays out of the diary and of any context that leaves the PC, also when the chat is opened again,
+        unless every one of the ``private_sources`` it quoted (unknown when none is given) is shared. ``steps`` are the tool steps taken
         for an assistant reply. ``attachments`` are recorded as kind
         and size only.
         """
@@ -341,19 +355,20 @@ class ChatStore:
             if chat is None:
                 raise ValueError("unknown chat")
             kept = tuple(dict(step) for step in (steps or ()))
+            sources = tuple(sorted(_private_sources(private_sources))) if private else ()
             cur = self.conn.execute(
-                "INSERT INTO chat_messages(chat_id, role, content, ts, source, private, steps, attachments) "
-                "VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO chat_messages(chat_id, role, content, ts, source, private, steps, attachments, "
+                "private_sources) VALUES (?,?,?,?,?,?,?,?,?)",
                 (chat_id, role, content, ts, source, 1 if private else 0,
-                 json.dumps(kept, ensure_ascii=False) if kept else "", markers))
+                 json.dumps(kept, ensure_ascii=False) if kept else "", markers, ",".join(sources)))
             title = chat.title or (_title_from(content) if role == "user" else "")
             self.conn.execute("UPDATE chats SET updated_at = ?, title = ? WHERE id = ?",
                               (max(ts, time.time()), title, chat_id))
             self.conn.commit()
-            return Message(int(cur.lastrowid), chat_id, role, content, ts, source, private, kept,
+            return Message(int(cur.lastrowid), chat_id, role, content, ts, source, private, sources, kept,
                            _parse_markers(markers))
 
-    _MESSAGE_COLUMNS = "id, chat_id, role, content, ts, source, private, steps, attachments"
+    _MESSAGE_COLUMNS = "id, chat_id, role, content, ts, source, private, steps, attachments, private_sources"
 
     @staticmethod
     def _steps(raw: str) -> Tuple[Dict[str, Any], ...]:
@@ -365,7 +380,10 @@ class ChatStore:
 
     @classmethod
     def _message(cls, row) -> Message:
-        return Message(row[0], row[1], row[2], row[3], row[4], row[5], bool(row[6]), cls._steps(row[7]), _parse_markers(row[8]))
+        private = bool(row[6])
+        sources = tuple(sorted(_private_sources(str(row[9] or "").split(",")))) if private else ()
+        return Message(row[0], row[1], row[2], row[3], row[4], row[5], private, sources, cls._steps(row[7]),
+                       _parse_markers(row[8]))
 
     def messages(self, chat_id: str, after_id: int = 0) -> List[Message]:
         with self._lock:

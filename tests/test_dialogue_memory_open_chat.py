@@ -96,10 +96,10 @@ class TestKeptTurns:
         dm.set_messages([{"role": "user", "content": "what did I work on"},
                          {"role": "assistant", "content": "You were in Word.", "diary": False}], saved=True)
         dm.keep_last_turns(20)
-        assert dm.has_private_context() is True
+        assert dm.private_context_sources() == {"unknown"}
         clock.advance(dm.RECENT_WINDOW_SEC + 60)
         assert contents(dm.get_recent_messages()) == ["what did I work on"]
-        assert dm.has_private_context() is False
+        assert not dm.private_context_sources()
 
     def test_kept_turns_alone_are_not_recent_activity(self, clock):
         """Tool results and caches reset after an idle window even while the thread is kept."""

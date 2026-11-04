@@ -80,7 +80,7 @@ Registered by `registry.configure_calendar_tool(cfg)` only when `calendar_enable
 
 ## Cloud boundary
 
-`calendar_share_with_cloud` (default false; only a real `true` counts) decides whether Codex and Claude are offered `calendar` (its entry in `bridge.tools.CLOUD_GATED_TOOLS`). Private dialogue turns are shared with them only when at least one private source is shared and every one that is set up is shared (`bridge.settings.share_private_turns`, see `bridge/bridge.spec.md`); the calendar counts as set up while it is on or while it still has sources configured.
+`calendar_share_with_cloud` (default false; only a real `true` counts) decides whether Codex and Claude are offered `calendar` (its entry in `bridge.tools.CLOUD_GATED_TOOLS`). A turn that read the calendar records `calendar` as its private source and is shared with them only while `calendar_enabled` and `calendar_share_with_cloud` are both on, and every other source the turn quoted is turned on and shared too (`bridge.settings.share_private_turn`, see `bridge/bridge.spec.md`); turning the calendar off keeps its earlier turns local.
 
 ## Setup command
 

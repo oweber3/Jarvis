@@ -176,7 +176,7 @@ def test_no_calendars_set_up_fails_with_how_to_add_one(mock_config, tmp_path):
 
 def test_reading_the_calendar_keeps_the_reply_out_of_the_diary(cal_cfg):
     call(cal_cfg, "calendar")
-    assert al.consume_turn_private() is True
+    assert al.consume_turn_private() == {"calendar"}
 
 
 def test_logs_never_carry_titles_or_addresses(cal_cfg, ics_server, monkeypatch):
@@ -262,7 +262,7 @@ def test_a_refused_password_explains_the_app_password(mail_cfg, mailbox):
 
 def test_reading_email_keeps_the_reply_out_of_the_diary(mail_cfg):
     call(mail_cfg, "email")
-    assert al.consume_turn_private() is True
+    assert al.consume_turn_private() == {"email"}
 
 
 # ── Cloud boundary ─────────────────────────────────────────────────────────
@@ -294,15 +294,13 @@ def test_withheld_from_cloud_modes_unless_each_is_shared(cal_cfg, mail_cfg):
             assert "email" not in snapshot, (mode, junk)
 
 
-def test_private_dialogue_goes_to_the_cloud_only_when_every_private_source_is_shared(cal_cfg):
+def test_private_turns_may_reach_the_cloud_only_from_sources_turned_on_and_shared(cal_cfg):
     from jarvis.bridge.settings import bridge_settings
-    activity_only = _bridge_cfg(cal_cfg, activity_log_share_with_cloud=True)
-    assert not bridge_settings(activity_only, "claude").share_private_turns
-    everything = _bridge_cfg(cal_cfg, activity_log_share_with_cloud=True, calendar_share_with_cloud=True,
-                             email_share_with_cloud=True)
-    assert bridge_settings(everything, "claude").share_private_turns
-    unused_off = _bridge_cfg(cal_cfg, activity_log_share_with_cloud=True, calendar_enabled=False, email_enabled=False)
-    assert bridge_settings(unused_off, "codex").share_private_turns
+    activity_only = _bridge_cfg(cal_cfg, activity_log_enabled=True, activity_log_share_with_cloud=True)
+    assert bridge_settings(activity_only, "claude").shared_private_sources == {"activityLog"}
+    everything = _bridge_cfg(cal_cfg, activity_log_enabled=True, activity_log_share_with_cloud=True,
+                             calendar_share_with_cloud=True, email_share_with_cloud=True)
+    assert bridge_settings(everything, "claude").shared_private_sources == {"activityLog", "calendar", "email"}
 
 
 def test_a_routine_step_with_no_arguments_runs_todays_agenda(cal_cfg):
@@ -332,19 +330,20 @@ def test_a_start_time_without_an_end_reads_the_rest_of_that_day(cal_cfg):
     assert result.success, result.error_message
 
 
-def test_private_turns_stay_local_while_a_configured_source_is_unshared_even_if_turned_off(cal_cfg):
+def test_a_source_turned_off_is_not_shared_whatever_its_sharing_switch_says(cal_cfg):
     from jarvis.bridge.settings import bridge_settings
-    switched_off = _bridge_cfg(cal_cfg, activity_log_share_with_cloud=True, calendar_share_with_cloud=True,
+    switched_off = _bridge_cfg(cal_cfg, calendar_share_with_cloud=True, email_share_with_cloud=True,
                                email_enabled=False, email_accounts=[{"name": "Gmail", "type": "imap"}])
-    assert not bridge_settings(switched_off, "claude").share_private_turns
+    assert bridge_settings(switched_off, "claude").shared_private_sources == {"calendar"}
 
 
-def test_document_search_set_up_and_unshared_keeps_private_turns_local_however_the_rest_is_shared(cal_cfg):
+def test_document_search_unshared_withholds_only_its_own_turns(cal_cfg):
     from jarvis.bridge.settings import bridge_settings
-    rest_shared = dict(activity_log_share_with_cloud=True, calendar_share_with_cloud=True, email_share_with_cloud=True)
+    rest_shared = dict(activity_log_enabled=True, activity_log_share_with_cloud=True, calendar_share_with_cloud=True,
+                       email_share_with_cloud=True)
     docs_unshared = _bridge_cfg(cal_cfg, document_search_enabled=True, document_search_share_with_cloud=False,
                                 **rest_shared)
-    assert not bridge_settings(docs_unshared, "codex").share_private_turns
+    assert bridge_settings(docs_unshared, "codex").shared_private_sources == {"activityLog", "calendar", "email"}
     docs_shared = _bridge_cfg(cal_cfg, document_search_enabled=True, document_search_share_with_cloud=True,
                               **rest_shared)
-    assert bridge_settings(docs_shared, "codex").share_private_turns
+    assert "documentSearch" in bridge_settings(docs_shared, "codex").shared_private_sources

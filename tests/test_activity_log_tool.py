@@ -110,7 +110,7 @@ class TestRunning:
 
     def test_the_turn_is_marked_so_the_reply_stays_out_of_the_diary(self, cfg, seeded):
         call(cfg, action="summary", start=iso(seeded - 600))
-        assert al.consume_turn_private() is True
+        assert al.consume_turn_private() == {"activityLog"}
 
     @pytest.mark.parametrize("args", [
         {"action": "summary"},
@@ -122,7 +122,7 @@ class TestRunning:
     def test_bad_input_fails_with_a_message_and_reads_nothing(self, cfg, seeded, args):
         result = call(cfg, **args)
         assert result.success is False and (result.error_message or "").strip()
-        assert al.consume_turn_private() is False
+        assert not al.consume_turn_private()
 
     def test_timeline_limit_is_applied(self, cfg, seeded):
         result = call(cfg, action="timeline", start=iso(seeded - 600), end=iso(seeded + 4 * HOUR), limit=1)
@@ -184,7 +184,7 @@ class TestCloudBoundary:
         decision = broker.begin_execute(req.id, "call-1", "activityLog", {"action": "summary"}, "t", "u")
 
         assert decision.kind == "refused"
-        assert al.consume_turn_private() is False
+        assert not al.consume_turn_private()
 
 
 @pytest.mark.unit
@@ -200,13 +200,13 @@ class TestStopSharingAtRuntime:
         configure_activity_log_tool(cfg, platform="win32")
         boundary = TestCloudBoundary()
         shared = boundary.bridge_cfg(cfg, True)
-        assert bridge_settings(shared, "claude").share_private_turns
+        assert "activityLog" in bridge_settings(shared, "claude").shared_private_sources
         ran = []
         monkeypatch.setattr(daemon.threading, "Thread",
                             lambda target, **kw: SimpleNamespace(start=lambda: ran.append(target())))
         assert daemon.handle_activity_stdin_line(request_line("stop_sharing"))
         assert ran
         for mode in ("codex", "claude"):
-            assert not bridge_settings(shared, mode).share_private_turns, mode
+            assert "activityLog" not in bridge_settings(shared, mode).shared_private_sources, mode
         for mode, snapshot in boundary.snapshots(shared).items():
             assert "activityLog" not in snapshot, mode
