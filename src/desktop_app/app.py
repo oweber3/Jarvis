@@ -158,13 +158,33 @@ def _should_emit_as_log(line: str) -> bool:
     readable line for every switch. The web chat announcement carries the
     server's identity token, which stays between the daemon and the app.
     """
-    from jarvis.daemon import CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX, WEB_CHAT_EVENT_PREFIX
+    from jarvis.daemon import (
+        ASSISTANT_STATE_IPC_PREFIX, CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX, WEB_CHAT_EVENT_PREFIX,
+    )
     from jarvis.tools.confirmation_pipe import CONFIRM_IPC_PREFIX
 
     if line.startswith((CHAT_IPC_PREFIX, REPLY_MODE_EVENT_PREFIX)):
         return False
     # Found anywhere: another thread's output can end up in front of them on the same line.
-    return CONFIRM_IPC_PREFIX not in line and WEB_CHAT_EVENT_PREFIX not in line
+    return (CONFIRM_IPC_PREFIX not in line and WEB_CHAT_EVENT_PREFIX not in line
+            and ASSISTANT_STATE_IPC_PREFIX not in line)
+
+
+def _face_state_from_line(line: str):
+    """The ``JarvisState`` a subprocess daemon's ``__ASSISTANT_STATE__:`` line carries, or ``None``.
+
+    Found anywhere in the line, since another thread's output can end up in front of it."""
+    import re
+    from jarvis.daemon import ASSISTANT_STATE_IPC_PREFIX
+    from desktop_app.face_widget import JarvisState
+    at = line.find(ASSISTANT_STATE_IPC_PREFIX)
+    if at < 0:
+        return None
+    value = re.match(r"[a-z_]*", line[at + len(ASSISTANT_STATE_IPC_PREFIX):]).group(0)
+    try:
+        return JarvisState(value)
+    except ValueError:
+        return None
 
 
 def _web_chat_token_from_line(line: str) -> tuple:
@@ -2910,8 +2930,15 @@ class JarvisSystemTray:
 
         self.tray_icon.setIcon(icon)
 
+    def _stop_following_face_state(self) -> None:
+        unsubscribe = getattr(self, "_face_state_unsubscribe", None)
+        self._face_state_unsubscribe = None
+        if unsubscribe is not None:
+            unsubscribe()
+
     def _set_face_asleep(self) -> None:
         """Reset the face to asleep so it doesn't look ready while the daemon is down."""
+        self._stop_following_face_state()
         try:
             from desktop_app.face_widget import JarvisState, get_jarvis_state
             get_jarvis_state().set_state(JarvisState.ASLEEP)
@@ -2953,6 +2980,10 @@ class JarvisSystemTray:
                 from desktop_app.confirmation_dialog import show_desktop_confirmation_dialog
                 from jarvis.tools.confirmation import set_dialog_callback
                 set_dialog_callback(show_desktop_confirmation_dialog)
+                # The daemon runs in this process: the face follows its state directly.
+                from desktop_app.face_widget import follow_assistant_state
+                self._stop_following_face_state()
+                self._face_state_unsubscribe = follow_assistant_state()
                 self.daemon_thread = DaemonThread(self.log_signals)
                 # Reset UI state on completion. QueuedConnection guarantees the
                 # slot runs on the main thread (the finished signal is emitted
@@ -3185,6 +3216,10 @@ class JarvisSystemTray:
                     self._confirm_ipc_signals.line_received.emit(line[confirm_at:], relay)
                 elif web_chat_at >= 0:
                     self._take_web_chat_announcement(line[web_chat_at:])
+                face_state = _face_state_from_line(line)
+                if face_state is not None:
+                    from desktop_app.face_widget import get_jarvis_state
+                    get_jarvis_state().set_state(face_state)
                 self._on_reply_mode_ipc_line(line)
                 if _should_emit_as_log(line):
                     self.log_signals.new_log.emit(line)

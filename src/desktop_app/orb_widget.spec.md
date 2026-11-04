@@ -1,6 +1,6 @@
 # Orb Widget Specification
 
-The face window shows a reactive sphere of light, the orb (`orb_widget.py`), hosted by `FaceWindow` in `face_widget.py`. `face_widget.py` also owns the file-backed `JarvisState` channel the daemon writes; core imports it through guarded imports and the orb only reads it.
+The face window shows a reactive sphere of light, the orb (`orb_widget.py`), hosted by `FaceWindow` in `face_widget.py`. `face_widget.py` also owns the file-backed `JarvisState` channel; the desktop app writes the daemon's state to it (`desktop_app.spec.md`, Face state), core never imports it, and the orb only reads it.
 
 ## Layers
 

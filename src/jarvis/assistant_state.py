@@ -1,8 +1,9 @@
 """Jarvis's overall state (asleep, idle, listening, thinking, speaking, dictating) and who hears about it.
 
-Every state change goes through ``set_state``. It forwards the state to the desktop face (when the desktop
-app is importable) and notifies in-process subscribers such as local extensions, which must not
-depend on the desktop app. Subscribers run on the caller's thread, so they must return quickly.
+Every state change goes through ``set_state``, which notifies in-process subscribers: local extensions,
+the web chat and phone backends, the daemon's stdout channel to a desktop app that runs it as a
+subprocess, and the desktop face when the app runs the daemon in its own process. Core knows nothing of
+the desktop app. Subscribers run on the caller's thread, so they must return quickly.
 """
 from __future__ import annotations
 
@@ -49,9 +50,8 @@ def subscribe(callback: Subscriber) -> Callable[[], None]:
 
 
 def set_state(state: AssistantState) -> None:
-    """Record ``state``, show it on the desktop face and tell subscribers if it changed."""
+    """Record ``state`` and tell subscribers if it changed."""
     global _state
-    _show_on_face(state)
     with _lock:
         if state is _state:
             return
@@ -70,7 +70,6 @@ def replace_state(expected: AssistantState, state: AssistantState) -> bool:
             return False
         _state = state
         subscribers = list(_subscribers)
-    _show_on_face(state)
     _notify(state, subscribers)
     return True
 
@@ -82,14 +81,6 @@ def _notify(state: AssistantState, subscribers: List[Subscriber]) -> None:
             callback(state)
         except Exception as exc:  # a subscriber must never break the caller or the others
             debug_log(f"assistant state subscriber failed: {exc}", "state")
-
-
-def _show_on_face(state: AssistantState) -> None:
-    try:
-        from desktop_app.face_widget import JarvisState, get_jarvis_state
-        get_jarvis_state().set_state(JarvisState(state.value))
-    except Exception as exc:  # headless runs have no desktop app
-        debug_log(f"face state not shown ({state.value}): {exc}", "state")
 
 
 def reset() -> None:

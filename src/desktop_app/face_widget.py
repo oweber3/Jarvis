@@ -1,9 +1,11 @@
 """
 Jarvis face window: hosts the reactive orb visual and owns the daemon state channel.
 
-- ``JarvisState`` / ``JarvisStateManager`` / ``get_jarvis_state``: the file-backed,
-  cross-process state the daemon writes and the visual reads (dev mode runs the
-  daemon as a subprocess, bundled mode as a thread; a file works for both).
+- ``JarvisState`` / ``JarvisStateManager`` / ``get_jarvis_state``: the file-backed
+  state the desktop app writes from the daemon's state and the visuals read.
+- ``follow_assistant_state``: forwards in-process assistant state changes to the face
+  (bundled mode runs the daemon as a thread). In dev mode the daemon is a subprocess and
+  its state arrives over stdout instead (``app._face_state_from_line``).
 - ``FaceWindow``: the floating window. The visual itself lives in
   ``desktop_app.orb_widget`` (``OrbWidget``).
 """
@@ -13,7 +15,7 @@ import os
 import tempfile
 import threading
 from enum import Enum
-from typing import Optional
+from typing import Callable, Optional
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QApplication
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
 
@@ -114,6 +116,18 @@ def get_jarvis_state() -> JarvisStateManager:
         if _jarvis_state_instance is None:
             _jarvis_state_instance = JarvisStateManager()
         return _jarvis_state_instance
+
+
+def follow_assistant_state() -> Callable[[], None]:
+    """Show every assistant state change of a daemon running in this process on the face.
+
+    Returns a function that stops following."""
+    from jarvis import assistant_state
+
+    def forward(state) -> None:
+        get_jarvis_state().set_state(JarvisState(state.value))
+
+    return assistant_state.subscribe(forward)
 
 
 class FaceWindow(QWidget):
