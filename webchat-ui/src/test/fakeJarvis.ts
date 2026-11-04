@@ -23,6 +23,13 @@ export class FakeJarvis {
   readonly requests: { method: string; path: string; body: unknown }[] = []
   readonly sent: string[] = []
   readonly rewinds: { chat: string; message_id: number; text: string | undefined }[] = []
+  readonly modelChoices: { kind: string; value: string; effort?: string }[] = []
+  localModels = [
+    { id: "gemma", name: "Gemma 4 12B", installed: true },
+    { id: "qwen", name: "Qwen 3.5 9B", installed: true },
+    { id: "big", name: "Huge 70B", installed: false },
+  ]
+  currentModel = "gemma"
   chats: Chat[] = []
   messages = new Map<string, ChatMessage[]>()
   notices: Notice[] = []
@@ -132,7 +139,20 @@ export class FakeJarvis {
     if (route === "GET /api/poll") return json(200, await this.poll(url, init.signal ?? undefined))
     if (route === "GET /api/library") return json(200, this.library())
     if (route === "GET /api/models")
-      return json(200, { mode: { mode: "local", enabled: ["local"] }, current: "gemma", switchable: true, models: [], cloud: null })
+      return json(200, {
+        mode: { mode: "local", enabled: ["local"] },
+        current: this.currentModel,
+        switchable: true,
+        models: this.localModels,
+        cloud: null,
+      })
+    if (route === "POST /api/model") {
+      const choice = body as { kind: string; value: string; effort?: string }
+      this.modelChoices.push(choice)
+      if (choice.kind === "local") this.currentModel = choice.value
+      this.bump()
+      return json(200, { ok: true })
+    }
     if (route === "GET /api/attachments/support")
       return json(200, {
         images: { ok: true, reason: null },
@@ -271,7 +291,7 @@ export class FakeJarvis {
       messages,
       notices: [...this.notices],
       mode: { mode: "local", enabled: ["local"] },
-      model: { current: "gemma", switchable: true },
+      model: { current: this.currentModel, switchable: true },
       cloud: null,
     } as Snapshot
   }
