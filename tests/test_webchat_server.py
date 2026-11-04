@@ -115,7 +115,9 @@ class TestStaticFiles:
         assert call(parts, "GET", "/assets/app.css")[2].getheader("Content-Type").startswith("text/css")
 
     @pytest.mark.parametrize("path", ["/assets/../../secret.txt", "/assets/..%2f..%2fsecret.txt", "/../secret.txt",
-                                      "/assets/%2e%2e/%2e%2e/secret.txt", "/assets/missing.js", "/assets/"])
+                                      "/assets/%2e%2e/%2e%2e/secret.txt", "/assets/missing.js", "/assets/",
+                                      "/assets/%5C%5Cevil.example%5Cshare%5Cx.js", "/assets//evil.example/share/x.js",
+                                      "/assets/C:%5CWindows%5Cwin.ini"])
     def test_nothing_outside_the_assets_folder_is_served(self, parts, path):
         status, body, _ = call(parts, "GET", path)
         assert status == 404 and b"do not serve" not in body

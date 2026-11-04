@@ -2,10 +2,13 @@
 
 Other web pages must not be able to reach such a server: a rebound DNS name arrives with a foreign
 ``Host``, and a cross-site request carries a foreign ``Origin`` or ``Sec-Fetch-Site: cross-site``. Requests
-with no ``Origin`` (the page's own GETs, other local clients) are served.
+with no ``Origin`` (the page's own GETs, other local clients) are served. ``asset_file`` maps a requested
+asset name to a built file without letting the name become a drive or network path.
 """
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urlsplit
 
@@ -44,3 +47,24 @@ def refusal(host_header: str, origin_header: Optional[str], sec_fetch_site: Opti
     if sec_fetch_site == "cross-site":
         return "origin"
     return None
+
+
+# One segment of a built file's name: letters, digits, ".", "_" and "-", never starting with a dot.
+_ASSET_SEGMENT = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]*\Z")
+
+
+def asset_file(assets_dir: Path, name: str) -> Optional[Path]:
+    """The built file ``name`` (already URL-decoded) inside ``assets_dir``, or ``None``.
+
+    The name is checked before the file system sees it: on Windows a name such as ``//host/share/x`` or
+    ``\\\\host\\share`` joined to a folder is a network path, and resolving it would make the PC connect to
+    that host (and offer the user's sign-in). Only plain segments separated by ``/`` pass, and the result
+    must still lie inside the folder once links are resolved."""
+    segments = name.split("/") if isinstance(name, str) else []
+    if not segments or not all(_ASSET_SEGMENT.match(segment) for segment in segments):
+        return None
+    root = Path(assets_dir).resolve()
+    target = root.joinpath(*segments).resolve()
+    if root not in target.parents or not target.is_file():
+        return None
+    return target

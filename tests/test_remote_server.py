@@ -162,7 +162,8 @@ class TestStaticApp:
 
     def test_paths_outside_the_app_are_not_served(self, server):
         for path in ["/../secret.txt", "/%2e%2e/secret.txt", "/assets/../../secret.txt", "/assets/%2e%2e/index.html",
-                     "/static/../server.py", "/nope.txt", "/assets/"]:
+                     "/static/../server.py", "/nope.txt", "/assets/", "/assets/%5C%5Cevil.example%5Cshare%5Cx.js",
+                     "/assets//evil.example/share/x.js", "/assets/C:%5CWindows%5Cwin.ini"]:
             status, _, _ = Client(server).request("GET", path)
             assert status == 404, path
 

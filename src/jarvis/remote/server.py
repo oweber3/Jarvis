@@ -20,7 +20,7 @@ from typing import Callable, List, Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..debug import debug_log
-from ..utils.local_guard import refusal
+from ..utils.local_guard import asset_file, refusal
 from ..webchat.api import POLL_TIMEOUT_SEC, ChatApi, Refused as _Refused
 from ..webchat.uploads import MAX_UPLOAD_BYTES
 from .networks import is_allowed_client, is_own_host, pc_name
@@ -370,10 +370,8 @@ def _make_handler(server: RemoteServer):
                 name, content_type = STATIC_FILES[path]
                 target = root / name
             elif path.startswith("/assets/"):
-                name = unquote(path[len("/assets/"):])
-                assets = (root / "assets").resolve()
-                target = (assets / name).resolve()
-                if not name or assets not in target.parents:
+                target = asset_file(root / "assets", unquote(path[len("/assets/"):]))
+                if target is None:
                     raise _Refused(404, "not_found")
                 content_type = CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
             else:
