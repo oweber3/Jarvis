@@ -216,3 +216,19 @@ class TestLinks:
     ])
     def test_everything_else_is_not(self, address):
         assert not is_chat_url(QUrl(address), PORT)
+
+
+def test_the_platform_close_shortcut_hides_the_window_and_keeps_it(window, qapp):
+    """As in the desktop chat: Ctrl+W (Cmd+W) hides the chat; the conversation and the window stay for the tray."""
+    from PyQt6.QtGui import QKeySequence, QShortcut
+
+    window.show()
+    pump(qapp, 30)
+    closing = [s for s in window.findChildren(QShortcut)
+               if set(QKeySequence.keyBindings(QKeySequence.StandardKey.Close)) <= set(s.keys())]
+    assert closing, "no shortcut for the platform's close keys"
+    closing[0].activated.emit()
+    pump(qapp, 30)
+    assert not window.isVisible()
+    window.show()
+    assert window.isVisible()
