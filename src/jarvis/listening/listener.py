@@ -2829,6 +2829,12 @@ class VoiceListener(threading.Thread):
     def _init_startup_signals(self) -> None:
         # Set once the microphone permission check is over (or skipped, or start-up ended before it).
         self._microphone_checked = threading.Event()
+        # time.monotonic() when the check began (after the device list), None until then.
+        self._microphone_check_started_at: Optional[float] = None
+
+    def microphone_check_started_at(self) -> Optional[float]:
+        """When the start-up microphone check began (``time.monotonic()``), or None if it has not."""
+        return self._microphone_check_started_at
 
     def wait_until_microphone_checked(self, timeout: float) -> bool:
         """Wait until the start-up microphone check is over; True when it is.
@@ -2888,6 +2894,7 @@ class VoiceListener(threading.Thread):
         # Uses InputStream (not sd.rec) so the stream can be explicitly closed
         # on timeout, avoiding resource leaks that could block later audio init.
         if sys.platform == 'win32':
+            self._microphone_check_started_at = time.monotonic()
             try:
                 print("  🔐 Checking microphone permission...", flush=True)
                 mic_ok = threading.Event()

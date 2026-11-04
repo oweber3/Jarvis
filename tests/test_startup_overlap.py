@@ -12,24 +12,45 @@ from jarvis.listening.listener import VoiceListener
 
 
 class FakeListener:
-    """Checks the microphone briefly, then spends a while loading speech recognition."""
+    """Lists the audio devices, checks the microphone, then spends a while loading speech recognition."""
 
-    def __init__(self, timeline, check_s=0.1, load_s=0.6, checks=True):
+    def __init__(self, timeline, enumerate_s=0.0, check_s=0.1, load_s=0.6, check_hangs=False,
+                 ends_before_check=False):
         self.timeline = timeline
+        self.enumerate_s = enumerate_s
         self.check_s = check_s
         self.load_s = load_s
-        self.checks = checks
+        self.check_hangs = check_hangs
+        self.ends_before_check = ends_before_check
         self._checked = threading.Event()
+        self._check_started_at = None
+        self._thread = None
 
     def start(self):
         def run():
+            time.sleep(self.enumerate_s)
+            if self.ends_before_check:
+                self.timeline.append("no microphone")
+                self._checked.set()
+                return
+            self._check_started_at = time.monotonic()
+            self.timeline.append("mic check started")
+            if self.check_hangs:
+                time.sleep(10)
+                return
             time.sleep(self.check_s)
             self.timeline.append("mic checked")
-            if self.checks:
-                self._checked.set()
+            self._checked.set()
             time.sleep(self.load_s)
             self.timeline.append("whisper loaded")
-        threading.Thread(target=run, daemon=True).start()
+        self._thread = threading.Thread(target=run, daemon=True)
+        self._thread.start()
+
+    def is_alive(self):
+        return self._thread is not None and self._thread.is_alive()
+
+    def microphone_check_started_at(self):
+        return self._check_started_at
 
     def wait_until_microphone_checked(self, timeout):
         return self._checked.wait(timeout)
@@ -43,35 +64,62 @@ class FakeTTS:
         self.timeline.append("tts started")
 
 
-def test_the_voice_loads_after_the_microphone_check_while_speech_recognition_loads():
+def _start(listener, tts, window=5.0, cap=30.0):
     from jarvis import daemon
 
+    daemon._start_listener_then_tts(listener, tts, check_window_sec=window, safety_cap_sec=cap)
+
+
+def test_the_voice_loads_after_the_microphone_check_while_speech_recognition_loads():
     timeline = []
-    daemon._start_listener_then_tts(FakeListener(timeline), FakeTTS(timeline), check_timeout_sec=5.0)
+    _start(FakeListener(timeline), FakeTTS(timeline))
     time.sleep(0.8)
 
-    assert timeline == ["mic checked", "tts started", "whisper loaded"]
+    assert timeline == ["mic check started", "mic checked", "tts started", "whisper loaded"]
 
 
-def test_a_microphone_check_that_never_reports_back_does_not_stop_the_voice_from_loading():
-    from jarvis import daemon
+def test_slow_device_listing_does_not_eat_into_the_microphone_check_window():
+    """The window starts when the check starts: listing devices slowly (Bluetooth) never lets the voice
+    load while the check is still open."""
+    timeline = []
+    _start(FakeListener(timeline, enumerate_s=0.6, check_s=0.2), FakeTTS(timeline), window=0.5)
 
+    assert timeline == ["mic check started", "mic checked", "tts started"]
+
+
+def test_a_microphone_check_that_hangs_is_given_up_on_after_its_window():
     timeline = []
     started = time.monotonic()
-    daemon._start_listener_then_tts(FakeListener(timeline, checks=False), FakeTTS(timeline), check_timeout_sec=0.3)
+    _start(FakeListener(timeline, check_hangs=True), FakeTTS(timeline), window=0.3)
 
-    assert "tts started" in timeline
+    assert timeline == ["mic check started", "tts started"]
+    assert time.monotonic() - started < 1.0
+
+
+def test_a_listener_that_ends_before_checking_lets_the_voice_load_at_once():
+    timeline = []
+    started = time.monotonic()
+    _start(FakeListener(timeline, ends_before_check=True), FakeTTS(timeline))
+
+    assert timeline == ["no microphone", "tts started"]
+    assert time.monotonic() - started < 1.0
+
+
+def test_the_safety_cap_bounds_a_device_listing_that_never_finishes():
+    timeline = []
+    started = time.monotonic()
+    _start(FakeListener(timeline, enumerate_s=10), FakeTTS(timeline), window=0.2, cap=0.4)
+
+    assert timeline == ["tts started"]
     assert time.monotonic() - started < 1.0
 
 
 def test_no_voice_engine_still_starts_the_listener():
-    from jarvis import daemon
-
     timeline = []
-    daemon._start_listener_then_tts(FakeListener(timeline, load_s=0.0), None, check_timeout_sec=5.0)
+    _start(FakeListener(timeline, load_s=0.0), None)
     time.sleep(0.3)
 
-    assert timeline == ["mic checked", "whisper loaded"]
+    assert timeline == ["mic check started", "mic checked", "whisper loaded"]
 
 
 def _bare_listener(cfg=None):
@@ -128,3 +176,4 @@ def test_the_microphone_check_is_reported_done_before_speech_recognition_loads(m
     obj.run()
 
     assert seen == {"checked when whisper loads": True}
+    assert obj.microphone_check_started_at() is not None

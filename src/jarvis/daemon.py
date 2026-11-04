@@ -176,25 +176,42 @@ def _stop_side_by_side(steps: dict, timeout_sec: float) -> None:
             debug_log(f"shutdown step '{name}' still running after {timeout_sec}s; continuing", "jarvis")
 
 
-# Longest the voice waits for the listener's microphone check: just above the check's own 5 s timeout.
-MICROPHONE_CHECK_WAIT_SEC = 6.0
+# How long after the microphone check begins the voice waits for it: just above the check's own 5 s timeout.
+MICROPHONE_CHECK_WINDOW_SEC = 6.0
+# Longest the voice waits in all, for a device listing that never reaches the check.
+MICROPHONE_CHECK_SAFETY_CAP_SEC = 30.0
 
 
-def _start_listener_then_tts(listener, tts, check_timeout_sec: float) -> None:
+def _start_listener_then_tts(listener, tts, check_window_sec: float, safety_cap_sec: float) -> None:
     """Start the voice listener, then load the voice on this thread while Whisper loads on the listener's.
 
     The voice waits for the listener's microphone check first: a DLL load racing that check can deadlock on
-    the Windows loader lock. A check that hangs past its own 5 s timeout is given up on, as the listener does
-    before loading Whisper. Loading the voice on the starting thread also keeps voice outputs' ``warm`` there
-    (extensions/extensions.spec.md). A reply that arrives while the voice is still loading waits for it
-    (the engines' start lock).
+    the Windows loader lock. The wait lasts while the listener is alive and, once the check has begun, at most
+    ``check_window_sec`` from that moment (so a slow device listing before it never shortens it); a check that
+    hangs past its own 5 s timeout is given up on, as the listener does before loading Whisper.
+    ``safety_cap_sec`` bounds the whole wait. Loading the voice on the starting thread also keeps voice
+    outputs' ``warm`` there (extensions/extensions.spec.md). A reply that arrives while the voice is still
+    loading waits for it (the engines' start lock).
     """
     listener.start()
     if tts is None:
         return
     started = time.monotonic()
-    if not listener.wait_until_microphone_checked(check_timeout_sec):
-        debug_log(f"microphone check still running after {check_timeout_sec}s; loading the voice anyway", "jarvis")
+    reason = "check over"
+    while not listener.wait_until_microphone_checked(0.05):
+        now = time.monotonic()
+        check_started = listener.microphone_check_started_at()
+        if not listener.is_alive():
+            reason = "listener ended"
+            break
+        if check_started is not None and now - check_started >= check_window_sec:
+            reason = f"check still running after {check_window_sec}s"
+            break
+        if now - started >= safety_cap_sec:
+            reason = f"no check after {safety_cap_sec}s"
+            break
+    debug_log(f"loading the voice alongside speech recognition ({reason}, waited {time.monotonic() - started:.2f}s)",
+              "jarvis")
     tts.start()
     debug_log(f"voice loaded alongside speech recognition in {time.monotonic() - started:.2f}s", "jarvis")
 
@@ -1773,7 +1790,9 @@ def main(smoke_test: bool = False) -> None:
     print("🎤 Preparing speech recognition in the background...", flush=True)
     voice_thread: Optional[threading.Thread] = None
     voice_thread = VoiceListener(db, cfg, tts, _global_dialogue_memory)
-    _start_listener_then_tts(voice_thread, tts if tts.enabled else None, check_timeout_sec=MICROPHONE_CHECK_WAIT_SEC)
+    _start_listener_then_tts(voice_thread, tts if tts.enabled else None,
+                             check_window_sec=MICROPHONE_CHECK_WINDOW_SEC,
+                             safety_cap_sec=MICROPHONE_CHECK_SAFETY_CAP_SEC)
     if tts.enabled:
         print("✓ TTS engine started", flush=True)
     else:
