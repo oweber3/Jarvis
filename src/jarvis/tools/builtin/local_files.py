@@ -27,7 +27,8 @@ MAX_TRANSFER_ITEMS = 10_000
 
 _INVALID_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _RESERVED_NAMES = {'con', 'prn', 'aux', 'nul', *(f'com{i}' for i in range(1, 10)), *(f'lpt{i}' for i in range(1, 10))}
-_EXTENSION = re.compile(r'\.[^\W_]{1,10}', re.UNICODE)
+# A file extension: up to ten letters or digits with at least one letter, so the ".1" of "v2.1" is not one.
+_EXTENSION = re.compile(r'\.(?=[^\W_]*[^\W\d_])[^\W_]{1,10}', re.UNICODE)
 _PAST = {'move': 'moved', 'copy': 'copied', 'rename': 'renamed'}
 DELETE_OFF = ("File deletion is turned off, so no file was deleted. It can be turned on in Settings, "
               "Privacy, Screen and files, Allow File Deletion.")
