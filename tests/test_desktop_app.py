@@ -1607,7 +1607,7 @@ class TestDaemonSmokeTest:
              patch("jarvis.daemon.create_tts_engine") as mock_tts, \
              patch("jarvis.daemon.VoiceListener") as mock_vl, \
              patch("jarvis.memory.graph.GraphMemoryStore") as mock_graph, \
-             patch("jarvis.daemon.time.sleep", side_effect=StopBeforeMainLoop()):
+             patch("jarvis.daemon._wait_for_stop", side_effect=StopBeforeMainLoop()):
 
             from tests.conftest import MockConfig
             mock_load.return_value = MockConfig(db_path=":memory:")

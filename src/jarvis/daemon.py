@@ -59,6 +59,7 @@ from .utils.location import get_location_context, is_location_available
 # Global instances for coordination between modules
 _global_dialogue_memory: Optional[DialogueMemory] = None
 _global_stop_requested: bool = False
+_global_stop_event = threading.Event()  # set with _global_stop_requested, so the idle main loop wakes at once
 _warm_profile_graph_listener = None  # registered callback, kept for shutdown unregister
 _global_tts_engine = None  # TTS engine reference for face animation polling
 _global_dictation_engine = None  # Dictation engine reference for history UI
@@ -136,6 +137,65 @@ def request_stop() -> None:
     """Request the daemon to stop gracefully."""
     global _global_stop_requested
     _global_stop_requested = True
+    _global_stop_event.set()
+
+
+def _clear_stop_request() -> None:
+    """Forget an earlier stop request, so a new run (or an in-process restart) starts fresh."""
+    global _global_stop_requested
+    _global_stop_requested = False
+    _global_stop_event.clear()
+
+
+def _wait_for_stop(timeout_sec: float) -> bool:
+    """Idle for up to ``timeout_sec``, waking at once on a stop request. True when a stop was requested."""
+    _global_stop_event.wait(timeout_sec)
+    return _global_stop_requested
+
+
+def _stop_side_by_side(steps: dict, timeout_sec: float) -> None:
+    """Run independent shutdown steps at the same time and wait for them, at most ``timeout_sec`` in all.
+
+    A step that raises is logged and does not keep the others from running. A step still running at the
+    deadline is left to finish in its daemon thread, so a wedged helper never holds up the quit.
+    """
+    threads = []
+    for name, step in steps.items():
+        def _run(name=name, step=step) -> None:
+            try:
+                step()
+            except Exception as exc:
+                debug_log(f"shutdown step '{name}' failed: {type(exc).__name__}: {exc}", "jarvis")
+        thread = threading.Thread(target=_run, name=f"shutdown-{name}", daemon=True)
+        thread.start()
+        threads.append((name, thread))
+    deadline = time.monotonic() + timeout_sec
+    for name, thread in threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+        if thread.is_alive():
+            debug_log(f"shutdown step '{name}' still running after {timeout_sec}s; continuing", "jarvis")
+
+
+# Bound for stopping TTS, the MCP runtime and the reply bridge together: above each one's own
+# worst case (the Codex child gets 5 s, then terminate and kill at 2 s each).
+ENGINE_STOP_TIMEOUT_SEC = 10.0
+
+
+def _stop_engines_side_by_side(tts) -> None:
+    """Stop the TTS engine, the persistent MCP sessions and the reply bridge at the same time.
+
+    They share nothing (each owns its own child process or thread), so stopping them one after
+    another only added their waits together.
+    """
+    from .bridge import modes as reply_modes
+    from .tools.external.mcp_runtime import shutdown_runtime
+
+    steps = {"mcp": shutdown_runtime, "reply-bridge": reply_modes.stop}
+    if tts is not None:
+        steps["tts"] = tts.stop
+    started = time.monotonic()
+    _stop_side_by_side(steps, timeout_sec=ENGINE_STOP_TIMEOUT_SEC)
+    debug_log(f"engines stopped side by side in {time.monotonic() - started:.2f}s", "jarvis")
 
 
 def set_diary_update_callbacks(
@@ -1481,11 +1541,11 @@ def main(smoke_test: bool = False) -> None:
             marker, and return without entering the main event loop.
             Used by CI smoke tests to verify the build is not broken.
     """
-    global _global_dialogue_memory, _global_stop_requested, _global_tts_engine, _global_dictation_engine
+    global _global_dialogue_memory, _global_tts_engine, _global_dictation_engine
     global _warm_profile_graph_listener, _global_voice_listener
 
     # Reset stop flag at start (in case of restart)
-    _global_stop_requested = False
+    _clear_stop_request()
 
     _install_signal_handlers()
     close_state_channel = open_assistant_state_channel()
@@ -1772,19 +1832,7 @@ def main(smoke_test: bool = False) -> None:
                 pass
 
         close_state_channel()
-        if tts is not None:
-            try:
-                tts.stop()
-            except Exception:
-                pass
-
-        try:
-            from .tools.external.mcp_runtime import shutdown_runtime
-            shutdown_runtime()
-        except Exception:
-            pass
-
-        reply_modes.stop()
+        _stop_engines_side_by_side(tts)
         activity_runtime.stop()
         documents_runtime.stop()
         smarthome_service.set_home(None)
@@ -1858,7 +1906,8 @@ def main(smoke_test: bool = False) -> None:
     try:
         # Main daemon loop
         while not _global_stop_requested:
-            time.sleep(1.0)
+            if _wait_for_stop(1.0):
+                break
             now = time.time()
 
             # Periodically check if diary should be updated
@@ -1869,7 +1918,8 @@ def main(smoke_test: bool = False) -> None:
         # Keep voice thread alive (unless stop requested)
         if voice_thread is not None:
             while voice_thread.is_alive() and not _global_stop_requested:
-                time.sleep(0.5)
+                if _wait_for_stop(0.5):
+                    break
                 _check_and_update_diary(db, cfg, verbose=False)
 
     except KeyboardInterrupt:
@@ -1932,18 +1982,9 @@ def main(smoke_test: bool = False) -> None:
         print("✅ Diary update complete", flush=True)
         debug_log("diary update complete", "jarvis")
 
-        if tts is not None:
-            tts.stop()
-
-        # Tear down persistent MCP sessions so subprocess-launched
-        # children (e.g. chrome-devtools-mcp's Chrome) close cleanly.
-        try:
-            from .tools.external.mcp_runtime import shutdown_runtime
-            shutdown_runtime()
-        except Exception as _e:
-            debug_log(f"MCP runtime shutdown error: {_e}", "jarvis")
-
-        reply_modes.stop()
+        # TTS, the persistent MCP sessions (so subprocess-launched children such as
+        # chrome-devtools-mcp's Chrome close cleanly) and the reply bridge stop side by side.
+        _stop_engines_side_by_side(tts)
         activity_runtime.stop()
         documents_runtime.stop()
         smarthome_service.set_home(None)
