@@ -343,3 +343,26 @@ def test_generate_tools_json_schema_handles_empty_input():
     tools_schema = generate_tools_json_schema(["screenshot"], {})
     assert isinstance(tools_schema, list)
     assert len(tools_schema) >= 1
+
+
+def test_a_failing_server_never_puts_its_command_line_in_the_debug_log(monkeypatch):
+    # The error names the command (a home folder path, a user name); the console summary may show it to the
+    # user, but the debug log, which can go into an issue report, gets the error type only.
+    from jarvis.tools import registry
+
+    secret = r"C:\Users\owen\tools\private-server.exe"
+
+    class FailingClient:
+        def __init__(self, config):
+            pass
+
+        def list_tools(self, server_name):
+            raise FileNotFoundError(f"MCP server command does not exist: {secret}")
+
+    logged = []
+    monkeypatch.setattr(registry, "_mcp_client_class", lambda: FailingClient)
+    monkeypatch.setattr(registry, "debug_log", lambda message, *a, **k: logged.append(message))
+    tools, errors = registry.discover_mcp_tools({"private": {"command": secret}})
+    assert tools == {} and "private" in errors
+    assert not any("owen" in line or "private-server" in line for line in logged)
+    assert any("FileNotFoundError" in line for line in logged)

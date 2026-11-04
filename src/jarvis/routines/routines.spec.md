@@ -155,6 +155,7 @@ Routine names are user data, so running one by name is a deterministic fast comm
 - A routine run through `jarvis_execute` may use only tools in that request's snapshot. The bridge's execution path passes the snapshot to `run_tool_with_retries`, which makes it available to the tool for the duration of the call; a step outside it fails validation as unavailable. A routine therefore never widens a cloud model's catalogue: a `replyMode` step, a memory tool without long-term-memory sharing, or `activityLog` or `documentSearch` without its cloud switch is unavailable there.
 - The routine's steps run on the query thread inside that one `jarvis_execute` call and count as one call against `<mode>_max_tool_calls`. A routine that outlasts the bridge deadline is not interrupted; the bridge records the call as uncertain and never replays it.
 - What reaches the provider is what any tool result carries: labels, positions, statuses and reasons. Step arguments stay in `config.json` and the in-memory journal; the save question carries labels only.
+- A label can quote a short argument (a search phrase, a device name), so `list` and `recent` through a bridge show nothing of a tool outside that request's snapshot: `recent` leaves out every journal entry for such a tool (a call made locally, perhaps in a private turn), and `list` shows such a saved step as `(a step not shared with this reply mode)` instead of its label.
 
 ## Desktop record and dialogue
 

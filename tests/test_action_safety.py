@@ -340,7 +340,7 @@ def test_high_risk_action_requires_dialog():
         import threading
         from jarvis.tools.confirmation import set_result_handler
         delivered, done = [], threading.Event()
-        set_result_handler(lambda reply, ok: (delivered.append((reply, ok)), done.set()))
+        set_result_handler(lambda reply, ok, *_: (delivered.append((reply, ok)), done.set()))
         mock_dialog_cb = MagicMock(return_value=MagicMock())
         set_dialog_callback(mock_dialog_cb)
 

@@ -16,7 +16,7 @@ from typing import Optional
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..debug import debug_log
-from ..utils.local_guard import refusal
+from ..utils.local_guard import asset_file, refusal
 from . import identity
 from .api import POLL_TIMEOUT_SEC, ChatApi, Refused as _Refused
 from .uploads import MAX_UPLOAD_BYTES
@@ -230,10 +230,8 @@ def _make_handler(server: WebChatServer):
             if path in ("/", "/index.html"):
                 target = root / "index.html"
             elif path.startswith("/assets/"):
-                name = unquote(path[len("/assets/"):])
-                assets = (root / "assets").resolve()
-                target = (assets / name).resolve()
-                if not name or assets not in target.parents:
+                target = asset_file(root / "assets", unquote(path[len("/assets/"):]))
+                if target is None:
                     raise _Refused(404, "not_found")
             else:
                 raise _Refused(404, "not_found")

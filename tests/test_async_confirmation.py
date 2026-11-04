@@ -120,7 +120,7 @@ def results():
     """Collects delivered results and lets a test wait for the next one."""
     box = SimpleNamespace(items=[], event=threading.Event())
 
-    def handler(reply, success):
+    def handler(reply, success, private_sources=frozenset()):
         box.items.append((reply, success))
         box.event.set()
 

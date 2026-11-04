@@ -14,6 +14,7 @@ import json
 import socket
 import struct
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 _GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -47,6 +48,7 @@ class FakeHomeAssistant:
         self.answer_pings = True
         self.admin = True
         self.stall_after_auth = False
+        self.handshake_byte_delay = 0.0   # answer the upgrade one byte at a time, each read well inside a timeout
         self.handshake_headers: List[Dict[str, str]] = []
         self._lock = threading.Lock()
         self._clients: List[_Client] = []
@@ -280,8 +282,14 @@ class _Client:
             self.close()
             return None
         accept = base64.b64encode(hashlib.sha1((headers["sec-websocket-key"] + _GUID).encode()).digest()).decode()
-        self.conn.sendall(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-                           f"Sec-WebSocket-Accept: {accept}\r\n\r\n").encode())
+        answer = ("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                  f"Sec-WebSocket-Accept: {accept}\r\n\r\n").encode()
+        if server.handshake_byte_delay:
+            for index in range(len(answer)):
+                time.sleep(server.handshake_byte_delay)
+                self.conn.sendall(answer[index:index + 1])
+        else:
+            self.conn.sendall(answer)
         return headers
 
     def _read(self, size: int) -> bytes:
