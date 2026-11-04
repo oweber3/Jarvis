@@ -548,6 +548,7 @@ CHILD = textwrap.dedent(
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("approved, expected", [(True, "RAN"), (False, "NOT RAN")])
 def test_a_daemon_subprocess_gets_its_answer_over_the_pipes(approved, expected, tmp_path):
     from desktop_app.confirmation_dialog import SubprocessConfirmationRelay

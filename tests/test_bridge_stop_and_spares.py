@@ -186,6 +186,7 @@ class _SlowSession(FakeSession):
 class TestSpareStartedWithOldSettings:
     """A spare session or thread started with the old model or effort is closed and never used."""
 
+    @pytest.mark.slow
     def test_a_late_claude_spare_is_closed_and_the_next_request_uses_the_new_model(self):
         claude = _SlowStartClaude(scripted(("answer", "completed", "Done.")))
         service, _ = build_claude(cfg=make_cfg(claude_model="sonnet"), factory=claude)

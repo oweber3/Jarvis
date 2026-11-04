@@ -40,6 +40,22 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--quick", action="store_true", default=False,
+        help="leave out tests marked slow (real subprocesses, real waits); the full run keeps them",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if not config.getoption("--quick"):
+        return
+    slow = [item for item in items if item.get_closest_marker("slow")]
+    if slow:
+        config.hook.pytest_deselected(items=slow)
+        items[:] = [item for item in items if not item.get_closest_marker("slow")]
+
+
 @dataclass
 class MockConfig:
     """Minimal config object for unit tests that need a config."""
