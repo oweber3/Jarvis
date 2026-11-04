@@ -212,6 +212,12 @@ def describe_two_hands(a: Hand, b: Hand, width: int = 640, height: int = 480) ->
     return f"wrists {gap:.2f} palm lengths apart, lean {angle(left)} / {angle(right)}{crossed}"
 
 
+def read_shape(hand: Hand, settings: Optional["WindowSnapSettings"] = None) -> str:
+    """The gesture one hand makes on its own, as on the first frame it is seen."""
+    s = settings or WindowSnapSettings()
+    return shape_of(frozenset(f for f in FINGERS if finger_curl(hand, f) > s.finger_up))
+
+
 def shape_of(raised: FrozenSet[str]) -> str:
     """The gesture a set of raised fingers makes: one finger, two fingers, fist, open hand or other."""
     return _SHAPES.get(raised, OTHER)
