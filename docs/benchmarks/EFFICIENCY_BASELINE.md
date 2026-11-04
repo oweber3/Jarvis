@@ -254,6 +254,38 @@ Benefit is what the owner notices: seconds at start-up and shutdown, and resourc
 
 Not worth doing now: the desktop app's own start-up (about 1 s), the 0.54 s application index (already on a background thread), the idle native thread pools.
 
+## Results after the spec-neutral fixes
+
+Branch `perf/efficiency-fixes`, cut from `develop` at `32d0ea8` (which includes smart home). Only the fixes that need no spec change were made; the rest wait for the owner because they contradict a sentence in a spec or are product decisions.
+
+"Before" is `32d0ea8` itself, measured again with the same harness, the same owner profile and the same night, alternating before and after runs so drift affects both equally. (The `develop` baseline is about 0.8 s faster to "Listening!" than the `70361d8` figures above, mostly because the earlier runs overlapped the sibling test run.)
+
+| Measure (owner profile) | Before | After | Change | Runs |
+|-------------------------|-------:|------:|-------:|-----:|
+| Start-up to "Listening!" | 8.76 s (8.50 to 10.07) | **6.74 s** (6.50 to 7.02) | **−2.0 s (−23 %)** | 5 + 5 |
+| Shutdown, nothing to save | 0.90 s (0.86 to 1.34) | **0.49 s** (0.44 to 0.67) | **−0.4 s (−46 %)** | 5 + 5 |
+| Embedding model still loaded after 6 min idle | no (unloaded at about 5 min) | **yes** | next memory lookup no longer pays a 1.35 s reload | 1 + 1 |
+| Idle CPU, 5 min | 2.77 % of one core | 2.77 % of one core | none expected | 1 + 1 |
+| Idle RAM | 2,277 MB | 2,277 MB | none expected | 1 + 1 |
+| `--smoke-test` (through the harness) | passes 3/3 | passes 3/3 | `SMOKE_TEST_INIT_OK` comes about 0.5 s later because TTS now loads after the listener starts; the smoke marker is not a readiness measure | 3 + 3 |
+
+Start-up timeline after the change (first after run): the listener's microphone check ends at 2.5 s, Whisper starts loading at 2.8 s, Kokoro is ready at 5.2 s (it loaded during Whisper's load), Whisper is loaded at 6.2 s, "Listening!" at 7.0 s.
+
+| # | Fix | Status | Why |
+|---|-----|--------|-----|
+| 1 | Load the voice while Whisper loads | **Done** | The listener starts first and reports when its microphone check is over; the voice then loads on the starting thread while Whisper loads on the listener's. No DLL load races the check (the Windows loader-lock hazard the code guards against), and voice outputs still warm on the starting thread as `extensions/extensions.spec.md` requires. |
+| 2 | Calm the orb | Waits for the owner | `orb_widget.spec.md` specifies about 16 FPS at rest |
+| 3 | Do not make shutdown wait for the diary | Waits for the owner | `memory/summariser.spec.md` defines the shutdown flush |
+| 4 | Kokoro on the CPU | Waits for the owner | voice-quality and latency choice |
+| 5 | Stop aborting warm-ups in local mode | Waits for the owner | `listening/listening.spec.md` fixes the warm-up timeout (`llm_routing_timeout_sec`) and the 60 s join |
+| 6 | Wake-word sound gate | Waits for the owner | `listening/listening.spec.md` says every captured frame is fed to the detector, which scores each 80 ms step |
+| 7 | Local chat model choice | Waits for the owner | product decision |
+| 8 | Smaller intent model | Waits for the owner | accuracy decision; needs evals |
+| 9 | `keep_alive` on embedding requests | **Done** | `llm/llm.spec.md` and `docs/llm_contexts.md` already require it on every Ollama request |
+| 10 | Event-woken main loop, engines stopped side by side | **Done** | No spec fixes the teardown order; TTS, the MCP runtime and the reply bridge stop concurrently, bounded at 10 s |
+| 11 | Trim imports | Not done | Measured on `develop`: the only avoidable import is `pkg_resources` (0.13 s, pulled in by `webrtcvad`), and avoiding it means depending on that package's private C module. The other heavy imports (`rapidfuzz`, `requests`, `sounddevice`, `numpy`) are needed during start-up anyway, so deferring them only moves the time. |
+| 12 | Web chat hub idle sleep | Not done | `remote/remote.spec.md` promises the phone's poll wakes "within half a second" (the hub's 0.5 s tick), and `webchat/webchat.spec.md` requires every turn to be mirrored into the open chat whether or not a page is open; the gain was 0.06 % of one core |
+
 ## Reproducing
 
 1. Copy `~/.config/jarvis/config.json` and the database to a temporary folder, point `db_path` at the copy, and turn off anything that acts on the outside world (extensions, gestures, TV, phone access). Point `JARVIS_CONFIG_PATH` at the copy.
