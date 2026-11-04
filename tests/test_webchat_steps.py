@@ -285,6 +285,16 @@ class TestStepsWhileWorking:
         hub.sync()
         assert hub.snapshot(0)["rev"] != rev
 
+    def test_a_new_step_does_not_send_every_page_for_the_chat_list(self, hub, backend, log):
+        backend.mode = "hold"
+        hub.submit("search the web")
+        hub.sync()
+        library_rev = hub.snapshot(0)["library_rev"]
+        for label in ("Searched the web", "Opened Word", "Read the page"):
+            log.record("webSearch", "done", label)
+            hub.sync()
+        assert hub.snapshot(0)["library_rev"] == library_rev
+
     def test_once_the_reply_lands_its_steps_are_stored_with_it_and_no_longer_live(self, hub, backend, store, log):
         backend.mode = "hold"
         hub.submit("search the web")

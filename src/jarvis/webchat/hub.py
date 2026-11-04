@@ -98,6 +98,7 @@ class ChatHub:
         self._memory = None
         self._cursor = 0.0
         self._signature = None
+        self._working = None  # the latest step of the typed request in flight, as last seen (``sync``)
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -178,6 +179,9 @@ class ChatHub:
                         self._store_turn(chat_id, turn)
                         changed = True
             signature = self._signature_now()
+            # A step taken for a typed request in flight changes what the page shows while Jarvis works, but not
+            # the chat list: it wakes the poll without sending every page for the library.
+            working = self._steps.latest() if self._typed_in_flight() else None
             with self._cond:
                 if signature != self._signature:
                     self._signature = signature
@@ -185,6 +189,9 @@ class ChatHub:
                 if changed:
                     self._library_rev += 1
                     self._bump_locked()
+                elif working != self._working:
+                    self._bump_locked()
+                self._working = working
 
     def _attach(self, memory) -> None:
         """Start following a (new) dialogue memory. An empty one gets the open chat's recent turns back.
@@ -286,11 +293,9 @@ class ChatHub:
         mode = self._backend.reply_mode_state() or {}
         model = self._backend.local_model_state() or {}
         cloud = self._backend.cloud_model_state() or {}
-        # A step taken for a typed request in flight changes what the page shows while Jarvis works.
-        working = self._steps.latest() if self._typed_in_flight() else None
         return (self._effective_state(), bool(self._backend.is_busy()), mode.get("mode"),
                 tuple(mode.get("enabled") or ()), model.get("current"), self._backend.is_ready(),
-                tuple(sorted(cloud.items())), self._watched(), working)
+                tuple(sorted(cloud.items())), self._watched())
 
     def _live_steps(self) -> List[Dict[str, Any]]:
         """The steps taken so far for the typed request in flight (the ones its reply will be stored with), with
