@@ -10,6 +10,7 @@ import {
 } from "@/components/attachment.aui";
 import { MarkdownText } from "@/components/markdown-text";
 import { DayDivider, MessageTime } from "@/components/MessageTime";
+import { JarvisMark } from "@/components/JarvisMark";
 import { ToolStepGroup, ToolStepRow } from "@/components/ToolSteps";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ import {
   AudioLinesIcon,
   CheckIcon,
   CopyIcon,
+  InfoIcon,
   MicIcon,
   PencilIcon,
   PhoneIcon,
@@ -139,9 +141,8 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
       className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
       style={{
         ["--thread-max-width" as string]: "44rem",
-        ["--composer-bg" as string]:
-          "color-mix(in oklab, var(--color-muted) 30%, transparent)",
-        ["--composer-radius" as string]: "1rem",
+        ["--composer-bg" as string]: "var(--color-card)",
+        ["--composer-radius" as string]: "1.25rem",
         ["--composer-padding" as string]: "8px",
       }}
     >
@@ -167,7 +168,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
           <ThreadLoadEarlier />
           <div
             data-slot="aui_message-group"
-            className="mb-14 flex flex-col gap-y-6 empty:hidden"
+            className="mb-14 flex flex-col gap-y-7 empty:hidden"
           >
             <ThreadPrimitive.Messages>
               {() => <ThreadMessage />}
@@ -341,12 +342,11 @@ const NoticeLine: FC = () => {
     return part && part.type === "text" ? part.text : "";
   });
   return (
-    <div
-      data-slot="aui_notice"
-      role="status"
-      className="text-muted-foreground px-2 text-center text-xs"
-    >
-      {text}
+    <div data-slot="aui_notice" role="status" className="flex justify-center px-2">
+      <span className="bg-muted/60 text-muted-foreground border-border inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1 text-xs">
+        <InfoIcon aria-hidden className="size-3.5 shrink-0" />
+        <span className="min-w-0">{text}</span>
+      </span>
     </div>
   );
 };
@@ -537,7 +537,7 @@ const ThreadScrollToBottom: FC = () => {
       <TooltipIconButton
         tooltip="Scroll to bottom"
         variant="outline"
-        className="aui-thread-scroll-to-bottom dark:border-border dark:bg-background dark:hover:bg-accent absolute -top-12 z-10 self-center rounded-full p-4 disabled:invisible"
+        className="aui-thread-scroll-to-bottom border-border bg-popover text-popover-foreground hover:bg-accent absolute -top-12 z-10 size-9 self-center rounded-full shadow-(--shadow-raised) disabled:invisible"
       >
         <ArrowDownIcon />
       </TooltipIconButton>
@@ -561,13 +561,13 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <div
         data-slot="aui_composer-shell"
-        className="border-foreground/10 focus-within:border-foreground/25 flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color]"
+        className="border-border focus-within:border-ring/60 bg-card flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border p-(--composer-padding) transition-[border-color,box-shadow] duration-150"
       >
         <ComposerAttachments />
         <ComposerPrimitive.Input
           id="message-box"
-          placeholder="Send a message..."
-          className="aui-composer-input caret-primary placeholder:text-muted-foreground/60 max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
+          placeholder="Message Jarvis…"
+          className="aui-composer-input caret-primary placeholder:text-muted-foreground max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none focus-visible:outline-none"
           rows={1}
           autoFocus={autoFocus}
           enterKeyHint="send"
@@ -580,6 +580,10 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
         <AttachmentNotice gate={gate} />
         <ComposerAction blocked={gate.blocked} />
       </div>
+      <p className="aui-composer-hint text-muted-foreground mt-2 text-center text-[11px] @max-[32rem]:hidden">
+        <kbd className="font-sans">Enter</kbd> to send · <kbd className="font-sans">Shift</kbd>+<kbd className="font-sans">Enter</kbd>{" "}
+        for a new line · <kbd className="font-sans">?</kbd> for shortcuts
+      </p>
     </ComposerPrimitive.Root>
   );
 };
@@ -646,6 +650,10 @@ const stepGroups = groupPartByType({ "tool-call": ["group-steps"] });
 
 const AssistantMessage: FC = () => {
   const isLast = useAuiState((s) => s.message.isLast);
+  // A reply that follows another one (the outcome of a confirmed action) continues it: no second mark.
+  const continues = useAuiState((s) => s.thread.messages[s.message.index - 1]?.role === "assistant");
+  // A reply still being worked on has no time and nothing to copy yet.
+  const running = useAuiState((s) => s.message.status?.type === "running");
   const ACTION_BAR_PT = "pt-1.5";
   // Keep the action bar inside the contained root's paint box, then cancel its reserved space in flow.
   const ACTION_BAR_HEIGHT = `min-h-7.5 ${ACTION_BAR_PT}`;
@@ -655,11 +663,14 @@ const AssistantMessage: FC = () => {
       data-slot="aui_assistant-message-root"
       data-role="assistant"
       data-last-message={isLast ? "" : undefined}
-      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 pb-7.5 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto]"
+      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 pb-7.5 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] @max-[32rem]:grid-cols-1"
     >
+      <div className="row-span-2 w-7 pt-0.5 @max-[32rem]:hidden" aria-hidden>
+        {!continues && <JarvisMark className="size-7" />}
+      </div>
       <div
         data-slot="aui_assistant-message-content"
-        className="text-foreground px-2 leading-relaxed wrap-break-word"
+        className="text-foreground min-w-0 leading-relaxed wrap-break-word"
       >
         <MessagePrimitive.GroupedParts groupBy={stepGroups}>
           {({ part, children }) => {
@@ -682,10 +693,14 @@ const AssistantMessage: FC = () => {
 
       <div
         data-slot="aui_assistant-message-footer"
-        className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
+        className={cn("flex items-center gap-2", ACTION_BAR_HEIGHT)}
       >
-        <AssistantActionBar />
-        <MessageTime className="ms-2" />
+        {!running && (
+          <>
+            <MessageTime />
+            <AssistantActionBar />
+          </>
+        )}
       </div>
     </MessagePrimitive.Root>
   );
@@ -744,7 +759,7 @@ const UserMessage: FC = () => {
     >
       <UserMessageAttachments />
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
-        <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
+        <div className="aui-user-message-content peer bg-muted text-foreground px-4 py-2.5 leading-relaxed wrap-break-word empty:hidden">
           <MessagePrimitive.Parts />
         </div>
         <div className="mt-1 flex items-center justify-end gap-1.5">

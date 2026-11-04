@@ -139,7 +139,7 @@ const Shell: FC = () => {
       )}
       <aside
         aria-label="Chats"
-        className={`border-border bg-card w-72 max-w-[85vw] shrink-0 border-e max-md:fixed max-md:inset-y-0 max-md:start-0 max-md:z-40 max-md:shadow-xl md:bg-card/60 ${sidebarOpen ? "" : "hidden"}`}
+        className={`border-border bg-card w-72 max-w-[85vw] shrink-0 border-e max-md:fixed max-md:inset-y-0 max-md:start-0 max-md:z-40 max-md:shadow-2xl md:bg-card/50 ${sidebarOpen ? "" : "hidden"}`}
       >
         <ProjectsSidebar />
       </aside>
@@ -153,7 +153,7 @@ const Shell: FC = () => {
       </main>
       <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />
       {toast && (
-        <div role="alert" className="bg-popover text-popover-foreground border-border absolute bottom-24 left-1/2 z-40 flex max-w-md -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-2 text-sm shadow-lg">
+        <div role="alert" className="bg-popover text-popover-foreground border-border animate-in fade-in slide-in-from-bottom-2 absolute bottom-28 left-1/2 z-40 flex max-w-md -translate-x-1/2 items-center gap-3 rounded-xl border px-4 py-2.5 text-sm shadow-(--shadow-raised)">
           <span>{toast}</span>
           <button type="button" aria-label="Dismiss" onClick={actions.dismissToast} className="text-muted-foreground hover:text-foreground">
             <XIcon className="size-4" />
@@ -167,20 +167,23 @@ const Shell: FC = () => {
 const Header: FC<{ onToggleSidebar: () => void; onShowShortcuts: () => void }> = ({ onToggleSidebar, onShowShortcuts }) => {
   const { chat } = useJarvis()
   return (
-    <header className="border-border flex h-12 shrink-0 items-center gap-3 border-b px-3">
+    <header className="border-border bg-background/80 supports-[backdrop-filter]:bg-background/60 flex h-14 shrink-0 items-center gap-2 border-b px-3 backdrop-blur-md">
       <button
         type="button"
         onClick={onToggleSidebar}
         aria-label="Show or hide chats"
-        className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-8 items-center justify-center rounded-md"
+        title="Show or hide chats (Ctrl+B)"
+        className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors"
       >
         <PanelLeftIcon className="size-4" />
       </button>
-      <h1 className="min-w-0 truncate text-sm font-medium">{chat ? chatTitle(chat) : "Jarvis"}</h1>
-      <Presence />
+      <div className="flex min-w-0 items-center gap-2.5">
+        <h1 className="min-w-0 truncate text-[15px] font-semibold tracking-tight">{chat ? chatTitle(chat) : "Jarvis"}</h1>
+        <Presence />
+      </div>
       <span className="flex-1" />
       <span
-        className="text-muted-foreground flex shrink-0 items-center gap-1.5 text-xs"
+        className="text-muted-foreground sm:border-border flex shrink-0 items-center gap-1.5 rounded-full text-xs sm:border sm:px-2.5 sm:py-1"
         title="What you say to Jarvis by voice is added to this chat"
       >
         <MicIcon className="text-primary size-3.5" aria-hidden />
@@ -191,7 +194,7 @@ const Header: FC<{ onToggleSidebar: () => void; onShowShortcuts: () => void }> =
         onClick={onShowShortcuts}
         aria-label="Keyboard shortcuts"
         title="Keyboard shortcuts (?)"
-        className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-8 shrink-0 items-center justify-center rounded-md"
+        className="text-muted-foreground hover:bg-muted hover:text-foreground flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors"
       >
         <KeyboardIcon className="size-4" />
       </button>
@@ -217,9 +220,9 @@ const Presence: FC = () => {
       role="status"
       data-slot="presence"
       data-tone={now.tone}
-      className="text-muted-foreground flex shrink-0 items-center gap-1.5 text-xs"
+      className="text-muted-foreground bg-muted/50 flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs"
     >
-      <span aria-hidden className={`size-2 rounded-full ${PRESENCE_DOT[now.tone]}`} />
+      <span aria-hidden className={`size-1.5 rounded-full ${PRESENCE_DOT[now.tone]}`} />
       <span className="max-sm:sr-only">{now.label}</span>
     </span>
   )

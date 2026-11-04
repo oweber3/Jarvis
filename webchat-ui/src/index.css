@@ -35,10 +35,15 @@
   --input: var(--hud-border);
   --ring: var(--hud-accent-primary);
   --radius: 0.625rem;
+  /* Depth: a soft shadow under raised surfaces (the message box, menus), a hairline for the rest. */
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.35), 0 12px 32px -16px rgb(0 0 0 / 0.7);
+  --shadow-bubble: 0 1px 1px rgb(0 0 0 / 0.25), 0 6px 16px -10px rgb(34 211 238 / 0.45);
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
+  --shadow-raised: 0 1px 2px rgb(15 23 42 / 0.06), 0 12px 32px -18px rgb(15 23 42 / 0.28);
+  --shadow-bubble: 0 1px 1px rgb(15 23 42 / 0.08), 0 6px 14px -10px rgb(29 78 216 / 0.45);
 }
 
 @theme inline {
@@ -81,6 +86,19 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
     margin: 0;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--hud-accent-primary) 30%, transparent);
+  }
+  /* Slim scrollbars in the palette, so they do not draw a grey bar through the HUD look. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--hud-text-muted) 40%, transparent) transparent;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
   /* The soft HUD glow behind the page, as in the Memory Viewer. */
   body::before {
@@ -104,10 +122,31 @@
   }
 }
 
-/* The owner's messages: the orb's cyan-to-blue gradient with dark text, as in the desktop chat. */
+/* The owner's messages: the orb's cyan-to-blue gradient with dark text, as in the desktop chat, and a corner that
+   points at the owner's side. */
 [data-slot="aui_user-message-root"] .aui-user-message-content {
   background-image: linear-gradient(135deg, var(--hud-accent-secondary), var(--hud-accent-deep));
   color: var(--hud-ink-on-accent);
+  border-radius: 1.25rem 1.25rem 0.375rem 1.25rem;
+  box-shadow: var(--shadow-bubble);
+}
+[dir="rtl"] [data-slot="aui_user-message-root"] .aui-user-message-content {
+  border-radius: 1.25rem 1.25rem 1.25rem 0.375rem;
+}
+
+/* The message box: raised, with a glow of the accent while it is being typed in. */
+[data-slot="aui_composer-shell"] {
+  box-shadow: var(--shadow-raised);
+}
+[data-slot="aui_composer-shell"]:focus-within {
+  box-shadow:
+    var(--shadow-raised),
+    0 0 0 4px var(--hud-accent-glow);
+}
+
+/* The keyboard hint under the message box is for hardware keyboards: the phone app has none. */
+.phone-root .aui-composer-hint {
+  display: none;
 }
 
 /* The message a search result pointed at, marked for a moment after it scrolls into view. */

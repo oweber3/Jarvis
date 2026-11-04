@@ -336,7 +336,7 @@ export const ThreadListItem: FC = () => {
   return (
     <ThreadListItemPrimitive.Root
       data-slot="aui_thread-list-item"
-      className="group hover:bg-muted focus-visible:bg-muted data-active:bg-muted has-focus-visible:bg-muted has-data-[state=open]:bg-muted relative flex h-8 items-center rounded-md transition-colors focus-visible:outline-none"
+      className="group hover:bg-muted focus-visible:bg-muted data-active:bg-accent data-active:text-foreground has-focus-visible:bg-muted has-data-[state=open]:bg-muted data-active:before:bg-primary relative flex h-9 items-center rounded-lg transition-colors before:absolute before:inset-y-2 before:start-0 before:w-0.5 before:rounded-full focus-visible:outline-none"
     >
       {isRenaming ? (
         <ThreadListItemRename

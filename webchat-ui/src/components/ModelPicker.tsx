@@ -42,7 +42,7 @@ const ModeSwitch: FC = () => {
           )}
         >
           {m === "local" ? <CpuIcon className="size-3.5" aria-hidden /> : <CloudIcon className="size-3.5" aria-hidden />}
-          {MODE_SHORT_LABELS[m] ?? m}
+          <span className="@max-[30rem]:sr-only">{MODE_SHORT_LABELS[m] ?? m}</span>
         </button>
       ))}
     </div>
