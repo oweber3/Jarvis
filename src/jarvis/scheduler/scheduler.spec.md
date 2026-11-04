@@ -46,6 +46,8 @@ When the scheduler starts, every pending item that came due more than 2 minutes 
 
 The text is redacted before it goes anywhere. An announcement is spoken once; alarms do not repeat.
 
+`deliver_announcement(text, private_sources=...)` takes the private sources the announcement quoted (empty for timers, alarms, reminders and routines that read nothing private). A private announcement is a private turn, exactly as a reply that quoted those sources is (`reply/engine.py` `_deliver_reply`): it is stored in the dialogue memory with `diary=False` and its `private_sources`, so it never reaches the diary or the graph, the web chat stores it as private, and Codex and Claude see it in the recent dialogue only while every source it quoted is turned on and shared (`bridge.settings.share_private_turn`). The console prints `⏰ 🔒 Announcement withheld from the log (it quotes private data).` instead of the text. It is still spoken and shown in the chat views.
+
 ## Tool: `scheduleControl`
 
 Platform-neutral and always registered. Times arrive as arguments: the model turns "at 2:30", "tomorrow at 9" or "in 20 minutes" into an ISO time or a number of seconds, using the current date and time it is already given. The tool parses no words.
@@ -90,6 +92,7 @@ A routine with `"report": "results"` is a briefing: what its steps found is the 
 
 - Run by hand, `routineControl run` returns the report followed by each done step's label and result, and the reply model reads it out (briefings are therefore not fast commands).
 - Run on schedule, the done steps' results go to the local model in one call (`briefing.py`), fenced as data, with the instruction to say them as a short spoken briefing in the routine's language. The model is the `BACKGROUND` tier, which is local in every reply mode, so a briefing's results never reach a cloud provider through this path. If the call fails or returns nothing, Jarvis says the briefing ran but could not be put into words. See `docs/llm_contexts.md`.
+- A scheduled run happens on the scheduler thread, outside the reply engine, so `run_scheduled_routine` owns the private-turn mark there: it consumes any stale mark before the steps run, consumes the sources the steps marked (`calendar`, `email`, `documentSearch`, `activityLog`) after them, and passes them with whatever it announces next (the briefing, the could-not-be-put-into-words sentence or a failure). The announcement is then private (Announcing). A run whose steps read nothing private announces as before.
 
 ## Daemon
 
@@ -97,7 +100,7 @@ A routine with `"report": "results"` is a briefing: what its steps found is the 
 
 ## Privacy and logging
 
-- Labels and messages live only in the Jarvis database and in the announcement itself (console, chat, conversation, speech).
+- Labels and messages live only in the Jarvis database and in the announcement itself (console, chat, conversation, speech). A briefing that quoted a private source is a private turn and is withheld from the console (Announcing).
 - `debug_log` under `scheduler` records kinds, counts, durations in seconds, outcomes and failure exception types. Never labels, messages, routine names or step results.
 - No network call and no telemetry. A scheduled routine reaches the network only through the tools it runs.
 
@@ -108,6 +111,6 @@ Behaviours that automated tests assert with a fake clock, a temporary database a
 - Items: a timer fires once when due, several named timers run side by side, a cancelled item never fires, reminders and alarms say their message or the time, pending items survive a restart, items missed while off are announced once as missed and never again, an item due just before start fires normally, a failing announcement does not stop later items, finished items are pruned after 30 days, the background thread fires a timer on its own.
 - Tool: named timers set and fire; time left; listing; clock times later today, passed today (tomorrow), relative seconds, full dates and offsets; invalid input sets nothing; cancel by name, the only one, ambiguity cancels nothing, no match fails; no scheduler fails honestly; every action is `SAFE`.
 - Fast path: the timer phrasings with durations and names, time left, cancel and list; uncertain requests, clock times and durations over a day fall through; a fast timer runs through the dispatcher and fires.
-- Scheduled routines: schedules load with every day by default, malformed ones are ignored with the routine kept; a routine starts at its time on its days only, once a day; a time slept through is skipped; a run goes through central safety; a step needing confirmation means nothing runs and nothing is left pending; an invalid routine is reported; failures are announced; the shared query lock is held; a briefing speaks the composed text or says it could not be put into words; scheduling reads back and writes only after yes.
-- Announcements reach the listener's reply path, the chat (both modes), the console and the conversation.
+- Scheduled routines: schedules load with every day by default, malformed ones are ignored with the routine kept; a routine starts at its time on its days only, once a day; a time slept through is skipped; a run goes through central safety; a step needing confirmation means nothing runs and nothing is left pending; an invalid routine is reported; failures are announced; the shared query lock is held; a briefing speaks the composed text or says it could not be put into words; a briefing that read the calendar is announced as private with source `calendar` (also when it could not be put into words) and leaves no mark on the thread; a briefing of only non-private steps is an ordinary announcement, whatever stale mark the thread held.
+- Announcements reach the listener's reply path, the chat (both modes), the console and the conversation. A private announcement is stored out of the diary with its sources, is withheld from the console, and reaches a cloud mode's recent dialogue only while its source is shared; an ordinary one reaches the diary.
 - Routing evals (`evals/test_scheduler_routing.py`) and the briefing eval (`evals/test_briefing_compose.py`) run against a local model.

@@ -16,8 +16,50 @@ class FakeMemory:
     def __init__(self):
         self.messages = []
 
-    def add_message(self, role, text):
+    def add_message(self, role, text, **kwargs):
         self.messages.append((role, text))
+
+
+def _quiet_outputs(monkeypatch, memory):
+    monkeypatch.setattr(daemon, "_global_voice_listener", None)
+    monkeypatch.setattr(daemon, "_global_dialogue_memory", memory)
+    monkeypatch.setattr(daemon, "_global_tts_engine", None)
+    monkeypatch.setattr(daemon, "_stdin_ipc_enabled", lambda: False)
+
+
+def test_a_private_announcement_stays_out_of_the_diary_and_the_console_log(monkeypatch, capsys):
+    from jarvis.memory.conversation import DialogueMemory
+    memory = DialogueMemory()
+    _quiet_outputs(monkeypatch, memory)
+    daemon.deliver_announcement("The dentist is at nine.", private_sources={"calendar"})
+    [turn] = memory.messages_after(0)
+    assert turn.content == "The dentist is at nine."
+    assert turn.private and turn.private_sources == frozenset({"calendar"})  # the web chat stores it private
+    assert memory.get_pending_chunks() == []
+    out = capsys.readouterr().out
+    assert "dentist" not in out and "🔒" in out
+
+
+def test_a_private_announcement_reaches_a_cloud_mode_only_while_its_source_is_shared(monkeypatch):
+    from jarvis.bridge.adapter import build_dialogue_context
+    from jarvis.bridge.settings import BridgeSettings
+    from jarvis.memory.conversation import DialogueMemory
+    memory = DialogueMemory()
+    _quiet_outputs(monkeypatch, memory)
+    daemon.deliver_announcement("The dentist is at nine.", private_sources={"calendar"})
+    daemon.deliver_announcement("Your pasta timer is done.")
+    kept_local = build_dialogue_context(memory, BridgeSettings(shared_private_sources=frozenset({"email"})))
+    assert [m["content"] for m in kept_local] == ["Your pasta timer is done."]
+    shared = build_dialogue_context(memory, BridgeSettings(shared_private_sources=frozenset({"calendar"})))
+    assert [m["content"] for m in shared] == ["The dentist is at nine.", "Your pasta timer is done."]
+
+
+def test_an_ordinary_announcement_reaches_the_diary(monkeypatch):
+    from jarvis.memory.conversation import DialogueMemory
+    memory = DialogueMemory()
+    _quiet_outputs(monkeypatch, memory)
+    daemon.deliver_announcement("Your pasta timer is done.")
+    assert memory.get_pending_chunks() == ["Assistant: Your pasta timer is done."]
 
 
 def test_an_announcement_is_spoken_shown_in_chat_printed_and_remembered(monkeypatch, capsys):

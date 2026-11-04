@@ -85,6 +85,7 @@ Defining a routine never pre-approves anything. Each run is classified as a whol
 - Each step is `done`, `failed` (with the tool's error, redacted and with paths and web addresses replaced by `[path]` and `[address]`, or `needs confirmation`) or `skipped` (with its reason).
 - In an `actions` routine the results of information steps (the weather, the time) are not part of the report: a routine is a chain of actions. The report contains labels, positions, statuses and reasons, never argument values, and the step results are not kept.
 - In a `results` routine (a briefing) the report is followed by each done step's label and its result, redacted and at most 2,000 characters per step, for the reply model to read out. Results that come from outside content are already fenced by the tool that produced them. Run on schedule, the results are put into words by the local model instead (`scheduler/scheduler.spec.md`, Briefings).
+- A step that reads a private source (`calendar`, `email`, `documentSearch`, `activityLog`) marks the turn private on the thread that runs the routine. Run by hand, the reply engine consumes the mark and stores the reply as a private turn; run on schedule, `run_scheduled_routine` consumes it and announces the briefing as a private turn with the same sources (`scheduler/scheduler.spec.md`, Briefings and Announcing). Either way it stays out of the diary and reaches Codex or Claude only while every source it quoted is shared.
 
 ## Recent actions (the journal)
 

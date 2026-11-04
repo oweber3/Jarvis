@@ -20,9 +20,13 @@ def _language(cfg) -> str:
     return phrases.language_of(locales[0] if isinstance(locales, (list, tuple)) and locales else None)
 
 
-def run_scheduled_routine(routine: Any, cfg: Any, *, announce: Callable[[str], None], db=None,
+def run_scheduled_routine(routine: Any, cfg: Any, *, announce: Callable[..., None], db=None,
                           exclusive: Callable[[], ContextManager] = contextlib.nullcontext,
                           compose: Optional[Callable[..., Optional[str]]] = None) -> None:
+    """Run ``routine`` now. ``announce(text, private_sources=...)`` says the outcome; a run whose steps
+    quoted a private source (a calendar, email, documents, the activity log) passes those sources, so the
+    announcement is stored as a private turn like any reply that quoted them."""
+    from ..memory.activity_log import consume_turn_private
     from ..routines import runner
     from ..tools.confirmation import SafetyTier, get_confirmation_store
     language = _language(cfg)
@@ -42,13 +46,17 @@ def run_scheduled_routine(routine: Any, cfg: Any, *, announce: Callable[[str], N
         print(f"🔁 Running the scheduled routine {name}", flush=True)
         confirmations = get_confirmation_store()
         pending_before = confirmations.get_pending()
+        consume_turn_private()  # a mark left on this thread by something that never delivered is not this run's
         result = runner.run_routine(routine, cfg, db=db, language=language, user_print=print, grants=())
+        private = consume_turn_private()  # the private sources the steps quoted; empty when none did
         if confirmations.get_pending() is not pending_before:
             # A step started to ask after all: nobody asked for this run, so its question never stands.
             confirmations.clear_pending()
             debug_log("scheduled routine: a step asked for confirmation; the question was dropped", "scheduler")
+    if private:
+        debug_log(f"scheduled routine quoted {len(private)} private source(s); announced as private", "scheduler")
     if result.error is not None:
-        announce(result.error)
+        announce(result.error, private_sources=private)
         return
     if routine.report == "results":
         outputs = result.outputs
@@ -62,10 +70,10 @@ def run_scheduled_routine(routine: Any, cfg: Any, *, announce: Callable[[str], N
         if not text:
             debug_log("briefing unavailable; saying so", "scheduler")
             text = phrases.text("briefing_unavailable", language, routine=name)
-        announce(text)
+        announce(text, private_sources=private)
         return
     if not result.success:
-        announce(result.text)
+        announce(result.text, private_sources=private)
 
 
 def _default_compose():

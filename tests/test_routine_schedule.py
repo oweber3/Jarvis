@@ -232,6 +232,50 @@ def test_a_briefing_that_cannot_be_composed_says_so_instead_of_staying_silent(to
     assert said.said == [phrases.text("briefing_unavailable", "en", routine="Morning briefing")]
 
 
+def _private_briefing(tools):
+    from jarvis.memory.activity_log import mark_turn_private
+
+    def read_calendar(args):
+        mark_turn_private("calendar")  # as the real calendar tool marks the turn it answers
+        return ToolExecutionResult(True, "09:00 dentist")
+
+    tools("getWeather", properties={"location": {"type": "string"}},
+          behaviour=lambda args: ToolExecutionResult(True, "London: 14 C, light rain"))
+    tools("calendar", properties={"action": {"type": "string"}}, behaviour=read_calendar)
+    store.load({"morning briefing": {"report": "results", "schedule": {"time": "07:00", "days": WEEKDAYS},
+                                     "steps": [{"tool": "getWeather"}, {"tool": "calendar"}]}})
+
+
+def test_a_briefing_that_read_the_calendar_is_announced_as_private_with_its_source(tools, mock_config):
+    from jarvis.memory.activity_log import is_turn_private
+    _private_briefing(tools)
+    said = Announcements()
+    run_scheduled_routine(store.current(mock_config)["morning briefing"], mock_config, announce=said,
+                          compose=lambda *args: "Light rain, and the dentist at nine.")
+    assert said.said == ["Light rain, and the dentist at nine."]
+    assert said.private == [frozenset({"calendar"})]
+    assert not is_turn_private()  # the scheduler thread keeps no mark for whatever runs on it next
+
+
+def test_a_briefing_that_could_not_be_composed_from_private_data_is_still_private(tools, mock_config):
+    _private_briefing(tools)
+    said = Announcements()
+    run_scheduled_routine(store.current(mock_config)["morning briefing"], mock_config, announce=said,
+                          compose=lambda *args: None)
+    assert said.private == [frozenset({"calendar"})]
+
+
+def test_a_briefing_of_only_non_private_steps_is_an_ordinary_announcement(tools, mock_config):
+    from jarvis.memory.activity_log import mark_turn_private
+    _briefing(tools)
+    mark_turn_private("email")  # a stale mark left on the thread by something that never delivered
+    said = Announcements()
+    run_scheduled_routine(store.current(mock_config)["morning briefing"], mock_config, announce=said,
+                          compose=lambda *args: "Light rain at seven.")
+    assert said.said == ["Light rain at seven."]
+    assert said.private == [frozenset()]
+
+
 def test_running_a_briefing_by_hand_gives_the_model_the_step_results(tools, mock_config):
     _briefing(tools)
     result = routine_control(mock_config, action="run", name="morning briefing")

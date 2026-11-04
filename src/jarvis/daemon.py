@@ -36,7 +36,7 @@ if sys.platform == 'win32' and not getattr(sys, 'frozen', False):
     except Exception:
         pass
 
-from typing import Optional
+from typing import Iterable, Optional
 
 from .config import load_settings
 from .memory.db import Database
@@ -682,23 +682,29 @@ def deliver_chat_confirmed_result(reply: str, success: bool) -> None:
             debug_log(f"chat result delivery failed: {exc}", "chat")
 
 
-def deliver_announcement(text: str) -> None:
+def deliver_announcement(text: str, *, private_sources: Iterable[str] = ()) -> None:
     """Say something Jarvis brings up on its own (a timer, alarm, reminder or scheduled routine).
 
     Printed to the console, recorded in the shared conversation (so "what was that?" works), shown in
     the chat (bundled listeners, or a ``notice`` IPC event in subprocess mode) and spoken through the
     voice listener's reply path, so stop and barge-in cut it like any reply. Without a listener the TTS
-    engine speaks it directly."""
+    engine speaks it directly.
+
+    An announcement that quoted ``private_sources`` (a scheduled briefing that read a calendar, email,
+    documents or the activity log) is a private turn, as a reply that quoted them would be: stored out of
+    the diary with its sources, and withheld from the console log."""
     from .utils.redact import redact
     safe = redact(text or "").strip()
     if not safe:
         return
+    private = frozenset(private_sources)
     print(f"{TURN_LINE_PREFIX}announcement", flush=True)
-    print(f"⏰ {safe}", flush=True)
+    print("⏰ 🔒 Announcement withheld from the log (it quotes private data)." if private else f"⏰ {safe}",
+          flush=True)
     dm = _global_dialogue_memory
     if dm is not None:
         try:
-            dm.add_message("assistant", safe)
+            dm.add_message("assistant", safe, diary=not private, private_sources=private)
         except Exception as exc:
             debug_log(f"recording announcement failed: {type(exc).__name__}", "scheduler")
     with _chat_result_listeners_lock:

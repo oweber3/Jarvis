@@ -23,9 +23,11 @@ class Announcements:
 
     def __init__(self):
         self.said: List[str] = []
+        self.private: List[frozenset] = []  # the private sources each announcement quoted
 
-    def __call__(self, text: str) -> None:
+    def __call__(self, text: str, *, private_sources=()) -> None:
         self.said.append(text)
+        self.private.append(frozenset(private_sources))
 
 
 def local_ts(year, month, day, hour=0, minute=0, second=0) -> float:
