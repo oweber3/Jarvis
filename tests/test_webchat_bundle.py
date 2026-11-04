@@ -24,7 +24,6 @@ URL = re.compile(r"https?://[^\s\"'`)<>\\]+")
 INERT_URLS = (
     "http://www.w3.org/",
     "https://react.dev/errors/",
-    "https://github.com/syntax-tree/",
     "https://tailwindcss.com",
 )
 
