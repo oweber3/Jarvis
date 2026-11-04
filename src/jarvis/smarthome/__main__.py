@@ -82,7 +82,17 @@ def _devices(cfg) -> int:
     return 0
 
 
+def _configure_console() -> None:
+    # A Windows console on a legacy code page cannot print the emoji lines.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    _configure_console()
     parser = argparse.ArgumentParser(prog="python -m jarvis.smarthome", description="Check Jarvis's smart home.")
     parser.add_argument("command", choices=("test", "devices"))
     args = parser.parse_args(argv)
