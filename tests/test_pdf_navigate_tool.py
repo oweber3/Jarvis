@@ -192,3 +192,21 @@ def test_find_lists_pages_holding_the_rarest_words_when_none_has_every_word(cfg,
     assert data['candidates'][0]['page'] == 2 and data['candidates'][0]['partial'] is True
     assert '4.13' in data['candidates'][0]['snippet']
     pdf_document.clear_cache()
+
+
+def test_a_request_from_the_phone_is_refused_and_shows_nothing(cfg, monkeypatch, book):
+    from jarvis.tools.request_scope import request_scope
+    fake = FakeViewer(monkeypatch, book)
+    with request_scope('phone'):
+        result = _run(cfg, {'action': 'goto', 'page': 3})
+    assert not result.success and 'phone' in result.error_message.casefold()
+    assert fake.shown == [] and result.reply_text is None
+
+
+def test_a_request_at_the_pc_still_shows_the_page(cfg, monkeypatch, book):
+    from jarvis.tools.request_scope import request_scope
+    fake = FakeViewer(monkeypatch, book)
+    with request_scope('chat'):
+        result = _run(cfg, {'action': 'goto', 'page': 3})
+    assert result.success, result.error_message
+    assert fake.shown == [('pdfgear', 'Garden.pdf', 3, len(PAGES))]

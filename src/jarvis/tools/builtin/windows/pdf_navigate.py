@@ -8,6 +8,7 @@ from ...base import Tool
 from ...types import ToolExecutionResult
 from ....debug import debug_log
 from ....utils.redact import redact
+from ...request_scope import from_phone
 from .desktop_control import _redact_data
 
 ACTIONS = ('goto', 'find', 'outline')
@@ -18,6 +19,7 @@ _SEARCH_BUDGET_SEC = 4.0
 _MAX_CANDIDATES = 8
 _MAX_CLOSEST = 4
 _MAX_OUTLINE = 80
+FROM_PHONE = 'The PDF on the PC screen can be moved through only at the PC, not for a request from the phone.'
 
 
 class PdfNavigateTool(Tool):
@@ -86,6 +88,9 @@ class PdfNavigateTool(Tool):
             if not context.cfg.windows_tools_enabled:
                 raise ValueError("Windows control is disabled; set 'windows_tools_enabled' to true to use it.")
             action, page, query, file = self._parse(args)
+            if from_phone():
+                debug_log(f'{self.name} refused: the request came from a phone.', 'windows')
+                raise ValueError(FROM_PHONE)
             from ....platform.windows._bounded import run_bounded
             data = run_bounded(lambda: self._operate(action, page, query, file), _TIMEOUT_SEC)
             context.user_print(f'📄 PDF {action} completed.')
