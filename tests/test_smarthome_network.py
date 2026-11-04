@@ -88,6 +88,17 @@ class TestResolution:
         with pytest.raises(SmartHomeAddressError):
             validate_endpoint("ftp://homeassistant.local", default_port=8123, resolve=False)
 
+    def test_an_address_copied_from_the_browser_uses_the_web_port(self):
+        # A browser hides ":80", so "http://192.168.1.36" is Home Assistant serving on port 80.
+        assert validate_endpoint("http://192.168.1.36", default_port=8123, resolve=False).port == 80
+        assert validate_endpoint("http://192.168.1.36/", default_port=8123, resolve=False).port == 80
+        assert validate_endpoint("https://192.168.1.36", default_port=8123, resolve=False).port == 443
+
+    def test_a_bare_address_uses_the_service_default_port(self):
+        assert validate_endpoint("192.168.1.36", default_port=8123, resolve=False).port == 8123
+        assert validate_endpoint("192.168.1.36", default_port=1883, schemes=("mqtt", "mqtts"),
+                                 resolve=False).port == 1883
+
     def test_a_link_local_hostname_keeps_its_scope_id(self, monkeypatch):
         monkeypatch.setattr(network, "_resolve", resolver("fe80::5%eth0"))
         assert validate_endpoint("http://ha.local:8123", default_port=8123).ip == "fe80::5%eth0"

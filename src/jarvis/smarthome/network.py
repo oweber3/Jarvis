@@ -78,7 +78,8 @@ def validate_endpoint(value, *, default_port: int, schemes: Sequence[str] = ("ht
     if not isinstance(value, str) or not value.strip():
         raise SmartHomeAddressError("No address is set.")
     text = value.strip()
-    if "://" not in text:
+    typed_scheme = "://" in text
+    if not typed_scheme:
         text = f"{schemes[0]}://{text}"
     try:
         parts = urlsplit(text)
@@ -93,7 +94,10 @@ def validate_endpoint(value, *, default_port: int, schemes: Sequence[str] = ("ht
     if not host or "%" in host or any(c.isspace() for c in host):
         raise SmartHomeAddressError("The address is not valid.")
     if port is None:
-        port = {"https": 443, "mqtts": 8883}.get(parts.scheme, default_port)
+        # A typed "http://" without a port is the web port, as in a browser (which hides ":80");
+        # a bare address uses the service's usual port.
+        port = {"https": 443, "mqtts": 8883, **({"http": 80} if typed_scheme else {})}.get(parts.scheme,
+                                                                                          default_port)
     if not 0 < port < 65536:
         raise SmartHomeAddressError("The port is not valid.")
     try:
