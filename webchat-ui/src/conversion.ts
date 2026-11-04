@@ -1,6 +1,7 @@
 import type { ThreadMessageLike } from "@assistant-ui/react"
 import type { AttachmentMarker, Chat, ChatMessage, Notice } from "@/api"
 import { chipType, markerLabel } from "@/attachments"
+import type { LiveStep } from "@/steps"
 type ThreadMessageLikePart = Exclude<ThreadMessageLike["content"], string>[number]
 
 // Turns what the server stores into messages the thread renders. Pure functions, covered by tests.
@@ -103,10 +104,23 @@ export function noticeMessages(notice: Notice): ThreadMessageLike[] {
   return out
 }
 
+// The steps of the request in flight, drawn in its thinking placeholder as finished calls.
+function liveParts(steps: readonly LiveStep[]): ThreadMessageLikePart[] {
+  return steps.map((step, index) => ({
+    type: "tool-call" as const,
+    toolCallId: `live-s${index}`,
+    toolName: step.tool,
+    args: { label: step.label, status: step.status },
+    result: step.status,
+    ...(step.status === "failed" || step.status === "declined" ? { isError: true } : {}),
+  }))
+}
+
 export function buildThreadMessages(
   messages: readonly ChatMessage[],
   notices: readonly Notice[],
   pending: Pending | null,
+  liveSteps: readonly LiveStep[] = [],
   now: () => Date = () => new Date(),
 ): ThreadMessageLike[] {
   // Notices sit where they happened: after every message that is not newer than them.
@@ -131,7 +145,7 @@ export function buildThreadMessages(
       out.push({
         id: "pending-reply",
         role: "assistant",
-        content: [],
+        content: liveParts(liveSteps),
         createdAt,
         status: { type: "running" },
       })

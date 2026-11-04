@@ -88,6 +88,22 @@ describe("buildThreadMessages", () => {
     expect(out[1]?.status).toEqual({ type: "running" })
     expect(out[1]?.content).toEqual([])
   })
+
+  it("shows the steps Jarvis has taken so far in the thinking placeholder", () => {
+    const sending = { text: "open word", accepted: true, afterId: 0, acceptedAt: 1 }
+    const live = [{ tool: "openApp", status: "done" as const, label: "Opened Word" }]
+    const placeholder = buildThreadMessages([], [], sending, live)[1]!
+    const parts = placeholder.content as unknown as { type: string; args?: unknown }[]
+    expect(parts.map((p) => p.type)).toEqual(["tool-call"])
+    expect(parts[0]!.args).toMatchObject({ label: "Opened Word", status: "done" })
+    expect(placeholder.status).toEqual({ type: "running" })
+  })
+
+  it("shows no steps once Stop was pressed", () => {
+    const stopped = { text: "open word", accepted: true, afterId: 0, acceptedAt: 1, stopped: true }
+    const live = [{ tool: "openApp", status: "done" as const, label: "Opened Word" }]
+    expect(buildThreadMessages([], [], stopped, live).map((m) => m.role)).toEqual(["user"])
+  })
 })
 
 describe("tool steps", () => {

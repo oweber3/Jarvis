@@ -286,9 +286,18 @@ class ChatHub:
         mode = self._backend.reply_mode_state() or {}
         model = self._backend.local_model_state() or {}
         cloud = self._backend.cloud_model_state() or {}
+        # A step taken for a typed request in flight changes what the page shows while Jarvis works.
+        working = self._steps.latest() if self._typed_in_flight() else None
         return (self._effective_state(), bool(self._backend.is_busy()), mode.get("mode"),
                 tuple(mode.get("enabled") or ()), model.get("current"), self._backend.is_ready(),
-                tuple(sorted(cloud.items())), self._watched())
+                tuple(sorted(cloud.items())), self._watched(), working)
+
+    def _live_steps(self) -> List[Dict[str, Any]]:
+        """The steps taken so far for the typed request in flight (the ones its reply will be stored with), with
+        their tool, status and label only: what was found arrives with the reply, as stored."""
+        if not self._typed_in_flight():
+            return []
+        return [{"tool": s.tool, "status": s.status, "label": s.label} for s in self._steps.since(self._step_cursor)]
 
     def _watched(self) -> tuple:
         """The values of the extra change signals; one that raises reads as unchanged."""
@@ -693,6 +702,7 @@ class ChatHub:
             "chat": chat_dict(chat) if chat else None,
             "messages": [message_dict(m) for m in messages],
             "notices": notices,
+            "live_steps": self._live_steps(),
             "mode": self._backend.reply_mode_state(),
             "model": self._backend.local_model_state(),
             "cloud": self._backend.cloud_model_state(),

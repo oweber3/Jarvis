@@ -1,5 +1,6 @@
 import type { AttachmentMarker, Chat, ChatMessage, ChatPage, Library, Notice, Snapshot } from "@/api"
 import { lastMessageId, mergeMessages, pendingDone, type Pending } from "@/conversion"
+import type { LiveStep } from "@/steps"
 
 // Keeps the page in step with the server while the owner acts at the same time. The server owns the
 // conversation; this follows it with a long poll and applies the owner's own actions on top, so the two
@@ -42,6 +43,8 @@ export type SyncView = {
   pending: (pending: Pending | null) => void
   reachable: (reachable: boolean) => void
   window: (window: HistoryWindow) => void
+  /** The steps taken so far for the typed request in flight. */
+  liveSteps?: (steps: LiveStep[]) => void
   /** Whether Stop was pressed for a request the server still reports as running. */
   stopping?: (stopping: boolean) => void
 }
@@ -57,6 +60,7 @@ export class ChatSync {
   private rev = -1
   private libraryRev = -1
   private historyRev: number | null = null
+  private liveKey = "[]"
   private polls = 0
   private loads = 0
   private switching = 0
@@ -129,6 +133,12 @@ export class ChatSync {
       cloud: snap.cloud,
     })
     this.view.notices(snap.notices)
+    const live = snap.live_steps ?? []
+    const liveKey = JSON.stringify(live)
+    if (liveKey !== this.liveKey) {
+      this.liveKey = liveKey
+      this.view.liveSteps?.(live)
+    }
     // Remembered only once the library was fetched, so a failed fetch is retried with the same snapshot. It is
     // fetched while the chat loads, not before.
     const libraryRev = snap.library_rev

@@ -144,7 +144,7 @@ All JSON. Errors are `{"error": "<code>"}`.
 
 A `session` is the 32-character lowercase hex id `start` returned (`400 bad_session` otherwise).
 
-The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `history_rev` (bumped when stored messages of the open chat are taken back by a rewind; every page then reloads the chat), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`, `steps`, `attachments`; never the private flag), `notices` (the ones not yet overtaken by a newer stored turn, each with its `ts`), `mode`, `model` and `cloud`.
+The poll snapshot carries `rev`, `library_rev` (bumped when a title, project or chat list changes), `live_steps` (**Tool steps**, While Jarvis works), `history_rev` (bumped when stored messages of the open chat are taken back by a rewind; every page then reloads the chat), `ready`, `state` (`thinking` while a typed request runs), `busy`, `busy_query`, `active_chat_id`, `chat`, the open chat's `messages` after `after` (`id`, `role`, `text`, `ts`, `source`, `steps`, `attachments`; never the private flag), `notices` (the ones not yet overtaken by a newer stored turn, each with its `ts`), `mode`, `model` and `cloud`.
 
 ### Two surfaces
 
@@ -219,7 +219,7 @@ The hub then removes the message and every later one from the store (`secure_del
 
 ## Tool steps
 
-Under a reply the page shows the tool calls Jarvis made for it as compact rows ("Opened Word", "Set the volume to 30%", "Searched the web"), collapsed by default; a row opens to how the call ended ("Done", "Didn't work", "Not allowed", "Waiting for your confirmation") and, when the tool says so, what it found ("3 results"). They appear on every route, because every executed call goes through one place.
+Ahead of a reply's text the page shows the tool calls Jarvis made for it as compact lines with a status badge: what was done ("Opened Word", "Set the volume to 30%", "Searched the web"), what it found when the tool says so ("· 3 results"), and, beside it, how the call ended when it did not simply work ("· Didn't work", "· Not allowed", "· Waiting for your confirmation"), so a step that needs the owner stands out without opening anything. More than three steps fold into one line ("4 steps", "4 steps · 1 didn't work or weren't allowed", "… · waiting for your confirmation") that opens to them. They appear on every route, because every executed call goes through one place.
 
 **One place sees every call.** `run_tool_with_retries` (`tools/registry.py`), the same function the journal of `routines/routines.spec.md` is fed from, leaves a step in `tools/step_log.py` (`StepLog`, in memory only, bounded) for each call that went through central safety: the fast path, the local loop and planner, tool-model mode, the Claude and Codex bridges, approved confirmations and each step of a routine. Its status is `done`, `failed` (the tool returned an error), `declined` (central safety denied it, or the desktop dialog it needs is not available) or `waiting` (it asked for a yes; once approved it runs through the same function and leaves its own `done`). An unknown tool, `routineControl`, `stop`, `toolSearchTool` and `refreshMCPTools` leave nothing.
 
@@ -235,7 +235,9 @@ Under a reply the page shows the tool calls Jarvis made for it as compact rows (
 
 **Storage.** Each message has a `steps` column (JSON, empty when there are none), added to databases made before it with `ALTER TABLE` when the store opens. Steps are stored only on assistant messages, survive reloads, and are deleted with their chat (`secure_delete`).
 
-**Page.** The server sends `steps` (a list of `{tool, status, label, summary}`, empty for the owner's messages) with every message in the poll and in `GET /api/chats/<id>`. The page turns them into assistant-ui tool-call parts ahead of the reply's text (`conversion.ts`), each already finished so the thread never shows one running, and draws each with `ToolStepRow` (`components/ToolSteps.tsx`), in the normal and the spoken message style. The wording of how a step ended lives in `steps.ts`; the label and summary are the server's.
+**Page.** The server sends `steps` (a list of `{tool, status, label, summary}`, empty for the owner's messages) with every message in the poll and in `GET /api/chats/<id>`. The page turns them into assistant-ui tool-call parts ahead of the reply's text (`conversion.ts`), each already finished so the thread never shows one running, and draws each with `ToolStepRow` and a reply's run of them with `ToolStepGroup` (`components/ToolSteps.tsx`), in the normal and the spoken message style. The wording of how a step ended lives in `steps.ts`; the label and summary are the server's.
+
+**While Jarvis works.** While a typed request (from the page or a phone) is in flight, the poll snapshot carries `live_steps`: the steps taken for it so far, the same ones its reply will be stored with, as `{tool, status, label}` only (what a tool found arrives with the reply). A new step wakes the long poll. The page that sent the request shows them in its thinking placeholder above **Thinking**, so a long request shows its progress; once the reply lands they are its stored steps and `live_steps` is empty again.
 
 ## Start screen
 

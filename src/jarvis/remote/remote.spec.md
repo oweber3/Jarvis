@@ -123,7 +123,7 @@ A missing or unknown token gets `401`. The page then forgets its token and retur
 
 ### Long poll
 
-`GET /api/poll` returns at once when the hub's revision differs from `rev` or the open chat has messages after `after`; otherwise it waits up to 25 seconds for a change and then returns the current snapshot. The snapshot is the web chat's (`rev`, `library_rev`, `ready`, `state`, `busy`, `busy_query`, `active_chat_id`, `chat`, `messages`, `notices`, `mode`, `model`, `cloud`) plus a `phone` object:
+`GET /api/poll` returns at once when the hub's revision differs from `rev` or the open chat has messages after `after`; otherwise it waits up to 25 seconds for a change and then returns the current snapshot. The snapshot is the web chat's (`rev`, `library_rev`, `history_rev`, `ready`, `state`, `busy`, `busy_query`, `active_chat_id`, `chat`, `messages`, `notices`, `live_steps`, `mode`, `model`, `cloud`) plus a `phone` object:
 
 ```json
 {

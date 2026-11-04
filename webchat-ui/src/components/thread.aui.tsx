@@ -10,7 +10,7 @@ import {
 } from "@/components/attachment.aui";
 import { MarkdownText } from "@/components/markdown-text";
 import { DayDivider, MessageTime } from "@/components/MessageTime";
-import { ToolStepRow } from "@/components/ToolSteps";
+import { ToolStepGroup, ToolStepRow } from "@/components/ToolSteps";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,6 +21,7 @@ import {
   type AssistantState,
   ComposerPrimitive,
   ErrorPrimitive,
+  groupPartByType,
   MessagePrimitive,
   ThreadPrimitive,
   type TextMessagePartComponent,
@@ -638,8 +639,9 @@ const MessageError: FC = () => {
   );
 };
 
-// Replies are text after their tool steps, so no parts are grouped (the thinking indicator still arrives as a part).
-const noGroups = () => [] as const;
+// A reply's tool steps come before its text; consecutive ones are one group (the thinking indicator still arrives
+// as a part of its own).
+const stepGroups = groupPartByType({ "tool-call": ["group-steps"] });
 
 const AssistantMessage: FC = () => {
   const isLast = useAuiState((s) => s.message.isLast);
@@ -658,23 +660,17 @@ const AssistantMessage: FC = () => {
         data-slot="aui_assistant-message-content"
         className="text-foreground px-2 leading-relaxed wrap-break-word"
       >
-        <MessagePrimitive.GroupedParts groupBy={noGroups}>
-          {({ part }) => {
+        <MessagePrimitive.GroupedParts groupBy={stepGroups}>
+          {({ part, children }) => {
             switch (part.type) {
+              case "group-steps":
+                return <ToolStepGroup indices={part.indices}>{children}</ToolStepGroup>;
               case "tool-call":
                 return <ToolStepRow args={part.args} />;
               case "text":
                 return <MarkdownText />;
               case "indicator":
-                return (
-                  <span
-                    data-slot="aui_assistant-message-indicator"
-                    className="animate-pulse font-sans"
-                    aria-label="Assistant is working"
-                  >
-                    {"●"}
-                  </span>
-                );
+                return <ThinkingIndicator />;
               default:
                 return null;
             }
@@ -693,6 +689,26 @@ const AssistantMessage: FC = () => {
     </MessagePrimitive.Root>
   );
 };
+
+// Jarvis is working on the reply. The dots move only when motion is welcome.
+const ThinkingIndicator: FC = () => (
+  <span
+    data-slot="aui_assistant-message-indicator"
+    role="status"
+    className="text-muted-foreground inline-flex items-center gap-2 py-1 text-sm"
+  >
+    <span aria-hidden className="flex items-center gap-1">
+      {[0, 1, 2].map((dot) => (
+        <span
+          key={dot}
+          className="bg-primary size-1.5 rounded-full motion-safe:animate-bounce"
+          style={{ animationDelay: `${dot * 140}ms` }}
+        />
+      ))}
+    </span>
+    <span>Thinking</span>
+  </span>
+);
 
 const AssistantActionBar: FC = () => {
   return (

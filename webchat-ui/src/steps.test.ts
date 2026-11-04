@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { ToolStep } from "@/api"
-import { expandedLines, stepFromArgs, stepTone } from "@/steps"
+import { expandedLines, stepEnding, stepFromArgs, stepTone, stepsSummary } from "@/steps"
 
 const step = (over: Partial<ToolStep> = {}): ToolStep => ({
   tool: "systemVolume",
@@ -53,5 +53,34 @@ describe("stepFromArgs", () => {
   it("survives missing or odd arguments", () => {
     expect(stepFromArgs(undefined)).toEqual({ label: "Step", status: "done", summary: null })
     expect(stepFromArgs({ label: 3, summary: "   " })).toEqual({ label: "Step", status: "done", summary: null })
+  })
+})
+
+describe("stepEnding", () => {
+  it("says nothing for a step that worked: its tick says it", () => {
+    expect(stepEnding(step({ status: "done" }))).toBeNull()
+  })
+
+  it.each([
+    ["failed", "Didn't work"],
+    ["declined", "Not allowed"],
+    ["waiting", "Waiting for your confirmation"],
+  ] as const)("names a %s step beside its label", (status, text) => {
+    expect(stepEnding(step({ status }))).toBe(text)
+  })
+})
+
+describe("stepsSummary", () => {
+  it("counts the steps of a reply", () => {
+    expect(stepsSummary([step(), step(), step(), step()])).toBe("4 steps")
+  })
+
+  it("says when something did not go as asked", () => {
+    expect(stepsSummary([step(), step({ status: "failed" }), step({ status: "declined" }), step()])).toBe(
+      "4 steps · 2 didn't work or weren't allowed",
+    )
+    expect(stepsSummary([step(), step(), step(), step({ status: "waiting" })])).toBe(
+      "4 steps · waiting for your confirmation",
+    )
   })
 })

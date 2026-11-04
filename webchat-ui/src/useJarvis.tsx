@@ -23,6 +23,7 @@ import {
 } from "@/api"
 import { JarvisAttachmentAdapter } from "@/attachmentAdapter"
 import { buildThreadMessages, chatTitle, convertThreadMessage, type Pending } from "@/conversion"
+import type { LiveStep } from "@/steps"
 import { ChatSync, type HistoryWindow } from "@/sync"
 
 // All of the page's state. The server owns the conversation (voice and typed turns land in the open chat
@@ -137,6 +138,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
   const [loadingChat, setLoadingChat] = useState(true)
   const [history, setHistory] = useState<HistoryWindow>({ hasEarlier: false, hasLater: false })
   const [stopping, setStopping] = useState(false)
+  const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
   const [toast, setToast] = useState<string | null>(null)
 
   const chatRef = useRef<Chat | null>(null)
@@ -157,6 +159,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
         reachable: setReachable,
         window: setHistory,
         stopping: setStopping,
+        liveSteps: setLiveSteps,
       }),
   )
 
@@ -350,8 +353,8 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
   // Notices belong to the newest moment of the chat, so a window that stops short of it shows none.
   const shownNotices = history.hasLater ? NO_NOTICES : notices
   const threadMessages = useMemo(
-    () => buildThreadMessages(messages, shownNotices, pending),
-    [messages, shownNotices, pending],
+    () => buildThreadMessages(messages, shownNotices, pending, liveSteps),
+    [messages, shownNotices, pending, liveSteps],
   )
 
   const runtimeRef = useRef<ReturnType<typeof useExternalStoreRuntime> | null>(null)

@@ -79,6 +79,8 @@ export type Snapshot = {
   library_rev: number
   /** Bumped when stored messages of the open chat are taken back (a rewind), so every page reloads it. */
   history_rev?: number
+  /** The steps taken so far for the typed request in flight: tool, status and label. */
+  live_steps?: Pick<ToolStep, "tool" | "status" | "label">[]
   ready: boolean
   state: string
   busy: boolean

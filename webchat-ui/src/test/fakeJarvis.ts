@@ -30,6 +30,8 @@ export class FakeJarvis {
     { id: "big", name: "Huge 70B", installed: false },
   ]
   currentModel = "gemma"
+  /** The steps of the request in flight, as the hub serves them. */
+  liveSteps: { tool: string; status: string; label: string }[] = []
   chats: Chat[] = []
   messages = new Map<string, ChatMessage[]>()
   notices: Notice[] = []
@@ -290,6 +292,7 @@ export class FakeJarvis {
       chat,
       messages,
       notices: [...this.notices],
+      live_steps: this.busyQuery ? [...this.liveSteps] : [],
       mode: { mode: "local", enabled: ["local"] },
       model: { current: this.currentModel, switchable: true },
       cloud: null,
