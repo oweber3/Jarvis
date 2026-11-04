@@ -16,6 +16,7 @@ pytestmark = pytest.mark.unit
 
 def listener(rate=48000):
     obj = VoiceListener.__new__(VoiceListener)
+    obj._init_startup_signals()
     obj.cfg = SimpleNamespace(voice_min_energy=0.0045, voice_debug=False)
     obj._samplerate = 16000
     obj._stream_samplerate = rate

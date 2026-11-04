@@ -176,6 +176,27 @@ def _stop_side_by_side(steps: dict, timeout_sec: float) -> None:
             debug_log(f"shutdown step '{name}' still running after {timeout_sec}s; continuing", "jarvis")
 
 
+# Longest the voice waits for the listener's microphone check: just above the check's own 5 s timeout.
+MICROPHONE_CHECK_WAIT_SEC = 6.0
+
+
+def _start_listener_then_tts(listener, tts, check_timeout_sec: float) -> None:
+    """Start the voice listener, then load the voice on this thread while Whisper loads on the listener's.
+
+    The voice waits for the listener's microphone check first: a DLL load racing that check can deadlock on
+    the Windows loader lock. Loading the voice on the starting thread also keeps voice outputs' ``warm`` there
+    (extensions/extensions.spec.md).
+    """
+    listener.start()
+    if tts is None:
+        return
+    started = time.monotonic()
+    if not listener.wait_until_microphone_checked(check_timeout_sec):
+        debug_log(f"microphone check still running after {check_timeout_sec}s; loading the voice anyway", "jarvis")
+    tts.start()
+    debug_log(f"voice loaded alongside speech recognition in {time.monotonic() - started:.2f}s", "jarvis")
+
+
 # Bound for stopping TTS, the MCP runtime and the reply bridge together: above each one's own
 # worst case (the Codex child gets 5 s, then terminate and kill at 2 s each).
 ENGINE_STOP_TIMEOUT_SEC = 10.0
@@ -1735,17 +1756,17 @@ def main(smoke_test: bool = False) -> None:
         voice_outputs=extensions.voice_outputs(),
     )
     _global_tts_engine = tts  # Expose for face widget speaking animation
-    if tts.enabled:
-        tts.start()
-        print("✓ TTS engine started", flush=True)
-    else:
-        print("  TTS disabled", flush=True)
 
-    # Initialize voice listening (only if dependencies available)
+    # Initialize voice listening (only if dependencies available). The voice loads here, on this
+    # thread, while Whisper loads on the listener's, once the listener's microphone check is over.
     print("🎤 Preparing speech recognition in the background...", flush=True)
     voice_thread: Optional[threading.Thread] = None
     voice_thread = VoiceListener(db, cfg, tts, _global_dialogue_memory)
-    voice_thread.start()
+    _start_listener_then_tts(voice_thread, tts if tts.enabled else None, check_timeout_sec=MICROPHONE_CHECK_WAIT_SEC)
+    if tts.enabled:
+        print("✓ TTS engine started", flush=True)
+    else:
+        print("  TTS disabled", flush=True)
     _global_voice_listener = voice_thread
     window_snap_service.set_talk_handler(listen_now)  # a raised hand in gesture control
 
