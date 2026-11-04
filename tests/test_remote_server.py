@@ -287,6 +287,9 @@ class TestChatThroughTheSharedHub:
 
     def test_a_poll_with_nothing_new_waits_then_returns(self, server, store):
         client = paired_client(server, store)
+        # The server starts the hub and then watches its own signals, so the hub's first two passes can come either
+        # side of a first poll; one pass now settles it, as a running hub does within its first interval.
+        server.hub.sync()
         _, first, _ = poll(client)
         status, again, _ = poll(client, rev=first["rev"], after=2 ** 40)
         assert status == 200 and again["rev"] == first["rev"]
