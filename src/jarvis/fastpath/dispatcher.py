@@ -38,7 +38,10 @@ def match_command(text, cfg, language=None, addressed=True, ambient=False):
             return result if safety.tier == SafetyTier.SAFE else None
         tv_apps = BUILTIN_TOOLS['tvControl'].fast_targets(cfg) if 'tvControl' in available else ()
         routines = BUILTIN_TOOLS['routineControl'].fast_targets(cfg) if 'routineControl' in available else ()
-        result = match(redact(text), lang, tv_apps=tv_apps, routines=routines, available_tools=available)
+        home_devices, home_areas = (BUILTIN_TOOLS['homeControl'].fast_targets(cfg) if 'homeControl' in available
+                                    else ((), ()))
+        homes = {'home_devices': home_devices, 'home_areas': home_areas}
+        result = match(redact(text), lang, tv_apps=tv_apps, routines=routines, available_tools=available, **homes)
         # A routine may share its name with an application ("start chrome"): with every target offered, the
         # single-match rule makes such an utterance fall through to the model.
         if ((result is None or result.tool_name == 'routineControl') and cfg.windows_tools_enabled
@@ -47,7 +50,7 @@ def match_command(text, cfg, language=None, addressed=True, ambient=False):
             workspaces = (BUILTIN_TOOLS['workspaceControl'].fast_targets(cfg)
                           if 'workspaceControl' in available else ())
             result = match(redact(text), lang, targets=targets, workspaces=workspaces, tv_apps=tv_apps,
-                           routines=routines, available_tools=available)
+                           routines=routines, available_tools=available, **homes)
         if result is not None and result.needs_wake_word and not addressed:
             debug_log(f'Fast route {result.command_id} needs the wake word; using LLM_ROUTE.', 'routing')
             return None

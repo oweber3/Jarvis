@@ -2096,6 +2096,145 @@
       ],
       "reply": null,
       "needs_wake_word": true
+    },
+    {
+      "id": "home.turn_on",
+      "family": "home",
+      "tool": "homeControl",
+      "args": {
+        "action": "turn_on"
+      },
+      "reply": "Turned on {home_target}.",
+      "phrases": [
+        "turn on {home_target}",
+        "turn {home_target} on",
+        "switch on {home_target}",
+        "switch {home_target} on"
+      ]
+    },
+    {
+      "id": "home.turn_off",
+      "family": "home",
+      "tool": "homeControl",
+      "args": {
+        "action": "turn_off"
+      },
+      "reply": "Turned off {home_target}.",
+      "phrases": [
+        "turn off {home_target}",
+        "turn {home_target} off",
+        "switch off {home_target}",
+        "switch {home_target} off"
+      ]
+    },
+    {
+      "id": "home.area_lights_on",
+      "family": "home",
+      "tool": "homeControl",
+      "args": {
+        "action": "turn_on",
+        "kind": "light"
+      },
+      "reply": "Turned on the {area} lights.",
+      "phrases": [
+        "turn on the {area} lights",
+        "turn the {area} lights on",
+        "switch on the {area} lights",
+        "switch the {area} lights on",
+        "turn on {area} lights",
+        "turn {area} lights on",
+        "switch on {area} lights",
+        "switch {area} lights on"
+      ]
+    },
+    {
+      "id": "home.area_lights_off",
+      "family": "home",
+      "tool": "homeControl",
+      "args": {
+        "action": "turn_off",
+        "kind": "light"
+      },
+      "reply": "Turned off the {area} lights.",
+      "phrases": [
+        "turn off the {area} lights",
+        "turn the {area} lights off",
+        "switch off the {area} lights",
+        "switch the {area} lights off",
+        "turn off {area} lights",
+        "turn {area} lights off",
+        "switch off {area} lights",
+        "switch {area} lights off"
+      ]
+    },
+    {
+      "id": "home.set_level",
+      "family": "home",
+      "tool": "homeControl",
+      "args": {
+        "action": "set"
+      },
+      "slot_args": {
+        "percent": "level"
+      },
+      "reply": "Set {home_target} to {percent} percent.",
+      "phrases": [
+        "set {home_target} to {percent} percent",
+        "set {home_target} to {percent}%"
+      ]
+    },
+    {
+      "id": "home.dim_to",
+      "family": "home",
+      "tool": "homeControl",
+      "args": {
+        "action": "set"
+      },
+      "slot_args": {
+        "percent": "brightness"
+      },
+      "reply": "Dimmed {home_target} to {percent} percent.",
+      "phrases": [
+        "dim {home_target} to {percent} percent",
+        "dim {home_target} to {percent}%"
+      ]
+    },
+    {
+      "id": "home.dim",
+      "family": "home",
+      "tool": "homeControl",
+      "args": {
+        "action": "set",
+        "brightness": 30
+      },
+      "reply": "Dimmed {home_target}.",
+      "phrases": [
+        "dim {home_target}"
+      ]
+    },
+    {
+      "id": "home.open",
+      "family": "home",
+      "tool": "homeControl",
+      "args": {
+        "action": "open"
+      },
+      "reply": "Opened {home_target}.",
+      "phrases": [
+        "open {home_target}"
+      ]
+    },
+    {
+      "id": "home.close",
+      "family": "home",
+      "tool": "homeControl",
+      "args": {
+        "action": "close"
+      },
+      "reply": "Closed {home_target}.",
+      "phrases": [
+        "close {home_target}"
+      ]
     }
   ]
 }

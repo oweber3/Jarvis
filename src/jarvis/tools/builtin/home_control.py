@@ -313,10 +313,12 @@ class HomeControlTool(Tool):
             lines.append(f"{note}\n{_facts([dev])}")
         for dev, reason in failed:
             lines.append(f"Not changed: {reason}\n{_facts([dev])}")
-        if failed and not acted:
-            context.user_print("⚠️ The smart home command failed")
-            text = "\n".join(lines)
-            return ToolExecutionResult(False, text, error_message=failed[0][1])
+        if not done:
+            # Nothing the hub confirmed is reported as done, so a fast-path reply never claims it.
+            context.user_print("⚠️ The smart home command was not confirmed" if unconfirmed
+                               else "⚠️ The smart home command failed")
+            reason = unconfirmed[0][1] if unconfirmed else failed[0][1]
+            return ToolExecutionResult(False, "\n".join(lines), error_message=reason)
         context.user_print(f"🏠 {_VERBS.get(action, 'Changed')} {len(acted)} devices")
         return HomeResult(True, "\n".join(lines), changed=tuple((d.kind, d.area) for d in done))
 
