@@ -269,6 +269,8 @@ Branch `perf/efficiency-fixes`, cut from `develop` at `32d0ea8` (which includes 
 | Idle RAM | 2,277 MB | 2,277 MB | none expected | 1 + 1 |
 | `--smoke-test` (through the harness) | passes 3/3 | passes 3/3 | `SMOKE_TEST_INIT_OK` comes about 0.5 s later because TTS now loads after the listener starts; the smoke marker is not a readiness measure | 3 + 3 |
 
+Hardware check after the review fixes (5 cold starts, owner profile, Kokoro on the graphics card through its helper): every run printed `Kokoro voice ready … on the graphics card` and `Whisper 'medium' loaded on cuda`, with no cuDNN error, no ONNX Runtime move to the processor and no fall-back to Piper. "Listening!" at 6.5 to 7.8 s (median 6.9 s), shutdown 0.61 to 0.68 s, and after each quit no MCP `node`/`cmd` process remained (two `node` processes ran during each session).
+
 Start-up timeline after the change (first after run): the listener's microphone check ends at 2.5 s, Whisper starts loading at 2.8 s, Kokoro is ready at 5.2 s (it loaded during Whisper's load), Whisper is loaded at 6.2 s, "Listening!" at 7.0 s.
 
 | # | Fix | Status | Why |
@@ -282,7 +284,7 @@ Start-up timeline after the change (first after run): the listener's microphone 
 | 7 | Local chat model choice | Waits for the owner | product decision |
 | 8 | Smaller intent model | Waits for the owner | accuracy decision; needs evals |
 | 9 | `keep_alive` on embedding requests | **Done** | `llm/llm.spec.md` and `docs/llm_contexts.md` already require it on every Ollama request |
-| 10 | Event-woken main loop, engines stopped side by side | **Done** | No spec fixes the teardown order; TTS, the MCP runtime and the reply bridge stop concurrently, bounded at 10 s |
+| 10 | Event-woken main loop, engines stopped side by side | **Done** | No spec fixes the teardown order; TTS, the MCP runtime and the reply bridge stop concurrently, bounded past the slowest one's own worst case; the MCP runtime stops its servers in parallel too |
 | 11 | Trim imports | Not done | Measured on `develop`: the only avoidable import is `pkg_resources` (0.13 s, pulled in by `webrtcvad`), and avoiding it means depending on that package's private C module. The other heavy imports (`rapidfuzz`, `requests`, `sounddevice`, `numpy`) are needed during start-up anyway, so deferring them only moves the time. |
 | 12 | Web chat hub idle sleep | Not done | `remote/remote.spec.md` promises the phone's poll wakes "within half a second" (the hub's 0.5 s tick), and `webchat/webchat.spec.md` requires every turn to be mirrored into the open chat whether or not a page is open; the gain was 0.06 % of one core |
 
