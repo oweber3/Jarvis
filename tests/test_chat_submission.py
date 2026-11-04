@@ -1117,6 +1117,23 @@ class TestWebChatRewind:
         assert seen == [] and [e[0] for e in events] == ["rewind"]
         assert not daemon.is_query_running()
 
+    def test_a_diary_pass_that_finishes_while_the_rewind_is_undone_is_not_undone_with_it(self):
+        """A diary pass runs on its own thread: one that took its turns before the rewind and marks them summarised
+        before the rewind is put back must not see them come back as never summarised."""
+        from jarvis.memory.conversation import DialogueMemory
+
+        for keep in (2, 0):  # some turns stay, or memory gets the chat's turns before the point instead
+            dm = DialogueMemory()
+            for role, text in (("user", "one"), ("assistant", "1"), ("user", "two"), ("assistant", "2")):
+                dm.add_message(role, text)
+            summarised_up_to = dm.last_timestamp()  # the pass took every turn so far
+            chat = [(m["role"], (m["content"],)) for m in dm.all_messages()]
+            taken = dm.take_back(chat, keep, [])
+            dm.mark_saved_up_to(summarised_up_to)  # and finished meanwhile
+            dm.put_back(taken)
+            assert [m["content"] for m in dm.all_messages()] == ["one", "1", "two", "2"]
+            assert dm.detach_unsaved().all_messages() == [], keep
+
     def test_a_refusal_from_the_chat_puts_back_turns_older_than_memory_held(self, monkeypatch):
         history = self._chat("one", "1", "two", "2", "three", "3")
         history[5] = {**history[5], "diary": False, "private_sources": ["calendar"]}

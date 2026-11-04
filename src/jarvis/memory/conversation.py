@@ -803,6 +803,8 @@ class DialogueMemory:
         # Track the timestamp up to which messages have been saved to diary
         # Messages with timestamp <= this value have been processed
         self._last_saved_timestamp: float = 0.0
+        # The newest timestamp a diary pass has marked as summarised (``mark_saved_up_to``), which ``put_back`` keeps.
+        self._diary_marked: float = 0.0
         # How many of the latest turns stay in context however old they are (``keep_last_turns``).
         self._keep_last: int = 0
         self._lock = threading.RLock()  # Reentrant lock for thread safety
@@ -1088,9 +1090,8 @@ class DialogueMemory:
             self._diary_excluded = {**taken.diary_excluded, **private_since}
             self._tool_turns = list(taken.tool_turns)
             self._hot_cache = OrderedDict(taken.hot_cache)
-            # A diary pass that ran meanwhile can only have covered turns newer than the cursor; keep what it did.
-            if self._last_saved_timestamp <= taken.cursor:
-                self._last_saved_timestamp = taken.last_saved
+            # A diary pass that finished meanwhile keeps what it marked, the turns put back included.
+            self._last_saved_timestamp = max(taken.last_saved, self._diary_marked)
             self._last_activity_time = since[-1][0] if since else taken.last_activity
 
     def private_context_sources(self, max_tool_turns: int = 2) -> FrozenSet[str]:
@@ -1405,6 +1406,7 @@ class DialogueMemory:
         """
         with self._lock:
             self._last_saved_timestamp = max(self._last_saved_timestamp, timestamp)
+            self._diary_marked = max(self._diary_marked, timestamp)
             self._cleanup_old_messages()
 
     def _cleanup_old_messages(self) -> None:
@@ -1436,6 +1438,7 @@ class DialogueMemory:
                 # Mark all current messages as saved
                 max_ts = max(ts for ts, _, _ in self._messages)
                 self._last_saved_timestamp = max_ts
+                self._diary_marked = max(self._diary_marked, max_ts)
             self._cleanup_old_messages()
 
 

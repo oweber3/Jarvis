@@ -1070,9 +1070,11 @@ def rewind_chat_conversation(
         _chat_query_lock.release()
         return
     if not report(taken.cursor):
-        dm.put_back(taken)
-        debug_log("chat rewind undone: the chat could not take its messages back", "chat")
-        _chat_query_lock.release()
+        try:
+            dm.put_back(taken)
+            debug_log("chat rewind undone: the chat could not take its messages back", "chat")
+        finally:
+            _chat_query_lock.release()
         return
     debug_log(f"chat rewind applied ({len(history) - keep} turns taken back), asking again", "chat")
     _start_text_query_worker(text, dm, cfg, db, callbacks=callbacks, use_ipc=False, origin=origin)
