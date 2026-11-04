@@ -54,6 +54,14 @@ describe("a reply's Markdown", () => {
     expect(block.querySelector("button")!.textContent).toContain("Copy code")
   })
 
+  it("colours the code of a block it knows the language of, keeping every character", () => {
+    const page = draw("```python\ndef total(xs):\n    return sum(xs)  # all\n```")
+    const code = page.querySelector("[data-slot='aui_code-block'] code")!
+    expect(code.textContent).toBe("def total(xs):\n    return sum(xs)  # all")
+    const coloured = [...code.querySelectorAll("span")].map((span) => span.textContent)
+    expect(coloured).toEqual(["def", "total", "return", "sum", "# all"])
+  })
+
   it("draws inline code, tables, task lists and struck-out text", () => {
     const page = draw("use `a < b`\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n- [ ] todo\n\n~~gone~~")
     expect(page.querySelector("code")!.textContent).toBe("a < b")

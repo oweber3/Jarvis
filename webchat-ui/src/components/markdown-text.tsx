@@ -5,6 +5,7 @@ import { Fragment, isValidElement, memo, type ComponentPropsWithoutRef, type FC,
 
 import { TooltipIconButton } from "@/components/tooltip-icon-button"
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard"
+import { highlight, type TokenKind } from "@/highlight"
 import { cn } from "@/lib/utils"
 
 // A reply's Markdown, drawn as React elements (never as HTML). Written for Jarvis on markdown-to-jsx, in place of
@@ -61,13 +62,39 @@ function fenced(children: ReactNode): { code: string; language: string } {
   return { code: typeof body === "string" ? body : Array.isArray(body) ? body.join("") : String(body ?? ""), language }
 }
 
+// The colours of a code block's tokens: palette colours that stay readable on the block's card in both looks
+// (tests/test_webchat_theme.py checks them).
+const TOKEN_COLOUR: Record<TokenKind, string> = {
+  keyword: "text-[var(--hud-accent-indigo)]",
+  string: "text-[var(--hud-success)]",
+  number: "text-[var(--hud-warning)]",
+  comment: "text-muted-foreground italic",
+  fn: "text-primary",
+}
+
+const Highlighted: FC<{ code: string; language: string }> = memo(function Highlighted({ code, language }) {
+  return (
+    <>
+      {highlight(code, language).map((token, index) =>
+        token.kind ? (
+          <span key={index} className={TOKEN_COLOUR[token.kind]}>
+            {token.text}
+          </span>
+        ) : (
+          token.text
+        ),
+      )}
+    </>
+  )
+})
+
 const CodeBlock: FC<Props<"pre">> = ({ children }) => {
   const { code, language } = fenced(children)
   const { isCopied, copyToClipboard } = useCopyToClipboard()
   const text = code.replace(/\n$/, "")
   return (
-    <div data-slot="aui_code-block" className="aui-code-block my-3 overflow-hidden rounded-xl border">
-      <div className="aui-code-header-root bg-muted/50 flex items-center justify-between border-b px-3.5 py-1 text-xs">
+    <div data-slot="aui_code-block" className="aui-code-block bg-card my-3 overflow-hidden rounded-xl border">
+      <div className="aui-code-header-root bg-muted/40 flex items-center justify-between border-b px-3.5 py-1 text-xs">
         <span className="aui-code-header-language text-muted-foreground font-medium lowercase">{language || "text"}</span>
         <TooltipIconButton tooltip={isCopied ? "Copied" : "Copy code"} onClick={() => !isCopied && copyToClipboard(text)}>
           {isCopied ? (
@@ -77,8 +104,10 @@ const CodeBlock: FC<Props<"pre">> = ({ children }) => {
           )}
         </TooltipIconButton>
       </div>
-      <pre className="aui-md-pre bg-muted/20 overflow-x-auto p-3.5 text-[13px] leading-relaxed">
-        <code className={cn("font-mono", language && `language-${language}`)}>{text}</code>
+      <pre className="aui-md-pre overflow-x-auto p-3.5 text-[13px] leading-relaxed">
+        <code className={cn("font-mono", language && `language-${language}`)}>
+          <Highlighted code={text} language={language} />
+        </code>
       </pre>
     </div>
   )
