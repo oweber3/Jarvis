@@ -179,6 +179,26 @@ def _make_handler(server: RemoteServer):
                 self.request.do_handshake()
             super().setup()
 
+        def handle(self) -> None:
+            if server._client_filter(self.client_address[0]):
+                super().handle()
+                return
+            # Refused before a byte of the request is parsed, so a client outside private networks (an
+            # accidental port forward) cannot hold this thread by trickling its headers or body.
+            debug_log("remote: request from outside private networks refused", "remote")
+            self.command, self.request_version, self.requestline = "GET", self.protocol_version, ""
+            self.close_connection = True
+            try:
+                self._json(403, {"error": "forbidden"})
+                self.wfile.flush()
+                self.connection.shutdown(socket.SHUT_WR)
+                # Swallow a little of what was sent, bounded, so closing does not reset the connection
+                # before the client has read the answer.
+                self.connection.settimeout(0.5)
+                self.connection.recv(65536)
+            except (OSError, ValueError):
+                pass
+
         def log_message(self, format, *args) -> None:  # noqa: A002 - request lines never reach the console
             return
 
@@ -237,8 +257,6 @@ def _make_handler(server: RemoteServer):
                 self._raw_body = self.rfile.read(length)
 
         def _may_send_large(self) -> bool:
-            if not server._client_filter(self.client_address[0]):
-                return False
             header = self.headers.get("Authorization") or ""
             token = header[7:].strip() if header.startswith("Bearer ") else ""
             return server.store.authenticate(token) is not None
@@ -284,9 +302,6 @@ def _make_handler(server: RemoteServer):
         # -- dispatch ------------------------------------------------------------------
 
         def _handle(self) -> None:
-            if not server._client_filter(self.client_address[0]):
-                debug_log("remote: request from outside private networks refused", "remote")
-                raise _Refused(403, "forbidden")
             path = urlsplit(self.path).path
             is_api = path.startswith("/api/")
             # A link from another site may open the app; only the API refuses cross-site fetches.

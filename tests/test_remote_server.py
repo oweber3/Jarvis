@@ -712,3 +712,24 @@ class TestReviewFindings:
         thread.join(timeout=5)
         assert result["body"]["status"] == "stopped"
         assert chat_backend.submitted == []
+
+
+@pytest.mark.unit
+class TestOutsideClients:
+    def test_an_outside_client_is_answered_before_its_request_is_read(
+            self, chat_backend, chat_store, backend, store, static_dir):
+        # A client trickling its request line (slowloris over an accidental port forward) must not hold a
+        # thread until the 60-second read timeout: it is refused before a byte is parsed.
+        server = make_server(chat_backend, chat_store, backend, store, static_dir, client_filter=lambda a: False)
+        try:
+            started = time.monotonic()
+            sock = socket.create_connection(("127.0.0.1", server.port), timeout=5)
+            try:
+                sock.sendall(b"GET / HT")   # never finished
+                data = sock.recv(200)
+            finally:
+                sock.close()
+            assert data.split(b" ", 2)[1] == b"403"
+            assert time.monotonic() - started < 3
+        finally:
+            server.stop()
