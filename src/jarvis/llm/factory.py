@@ -104,4 +104,7 @@ def get_embedding_backend(settings: Any) -> LLMBackend:
     api_key = _str_attr(settings, "embedding_api_key") or _str_attr(
         settings, "llm_api_key"
     ) or None
+    if provider == _OLLAMA:
+        # Same residency as every other request, so the embedding model is not unloaded after Ollama's 5-minute default.
+        return OllamaBackend(base_url, keep_alive=_residency(settings))
     return _build(provider, base_url, api_key)

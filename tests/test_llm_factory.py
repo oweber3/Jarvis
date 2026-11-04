@@ -27,6 +27,34 @@ class _Cfg:
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_chat_model: str = "gemma4:e2b"
     ollama_embed_model: str = "nomic-embed-text"
+    llm_keep_alive: str = "30m"
+    low_power_mode: bool = False
+
+
+class TestEmbeddingResidency:
+    """The embedding backend applies the same residency as the chat backend."""
+
+    def _sent_keep_alive(self, cfg):
+        from unittest.mock import MagicMock, patch
+
+        from jarvis.llm import get_embedding_backend
+
+        resp = MagicMock()
+        resp.json.return_value = {"embedding": [0.5]}
+        with patch("jarvis.llm.requests.post", return_value=resp) as post:
+            assert get_embedding_backend(cfg).embed("ping", "nomic-embed-text") == [0.5]
+        return post.call_args.kwargs["json"]["keep_alive"]
+
+    def test_follows_configured_keep_alive(self):
+        assert self._sent_keep_alive(_Cfg(llm_keep_alive="2h")) == "2h"
+
+    def test_low_power_mode_uses_the_chat_backend_residency(self):
+        from jarvis.llm import get_llm_backend
+
+        cfg = _Cfg(llm_keep_alive="2h", low_power_mode=True)
+        expected = get_llm_backend(cfg)._keep_alive
+
+        assert self._sent_keep_alive(cfg) == expected
 
 
 class TestGetLLMBackend:

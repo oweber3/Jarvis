@@ -403,3 +403,49 @@ def test_shutdown_runtime_stops_server_process(tmp_path, runtime_cleanup):
 
     _wait_for(lambda: not any(_alive(p) for p in pids), timeout=10)
     assert [p for p in pids if _alive(p)] == []
+
+
+def test_several_stuck_servers_are_all_ended_within_one_stop_window(tmp_path, monkeypatch, runtime_cleanup):
+    """Shutdown stops every worker at the same time: three servers stuck inside a call are killed after one
+    stop window, not one window after another, so the daemon's bounded shutdown never leaves one running."""
+    import mcp.client.stdio as stdio
+
+    from jarvis.tools.external import mcp_runtime
+    from jarvis.tools.external.mcp_runtime import get_runtime, shutdown_runtime
+
+    stop_wait = 2.0
+    monkeypatch.setattr(stdio, "PROCESS_TERMINATION_TIMEOUT", 60.0)
+    monkeypatch.setattr(mcp_runtime, "_STOP_WAIT_SEC", stop_wait)
+    runtime = get_runtime()
+    names = ["first", "second", "third"]
+    pids = []
+    try:
+        for name in names:
+            work = tmp_path / name
+            work.mkdir()
+            cfg = _server_cfg(work, _FAKE_SERVER)
+            threading.Thread(target=lambda n=name, c=cfg: _ignore(lambda: runtime.invoke(n, c, "hang", {}, timeout=120)),
+                             daemon=True).start()
+            assert _wait_for((work / "hanging").exists, timeout=30)
+            pids += _spawned_pids(work)
+        assert len(pids) == 3 and all(_alive(p) for p in pids)
+
+        started = time.monotonic()
+        shutdown_runtime()
+        elapsed = time.monotonic() - started
+
+        assert _wait_for(lambda: not any(_alive(p) for p in pids), timeout=5)
+        assert elapsed < stop_wait * 2, f"workers were stopped one after another ({elapsed:.1f}s)"
+    finally:
+        for pid in pids:
+            try:
+                psutil.Process(pid).kill()
+            except psutil.NoSuchProcess:
+                pass
+
+
+def _ignore(call):
+    try:
+        call()
+    except Exception:
+        pass

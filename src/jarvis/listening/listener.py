@@ -460,6 +460,7 @@ class VoiceListener(threading.Thread):
                 consumers should enqueue work for their own thread if needed.
         """
         super().__init__(daemon=True)
+        self._init_startup_signals()
 
         self.db = db
         self.cfg = cfg
@@ -2825,6 +2826,24 @@ class VoiceListener(threading.Thread):
             return f"\"How's the weather, {wake_title}?\""
         return f"\"How's the weather in [your city], {wake_title}?\""
 
+    def _init_startup_signals(self) -> None:
+        # Set once the microphone permission check is over (or skipped, or start-up ended before it).
+        self._microphone_checked = threading.Event()
+        # time.monotonic() when the check began (after the device list), None until then.
+        self._microphone_check_started_at: Optional[float] = None
+
+    def microphone_check_started_at(self) -> Optional[float]:
+        """When the start-up microphone check began (``time.monotonic()``), or None if it has not."""
+        return self._microphone_check_started_at
+
+    def wait_until_microphone_checked(self, timeout: float) -> bool:
+        """Wait until the start-up microphone check is over; True when it is.
+
+        Until then another thread must not load DLLs: a load racing the check can deadlock on the
+        Windows loader lock. After it, loads can overlap Whisper's own.
+        """
+        return self._microphone_checked.wait(timeout)
+
     def run(self) -> None:
         """Run capture and release Whisper work on every exit path."""
         from ..tools.confirmation import set_result_handler
@@ -2832,6 +2851,7 @@ class VoiceListener(threading.Thread):
         try:
             self._run()
         finally:
+            self._microphone_checked.set()
             set_result_handler(None)
             if self._transcription_worker_thread is not None:
                 self._finish_transcription_worker()
@@ -2874,6 +2894,7 @@ class VoiceListener(threading.Thread):
         # Uses InputStream (not sd.rec) so the stream can be explicitly closed
         # on timeout, avoiding resource leaks that could block later audio init.
         if sys.platform == 'win32':
+            self._microphone_check_started_at = time.monotonic()
             try:
                 print("  🔐 Checking microphone permission...", flush=True)
                 mic_ok = threading.Event()
@@ -2953,6 +2974,9 @@ class VoiceListener(threading.Thread):
             except Exception as e:
                 debug_log(f"microphone permission check error: {e}", "voice")
                 print(f"  ⚠️  Microphone check error: {e}", flush=True)
+
+        self._microphone_checked.set()
+        debug_log("microphone check over; the voice may load alongside Whisper", "voice")
 
         # Kick off LLM warmups in parallel with Whisper load so the first
         # user engagement doesn't pay cold-load cost on either model. All

@@ -59,6 +59,7 @@ from .utils.location import get_location_context, is_location_available
 # Global instances for coordination between modules
 _global_dialogue_memory: Optional[DialogueMemory] = None
 _global_stop_requested: bool = False
+_global_stop_event = threading.Event()  # set with _global_stop_requested, so the idle main loop wakes at once
 _warm_profile_graph_listener = None  # registered callback, kept for shutdown unregister
 _global_tts_engine = None  # TTS engine reference for face animation polling
 _global_dictation_engine = None  # Dictation engine reference for history UI
@@ -136,6 +137,114 @@ def request_stop() -> None:
     """Request the daemon to stop gracefully."""
     global _global_stop_requested
     _global_stop_requested = True
+    _global_stop_event.set()
+
+
+def _clear_stop_request() -> None:
+    """Forget an earlier stop request, so a new run (or an in-process restart) starts fresh."""
+    global _global_stop_requested
+    _global_stop_requested = False
+    _global_stop_event.clear()
+
+
+def _wait_for_stop(timeout_sec: float) -> bool:
+    """Idle for up to ``timeout_sec``, waking at once on a stop request. True when a stop was requested."""
+    _global_stop_event.wait(timeout_sec)
+    return _global_stop_requested
+
+
+def _stop_side_by_side(steps: dict, timeout_sec: float) -> None:
+    """Run independent shutdown steps at the same time and wait for them, at most ``timeout_sec`` in all.
+
+    A step that raises is logged and does not keep the others from running. A step still running at the
+    deadline is left to finish in its daemon thread, so a wedged helper never holds up the quit.
+    """
+    threads = []
+    for name, step in steps.items():
+        def _run(name=name, step=step) -> None:
+            try:
+                step()
+            except Exception as exc:
+                debug_log(f"shutdown step '{name}' failed: {type(exc).__name__}: {exc}", "jarvis")
+        thread = threading.Thread(target=_run, name=f"shutdown-{name}", daemon=True)
+        thread.start()
+        threads.append((name, thread))
+    deadline = time.monotonic() + timeout_sec
+    for name, thread in threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+        if thread.is_alive():
+            debug_log(f"shutdown step '{name}' still running after {timeout_sec}s; continuing", "jarvis")
+
+
+# How long after the microphone check begins the voice waits for it: just above the check's own 5 s timeout.
+MICROPHONE_CHECK_WINDOW_SEC = 6.0
+# Longest the voice waits in all, for a device listing that never reaches the check.
+MICROPHONE_CHECK_SAFETY_CAP_SEC = 30.0
+
+
+def _start_listener_then_tts(listener, tts, check_window_sec: float, safety_cap_sec: float) -> None:
+    """Start the voice listener, then load the voice on this thread while Whisper loads on the listener's.
+
+    The voice waits for the listener's microphone check first: a DLL load racing that check can deadlock on
+    the Windows loader lock. The wait lasts while the listener is alive and, once the check has begun, at most
+    ``check_window_sec`` from that moment (so a slow device listing before it never shortens it); a check that
+    hangs past its own 5 s timeout is given up on, as the listener does before loading Whisper.
+    ``safety_cap_sec`` bounds the whole wait. Loading the voice on the starting thread also keeps voice
+    outputs' ``warm`` there (extensions/extensions.spec.md). A reply that arrives while the voice is still
+    loading waits for it (the engines' start lock).
+    """
+    listener.start()
+    if tts is None:
+        return
+    started = time.monotonic()
+    reason = "check over"
+    while not listener.wait_until_microphone_checked(0.05):
+        now = time.monotonic()
+        check_started = listener.microphone_check_started_at()
+        if not listener.is_alive():
+            reason = "listener ended"
+            break
+        if check_started is not None and now - check_started >= check_window_sec:
+            reason = f"check still running after {check_window_sec}s"
+            break
+        if now - started >= safety_cap_sec:
+            reason = f"no check after {safety_cap_sec}s"
+            break
+    debug_log(f"loading the voice alongside speech recognition ({reason}, waited {time.monotonic() - started:.2f}s)",
+              "jarvis")
+    tts.start()
+    debug_log(f"voice loaded alongside speech recognition in {time.monotonic() - started:.2f}s", "jarvis")
+
+
+# Margin over the slowest engine's own worst case when stopping them together.
+ENGINE_STOP_MARGIN_SEC = 2.0
+# The Codex child's worst case: 5 s to exit, then terminate and kill at 2 s each. TTS is quicker.
+_REPLY_BRIDGE_STOP_WORST_CASE_SEC = 9.0
+
+
+def _engine_stop_timeout_sec() -> float:
+    """Bound for stopping TTS, the MCP runtime and the reply bridge together: above each one's own worst
+    case, so none is given up on before it has ended its child processes."""
+    from .tools.external.mcp_runtime import SHUTDOWN_WORST_CASE_SEC as mcp_worst_case
+
+    return max(mcp_worst_case, _REPLY_BRIDGE_STOP_WORST_CASE_SEC) + ENGINE_STOP_MARGIN_SEC
+
+
+def _stop_engines_side_by_side(tts) -> None:
+    """Stop the TTS engine, the persistent MCP sessions and the reply bridge at the same time.
+
+    They share nothing (each owns its own child process or thread), so stopping them one after
+    another only added their waits together.
+    """
+    from .bridge import modes as reply_modes
+    from .tools.external.mcp_runtime import shutdown_runtime
+
+    steps = {"mcp": shutdown_runtime, "reply-bridge": reply_modes.stop}
+    if tts is not None:
+        steps["tts"] = tts.stop
+    started = time.monotonic()
+    _stop_side_by_side(steps, timeout_sec=_engine_stop_timeout_sec())
+    debug_log(f"engines stopped side by side in {time.monotonic() - started:.2f}s", "jarvis")
 
 
 def set_diary_update_callbacks(
@@ -1481,11 +1590,11 @@ def main(smoke_test: bool = False) -> None:
             marker, and return without entering the main event loop.
             Used by CI smoke tests to verify the build is not broken.
     """
-    global _global_dialogue_memory, _global_stop_requested, _global_tts_engine, _global_dictation_engine
+    global _global_dialogue_memory, _global_tts_engine, _global_dictation_engine
     global _warm_profile_graph_listener, _global_voice_listener
 
     # Reset stop flag at start (in case of restart)
-    _global_stop_requested = False
+    _clear_stop_request()
 
     _install_signal_handlers()
     close_state_channel = open_assistant_state_channel()
@@ -1675,17 +1784,19 @@ def main(smoke_test: bool = False) -> None:
         voice_outputs=extensions.voice_outputs(),
     )
     _global_tts_engine = tts  # Expose for face widget speaking animation
-    if tts.enabled:
-        tts.start()
-        print("✓ TTS engine started", flush=True)
-    else:
-        print("  TTS disabled", flush=True)
 
-    # Initialize voice listening (only if dependencies available)
+    # Initialize voice listening (only if dependencies available). The voice loads here, on this
+    # thread, while Whisper loads on the listener's, once the listener's microphone check is over.
     print("🎤 Preparing speech recognition in the background...", flush=True)
     voice_thread: Optional[threading.Thread] = None
     voice_thread = VoiceListener(db, cfg, tts, _global_dialogue_memory)
-    voice_thread.start()
+    _start_listener_then_tts(voice_thread, tts if tts.enabled else None,
+                             check_window_sec=MICROPHONE_CHECK_WINDOW_SEC,
+                             safety_cap_sec=MICROPHONE_CHECK_SAFETY_CAP_SEC)
+    if tts.enabled:
+        print("✓ TTS engine started", flush=True)
+    else:
+        print("  TTS disabled", flush=True)
     _global_voice_listener = voice_thread
     window_snap_service.set_talk_handler(listen_now)  # a raised hand in gesture control
 
@@ -1772,19 +1883,7 @@ def main(smoke_test: bool = False) -> None:
                 pass
 
         close_state_channel()
-        if tts is not None:
-            try:
-                tts.stop()
-            except Exception:
-                pass
-
-        try:
-            from .tools.external.mcp_runtime import shutdown_runtime
-            shutdown_runtime()
-        except Exception:
-            pass
-
-        reply_modes.stop()
+        _stop_engines_side_by_side(tts)
         activity_runtime.stop()
         documents_runtime.stop()
         smarthome_service.set_home(None)
@@ -1858,7 +1957,8 @@ def main(smoke_test: bool = False) -> None:
     try:
         # Main daemon loop
         while not _global_stop_requested:
-            time.sleep(1.0)
+            if _wait_for_stop(1.0):
+                break
             now = time.time()
 
             # Periodically check if diary should be updated
@@ -1869,7 +1969,8 @@ def main(smoke_test: bool = False) -> None:
         # Keep voice thread alive (unless stop requested)
         if voice_thread is not None:
             while voice_thread.is_alive() and not _global_stop_requested:
-                time.sleep(0.5)
+                if _wait_for_stop(0.5):
+                    break
                 _check_and_update_diary(db, cfg, verbose=False)
 
     except KeyboardInterrupt:
@@ -1932,18 +2033,9 @@ def main(smoke_test: bool = False) -> None:
         print("✅ Diary update complete", flush=True)
         debug_log("diary update complete", "jarvis")
 
-        if tts is not None:
-            tts.stop()
-
-        # Tear down persistent MCP sessions so subprocess-launched
-        # children (e.g. chrome-devtools-mcp's Chrome) close cleanly.
-        try:
-            from .tools.external.mcp_runtime import shutdown_runtime
-            shutdown_runtime()
-        except Exception as _e:
-            debug_log(f"MCP runtime shutdown error: {_e}", "jarvis")
-
-        reply_modes.stop()
+        # TTS, the persistent MCP sessions (so subprocess-launched children such as
+        # chrome-devtools-mcp's Chrome close cleanly) and the reply bridge stop side by side.
+        _stop_engines_side_by_side(tts)
         activity_runtime.stop()
         documents_runtime.stop()
         smarthome_service.set_home(None)

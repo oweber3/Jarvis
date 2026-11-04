@@ -518,7 +518,7 @@ class OllamaBackend(LLMBackend):
         try:
             resp = requests.post(
                 f"{self._base_url}/api/embeddings",
-                json={"model": model, "prompt": text},
+                json={"model": model, "prompt": text, "keep_alive": self._keep_alive},
                 timeout=timeout_sec,
             )
             resp.raise_for_status()
