@@ -114,6 +114,33 @@ class TestStaticFiles:
         assert status == 200 and "javascript" in response.getheader("Content-Type")
         assert call(parts, "GET", "/assets/app.css")[2].getheader("Content-Type").startswith("text/css")
 
+    def test_built_assets_are_kept_by_the_browser_and_the_page_is_asked_for_every_time(self, parts):
+        # Built assets are named by their content, so a new build is a new name.
+        assert call(parts, "GET", "/assets/app.js")[2].getheader("Cache-Control") == "public, max-age=31536000, immutable"
+        assert call(parts, "GET", "/")[2].getheader("Cache-Control") == "no-cache"
+
+    def test_text_files_travel_compressed_to_a_browser_that_takes_gzip(self, parts):
+        import gzip
+        script = "console.log('a fairly long line of a built bundle');\n" * 200
+        (parts.server.settings.static_dir / "assets" / "big.js").write_text(script)
+        status, body, response = call(parts, "GET", "/assets/big.js", headers={"Accept-Encoding": "gzip, br"})
+        assert status == 200 and response.getheader("Content-Encoding") == "gzip"
+        assert gzip.decompress(body).decode() == script
+        assert int(response.getheader("Content-Length")) == len(body) < len(script)
+        assert "Accept-Encoding" in (response.getheader("Vary") or "")
+        status, body, response = call(parts, "GET", "/assets/big.js")
+        assert response.getheader("Content-Encoding") is None and body.decode() == script
+
+    def test_a_rebuilt_file_is_served_as_it_now_is(self, parts):
+        page = parts.server.settings.static_dir / "index.html"
+        call(parts, "GET", "/")
+        page.write_text("<!doctype html><title>Rebuilt page, longer than the one before it</title>")
+        assert b"Rebuilt page" in call(parts, "GET", "/")[1]
+
+    def test_answers_are_never_compressed_or_kept(self, parts):
+        status, _, response = call(parts, "GET", "/api/state", headers={"Accept-Encoding": "gzip"})
+        assert response.getheader("Content-Encoding") is None and response.getheader("Cache-Control") == "no-store"
+
     @pytest.mark.parametrize("path", ["/assets/../../secret.txt", "/assets/..%2f..%2fsecret.txt", "/../secret.txt",
                                       "/assets/%2e%2e/%2e%2e/secret.txt", "/assets/missing.js", "/assets/"])
     def test_nothing_outside_the_assets_folder_is_served(self, parts, path):

@@ -43,7 +43,11 @@ def built_files():
 
 
 def source_files():
-    sources = [p for p in SOURCE.rglob("*") if p.suffix in {".ts", ".tsx", ".css"}]
+    """The page's own sources. Tests (``*.test.ts(x)`` and ``src/test/``) are left out: they never reach a build,
+    and a test of how a link in a reply is drawn has to name one; the builds themselves are checked above."""
+    tests = SOURCE / "test"
+    sources = [p for p in SOURCE.rglob("*") if p.suffix in {".ts", ".tsx", ".css"}
+               and ".test." not in p.name and tests not in p.parents]
     return sources + [UI / "phone.html", UI / "public-phone" / "pcm-worklet.js", UI / "public-phone" / "manifest.webmanifest",
                       UI / "public-phone" / "icon.svg"]
 

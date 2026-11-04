@@ -209,6 +209,20 @@ class TestAuthentication:
 
 
 @pytest.mark.unit
+class TestStaticFilesTravelLight:
+    def test_built_assets_are_kept_and_compressed_and_the_page_is_asked_for_every_time(self, server, static_dir):
+        import gzip
+        script = "console.log('a fairly long line of the phone bundle');\n" * 200
+        (static_dir / "assets" / "big.js").write_text(script)
+        status, body, headers = Client(server).request("GET", "/assets/big.js", headers={"Accept-Encoding": "gzip"})
+        assert status == 200 and headers["Content-Encoding"] == "gzip"
+        assert gzip.decompress(body).decode() == script
+        assert headers["Cache-Control"] == "public, max-age=31536000, immutable"
+        assert Client(server).request("GET", "/")[2]["Cache-Control"] == "no-cache"
+        assert Client(server).request("GET", "/manifest.webmanifest")[2]["Cache-Control"] == "no-cache"
+
+
+@pytest.mark.unit
 class TestChatThroughTheSharedHub:
     def test_a_request_is_answered_in_the_open_chat(self, server, store, chat_backend):
         client = paired_client(server, store)

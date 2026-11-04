@@ -28,6 +28,7 @@ The server runs in the daemon process, like Phone Access (`remote/remote.spec.md
 | `jarvis/webchat/uploads.py` | Attachments: telling an upload apart by its content, preparing it for a model, `UploadStore` (in memory only) |
 | `jarvis/reply/attachments.py` | `RequestAttachment`: what a request carries, the fence around file text, the note a model reads, the kind-and-size summary that is stored |
 | `jarvis/webchat/server.py` | Threaded HTTP server (standard library), routing, guards, static files |
+| `jarvis/webchat/static_files.py` | How the built files travel: the assets kept by the browser, text compressed when it is accepted; shared with phone access |
 | `jarvis/webchat/identity.py` | The server's per-run identity token and the HMAC proof the desktop window checks |
 | `jarvis/webchat/runtime.py` | `start(cfg)` / `stop()`: called by the daemon; starts nothing when disabled. `acquire_hub(cfg)` / `release_hub()`: the one hub and store the web chat and phone access share, started by the first user and stopped by the last |
 | `jarvis/webchat/static/` | The built React app. Committed, so a source checkout needs no Node |
@@ -57,7 +58,7 @@ Applied to every request before routing:
 
 On Windows the socket is bound with `SO_EXCLUSIVEADDRUSE`, so no other socket can take over `127.0.0.1:<port>` and its connections while Jarvis serves it.
 
-Responses carry `Content-Security-Policy: default-src 'self'` (images may also be `data:` and styles inline), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `Permissions-Policy: microphone=(), camera=(), geolocation=()` (see **Voice input**), and `Cache-Control: no-store` for the API. Static files are served only from the built `index.html` and the `assets/` folder; nothing else on disk is reachable.
+Responses carry `Content-Security-Policy: default-src 'self'` (images may also be `data:` and styles inline), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, `Permissions-Policy: microphone=(), camera=(), geolocation=()` (see **Voice input**), and `Cache-Control: no-store` for the API. Static files are served only from the built `index.html` and the `assets/` folder; nothing else on disk is reachable. The built assets are named by their content, so they carry `Cache-Control: public, max-age=31536000, immutable` and the browser keeps them; the page itself is `no-cache`. Text files (`.js`, `.css`, `.html`, `.svg`, `.json` and the like) of 1 KiB or more go gzip-compressed to a browser that accepts it (`Vary: Accept-Encoding`), compressed once and kept in memory until the file changes (`webchat/static_files.py`, shared with phone access). API answers are never compressed or kept.
 
 ## Data
 

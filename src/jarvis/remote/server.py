@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from ..debug import debug_log
 from ..utils.local_guard import refusal
 from ..webchat.api import POLL_TIMEOUT_SEC, ChatApi, Refused as _Refused
+from ..webchat.static_files import StaticFiles, cache_control
 from ..webchat.uploads import MAX_UPLOAD_BYTES
 from .networks import is_allowed_client, is_own_host, pc_name
 from .phone import PhoneState
@@ -166,6 +167,7 @@ def _declares(content_type: Optional[str], expected: str) -> bool:
 def _make_handler(server: RemoteServer):
     api = server.api
     tls = server.secure
+    files = StaticFiles()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "Jarvis"
@@ -184,11 +186,16 @@ def _make_handler(server: RemoteServer):
 
         # -- responses -------------------------------------------------------------
 
-        def _send(self, status: int, body: bytes, content_type: str, *, api_response: bool) -> None:
+        def _send(self, status: int, body: bytes, content_type: str, *, api_response: bool, cache: str = "no-cache",
+                  encoding: Optional[str] = None, varies: bool = False) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store" if api_response else "no-cache")
+            self.send_header("Cache-Control", "no-store" if api_response else cache)
+            if encoding:
+                self.send_header("Content-Encoding", encoding)
+            if varies:
+                self.send_header("Vary", "Accept-Encoding")
             for name, value in SECURITY_HEADERS.items():
                 self.send_header(name, value)
             self.end_headers()
@@ -380,7 +387,9 @@ def _make_handler(server: RemoteServer):
                 raise _Refused(404, "not_found")
             if not target.is_file():
                 raise _Refused(404, "not_found")
-            self._send(200, target.read_bytes(), content_type, api_response=False)
+            body, encoding = files.body(target, self.headers.get("Accept-Encoding"))
+            self._send(200, body, content_type, api_response=False, cache=cache_control(path), encoding=encoding,
+                       varies=files.varies(target))
 
         # -- endpoints -------------------------------------------------------------------
 
