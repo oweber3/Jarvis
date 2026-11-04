@@ -261,7 +261,19 @@ describe("interrupting", () => {
     expect(w.state.played).toBe(0)
   })
 
-  it("a tap while Jarvis speaks stops the playback (barge-in) and ends conversation mode", async () => {
+  it("a tap while Jarvis speaks a one-off reply stops the playback (barge-in) and goes idle", async () => {
+    const w = world()
+    await speakARequest(w)
+    w.session.audioChanged(ready())
+    await tick()
+    expect(w.session.view.phase).toBe("speaking")
+    w.session.tap()
+    await tick()
+    expect(w.state.stopped).toBeGreaterThan(0)
+    expect(w.session.view.phase).toBe("idle")
+  })
+
+  it("in conversation mode, a tap while Jarvis speaks stops the playback and listens straight away", async () => {
     const w = world()
     w.session.setConversation(true)
     await speakARequest(w)
@@ -271,8 +283,15 @@ describe("interrupting", () => {
     w.session.tap()
     await tick()
     expect(w.state.stopped).toBeGreaterThan(0)
-    expect(w.session.view.conversation).toBe(false)
-    expect(w.session.view.phase).toBe("idle")
+    expect(w.session.view.conversation).toBe(true)
+    expect(w.session.view.phase).toBe("listening")
+    // The barge-in starts one recording, not a second one when the stopped reply's playback ends.
+    expect(w.state.opens).toBe(1)
+    w.mic.feed(0.4, QUIET)
+    w.mic.feed(0.6, SPEECH)
+    w.mic.feed(1.5, QUIET)
+    await tick()
+    expect(w.sent).toHaveLength(2)
   })
 
   it("stop() lets go of the microphone and the audio and ignores a late answer", async () => {

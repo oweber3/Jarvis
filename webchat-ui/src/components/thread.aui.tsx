@@ -56,6 +56,8 @@ export type ThreadComponents = {
   Welcome?: ComponentType | undefined;
   ComposerLeading?: ComponentType | undefined;
   ComposerTrailing?: ComponentType | undefined;
+  /** Shown just above the composer, inside the sticky footer (the phone app's confirmation, toast and voice indicator). */
+  ComposerAbove?: ComponentType | undefined;
   /** The Screenshot button; `null` leaves it out (the phone app has no screen of its own to share). */
   ComposerScreenshotButton?: ComponentType | null | undefined;
 };
@@ -124,7 +126,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
   isEmpty,
   autoFocus,
 }) => {
-  const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
+  const { Welcome = ThreadWelcome, ComposerAbove } = useContext(ThreadComponentsContext);
 
   return (
     <ThreadPrimitive.Root
@@ -173,6 +175,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
             )}
           >
             <ThreadScrollToBottom />
+            {ComposerAbove ? <ComposerAbove /> : null}
             <Composer autoFocus={autoFocus} />
           </ThreadPrimitive.ViewportFooter>
         </div>

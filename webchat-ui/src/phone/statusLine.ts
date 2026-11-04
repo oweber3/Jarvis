@@ -1,25 +1,35 @@
 import { MODE_LABELS } from "@/models"
 
-// The one line under the orb: whether the PC can be reached, who answers, and how busy the PC is.
+// What the header's connection dot shows, and the details behind it: whether the PC can be reached, who
+// answers, and how busy the PC is.
 
-export type StatusInput = {
-  reachable: boolean
-  ready: boolean
+export type ConnectionInput = { reachable: boolean; ready: boolean; busy: boolean }
+
+export type Connection = { tone: "good" | "warn" | "bad"; label: string }
+
+/** The header's dot: green when the PC is connected and free, amber while busy or starting, red when unreachable. */
+export function connection(input: ConnectionInput): Connection {
+  if (!input.reachable) return { tone: "bad", label: "Can't reach the PC" }
+  if (!input.ready) return { tone: "warn", label: "Jarvis is starting" }
+  if (input.busy) return { tone: "warn", label: "Jarvis is busy" }
+  return { tone: "good", label: "Connected" }
+}
+
+export type StatusInput = ConnectionInput & {
   mode: string | undefined
   pc: { cpu: number; ram: number } | null | undefined
 }
 
-export type StatusPart = { text: string; tone: "good" | "warn" | "muted" }
+export type StatusRow = { term: string; text: string }
 
-export function statusParts(input: StatusInput): StatusPart[] {
-  const parts: StatusPart[] = []
-  if (!input.reachable) parts.push({ text: "Can't reach the PC", tone: "warn" })
-  else if (!input.ready) parts.push({ text: "Jarvis is starting", tone: "warn" })
-  else parts.push({ text: "Connected", tone: "good" })
-  if (input.reachable && input.mode) parts.push({ text: MODE_LABELS[input.mode] ?? input.mode, tone: "muted" })
-  if (input.reachable && input.pc) {
-    parts.push({ text: `CPU ${Math.round(input.pc.cpu)}%`, tone: "muted" })
-    parts.push({ text: `RAM ${Math.round(input.pc.ram)}%`, tone: "muted" })
+/** The rows of the status details. Only the connection is shown while the PC cannot be reached. */
+export function statusDetails(input: StatusInput): StatusRow[] {
+  const rows: StatusRow[] = [{ term: "Connection", text: connection(input).label }]
+  if (!input.reachable) return rows
+  if (input.mode) rows.push({ term: "Replies", text: MODE_LABELS[input.mode] ?? input.mode })
+  if (input.pc) {
+    rows.push({ term: "PC CPU", text: `${Math.round(input.pc.cpu)}%` })
+    rows.push({ term: "PC memory", text: `${Math.round(input.pc.ram)}%` })
   }
-  return parts
+  return rows
 }
