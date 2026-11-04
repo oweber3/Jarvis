@@ -22,7 +22,7 @@ import {
   type Snapshot,
 } from "@/api"
 import { JarvisAttachmentAdapter } from "@/attachmentAdapter"
-import { buildThreadMessages, chatTitle, type Pending } from "@/conversion"
+import { buildThreadMessages, chatTitle, convertThreadMessage, type Pending } from "@/conversion"
 import { ChatSync } from "@/sync"
 
 // All of the page's state. The server owns the conversation (voice and typed turns land in the open chat
@@ -282,7 +282,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
 
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
     messages: threadMessages,
-    convertMessage: (message) => message,
+    convertMessage: convertThreadMessage,
     isRunning: pending !== null || meta.busy_query,
     isLoading: loadingChat,
     isDisabled: !meta.ready || !reachable,

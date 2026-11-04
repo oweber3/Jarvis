@@ -39,8 +39,16 @@ function stepParts(message: ChatMessage): ThreadMessageLikePart[] {
   }))
 }
 
+// What the thread renders for each stored message and notice is built once per object and then reused, so a poll
+// that brings one new turn (or only a change of Jarvis's state) leaves every other turn's objects as they were and
+// React redraws only what changed. The stored message objects themselves are kept across polls (``mergeMessages``).
+const threadMessageCache = new WeakMap<ChatMessage, ThreadMessageLike>()
+const noticeCache = new WeakMap<Notice, ThreadMessageLike[]>()
+
 export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
-  return {
+  const known = threadMessageCache.get(message)
+  if (known) return known
+  const built: ThreadMessageLike = {
     id: `m${message.id}`,
     role: message.role,
     content: [...stepParts(message), { type: "text", text: message.text }],
@@ -52,11 +60,19 @@ export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
       custom: { source: message.source },
     },
   }
+  threadMessageCache.set(message, built)
+  return built
 }
+
+/** The thread's own conversion step: the page hands it messages that are already in the thread's shape. One
+ * function for the page's lifetime, so the runtime keeps its cache of converted messages between renders. */
+export const convertThreadMessage = (message: ThreadMessageLike): ThreadMessageLike => message
 
 // A local line (busy, stopped, could not answer): shown, never stored. A failed request is shown
 // first as the message the owner sent.
 export function noticeMessages(notice: Notice): ThreadMessageLike[] {
+  const known = noticeCache.get(notice)
+  if (known) return known
   const out: ThreadMessageLike[] = []
   const createdAt = new Date(notice.ts * 1000)
   if (notice.request) {
@@ -75,6 +91,7 @@ export function noticeMessages(notice: Notice): ThreadMessageLike[] {
     status: { type: "complete", reason: "stop" },
     metadata: { custom: { notice: true, kind: notice.kind } },
   })
+  noticeCache.set(notice, out)
   return out
 }
 
