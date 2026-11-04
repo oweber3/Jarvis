@@ -259,7 +259,7 @@ def test_dialog_confirmation_can_authorise_central_execution(mock_config, monkey
     from jarvis.tools.confirmation import set_result_handler
     shown, done, delivered = [], threading.Event(), []
     set_dialog_callback(lambda request, resolve: shown.append(resolve) or object())
-    set_result_handler(lambda reply, ok: (delivered.append(reply), done.set()))
+    set_result_handler(lambda reply, ok, *_: (delivered.append(reply), done.set()))
     route = FastMatch('app.close', 'apps', 'appControl', {'action': 'close', 'target': 'Word'})
     try:
         # The request returns immediately; Confirm runs the action on a worker.

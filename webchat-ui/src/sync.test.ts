@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import type { Chat, ChatMessage, Library, Snapshot } from "@/api"
 import type { Pending } from "@/conversion"
-import { ChatSync, type SyncApi, type SyncView } from "@/sync"
+import { ChatSync, PAGE_MESSAGES, WINDOW_MESSAGES, type ChatPage, type HistoryWindow, type SyncApi, type SyncView } from "@/sync"
 
 // The page follows the server with a long poll while the owner acts at the same time. These tests drive
 // ChatSync with a scripted server, so they check what the page ends up showing, not how it gets there.
@@ -65,7 +65,7 @@ function snapshot(over: Partial<Snapshot> = {}): Snapshot {
 // ``holdLibrary``: library fetches wait for the test to answer them (to control their timing or failure).
 function setup(holdLibrary = false) {
   const polls: Array<{ rev: number; after: number; reply: Deferred<Snapshot> }> = []
-  const chats = new Map<string, Deferred<{ chat: Chat; messages: ChatMessage[] }>[]>()
+  const chats = new Map<string, Deferred<ChatPage>[]>()
   const libraries: Array<Deferred<Library>> = []
   const api = {
     poll: vi.fn((rev: number, after: number, signal: AbortSignal) => {
@@ -80,8 +80,8 @@ function setup(holdLibrary = false) {
       libraries.push(next)
       return next.promise
     }),
-    chat: vi.fn((id: string) => {
-      const next = deferred<{ chat: Chat; messages: ChatMessage[] }>()
+    chat: vi.fn((id: string, _page?: { limit: number; before?: number; around?: number }) => {
+      const next = deferred<ChatPage>()
       chats.set(id, [...(chats.get(id) ?? []), next])
       return next.promise
     }),
@@ -95,6 +95,7 @@ function setup(holdLibrary = false) {
     messages: [] as ChatMessage[],
     pending: null as Pending | null,
     reachable: true,
+    window: { hasEarlier: false, hasLater: false } as HistoryWindow,
   }
   const view: SyncView = {
     library: (l) => (shown.library = l),
@@ -105,6 +106,7 @@ function setup(holdLibrary = false) {
     loading: () => undefined,
     pending: (p) => (shown.pending = p),
     reachable: (r) => (shown.reachable = r),
+    window: (w) => (shown.window = w),
   }
   const sync = new ChatSync(api, view, async () => undefined)
   const abort = new AbortController()
@@ -117,8 +119,8 @@ function setup(holdLibrary = false) {
     libraries,
     start: () => void sync.run(abort.signal),
     stop: () => abort.abort(),
-    answerChat(id: string, messages: ChatMessage[] = [], index = 0) {
-      chats.get(id)![index]!.resolve({ chat: chat(id), messages })
+    answerChat(id: string, messages: ChatMessage[] = [], index = 0, flags: Partial<ChatPage> = {}) {
+      chats.get(id)![index]!.resolve({ chat: chat(id), messages, has_earlier: false, has_later: false, ...flags })
     },
   }
 }
@@ -132,8 +134,10 @@ describe("a failed library refresh", () => {
     await settle()
     t.libraries[0]!.reject(new Error("offline"))
     await settle()
+    t.answerChat("A") // the chat loads meanwhile
+    await settle()
 
-    // the same state is asked for again straight away, and the library is fetched again
+    // the same state is asked for again, and the library is fetched again
     expect(t.polls).toHaveLength(2)
     expect(t.polls[1]!.rev).toBe(-1)
     expect(t.shown.library).toBeNull()
@@ -141,8 +145,6 @@ describe("a failed library refresh", () => {
     await settle()
     expect(t.api.library).toHaveBeenCalledTimes(2)
     t.libraries[1]!.resolve(library())
-    await settle()
-    t.answerChat("A")
     await settle()
     expect(t.shown.library?.chats).toHaveLength(2)
 
@@ -275,5 +277,185 @@ describe("the message being sent", () => {
     t.sync.beginSend("hello")
     t.sync.sendFailed()
     expect(t.shown.pending).toBeNull()
+  })
+})
+
+// A chat can hold thousands of turns (every voice request lands in the open chat), so the page holds a window of
+// it: the newest page first, earlier pages as the owner scrolls up, never more than WINDOW_MESSAGES at once.
+const run = (from: number, count: number) => Array.from({ length: count }, (_, i) => message(from + i, i % 2 ? "assistant" : "user"))
+
+async function openedWith(t: ReturnType<typeof setup>, messages: ChatMessage[], flags: Partial<ChatPage> = {}) {
+  t.start()
+  await settle()
+  t.polls[0]!.reply.resolve(snapshot({ rev: 1, active_chat_id: "A" }))
+  await settle()
+  t.answerChat("A", messages, 0, flags)
+  await settle()
+}
+
+describe("a long chat", () => {
+  it("is loaded newest page first, and the first poll asks for no messages it would only send again", async () => {
+    const t = setup()
+    await openedWith(t, run(951, 50), { has_earlier: true })
+    expect(t.polls[0]!.after).toBeGreaterThan(Number.MAX_SAFE_INTEGER - 1)
+    expect(t.api.chat).toHaveBeenCalledWith("A", { limit: PAGE_MESSAGES })
+    expect(t.shown.window).toEqual({ hasEarlier: true, hasLater: false })
+    // from then on the poll asks for what is newer than the newest message shown
+    expect(t.polls.at(-1)!.after).toBe(1000)
+    t.stop()
+  })
+
+  it("puts earlier messages before the shown ones, once", async () => {
+    const t = setup()
+    await openedWith(t, run(951, 50), { has_earlier: true })
+    const loading = t.sync.loadEarlier()
+    void t.sync.loadEarlier() // a second scroll to the top joins the first
+    await settle()
+    expect(t.api.chat).toHaveBeenLastCalledWith("A", { limit: PAGE_MESSAGES, before: 951 })
+    t.answerChat("A", run(901, 50), 1, { has_earlier: false, has_later: true })
+    await loading
+    expect(t.api.chat).toHaveBeenCalledTimes(2)
+    expect(t.shown.messages.map((m) => m.id)).toEqual(run(901, 100).map((m) => m.id))
+    expect(t.shown.window).toEqual({ hasEarlier: false, hasLater: false })
+    t.stop()
+  })
+
+  // Takes about 25 s on Windows, past the default 5 s limit.
+  it("lets go of the newest messages once the window is full, and follows them again on the way back", async () => {
+    const t = setup()
+    await openedWith(t, run(10_001, 50), { has_earlier: true })
+    let first = 10_001
+    for (let page = 1; first - PAGE_MESSAGES > 0 && t.shown.messages.length < WINDOW_MESSAGES + PAGE_MESSAGES; page++) {
+      const loading = t.sync.loadEarlier()
+      await settle()
+      first -= PAGE_MESSAGES
+      t.answerChat("A", run(first, PAGE_MESSAGES), page, { has_earlier: true, has_later: true })
+      await loading
+    }
+    expect(t.shown.messages.length).toBeLessThanOrEqual(WINDOW_MESSAGES)
+    expect(t.shown.messages[0]!.id).toBe(first)
+    expect(t.shown.window.hasLater).toBe(true)
+
+    // away from the end, new turns are not added below the window and the poll does not ask for them
+    t.polls.at(-1)!.reply.resolve(snapshot({ rev: 2, messages: [message(20_000, "assistant", "new")] }))
+    await settle()
+    expect(t.shown.messages.some((m) => m.id === 20_000)).toBe(false)
+    expect(t.polls.at(-1)!.after).toBeGreaterThan(Number.MAX_SAFE_INTEGER - 1)
+
+    const back = t.sync.jumpToLatest()
+    await settle()
+    expect(t.api.chat).toHaveBeenLastCalledWith("A", { limit: PAGE_MESSAGES })
+    t.answerChat("A", run(19_951, 50), t.chats.get("A")!.length - 1, { has_earlier: true })
+    await back
+    expect(t.shown.window).toEqual({ hasEarlier: true, hasLater: false })
+    expect(t.shown.messages.at(-1)!.id).toBe(20_000)
+    t.stop()
+  }, 60_000)
+
+  it("keeps the newest messages while a message is being sent", async () => {
+    const t = setup()
+    await openedWith(t, run(10_001, 50), { has_earlier: true })
+    t.sync.beginSend("hello")
+    let first = 10_001
+    for (let page = 1; page <= 8; page++) {
+      const loading = t.sync.loadEarlier()
+      await settle()
+      first -= PAGE_MESSAGES
+      t.answerChat("A", run(first, PAGE_MESSAGES), page, { has_earlier: true, has_later: true })
+      await loading
+    }
+    expect(t.shown.messages.at(-1)!.id).toBe(10_050)
+    expect(t.shown.window.hasLater).toBe(false)
+    t.stop()
+  })
+
+  it("opens a search result on the stretch around the message found", async () => {
+    const t = setup()
+    await openedWith(t, run(951, 50), { has_earlier: true })
+    const opening = t.sync.openChat("B", 42)
+    await settle()
+    expect(t.api.chat).toHaveBeenLastCalledWith("B", { limit: PAGE_MESSAGES, around: 42 })
+    t.answerChat("B", run(17, 50), 0, { has_earlier: true, has_later: true })
+    await opening
+    expect(t.shown.chat?.id).toBe("B")
+    expect(t.shown.window).toEqual({ hasEarlier: true, hasLater: true })
+    t.stop()
+  })
+})
+
+describe("while Jarvis cannot be reached", () => {
+  it("asks again at once when the owner says so, instead of waiting out the back-off", async () => {
+    const t = setup()
+    const waits: Array<() => void> = []
+    const sync = new ChatSync(t.api, {
+      library: () => undefined,
+      chat: () => undefined,
+      messages: () => undefined,
+      notices: () => undefined,
+      meta: () => undefined,
+      loading: () => undefined,
+      pending: () => undefined,
+      reachable: () => undefined,
+      window: () => undefined,
+    }, () => new Promise<void>((resolve) => waits.push(resolve)))
+    const abort = new AbortController()
+    void sync.run(abort.signal)
+    await settle()
+    t.polls[0]!.reply.reject(new Error("offline"))
+    await settle()
+    expect(t.polls).toHaveLength(1) // waiting out the back-off
+    sync.retryNow()
+    await settle()
+    expect(t.polls).toHaveLength(2)
+    abort.abort()
+  })
+})
+
+describe("a request made outside the message box", () => {
+  it("brings back the newest messages first when the window had let go of them", async () => {
+    const t = setup()
+    await openedWith(t, run(951, 50), { has_earlier: true })
+    const opening = t.sync.openChat("A", 42)
+    await settle()
+    t.answerChat("A", run(17, 50), 1, { has_earlier: true, has_later: true })
+    await opening
+    expect(t.sync.detached).toBe(true)
+
+    const sending = t.sync.beginSendAtLatest("what time is it")
+    await settle()
+    expect(t.api.chat).toHaveBeenLastCalledWith("A", { limit: PAGE_MESSAGES })
+    t.answerChat("A", run(951, 50), 2, { has_earlier: true })
+    await sending
+    expect(t.sync.detached).toBe(false)
+    expect(t.shown.pending).toMatchObject({ text: "what time is it", afterId: 1000 })
+    t.stop()
+  })
+})
+
+describe("messages taken back on another page", () => {
+  it("are dropped from this page too, also when the first reload fails", async () => {
+    const t = setup()
+    t.start()
+    await settle()
+    t.polls[0]!.reply.resolve(snapshot({ rev: 1, history_rev: 0 }))
+    await settle()
+    t.answerChat("A", run(1, 4))
+    await settle()
+    expect(t.shown.messages.map((m) => m.id)).toEqual([1, 2, 3, 4])
+
+    // Another page asked message 3 again: 3 and 4 are gone from the chat, and the page must reload it.
+    t.polls[1]!.reply.resolve(snapshot({ rev: 2, history_rev: 1 }))
+    await settle()
+    t.chats.get("A")![1]!.reject(new Error("offline"))
+    await settle()
+
+    // The next snapshot brings the new exchange; the page reloads rather than adding it below 3 and 4.
+    t.polls.at(-1)!.reply.resolve(snapshot({ rev: 3, history_rev: 1, messages: [message(5, "user"), message(6, "assistant")] }))
+    await settle()
+    expect(t.chats.get("A")).toHaveLength(3)
+    t.answerChat("A", [...run(1, 2), message(5, "user"), message(6, "assistant")], 2)
+    await settle()
+    expect(t.shown.messages.map((m) => m.id)).toEqual([1, 2, 5, 6])
+    t.stop()
   })
 })

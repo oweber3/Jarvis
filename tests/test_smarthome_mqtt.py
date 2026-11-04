@@ -40,6 +40,12 @@ def announce(broker):
         "name": "Chime", "unique_id": "chime_1", "command_topic": "chime/press"})
 
 
+@pytest.fixture(autouse=True)
+def _short_test_settle(monkeypatch):
+    """A loopback broker delivers retained messages at once, so a connection test settles in far less than a second."""
+    monkeypatch.setattr(mqtt, "TEST_SETTLE_SEC", 0.3)
+
+
 @pytest.fixture
 def broker():
     server = FakeBroker()
@@ -143,8 +149,9 @@ class TestCommands:
         assert ("plug/7/set", b"ON", False) in broker.published
         assert registry.get("mqtt:plug_7").state == "on"
 
-    def test_json_schema_lights_get_json_commands(self, connector, broker):
+    def test_json_schema_lights_get_json_commands(self, connector, broker, monkeypatch):
         conn, registry = connector
+        monkeypatch.setattr(mqtt, "CONFIRM_TIMEOUT_SEC", 0.2)   # this light never reports back
         conn.send(registry.get("mqtt:desk_light_1"), Command("set", "colour", "red"))
         topic, payload, retain = broker.published[-1]
         assert topic == "home/desk/set" and not retain
@@ -217,7 +224,7 @@ class TestConnection:
 class TestRobustness:
     def test_the_connection_goes_to_the_resolved_address_not_the_name(self, broker, monkeypatch):
         from jarvis.smarthome import network
-        monkeypatch.setattr(network, "_resolve", lambda host: ["127.0.0.1"])
+        monkeypatch.setattr(network, "_resolve", lambda host, timeout: ["127.0.0.1"])
         # A name no resolver knows: only the pinned socket override can reach the broker.
         assert mqtt.test_connection("jarvis-broker.invalid", broker.port) == 5
         registry = Registry()
@@ -231,7 +238,7 @@ class TestRobustness:
     def test_a_name_not_found_yet_is_retried_without_blocking_start(self, broker, monkeypatch):
         from jarvis.smarthome import network
         answers = iter([[], []])
-        monkeypatch.setattr(network, "_resolve", lambda host: next(answers, ["127.0.0.1"]))
+        monkeypatch.setattr(network, "_resolve", lambda host, timeout: next(answers, ["127.0.0.1"]))
         monkeypatch.setattr(mqtt, "BACKOFF_START_SEC", 0.05)
         registry = Registry()
         conn = mqtt.MqttConnector(registry, "broker.local", broker.port)

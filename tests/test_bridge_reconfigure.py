@@ -117,6 +117,7 @@ class TestCodex:
             started.set()
             release.wait(5)
             model.answer("completed", "done")
+            model.finish()
 
         service, server = codex(slow)
         worker = threading.Thread(target=lambda: ask(service), daemon=True)

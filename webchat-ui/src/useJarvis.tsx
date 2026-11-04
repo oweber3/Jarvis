@@ -22,15 +22,19 @@ import {
   type Snapshot,
 } from "@/api"
 import { JarvisAttachmentAdapter } from "@/attachmentAdapter"
-import { buildThreadMessages, chatTitle, type Pending } from "@/conversion"
-import { ChatSync } from "@/sync"
+import { buildThreadMessages, chatTitle, convertThreadMessage, lastMessageId, type Pending } from "@/conversion"
+import type { LiveStep } from "@/steps"
+import { ChatSync, type HistoryWindow } from "@/sync"
 
 // All of the page's state. The server owns the conversation (voice and typed turns land in the open chat
 // the same way), so this follows it with a long poll and sends only what the owner does.
 
 export type JarvisActions = {
   newChat: (projectId?: string | null) => Promise<void>
-  openChat: (id: string) => Promise<void>
+  /** Opens a chat on its newest messages, or on the stretch around ``messageId`` (a search result). */
+  openChat: (id: string, messageId?: number) => Promise<void>
+  /** Back to the newest messages after scrolling far back in a long chat. */
+  jumpToLatest: () => Promise<void>
   moveChat: (id: string, projectId: string | null) => Promise<void>
   pinChat: (id: string, pinned: boolean) => Promise<void>
   createProject: (name: string) => Promise<void>
@@ -41,6 +45,8 @@ export type JarvisActions = {
   /** A model and effort of the active Claude or Codex mode; an omitted effort keeps the current one when offered. */
   chooseCloudModel: (model: string, effort?: string) => Promise<void>
   clearHistory: () => Promise<void>
+  /** While Jarvis cannot be reached: try again now. */
+  retryNow: () => void
   dismissToast: () => void
   /**
    * A request made outside the composer (the phone's spoken one): show it at once as a thinking bubble,
@@ -67,6 +73,10 @@ export type JarvisView = {
   reachable: boolean
   library: Library
   chat: Chat | null
+  /** How much of the open chat the page holds (a long chat is loaded a page at a time). */
+  history: HistoryWindow
+  /** What Jarvis is doing, for the header's presence line (``presence.ts``). */
+  activity: { state: string; busy: boolean; working: boolean }
   mode: ReplyModes | null
   modelState: LocalModelState
   models: LocalModel[]
@@ -79,6 +89,7 @@ export type JarvisView = {
 }
 
 const EMPTY_LIBRARY: Library = { projects: [], chats: [], active_chat_id: null }
+const NO_NOTICES: Notice[] = []
 const NO_MODEL: LocalModelState = { current: null, switchable: false }
 
 const JarvisContext = createContext<JarvisView | null>(null)
@@ -87,6 +98,12 @@ export function useJarvis(): JarvisView {
   const view = useContext(JarvisContext)
   if (!view) throw new Error("useJarvis must be used inside JarvisProvider")
   return view
+}
+
+// The stored id behind a thread message id ("m<id>"), or null for a notice, a pending message or nothing.
+function storedMessageId(threadId: string | null | undefined): number | null {
+  const found = threadId ? /^m(\d+)$/.exec(threadId) : null
+  return found ? Number(found[1]) : null
 }
 
 function textOf(message: AppendMessage): string {
@@ -107,8 +124,9 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [notices, setNotices] = useState<Notice[]>([])
   const [pending, setPending] = useState<Pending | null>(null)
-  const [meta, setMeta] = useState<Pick<Snapshot, "ready" | "busy" | "busy_query" | "mode" | "model" | "cloud">>({
+  const [meta, setMeta] = useState<Pick<Snapshot, "ready" | "state" | "busy" | "busy_query" | "mode" | "model" | "cloud">>({
     ready: false,
+    state: "idle",
     busy: false,
     busy_query: false,
     mode: null,
@@ -120,6 +138,9 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
   const [attachmentSupport, setAttachmentSupport] = useState<AttachmentSupport | null>(null)
   const [reachable, setReachable] = useState(true)
   const [loadingChat, setLoadingChat] = useState(true)
+  const [history, setHistory] = useState<HistoryWindow>({ hasEarlier: false, hasLater: false })
+  const [stopping, setStopping] = useState(false)
+  const [liveSteps, setLiveSteps] = useState<LiveStep[]>([])
   const [toast, setToast] = useState<string | null>(null)
 
   const chatRef = useRef<Chat | null>(null)
@@ -138,6 +159,9 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
         loading: setLoadingChat,
         pending: setPending,
         reachable: setReachable,
+        window: setHistory,
+        stopping: setStopping,
+        liveSteps: setLiveSteps,
       }),
   )
 
@@ -213,8 +237,12 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
         }
         await guarded(() => sync.newChat(projectId))()
       },
-      async openChat(id) {
-        await guarded(() => sync.openChat(id))()
+      async openChat(id, messageId) {
+        if (messageId !== undefined && id === sync.activeId && sync.messages.some((m) => m.id === messageId)) return
+        await guarded(() => sync.openChat(id, messageId))()
+      },
+      async jumpToLatest() {
+        await guarded(() => sync.jumpToLatest())()
       },
       async moveChat(id, projectId) {
         await guarded(async () => {
@@ -270,40 +298,103 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
           await refreshLibrary()
         })()
       },
+      retryNow: () => sync.retryNow(),
       dismissToast: () => setToast(null),
-      beginSend: (text) => sync.beginSend(text),
+      beginSend: (text) => void sync.beginSendAtLatest(text).catch(() => sync.beginSend(text)),
       sendAccepted: () => sync.sendAccepted(),
       sendFailed: () => sync.sendFailed(),
       showToast: setToast,
     }
   }, [fail, meta.mode, meta.model.current, refreshLibrary, refreshModels, sync])
 
-  const threadMessages = useMemo(() => buildThreadMessages(messages, notices, pending), [messages, notices, pending])
+  const sendNew = async (message: AppendMessage) => {
+    const text = textOf(message)
+    // A message goes below the newest turns, so a window that let go of them comes back first.
+    if (sync.detached) await sync.jumpToLatest()
+    const attached = attachmentAdapter.take((message.attachments ?? []).map((a) => a.id))
+    const forget = () => attached.forEach((a) => void api.discardAttachment(a.serverId).catch(() => undefined))
+    if (!text) return forget()
+    sync.beginSend(text, attached.map(({ kind, size }) => ({ kind, size })))
+    try {
+      const speak = hooksRef.current?.speakReplies?.() ?? false
+      const sent = await api.send(text, attached.map((a) => a.serverId), speak)
+      sync.sendAccepted()
+      hooksRef.current?.onSent?.(sent.query_id, speak)
+    } catch (error) {
+      sync.sendFailed()
+      forget()
+      if (toldByNotice(error)) giveBack(text, attached.length > 0)
+      else fail(error)
+    }
+  }
 
+  // A message Jarvis could not take (busy, not ready) goes back into the message box, unless the owner has started
+  // another one; its attachments were used up by the attempt.
+  const giveBack = (text: string, hadAttachments: boolean) => {
+    const composer = runtimeRef.current?.thread.composer
+    if (!composer || composer.getState().text.trim()) return
+    composer.setText(text)
+    if (hadAttachments) setToast("The message wasn't sent, so its words are back in the message box. Attach the files again.")
+  }
+
+  // ``text`` is the new wording (undefined asks the stored words again); ``shown`` is what the thread shows meanwhile.
+  const askAgain = async (messageId: number, text: string | undefined, shown: string) => {
+    const chatId = sync.activeId
+    if (chatId === null) return
+    // Everything from the message on goes, so the page says what it has shown; read before the thread changes.
+    const newestId = lastMessageId(sync.messages)
+    sync.beginRewind(messageId, shown)
+    try {
+      const speak = hooksRef.current?.speakReplies?.() ?? false
+      const sent = await api.rewind(chatId, messageId, newestId, text, speak)
+      sync.sendAccepted()
+      hooksRef.current?.onSent?.(sent.query_id, speak)
+    } catch (error) {
+      // The owner's new wording goes back into its box once the chat shows the message again.
+      if (text !== undefined) editAgainRef.current = { id: `m${messageId}`, text }
+      await sync.rewindFailed().catch(() => undefined)
+      fail(error)
+    }
+  }
+
+  const onEdit = async (message: AppendMessage) => {
+    const stored = storedMessageId(message.sourceId)
+    if (stored === null) return sendNew(message)
+    const text = textOf(message)
+    if (text) await askAgain(stored, text, text)
+  }
+  const onReload = async (parentId: string | null) => {
+    const stored = storedMessageId(parentId)
+    const original = sync.messages.find((m) => m.id === stored)
+    if (stored !== null && original?.role === "user") await askAgain(stored, undefined, original.text)
+  }
+
+  // Notices belong to the newest moment of the chat, so a window that stops short of it shows none.
+  const shownNotices = history.hasLater ? NO_NOTICES : notices
+  const threadMessages = useMemo(
+    () => buildThreadMessages(messages, shownNotices, pending, liveSteps),
+    [messages, shownNotices, pending, liveSteps],
+  )
+
+  const runtimeRef = useRef<ReturnType<typeof useExternalStoreRuntime> | null>(null)
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
     messages: threadMessages,
-    convertMessage: (message) => message,
-    isRunning: pending !== null || meta.busy_query,
+    convertMessage: convertThreadMessage,
+    // Stop gives the message box back at once, as the desktop chat does; the server's notice follows.
+    isRunning: !stopping && ((pending !== null && !pending.stopped) || meta.busy_query),
     isLoading: loadingChat,
     isDisabled: !meta.ready || !reachable,
-    onNew: async (message) => {
-      const text = textOf(message)
-      const attached = attachmentAdapter.take((message.attachments ?? []).map((a) => a.id))
-      const forget = () => attached.forEach((a) => void api.discardAttachment(a.serverId).catch(() => undefined))
-      if (!text) return forget()
-      sync.beginSend(text, attached.map(({ kind, size }) => ({ kind, size })))
-      try {
-        const speak = hooksRef.current?.speakReplies?.() ?? false
-        const sent = await api.send(text, attached.map((a) => a.serverId), speak)
-        sync.sendAccepted()
-        hooksRef.current?.onSent?.(sent.query_id, speak)
-      } catch (error) {
-        sync.sendFailed()
-        forget()
-        if (!toldByNotice(error)) fail(error)
-      }
-    },
+    hasEarlier: history.hasEarlier,
+    onLoadEarlier: () => sync.loadEarlier(),
+    onNew: (message) => sendNew(message),
+    // Edit: a stored message is asked again with the new words (it and what followed are replaced). A message that
+    // was never stored (it failed or was stopped) is simply sent again as edited. Neither Edit nor Ask again is
+    // offered while the page shows an earlier stretch of the chat: what would go is not all on the page.
+    onEdit: history.hasLater ? undefined : onEdit,
+    // Regenerate: the owner's message before a reply is asked again as it was.
+    onReload: history.hasLater ? undefined : onReload,
     onCancel: async () => {
+      sync.stopRequested()
       try {
         await api.stop()
       } catch (error) {
@@ -337,12 +428,35 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
     },
   })
 
+  runtimeRef.current = runtime
+
+  // An edit Jarvis could not take reopens with its words, once the thread holds the message again.
+  const editAgainRef = useRef<{ id: string; text: string } | null>(null)
+  useEffect(() => {
+    const wanted = editAgainRef.current
+    if (!wanted || !threadMessages.some((m) => m.id === wanted.id)) return
+    editAgainRef.current = null
+    const thread = runtime.thread
+    if (!thread.getState().capabilities.edit) return
+    try {
+      const composer = thread.getMessageById(wanted.id).composer
+      composer.beginEdit()
+      composer.setText(wanted.text)
+    } catch {
+      // The message is no longer in the thread, or is being edited already.
+    }
+  }, [runtime, threadMessages])
+  const working = !stopping && (pending !== null || meta.busy_query)
+  const activity = useMemo(() => ({ state: meta.state, busy: meta.busy, working }), [meta.state, meta.busy, working])
+
   const view = useMemo<JarvisView>(
     () => ({
       ready: meta.ready,
       reachable,
       library,
       chat,
+      history,
+      activity,
       mode: meta.mode,
       modelState: meta.model,
       models,
@@ -354,9 +468,11 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
     }),
     [
       actions,
+      activity,
       attachmentSupport,
       chat,
       cloudModels,
+      history,
       library,
       meta.cloud,
       meta.mode,

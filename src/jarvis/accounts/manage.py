@@ -25,6 +25,7 @@ CALENDAR_ERRORS = {
     "http_error": "the address was refused (it may have been reset; copy the current secret address)",
     "not_a_calendar": "the address did not return a calendar (use the secret address in iCal format)",
     "too_large": "the calendar file is too large",
+    "too_complex": "the calendar file takes too long to read",
     "not_signed_in": "the sign-in has expired or was removed (sign in again)",
     "server_error": "the calendar service returned an error",
     "outlook_not_installed": "classic Outlook is not installed",
@@ -346,15 +347,20 @@ class AccountStore:
         previous = credentials.get_secret(key) if same else ""
         if not credentials.set_secret(key, password):
             return _no("Windows Credential Manager could not store the password. Nothing was saved.")
-        ok, detail = self._check_mail(entry)
-        if not ok:
-            if previous:
-                credentials.set_secret(key, previous)
-            else:
-                credentials.delete_secret(key)
-            return _no(f"Could not read the inbox: {detail}. Nothing was saved.")
-        if not self._save(calendars, others + [entry], email_on=True):
-            return _no("The settings file could not be written.")
+        kept = False
+        try:
+            ok, detail = self._check_mail(entry)
+            if not ok:
+                return _no(f"Could not read the inbox: {detail}. Nothing was saved.")
+            if not self._save(calendars, others + [entry], email_on=True):
+                return _no("The settings file could not be written.")
+            kept = True
+        finally:
+            if not kept:  # a failed test, a write error or anything unexpected: the old password, or none
+                if previous:
+                    credentials.set_secret(key, previous)
+                else:
+                    credentials.delete_secret(key)
         debug_log(f"imap mailbox {'updated' if same else 'added'}", "accounts")
         return _ok(f"Connected {username}: {detail}.", [f"email:{name}"])
 
@@ -375,13 +381,18 @@ class AccountStore:
         if not credentials.set_secret(key, url):
             return _no("Windows Credential Manager could not store the link. Nothing was saved.")
         entry = {"name": name, "type": "ics"}
-        ok, detail = self._check_calendar(entry)
-        if not ok:
-            credentials.delete_secret(key)
-            self._source(entry).forget_copy()
-            return _no(f"Could not read the calendar: {detail}. Nothing was saved.")
-        if not self._save(calendars + [entry], mail, calendar_on=True):
-            return _no("The settings file could not be written.")
+        kept = False
+        try:
+            ok, detail = self._check_calendar(entry)
+            if not ok:
+                return _no(f"Could not read the calendar: {detail}. Nothing was saved.")
+            if not self._save(calendars + [entry], mail, calendar_on=True):
+                return _no("The settings file could not be written.")
+            kept = True
+        finally:
+            if not kept:  # a failed test, a write error or anything unexpected keeps nothing
+                credentials.delete_secret(key)
+                self._source(entry).forget_copy()
         debug_log("calendar link added", "accounts")
         return _ok(f"Connected {name}: {detail}.", [f"calendar:{name}"])
 

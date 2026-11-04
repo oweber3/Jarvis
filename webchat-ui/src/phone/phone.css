@@ -57,6 +57,17 @@ body {
   min-height: 44px;
 }
 
+/* The thread's own controls are fingers' size too: a message's Copy, Edit and Ask again, a folded list of steps,
+   loading earlier messages, going back to the latest, and the buttons of a message being edited. */
+.phone-root .aui-message-actions button,
+.phone-root [data-slot="aui_tool-steps"] > button,
+.phone-root .aui-thread-load-earlier,
+.phone-root [data-slot="aui_thread-back-to-latest"] button,
+.phone-root .aui-edit-composer-footer button {
+  min-width: 44px;
+  min-height: 44px;
+}
+
 .phone-root .aui-composer-send,
 .phone-root .aui-composer-cancel {
   border-radius: 9999px;

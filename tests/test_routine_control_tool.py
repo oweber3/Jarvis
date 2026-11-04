@@ -93,3 +93,45 @@ def test_the_routine_report_is_the_result(tools, mock_config):
     store.load({"movie mode": {"steps": [{"tool": "tvControl", "args": {"action": "launch"}}]}})
     result = call(mock_config, action="run", name="movie mode")
     assert result.success and result.reply_text == "Movie mode: the step is done."
+
+
+# -- the cloud boundary (routines.spec.md, Reply bridges) ----------------------------------------------
+
+BRIDGE_SNAPSHOT = frozenset({"routineControl", "tvControl"})
+
+
+def bridge_call(cfg, **args):
+    return run_tool_with_retries(None, cfg, "routineControl", args, "", "", "", allowed_tools=BRIDGE_SNAPSHOT)
+
+
+def test_recent_through_a_bridge_leaves_out_calls_to_tools_outside_its_snapshot(tools, mock_config):
+    # documentSearch without its cloud switch: neither the call nor its words reach the provider.
+    tools("tvControl")
+    tools("documentSearch")
+    run_tool_with_retries(None, mock_config, "documentSearch", {"query": "oncologist referral"}, "", "", "")
+    run_tool_with_retries(None, mock_config, "tvControl", {"action": "launch", "target": "HDMI 1"}, "", "", "")
+    result = bridge_call(mock_config, action="recent")
+    assert result.success
+    assert [entry["step"] for entry in json.loads(result.reply_text)["recent"]] == ["tvControl launch HDMI 1"]
+    assert "oncologist" not in result.reply_text and "documentSearch" not in result.reply_text
+
+
+def test_recent_through_a_bridge_with_only_unshared_calls_says_nothing_was_done(tools, mock_config):
+    tools("documentSearch")
+    run_tool_with_retries(None, mock_config, "documentSearch", {"query": "oncologist referral"}, "", "", "")
+    result = bridge_call(mock_config, action="recent")
+    assert result.success and "not done anything" in result.reply_text
+
+
+def test_listing_through_a_bridge_hides_the_labels_of_steps_outside_its_snapshot(tools, mock_config):
+    tools("tvControl")
+    tools("homeControl")
+    store.load({"bedtime": {"steps": [
+        {"tool": "homeControl", "args": {"action": "unlock", "device": "Front Door"}},
+        {"tool": "tvControl", "args": {"action": "launch", "target": "HDMI 1"}}]}})
+    result = bridge_call(mock_config, action="list")
+    steps = json.loads(result.reply_text)["routines"][0]["steps"]
+    assert steps[1] == "tvControl launch HDMI 1"
+    assert "Front Door" not in result.reply_text and "homeControl" not in result.reply_text
+    # Locally the same listing still names every step.
+    assert "homeControl" in call(mock_config, action="list").reply_text

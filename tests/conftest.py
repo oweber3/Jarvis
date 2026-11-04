@@ -40,6 +40,22 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--quick", action="store_true", default=False,
+        help="leave out tests marked slow (real subprocesses, real waits); the full run keeps them",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if not config.getoption("--quick"):
+        return
+    slow = [item for item in items if item.get_closest_marker("slow")]
+    if slow:
+        config.hook.pytest_deselected(items=slow)
+        items[:] = [item for item in items if not item.get_closest_marker("slow")]
+
+
 @dataclass
 class MockConfig:
     """Minimal config object for unit tests that need a config."""
@@ -133,9 +149,46 @@ class MockConfig:
             self.embedding_model = self.ollama_embed_model
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _quick_server_shutdown():
+    """Loopback HTTP servers in tests (fakes and Jarvis's own) notice ``shutdown()`` within 10 ms.
+
+    ``serve_forever`` checks for shutdown once per poll interval (0.5 s by default, 0.25 s for the web
+    chat and phone servers), and ``shutdown()`` blocks until it does, so every server a test stopped cost
+    up to that long. The interval changes nothing else these servers do.
+    """
+    import socketserver
+
+    original = socketserver.BaseServer.serve_forever
+
+    def serve_forever(self, poll_interval=0.5):
+        return original(self, poll_interval=min(poll_interval, 0.01))
+
+    socketserver.BaseServer.serve_forever = serve_forever
+    yield
+    socketserver.BaseServer.serve_forever = original
+
+
+@pytest.fixture(scope="session")
+def _sandbox_root(tmp_path_factory):
+    return tmp_path_factory.mktemp("jarvis_test_sandboxes")
+
+
+@pytest.fixture
+def _test_sandbox(_sandbox_root):
+    """A fresh empty directory for this test's isolation files.
+
+    ``tmp_path_factory.mktemp`` scans every directory already made in the session to pick the next
+    number, so calling it from an autouse fixture makes each test slower than the last. ``mkdtemp``
+    in one session directory costs the same for the first test and the ten-thousandth.
+    """
+    import tempfile
+    return Path(tempfile.mkdtemp(dir=_sandbox_root))
+
+
 @pytest.fixture(autouse=True)
-def _isolate_user_config_path(tmp_path_factory, monkeypatch):
-    """Redirect ``default_config_path`` to a per-session tempfile so a test
+def _isolate_user_config_path(_test_sandbox, monkeypatch):
+    """Redirect ``default_config_path`` to a per-test sandbox so a test
     that calls ``load_settings`` (or any other code path that resolves the
     user's config) cannot read or overwrite ``~/.config/jarvis/config.json``.
 
@@ -144,7 +197,7 @@ def _isolate_user_config_path(tmp_path_factory, monkeypatch):
     trigger a write) directly. This fixture is a belt-and-braces guard so
     a half-mocked test cannot reach the real config file.
     """
-    sandbox = tmp_path_factory.mktemp("jarvis_config_sandbox")
+    sandbox = _test_sandbox
     monkeypatch.setattr(
         "jarvis.config.default_config_path", lambda: sandbox / "config.json"
     )
@@ -303,13 +356,28 @@ def _isolate_file_search(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_orb_state_file(tmp_path, monkeypatch):
+def _never_look_up_the_public_address(request, monkeypatch):
+    """Keep unit tests from asking the router (UPnP discovery) or OpenDNS for this PC's public address.
+
+    Location detection falls back to both when a test reaches it without a configured IP (the setup
+    wizard's location check does); each waits seconds for an answer and sends packets off the PC.
+    Integration tests may still look it up."""
+    if request.node.get_closest_marker("integration"):
+        return
+    from jarvis.utils import location
+
+    monkeypatch.setattr(location, "_get_external_ip_via_upnp", lambda: None)
+    monkeypatch.setattr(location, "_resolve_public_ip_via_opendns", lambda timeout=1.5: None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_orb_state_file(_test_sandbox, monkeypatch):
     """Keep tests from writing the state file a running Jarvis's orb reads."""
     try:
         import desktop_app.face_widget as face_widget
     except Exception:
         return
-    monkeypatch.setattr(face_widget, "_get_jarvis_state_file", lambda: str(tmp_path / "jarvis_state"))
+    monkeypatch.setattr(face_widget, "_get_jarvis_state_file", lambda: str(_test_sandbox / "jarvis_state"))
     monkeypatch.setattr(face_widget, "_jarvis_state_instance", None)
 
 

@@ -10,7 +10,9 @@ import {
 } from "@/components/attachment.aui";
 import { MarkdownText } from "@/components/markdown-text";
 import { DayDivider, MessageTime } from "@/components/MessageTime";
-import { ToolStepRow } from "@/components/ToolSteps";
+import { GrowingTextarea } from "@/components/GrowingTextarea";
+import { JarvisMark } from "@/components/JarvisMark";
+import { ToolStepGroup, ToolStepRow } from "@/components/ToolSteps";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,9 +23,11 @@ import {
   type AssistantState,
   ComposerPrimitive,
   ErrorPrimitive,
+  groupPartByType,
   MessagePrimitive,
   ThreadPrimitive,
   type TextMessagePartComponent,
+  useAui,
   useAuiState,
 } from "@assistant-ui/react";
 import {
@@ -32,17 +36,24 @@ import {
   AudioLinesIcon,
   CheckIcon,
   CopyIcon,
+  InfoIcon,
   MicIcon,
+  PencilIcon,
   PhoneIcon,
+  RefreshCwIcon,
   SquareIcon,
 } from "lucide-react";
 import {
   createContext,
+  memo,
   useContext,
   useEffect,
+  useMemo,
+  useRef,
   type ComponentType,
   type FC,
 } from "react";
+import { useJarvis } from "@/useJarvis";
 import { messageSelector, scrollTarget, useScrollTarget } from "@/scrollTarget";
 import { dayDividerLabel, startsNewDay } from "@/time";
 
@@ -133,9 +144,8 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
       className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
       style={{
         ["--thread-max-width" as string]: "44rem",
-        ["--composer-bg" as string]:
-          "color-mix(in oklab, var(--color-muted) 30%, transparent)",
-        ["--composer-radius" as string]: "1rem",
+        ["--composer-bg" as string]: "var(--color-card)",
+        ["--composer-radius" as string]: "1.25rem",
         ["--composer-padding" as string]: "8px",
       }}
     >
@@ -158,9 +168,10 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
             <ThreadHistorySkeleton />
           </AuiIf>
 
+          <ThreadLoadEarlier />
           <div
             data-slot="aui_message-group"
-            className="mb-14 flex flex-col gap-y-6 empty:hidden"
+            className="mb-14 flex flex-col gap-y-7 empty:hidden"
           >
             <ThreadPrimitive.Messages>
               {() => <ThreadMessage />}
@@ -175,6 +186,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
             )}
           >
             <ThreadScrollToBottom />
+            <ThreadBackToLatest />
             {ComposerAbove ? <ComposerAbove /> : null}
             <Composer autoFocus={autoFocus} />
           </ThreadPrimitive.ViewportFooter>
@@ -184,17 +196,82 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
   );
 };
 
+// A long chat is loaded a page at a time: earlier messages arrive as the top of the conversation comes into view
+// (the button does the same from the keyboard). The runtime keeps the rows in place while a page is put in front.
+const ThreadLoadEarlier: FC = () => {
+  const aui = useAui();
+  const visible = useAuiState(
+    (s) => s.thread.hasEarlier || s.thread.isLoadingEarlier,
+  );
+  const loading = useAuiState((s) => s.thread.isLoadingEarlier);
+  const sentinel = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const element = sentinel.current;
+    if (!visible || !element) return;
+    const root = element.closest("[data-slot='aui_thread-viewport']");
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void aui.thread().loadEarlier();
+      },
+      { root, rootMargin: "600px 0px 0px 0px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [aui, visible]);
+
+  return (
+    <div ref={sentinel} data-slot="aui_thread-load-earlier" className="flex justify-center">
+      <span role="status" className="sr-only">
+        {loading ? "Loading earlier messages" : ""}
+      </span>
+      {visible && (
+        <ThreadPrimitive.LoadEarlier asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="aui-thread-load-earlier text-muted-foreground mb-6 rounded-full"
+          >
+            {loading ? "Loading earlier messages…" : "Load earlier messages"}
+          </Button>
+        </ThreadPrimitive.LoadEarlier>
+      )}
+    </div>
+  );
+};
+
+// After scrolling far back in a long chat the page lets go of the newest turns; this brings them back.
+const ThreadBackToLatest: FC = () => {
+  const { history, actions } = useJarvis();
+  if (!history.hasLater) return null;
+  return (
+    <div
+      data-slot="aui_thread-back-to-latest"
+      role="status"
+      className="bg-popover text-popover-foreground border-border flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm shadow-sm"
+    >
+      <span className="min-w-0">You're reading earlier messages.</span>
+      <Button size="sm" variant="secondary" className="shrink-0" onClick={() => void actions.jumpToLatest()}>
+        Back to the latest
+      </Button>
+    </div>
+  );
+};
+
 const ThreadMessage: FC = () => {
   const { AssistantMessage: AssistantMessageComponent = AssistantMessage } =
     useContext(ThreadComponentsContext);
   const role = useAuiState((s) => s.message.role);
   const isSpoken = useAuiState((s) => s.message.metadata.modality === "voice");
   const isNotice = useAuiState((s) => s.message.metadata.custom?.["notice"] === true);
+  const isEditing = useAuiState((s) => s.message.composer.isEditing);
 
   return (
     <>
       <DayStart />
-      {isNotice ? (
+      {isEditing ? (
+        <EditComposer />
+      ) : isNotice ? (
         <NoticeLine />
       ) : isSpoken ? (
         <SpokenMessage />
@@ -211,12 +288,15 @@ const dayOf = (date: Date | undefined) => (date ? date.getTime() / 1000 : undefi
 
 // A divider above the first message of each day. A pending message, which has no stored time yet, counts as now.
 const DayStart: FC = () => {
-  const label = useAuiState((s) => {
+  // The selector runs on every change of the thread, so it only says whether a day starts here; the words are
+  // worked out once per day.
+  const startsAt = useAuiState((s) => {
     const own = dayOf(s.message.createdAt);
     if (own === undefined) return null;
     const previous = dayOf(s.thread.messages[s.message.index - 1]?.createdAt);
-    return startsNewDay(previous, own) ? dayDividerLabel(own) : null;
+    return startsNewDay(previous, own) ? own : null;
   });
+  const label = useMemo(() => (startsAt === null ? null : dayDividerLabel(startsAt)), [startsAt]);
   return label ? <DayDivider label={label} /> : null;
 };
 
@@ -268,12 +348,11 @@ const NoticeLine: FC = () => {
     return part && part.type === "text" ? part.text : "";
   });
   return (
-    <div
-      data-slot="aui_notice"
-      role="status"
-      className="text-muted-foreground px-2 text-center text-xs"
-    >
-      {text}
+    <div data-slot="aui_notice" role="status" className="flex justify-center px-2">
+      <span className="bg-muted/60 text-muted-foreground border-border inline-flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1 text-xs">
+        <InfoIcon aria-hidden className="size-3.5 shrink-0" />
+        <span className="min-w-0">{text}</span>
+      </span>
     </div>
   );
 };
@@ -357,21 +436,110 @@ const SpokenMessage: FC = () => {
 const SpokenActionBar: FC = () => {
   return (
     <ActionBarPrimitive.Root
-      hideWhenRunning
-      autohide="always"
-      className="aui-spoken-action-bar text-muted-foreground flex shrink-0 gap-1"
+      autohide="never"
+      className="aui-spoken-action-bar aui-message-actions text-muted-foreground flex shrink-0 gap-0.5"
     >
-      <ActionBarPrimitive.Copy asChild>
-        <TooltipIconButton tooltip="Copy" className="size-6">
-          <AuiIf condition={(s) => s.message.isCopied}>
-            <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
-          </AuiIf>
-          <AuiIf condition={(s) => !s.message.isCopied}>
-            <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
-          </AuiIf>
-        </TooltipIconButton>
-      </ActionBarPrimitive.Copy>
+      <CopyAction className="size-6" />
+      <EditAction className="size-6" />
+      <AskAgainAction className="size-6" />
     </ActionBarPrimitive.Root>
+  );
+};
+
+// -- what can be done with a message ------------------------------------------------------------------------
+// The actions stay in the page, so the keyboard reaches them; they are drawn on the last message and on any message
+// the pointer is over or that holds focus, and always on a touch screen (index.css, .aui-message-actions).
+
+const isStored = (id: string) => /^m\d+$/.test(id);
+// The owner's own message: one stored in the chat, or one that was not answered (shown with its notice). Neither
+// Edit nor Ask again is offered while the page shows an earlier stretch of the chat (the runtime then has no
+// edit or reload: useJarvis.tsx).
+const canEdit = (s: AssistantState) =>
+  s.thread.capabilities.edit &&
+  !s.thread.isRunning &&
+  !s.thread.isDisabled &&
+  s.message.role === "user" &&
+  (isStored(s.message.id) || s.message.id.endsWith("-request"));
+// The latest reply, to a stored message of the owner's that carried nothing attached (attachments are not kept).
+const canAskAgain = (s: AssistantState) => {
+  if (!s.thread.capabilities.reload || s.thread.isRunning || s.thread.isDisabled) return false;
+  if (!s.message.isLast || s.message.role !== "assistant") return false;
+  if (!isStored(s.message.id)) return false;
+  const asked = s.thread.messages[s.message.index - 1];
+  return !!asked && asked.role === "user" && isStored(asked.id) && (asked.attachments?.length ?? 0) === 0;
+};
+
+const CopyAction: FC<{ className?: string }> = ({ className }) => (
+  <ActionBarPrimitive.Copy asChild>
+    <TooltipIconButton tooltip="Copy" className={className}>
+      <AuiIf condition={(s) => s.message.isCopied}>
+        <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
+      </AuiIf>
+      <AuiIf condition={(s) => !s.message.isCopied}>
+        <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
+      </AuiIf>
+    </TooltipIconButton>
+  </ActionBarPrimitive.Copy>
+);
+
+const EditAction: FC<{ className?: string }> = ({ className }) => (
+  <AuiIf condition={canEdit}>
+    <ActionBarPrimitive.Edit asChild>
+      <TooltipIconButton tooltip="Edit" className={className}>
+        <PencilIcon />
+      </TooltipIconButton>
+    </ActionBarPrimitive.Edit>
+  </AuiIf>
+);
+
+const AskAgainAction: FC<{ className?: string }> = ({ className }) => (
+  <AuiIf condition={canAskAgain}>
+    <ActionBarPrimitive.Reload asChild>
+      <TooltipIconButton tooltip="Ask again" className={className}>
+        <RefreshCwIcon />
+      </TooltipIconButton>
+    </ActionBarPrimitive.Reload>
+  </AuiIf>
+);
+
+// Editing a message the owner sent: Enter sends, Esc leaves it as it was. What sending does is said beside the box,
+// because a stored message takes everything after it with it.
+const EditComposer: FC = () => {
+  const note = useAuiState((s) => {
+    if (!isStored(s.message.id)) return "Sends the new wording as a new message.";
+    // The stored messages that follow it (a notice line is not one).
+    const after = s.thread.messages.slice(s.message.index + 1).filter((m) => isStored(m.id)).length;
+    const kept = (s.message.attachments?.length ?? 0) > 0 ? " Its attachments are not sent again." : "";
+    if (after <= 1) return `Jarvis answers the new wording in place of its last answer.${kept}`;
+    return `Jarvis forgets the ${after} messages after this one and answers the new wording.${kept}`;
+  });
+  return (
+    <MessagePrimitive.Root
+      data-slot="aui_edit-composer-wrapper"
+      className="flex flex-col px-2"
+    >
+      <ComposerPrimitive.Root className="aui-edit-composer-root border-ring/40 focus-within:border-ring ms-auto flex w-full max-w-[85%] cursor-text flex-col gap-1 rounded-(--composer-radius) border bg-(--composer-bg) transition-[border-color]">
+        <ComposerPrimitive.Input asChild autoFocus>
+          <GrowingTextarea
+            className="aui-edit-composer-input text-foreground max-h-80 min-h-14 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-none"
+            aria-label="Edit message"
+          />
+        </ComposerPrimitive.Input>
+        <p className="text-muted-foreground px-4 text-xs">{note}</p>
+        <div className="aui-edit-composer-footer mx-2.5 mb-2.5 flex items-center gap-1.5 self-end">
+          <ComposerPrimitive.Cancel asChild>
+            <Button variant="ghost" size="sm" className="h-8 px-3">
+              Cancel
+            </Button>
+          </ComposerPrimitive.Cancel>
+          <ComposerPrimitive.Send asChild>
+            <Button size="sm" className="h-8 px-3">
+              Send
+            </Button>
+          </ComposerPrimitive.Send>
+        </div>
+      </ComposerPrimitive.Root>
+    </MessagePrimitive.Root>
   );
 };
 
@@ -381,7 +549,7 @@ const ThreadScrollToBottom: FC = () => {
       <TooltipIconButton
         tooltip="Scroll to bottom"
         variant="outline"
-        className="aui-thread-scroll-to-bottom dark:border-border dark:bg-background dark:hover:bg-accent absolute -top-12 z-10 self-center rounded-full p-4 disabled:invisible"
+        className="aui-thread-scroll-to-bottom border-border bg-popover text-popover-foreground hover:bg-accent absolute -top-12 z-10 size-9 self-center rounded-full shadow-(--shadow-raised) disabled:invisible"
       >
         <ArrowDownIcon />
       </TooltipIconButton>
@@ -405,27 +573,44 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <div
         data-slot="aui_composer-shell"
-        className="border-foreground/10 focus-within:border-foreground/25 flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) transition-[border-color]"
+        className="border-border focus-within:border-ring/60 bg-card flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border p-(--composer-padding) transition-[border-color,box-shadow] duration-150"
       >
         <ComposerAttachments />
-        <ComposerPrimitive.Input
-          placeholder="Send a message..."
-          className="aui-composer-input caret-primary placeholder:text-muted-foreground/60 max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
-          rows={1}
-          autoFocus={autoFocus}
-          enterKeyHint="send"
-          aria-label="Message input"
-          // Enter must not slip past what disables the Send button, or the message and its attachments are lost.
-          onKeyDown={(event) => {
-            if (gate.blocked && event.key === "Enter" && !event.shiftKey) event.preventDefault();
-          }}
-        />
+        <MessageInput autoFocus={autoFocus} blocked={gate.blocked} />
         <AttachmentNotice gate={gate} />
         <ComposerAction blocked={gate.blocked} />
       </div>
+      <p className="aui-composer-hint text-muted-foreground mt-2 text-center text-[11px] @max-[32rem]:hidden">
+        <kbd className="font-sans">Enter</kbd> to send · <kbd className="font-sans">Shift</kbd>+<kbd className="font-sans">Enter</kbd>{" "}
+        for a new line · <kbd className="font-sans">?</kbd> for shortcuts
+      </p>
     </ComposerPrimitive.Root>
   );
 };
+
+// The text box grows with what is typed by measuring itself on each redraw, so it redraws only when what it shows
+// changes, never because something elsewhere on the page did.
+const MessageInput: FC<{ autoFocus: boolean; blocked: boolean }> = memo(function MessageInput({ autoFocus, blocked }) {
+  return (
+    <ComposerPrimitive.Input
+      asChild
+      autoFocus={autoFocus}
+      // Enter must not slip past what disables the Send button, or the message and its attachments are lost.
+      onKeyDown={(event) => {
+        if (blocked && event.key === "Enter" && !event.shiftKey) event.preventDefault();
+      }}
+    >
+      <GrowingTextarea
+        id="message-box"
+        placeholder="Message Jarvis…"
+        className="aui-composer-input caret-primary placeholder:text-muted-foreground max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none focus-visible:outline-none"
+        rows={1}
+        enterKeyHint="send"
+        aria-label="Message input"
+      />
+    </ComposerPrimitive.Input>
+  );
+});
 
 const ComposerAction: FC<{ blocked: boolean }> = ({ blocked }) => {
   const { ComposerLeading, ComposerTrailing, ComposerScreenshotButton = ComposerScreenshot } = useContext(ThreadComponentsContext);
@@ -483,10 +668,16 @@ const MessageError: FC = () => {
   );
 };
 
-// Replies are text after their tool steps, so no parts are grouped (the thinking indicator still arrives as a part).
-const noGroups = () => [] as const;
+// A reply's tool steps come before its text; consecutive ones are one group (the thinking indicator still arrives
+// as a part of its own).
+const stepGroups = groupPartByType({ "tool-call": ["group-steps"] });
 
 const AssistantMessage: FC = () => {
+  const isLast = useAuiState((s) => s.message.isLast);
+  // A reply that follows another one (the outcome of a confirmed action) continues it: no second mark.
+  const continues = useAuiState((s) => s.thread.messages[s.message.index - 1]?.role === "assistant");
+  // A reply still being worked on has no time and nothing to copy yet.
+  const running = useAuiState((s) => s.message.status?.type === "running");
   const ACTION_BAR_PT = "pt-1.5";
   // Keep the action bar inside the contained root's paint box, then cancel its reserved space in flow.
   const ACTION_BAR_HEIGHT = `min-h-7.5 ${ACTION_BAR_PT}`;
@@ -495,29 +686,27 @@ const AssistantMessage: FC = () => {
     <MessagePrimitive.Root
       data-slot="aui_assistant-message-root"
       data-role="assistant"
-      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 pb-7.5 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto]"
+      data-last-message={isLast ? "" : undefined}
+      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 pb-7.5 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] @max-[32rem]:grid-cols-1"
     >
+      <div className="row-span-2 w-7 pt-0.5 @max-[32rem]:hidden" aria-hidden>
+        {!continues && <JarvisMark className="size-7" />}
+      </div>
       <div
         data-slot="aui_assistant-message-content"
-        className="text-foreground px-2 leading-relaxed wrap-break-word"
+        className="text-foreground min-w-0 leading-relaxed wrap-break-word"
       >
-        <MessagePrimitive.GroupedParts groupBy={noGroups}>
-          {({ part }) => {
+        <MessagePrimitive.GroupedParts groupBy={stepGroups}>
+          {({ part, children }) => {
             switch (part.type) {
+              case "group-steps":
+                return <ToolStepGroup indices={part.indices}>{children}</ToolStepGroup>;
               case "tool-call":
                 return <ToolStepRow args={part.args} />;
               case "text":
                 return <MarkdownText />;
               case "indicator":
-                return (
-                  <span
-                    data-slot="aui_assistant-message-indicator"
-                    className="animate-pulse font-sans"
-                    aria-label="Assistant is working"
-                  >
-                    {"●"}
-                  </span>
-                );
+                return <ThinkingIndicator />;
               default:
                 return null;
             }
@@ -528,32 +717,59 @@ const AssistantMessage: FC = () => {
 
       <div
         data-slot="aui_assistant-message-footer"
-        className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
+        className={cn("flex items-center gap-2", ACTION_BAR_HEIGHT)}
       >
-        <AssistantActionBar />
-        <MessageTime className="ms-2" />
+        {!running && (
+          <>
+            <MessageTime />
+            <AssistantActionBar />
+          </>
+        )}
       </div>
     </MessagePrimitive.Root>
   );
 };
 
+// Jarvis is working on the reply. The dots move only when motion is welcome.
+const ThinkingIndicator: FC = () => (
+  <span
+    data-slot="aui_assistant-message-indicator"
+    role="status"
+    className="text-muted-foreground inline-flex items-center gap-2 py-1 text-sm"
+  >
+    <span aria-hidden className="flex items-center gap-1">
+      {[0, 1, 2].map((dot) => (
+        <span
+          key={dot}
+          className="bg-primary size-1.5 rounded-full motion-safe:animate-bounce"
+          style={{ animationDelay: `${dot * 140}ms` }}
+        />
+      ))}
+    </span>
+    <span>Thinking</span>
+  </span>
+);
+
 const AssistantActionBar: FC = () => {
   return (
     <ActionBarPrimitive.Root
-      hideWhenRunning
-      autohide="not-last"
-      className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in col-start-3 row-start-2 -ms-1 flex gap-1 duration-200"
+      autohide="never"
+      className="aui-assistant-action-bar-root aui-message-actions text-muted-foreground -ms-1 flex gap-0.5"
     >
-      <ActionBarPrimitive.Copy asChild>
-        <TooltipIconButton tooltip="Copy">
-          <AuiIf condition={(s) => s.message.isCopied}>
-            <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
-          </AuiIf>
-          <AuiIf condition={(s) => !s.message.isCopied}>
-            <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
-          </AuiIf>
-        </TooltipIconButton>
-      </ActionBarPrimitive.Copy>
+      <CopyAction />
+      <AskAgainAction />
+    </ActionBarPrimitive.Root>
+  );
+};
+
+const UserActionBar: FC = () => {
+  return (
+    <ActionBarPrimitive.Root
+      autohide="never"
+      className="aui-user-action-bar-root aui-message-actions text-muted-foreground flex gap-0.5"
+    >
+      <EditAction />
+      <CopyAction />
     </ActionBarPrimitive.Root>
   );
 };
@@ -567,10 +783,13 @@ const UserMessage: FC = () => {
     >
       <UserMessageAttachments />
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
-        <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
+        <div className="aui-user-message-content peer bg-muted text-foreground px-4 py-2.5 leading-relaxed wrap-break-word empty:hidden">
           <MessagePrimitive.Parts />
         </div>
-        <MessageTime className="mt-1 block text-end" />
+        <div className="mt-1 flex items-center justify-end gap-1.5">
+          <UserActionBar />
+          <MessageTime className="block text-end" />
+        </div>
       </div>
     </MessagePrimitive.Root>
   );

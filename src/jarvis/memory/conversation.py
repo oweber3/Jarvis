@@ -711,6 +711,18 @@ class StoredTurn(NamedTuple):
     private_sources: FrozenSet[str] = frozenset()
 
 
+class TakenBack(NamedTuple):
+    """What ``DialogueMemory.take_back`` changed, so ``put_back`` can undo it. ``cursor`` is the mirror cursor
+    (``messages_after``): every turn stored after the change is newer than it."""
+    cursor: float
+    messages: Tuple[Tuple[float, str, str], ...]
+    diary_excluded: Dict[float, FrozenSet[str]]
+    tool_turns: Tuple[Any, ...]
+    hot_cache: "OrderedDict[str, Any]"
+    last_saved: float
+    last_activity: float
+
+
 class DialogueMemory:
     """
     In-memory storage for recent dialogue interactions.
@@ -791,6 +803,8 @@ class DialogueMemory:
         # Track the timestamp up to which messages have been saved to diary
         # Messages with timestamp <= this value have been processed
         self._last_saved_timestamp: float = 0.0
+        # The newest timestamp a diary pass has marked as summarised (``mark_saved_up_to``), which ``put_back`` keeps.
+        self._diary_marked: float = 0.0
         # How many of the latest turns stay in context however old they are (``keep_last_turns``).
         self._keep_last: int = 0
         self._lock = threading.RLock()  # Reentrant lock for thread safety
@@ -1022,6 +1036,63 @@ class DialogueMemory:
             self._tool_turns = []
             self._hot_cache = OrderedDict()
             return True
+
+    def drop_last_turns(self, count: int) -> None:
+        """Drop the newest ``count`` turns (the web chat's Rewind, which knows exactly how many turns follow the
+        message asked again, from the chat it mirrors). Turns the diary has not seen go without a diary pass, as
+        the owner took them back. Conversation-scoped caches and tool carryover are cleared: they describe
+        state after the rewind point."""
+        with self._lock:
+            if count <= 0:
+                return
+            dropped = self._messages[-count:]
+            self._messages = self._messages[:-count]
+            for ts, _role, _content in dropped:
+                self._diary_excluded.pop(ts, None)
+            self._tool_turns = []
+            self._hot_cache = OrderedDict()
+
+    def take_back(self, chat_turns: List[Tuple[str, Tuple[str, ...]]], keep: int,
+                  restore: List[dict]) -> Optional[TakenBack]:
+        """Take a mirrored chat's conversation back to before its turn ``keep`` (the web chat's Rewind), checking
+        and changing in one hold of the lock, so a turn added meanwhile (an announcement, which needs no query
+        lock) is never taken back in place of one of the chat's.
+
+        ``chat_turns`` are the chat's turns, oldest first, as ``(role, texts)``: the texts this memory may hold
+        for the turn (the stored one, or redacted once more). This memory's turns must be the chat's newest ones,
+        or nothing changes and None is returned. When some of them come from before the point, the rest are
+        dropped (``drop_last_turns``); when none do, the conversation becomes ``restore`` (``set_messages``,
+        counted as summarised). Returns what changed, for ``put_back``."""
+        with self._lock:
+            held = self._messages
+            if len(held) > len(chat_turns):
+                return None
+            for (_ts, role, content), (want_role, texts) in zip(held, chat_turns[len(chat_turns) - len(held):]):
+                if role != want_role or content not in texts:
+                    return None
+            before = TakenBack(0.0, tuple(self._messages), dict(self._diary_excluded), tuple(self._tool_turns),
+                               OrderedDict(self._hot_cache), self._last_saved_timestamp, self._last_activity_time)
+            taken_back = len(chat_turns) - keep
+            if taken_back < len(held):
+                self.drop_last_turns(taken_back)
+                cursor = self._last_ts
+            else:
+                cursor = self.set_messages(restore, saved=True)
+            return before._replace(cursor=cursor)
+
+    def put_back(self, taken: TakenBack) -> None:
+        """Undo ``take_back``: the conversation is as it was before, followed by any turn stored since (an
+        announcement), which stays newer than the cursor ``take_back`` returned."""
+        with self._lock:
+            since = [turn for turn in self._messages if turn[0] > taken.cursor]
+            private_since = {ts: sources for ts, sources in self._diary_excluded.items() if ts > taken.cursor}
+            self._messages = list(taken.messages) + since
+            self._diary_excluded = {**taken.diary_excluded, **private_since}
+            self._tool_turns = list(taken.tool_turns)
+            self._hot_cache = OrderedDict(taken.hot_cache)
+            # A diary pass that finished meanwhile keeps what it marked, the turns put back included.
+            self._last_saved_timestamp = max(taken.last_saved, self._diary_marked)
+            self._last_activity_time = since[-1][0] if since else taken.last_activity
 
     def private_context_sources(self, max_tool_turns: int = 2) -> FrozenSet[str]:
         """The private sources the context a reply would see holds (empty when it holds none): those of
@@ -1335,6 +1406,7 @@ class DialogueMemory:
         """
         with self._lock:
             self._last_saved_timestamp = max(self._last_saved_timestamp, timestamp)
+            self._diary_marked = max(self._diary_marked, timestamp)
             self._cleanup_old_messages()
 
     def _cleanup_old_messages(self) -> None:
@@ -1366,6 +1438,7 @@ class DialogueMemory:
                 # Mark all current messages as saved
                 max_ts = max(ts for ts, _, _ in self._messages)
                 self._last_saved_timestamp = max_ts
+                self._diary_marked = max(self._diary_marked, max_ts)
             self._cleanup_old_messages()
 
 

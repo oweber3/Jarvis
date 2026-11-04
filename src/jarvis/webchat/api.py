@@ -19,10 +19,14 @@ from .uploads import UploadRefused
 
 MAX_TEXT_CHARS = 4000
 POLL_TIMEOUT_SEC = 25.0
+# A long chat is read a page at a time (``GET /api/chats/<id>?limit=``); the page asks for no more than this.
+MAX_PAGE_MESSAGES = 200
+DEFAULT_PAGE_MESSAGES = 50
 
 _PROJECT_PATH = re.compile(r"^/api/projects/([0-9a-f]+)$")
 _CHAT_PATH = re.compile(r"^/api/chats/([0-9a-f]+)$")
 _CHAT_OPEN_PATH = re.compile(r"^/api/chats/([0-9a-f]+)/open$")
+_CHAT_REWIND_PATH = re.compile(r"^/api/chats/([0-9a-f]+)/rewind$")
 _SESSION = re.compile(r"^[0-9a-f]{32}$")
 _UPLOAD_PATH = re.compile(r"^/api/attachments/([0-9a-f]+)$")
 UPLOAD_ROUTE = ("POST", "/api/attachments")
@@ -97,7 +101,8 @@ class ChatApi:
         if (method, path) in self._FIXED and (self.surface == "web" or (method, path) not in WEB_ONLY):
             return getattr(self, self._FIXED[(method, path)])
         for pattern, table in ((_PROJECT_PATH, self._PROJECT), (_CHAT_PATH, self._CHAT),
-                               (_CHAT_OPEN_PATH, self._OPEN), (_UPLOAD_PATH, self._UPLOAD)):
+                               (_CHAT_OPEN_PATH, self._OPEN), (_CHAT_REWIND_PATH, self._REWIND),
+                               (_UPLOAD_PATH, self._UPLOAD)):
             found = pattern.match(path)
             if found and method in table:
                 identifier = found.group(1)
@@ -131,6 +136,7 @@ class ChatApi:
     _PROJECT = {"PATCH": "_rename_project", "DELETE": "_delete_project"}
     _CHAT = {"GET": "_get_chat", "PATCH": "_patch_chat", "DELETE": "_delete_chat"}
     _OPEN = {"POST": "_open_chat"}
+    _REWIND = {"POST": "_rewind"}
     _UPLOAD = {"DELETE": "_discard_upload"}
 
     # -- state ---------------------------------------------------------------------
@@ -215,11 +221,35 @@ class ChatApi:
             raise Refused(self._answer_for(result.status), result.status)
         return 200, {"chat": chat_dict(result.chat)}
 
-    def _get_chat(self, chat_id, _call):
+    @staticmethod
+    def _page(query: dict) -> Optional[dict]:
+        """The page of a chat a request asks for: ``limit`` and one of ``before`` or ``around`` (message ids), or
+        None for the whole chat. Raises ``Refused`` for anything else."""
+        names = [name for name in ("limit", "before", "around") if name in query]
+        if not names:
+            return None
+        try:
+            values = {name: int(query[name][0]) for name in names}
+        except (TypeError, ValueError):
+            raise Refused(400, "bad_page")
+        limit = values.get("limit", DEFAULT_PAGE_MESSAGES)
+        if not 1 <= limit <= MAX_PAGE_MESSAGES or ("before" in values and "around" in values):
+            raise Refused(400, "bad_page")
+        return {"limit": limit, "before": values.get("before"), "around": values.get("around")}
+
+    def _get_chat(self, chat_id, call):
         chat = self.store.get_chat(chat_id)
         if chat is None:
             raise Refused(404, "unknown")
-        return 200, {"chat": chat_dict(chat), "messages": [message_dict(m) for m in self.store.messages(chat_id)]}
+        page = self._page(call.query)
+        if page is None:
+            found = self.store.messages(chat_id)
+            earlier = later = False
+        else:
+            window = self.store.messages_page(chat_id, page["limit"], before=page["before"], around=page["around"])
+            found, earlier, later = window.messages, window.has_earlier, window.has_later
+        return 200, {"chat": chat_dict(chat), "messages": [message_dict(m) for m in found],
+                     "has_earlier": earlier, "has_later": later}
 
     def _patch_chat(self, chat_id, call):
         body = call.body
@@ -277,6 +307,30 @@ class ChatApi:
             tracker.accepted(result.query_id)
         if result.status != "accepted":
             raise Refused({"busy": 409}.get(result.status, 503), result.status)
+        return 202, {"query_id": result.query_id, "status": result.status}
+
+    # How a refused rewind answers, beside a request's own refusals.
+    _REWIND_STATUS = {"unknown": 404, "not_open": 409, "not_user": 400, "changed": 409, "out_of_step": 409,
+                      "busy": 409, "not_taken_back": 500}
+
+    def _rewind(self, chat_id, call):
+        body = call.body
+        message_id, newest_id = body.get("message_id"), body.get("newest_id")
+        if not isinstance(message_id, int) or isinstance(message_id, bool):
+            raise Refused(400, "bad_message")
+        if not isinstance(newest_id, int) or isinstance(newest_id, bool):
+            raise Refused(400, "bad_newest")
+        text = body.get("text")
+        if text is not None and (not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS):
+            raise Refused(400, "bad_text")
+        speak = body.get("speak") is True and self.voice is not None
+        tracker = self.voice.track(call.context) if speak else None
+        result = self.hub.rewind(chat_id, message_id, text, newest_id=newest_id, origin=self.origin,
+                                 on_finish=tracker.finished if tracker is not None else None)
+        if tracker is not None and result.query_id:
+            tracker.accepted(result.query_id)
+        if result.status != "accepted":
+            raise Refused(self._REWIND_STATUS.get(result.status, 503), result.status)
         return 202, {"query_id": result.query_id, "status": result.status}
 
     def _stop(self, _call):

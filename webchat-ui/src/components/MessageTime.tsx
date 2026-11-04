@@ -23,7 +23,7 @@ export const MessageTime: FC<{ className?: string }> = ({ className }) => {
 export const DayDivider: FC<{ label: string }> = ({ label }) => (
   <div data-slot="aui_day-divider" role="separator" aria-label={label} className="text-muted-foreground flex items-center gap-3 text-xs">
     <span className="bg-border h-px flex-1" />
-    <span className="first-letter:uppercase">{label}</span>
+    <span className="border-border bg-background rounded-full border px-2.5 py-0.5 font-medium first-letter:uppercase">{label}</span>
     <span className="bg-border h-px flex-1" />
   </div>
 )

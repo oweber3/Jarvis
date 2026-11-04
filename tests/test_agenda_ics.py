@@ -223,3 +223,38 @@ def test_a_yearly_rule_with_only_a_month_day_repeats_every_month():
     start = datetime(2026, 10, 1).astimezone()
     assert [o.start_date for o in _between(text, start, datetime(2026, 12, 1).astimezone())] == [
         date(2026, 10, 15), date(2026, 11, 15)]
+
+
+# -- bounded work per read ---------------------------------------------------------------------------
+
+OUTLOOK_ZONE = ("BEGIN:VTIMEZONE\r\nTZID:W. Europe Standard Time\r\n"
+                "BEGIN:STANDARD\r\nDTSTART:16010101T030000\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\n"
+                "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10\r\nEND:STANDARD\r\n"
+                "BEGIN:DAYLIGHT\r\nDTSTART:16010101T020000\r\nTZOFFSETFROM:+0100\r\nTZOFFSETTO:+0200\r\n"
+                "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\n")
+
+
+def test_an_outlook_export_with_hundreds_of_weekly_events_reads_quickly():
+    # Outlook writes its zones from 1601: the offset in force must not be worked out from 1601 again for every
+    # time it converts.
+    import time
+    events = [_event(f"UID:{n}", f"SUMMARY:Lecture {n}", "DTSTART;TZID=W. Europe Standard Time:20200106T090000",
+                     "DTEND;TZID=W. Europe Standard Time:20200106T100000", "RRULE:FREQ=WEEKLY;BYDAY=MO")
+              for n in range(300)]
+    calendar = ics.parse_calendar(_cal(*events, extra=OUTLOOK_ZONE))
+    started = time.monotonic()
+    found = ics.occurrences(calendar, _utc(2026, 10, 12), _utc(2026, 10, 19))
+    assert time.monotonic() - started < 3
+    assert len(found) == 300 and found[0].start == _utc(2026, 10, 12, 7)
+
+
+def test_a_calendar_too_costly_to_expand_fails_within_the_read_budget(monkeypatch):
+    import time
+    monkeypatch.setattr(ics, "READ_BUDGET_SEC", 0.5)
+    events = [_event(f"UID:{n}", "SUMMARY:x", "DTSTART:19000101T090000Z", "DTEND:19000101T100000Z",
+                     "RRULE:FREQ=DAILY;COUNT=99999999") for n in range(500)]
+    calendar = ics.parse_calendar(_cal(*events))
+    started = time.monotonic()
+    with pytest.raises(ics.CalendarTooComplex):
+        ics.occurrences(calendar, _utc(2026, 10, 12), _utc(2026, 10, 13))
+    assert time.monotonic() - started < 2

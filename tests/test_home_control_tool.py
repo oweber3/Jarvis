@@ -314,3 +314,39 @@ class TestReviewFixes:
         assert request.tier == SafetyTier.CONFIRM_VOICE
         assert "Windows" not in request.target and "C:" not in request.target
         assert "C:\\Windows" in (request.consequence or "")
+
+
+@pytest.mark.unit
+class TestRiskAtRunTime:
+    """The tier is decided before the run and the devices are resolved again when it runs. A device that
+    appeared in between (the hub still loading its device list at start-up when the request was classified)
+    must not let a risky change through without the user's yes."""
+
+    def test_an_unlock_classified_before_the_lock_was_known_does_not_run_unconfirmed(self, tool, home):
+        loaded = list(home.registry.devices())
+        home.registry.replace_source("ha", [])
+        assert tier(tool, {"action": "unlock", "target": "front door"}) == SafetyTier.SAFE   # nothing to change yet
+        home.registry.replace_source("ha", loaded)                                          # the list arrives
+        result = run(tool, {"action": "unlock", "target": "front door"})
+        assert not result.success and "confirm" in (result.error_message or "").lower()
+        assert home.hub.sent == []
+
+    def test_an_approved_unlock_runs(self, tool, home, mock_config, monkeypatch):
+        from jarvis.tools import registry
+        from jarvis.tools.registry import run_tool_with_retries
+        from jarvis.tools.confirmation import get_confirmation_store
+        monkeypatch.setitem(registry.BUILTIN_TOOLS, "homeControl", tool)
+        mock_config.smarthome_enabled = True
+        mock_config.smarthome_confirm_devices = []
+        store = get_confirmation_store()
+        args = {"action": "unlock", "target": "front door"}
+        store.clear_pending()
+        try:
+            first = run_tool_with_retries(None, mock_config, "homeControl", args, "", "", "")
+            assert not first.success and store.has_pending() and home.hub.sent == []
+            store.handle_voice_response("yes", language="en")
+            result = store.run_approved(store.claim_approved(), cfg=mock_config)
+            assert result.success
+            assert [(dev, command.action) for dev, command in home.hub.sent] == [("ha:lock.front_door", "unlock")]
+        finally:
+            store.clear_pending()

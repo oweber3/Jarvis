@@ -114,8 +114,37 @@ class TestStaticFiles:
         assert status == 200 and "javascript" in response.getheader("Content-Type")
         assert call(parts, "GET", "/assets/app.css")[2].getheader("Content-Type").startswith("text/css")
 
+    def test_built_assets_are_kept_by_the_browser_and_the_page_is_asked_for_every_time(self, parts):
+        # Built assets are named by their content, so a new build is a new name.
+        assert call(parts, "GET", "/assets/app.js")[2].getheader("Cache-Control") == "public, max-age=31536000, immutable"
+        assert call(parts, "GET", "/")[2].getheader("Cache-Control") == "no-cache"
+
+    def test_text_files_travel_compressed_to_a_browser_that_takes_gzip(self, parts):
+        import gzip
+        script = "console.log('a fairly long line of a built bundle');\n" * 200
+        (parts.server.settings.static_dir / "assets" / "big.js").write_bytes(script.encode())
+        status, body, response = call(parts, "GET", "/assets/big.js", headers={"Accept-Encoding": "gzip, br"})
+        assert status == 200 and response.getheader("Content-Encoding") == "gzip"
+        assert gzip.decompress(body).decode() == script
+        assert int(response.getheader("Content-Length")) == len(body) < len(script)
+        assert "Accept-Encoding" in (response.getheader("Vary") or "")
+        status, body, response = call(parts, "GET", "/assets/big.js")
+        assert response.getheader("Content-Encoding") is None and body.decode() == script
+
+    def test_a_rebuilt_file_is_served_as_it_now_is(self, parts):
+        page = parts.server.settings.static_dir / "index.html"
+        call(parts, "GET", "/")
+        page.write_text("<!doctype html><title>Rebuilt page, longer than the one before it</title>")
+        assert b"Rebuilt page" in call(parts, "GET", "/")[1]
+
+    def test_answers_are_never_compressed_or_kept(self, parts):
+        status, _, response = call(parts, "GET", "/api/state", headers={"Accept-Encoding": "gzip"})
+        assert response.getheader("Content-Encoding") is None and response.getheader("Cache-Control") == "no-store"
+
     @pytest.mark.parametrize("path", ["/assets/../../secret.txt", "/assets/..%2f..%2fsecret.txt", "/../secret.txt",
-                                      "/assets/%2e%2e/%2e%2e/secret.txt", "/assets/missing.js", "/assets/"])
+                                      "/assets/%2e%2e/%2e%2e/secret.txt", "/assets/missing.js", "/assets/",
+                                      "/assets/%5C%5Cevil.example%5Cshare%5Cx.js", "/assets//evil.example/share/x.js",
+                                      "/assets/C:%5CWindows%5Cwin.ini"])
     def test_nothing_outside_the_assets_folder_is_served(self, parts, path):
         status, body, _ = call(parts, "GET", path)
         assert status == 404 and b"do not serve" not in body
@@ -191,6 +220,92 @@ class TestChats:
         assert status == 200
         assert [m["text"] for m in body["messages"]] == ["hello", "Done."]
         assert body["chat"]["id"] == chat_id
+
+    def test_a_long_chat_comes_back_a_page_at_a_time(self, parts):
+        chat = parts.store.create_chat(title="Long")
+        ids = [parts.store.append_message(chat.id, "user", f"m{i}", ts=float(i)).id for i in range(30)]
+        status, body, _ = call(parts, "GET", f"/api/chats/{chat.id}?limit=10")
+        assert status == 200
+        assert [m["text"] for m in body["messages"]] == [f"m{i}" for i in range(20, 30)]
+        assert (body["has_earlier"], body["has_later"]) == (True, False)
+        status, body, _ = call(parts, "GET", f"/api/chats/{chat.id}?limit=10&before={ids[20]}")
+        assert [m["text"] for m in body["messages"]] == [f"m{i}" for i in range(10, 20)]
+        assert (body["has_earlier"], body["has_later"]) == (True, True)
+        status, body, _ = call(parts, "GET", f"/api/chats/{chat.id}?limit=4&around={ids[5]}")
+        assert [m["text"] for m in body["messages"]] == ["m3", "m4", "m5", "m6"]
+
+    def test_without_a_page_the_whole_chat_comes_back(self, parts):
+        chat = parts.store.create_chat(title="Short")
+        for i in range(3):
+            parts.store.append_message(chat.id, "user", f"m{i}", ts=float(i))
+        status, body, _ = call(parts, "GET", f"/api/chats/{chat.id}")
+        assert [m["text"] for m in body["messages"]] == ["m0", "m1", "m2"]
+        assert (body["has_earlier"], body["has_later"]) == (False, False)
+
+    @pytest.mark.parametrize("query", ["limit=0", "limit=201", "limit=ten", "before=x", "around=1&before=2",
+                                       "limit=5&around=-"])
+    def test_a_malformed_page_is_refused(self, parts, query):
+        chat = parts.store.create_chat(title="Short")
+        status, body, _ = call(parts, "GET", f"/api/chats/{chat.id}?{query}")
+        assert status == 400 and body["error"] == "bad_page"
+
+    def test_a_sent_message_can_be_asked_again_edited(self, parts):
+        call(parts, "POST", "/api/chat", {"text": "hello"})
+        chat_id = parts.store.get_active_chat_id()
+        first = parts.store.messages(chat_id)[0].id
+        newest = parts.store.messages(chat_id)[-1].id
+        status, body, _ = call(parts, "POST", f"/api/chats/{chat_id}/rewind",
+                               {"message_id": first, "text": "hi", "newest_id": newest})
+        assert status == 202 and isinstance(body["query_id"], int)
+        assert [m.content for m in parts.store.messages(chat_id)] == ["hi", "Done."]
+
+    @pytest.mark.parametrize("body,code", [({}, "bad_message"), ({"message_id": "1"}, "bad_message"),
+                                           ({"message_id": True}, "bad_message"),
+                                           ({"message_id": 1}, "bad_newest"),
+                                           ({"message_id": 1, "newest_id": "2"}, "bad_newest"),
+                                           ({"message_id": 1, "newest_id": False}, "bad_newest"),
+                                           ({"message_id": 1, "newest_id": 2, "text": "  "}, "bad_text"),
+                                           ({"message_id": 1, "newest_id": 2, "text": "x" * 4001}, "bad_text")])
+    def test_a_malformed_rewind_is_refused(self, parts, body, code):
+        call(parts, "POST", "/api/chat", {"text": "hello"})
+        chat_id = parts.store.get_active_chat_id()
+        status, answer, _ = call(parts, "POST", f"/api/chats/{chat_id}/rewind", body)
+        assert (status, answer["error"]) == (400, code)
+        assert len(parts.store.messages(chat_id)) == 2
+
+    def test_rewinding_says_why_it_cannot(self, parts):
+        call(parts, "POST", "/api/chat", {"text": "hello"})
+        chat_id = parts.store.get_active_chat_id()
+        reply = parts.store.messages(chat_id)[1].id
+        rewind = lambda chat, message: call(parts, "POST", f"/api/chats/{chat}/rewind",  # noqa: E731
+                                            {"message_id": message, "newest_id": reply})
+        assert rewind(chat_id, reply)[1]["error"] == "not_user"
+        assert rewind(chat_id, 999)[0] == 404
+        assert rewind("abc123", reply)[0] == 404
+        call(parts, "POST", "/api/chat", {"text": "and again"})
+        status, answer, _ = rewind(chat_id, reply - 1)
+        assert (status, answer["error"]) == (409, "changed")
+        assert len(parts.store.messages(chat_id)) == 4
+        parts.backend.busy = True
+        status, answer, _ = call(parts, "POST", f"/api/chats/{chat_id}/rewind",
+                                 {"message_id": reply - 1, "newest_id": parts.store.messages(chat_id)[-1].id})
+        assert (status, answer["error"]) == (409, "busy")
+
+    def test_a_rewind_the_chat_cannot_save_changes_nothing(self, parts, monkeypatch):
+        import sqlite3
+
+        call(parts, "POST", "/api/chat", {"text": "hello"})
+        chat_id = parts.store.get_active_chat_id()
+        stored = parts.store.messages(chat_id)
+
+        def cannot(*_args):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(parts.store, "delete_messages_from", cannot)
+        status, answer, _ = call(parts, "POST", f"/api/chats/{chat_id}/rewind",
+                                 {"message_id": stored[0].id, "newest_id": stored[-1].id, "text": "hi"})
+        assert (status, answer["error"]) == (500, "not_taken_back")
+        assert [m.content for m in parts.store.messages(chat_id)] == ["hello", "Done."]
 
     def test_rename_and_move(self, parts):
         project = parts.store.create_project("Work")

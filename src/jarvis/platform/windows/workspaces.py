@@ -144,14 +144,28 @@ _BROWSERS = {
 }
 
 
+# Where Windows records the default browser for https links, newest first: current Windows 11 keeps the
+# user's latest choice in UserChoiceLatest and can leave the older UserChoice on the previous browser.
+_HTTPS_CHOICE = r'Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https'
+_CHOICE_KEYS = (_HTTPS_CHOICE + r'\UserChoiceLatest\ProgId', _HTTPS_CHOICE + r'\UserChoice')
+
+
 def _default_browser_key() -> str | None:
     """The Chromium browser the user's default for https links, or ``None`` for any other."""
     try:
         import winreg
-        path = r'Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice'
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
-            prog_id = winreg.QueryValueEx(key, 'ProgId')[0]
-    except (ImportError, OSError):
+    except ImportError:
+        return None
+    prog_id = None
+    for path in _CHOICE_KEYS:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+                prog_id = winreg.QueryValueEx(key, 'ProgId')[0]
+        except OSError:
+            continue
+        if prog_id:
+            break
+    if not prog_id:
         return None
     return next((name for name, spec in _BROWSERS.items() if str(prog_id).startswith(spec[2])), None)
 

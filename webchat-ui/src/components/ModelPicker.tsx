@@ -1,7 +1,6 @@
 import { CheckIcon, ChevronDownIcon, CloudIcon, CpuIcon, GaugeIcon } from "lucide-react"
-import { useMemo, useState, type FC } from "react"
-import { ModelSelector, type ModelOption } from "@/components/model-selector.aui"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { DropdownMenu } from "radix-ui"
+import { useMemo, type FC, type ReactNode } from "react"
 import { MODE_LABELS, MODE_ORDER, MODE_SHORT_LABELS, cloudValue, effortName, localValue, modeValue, pickEffort } from "@/models"
 import { cn } from "@/lib/utils"
 import { useJarvis } from "@/useJarvis"
@@ -43,12 +42,59 @@ const ModeSwitch: FC = () => {
           )}
         >
           {m === "local" ? <CpuIcon className="size-3.5" aria-hidden /> : <CloudIcon className="size-3.5" aria-hidden />}
-          {MODE_SHORT_LABELS[m] ?? m}
+          <span className="@max-[30rem]:sr-only">{MODE_SHORT_LABELS[m] ?? m}</span>
         </button>
       ))}
     </div>
   )
 }
+
+type Option = { id: string; name: string; description?: string; icon: ReactNode; disabled?: boolean }
+
+const MENU_CONTENT =
+  "bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 z-50 max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] min-w-56 overflow-y-auto rounded-xl border p-1.5 shadow-lg"
+const MENU_ITEM =
+  "data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground flex cursor-pointer items-start gap-2 rounded-lg px-2.5 py-1.5 text-start text-sm outline-none select-none data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60"
+const TRIGGER =
+  "text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring/50 data-[state=open]:bg-accent flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2.5 text-xs whitespace-nowrap outline-none focus-visible:ring-2"
+
+// A menu of options, one of them chosen: keyboard navigation, typeahead and the radio roles come from Radix.
+const ChoiceMenu: FC<{
+  label: string
+  heading: string
+  value: string | undefined
+  options: Option[]
+  trigger: ReactNode
+  onChoose: (id: string) => void
+}> = ({ label, heading, value, options, trigger, onChoose }) => (
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger aria-label={label} className={cn(TRIGGER, "max-w-56")}>
+      {trigger}
+      <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" aria-hidden />
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Portal>
+      <DropdownMenu.Content side="top" align="start" sideOffset={6} className={MENU_CONTENT}>
+        <DropdownMenu.Label className="text-muted-foreground px-2.5 pt-1 pb-1.5 text-xs font-medium">{heading}</DropdownMenu.Label>
+        <DropdownMenu.RadioGroup value={value ?? ""} onValueChange={(next) => next !== value && onChoose(next)}>
+          {options.map((option) => (
+            <DropdownMenu.RadioItem key={option.id} value={option.id} disabled={option.disabled} className={MENU_ITEM}>
+              <span className="text-muted-foreground mt-0.5 shrink-0 [&_svg]:size-4" aria-hidden>
+                {option.icon}
+              </span>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="font-medium">{option.name}</span>
+                {option.description && <span className="text-muted-foreground text-xs leading-snug">{option.description}</span>}
+              </span>
+              <DropdownMenu.ItemIndicator className="mt-0.5 shrink-0">
+                <CheckIcon className="size-4" aria-hidden />
+              </DropdownMenu.ItemIndicator>
+            </DropdownMenu.RadioItem>
+          ))}
+        </DropdownMenu.RadioGroup>
+      </DropdownMenu.Content>
+    </DropdownMenu.Portal>
+  </DropdownMenu.Root>
+)
 
 // The models of the active mode only: the local models, or what Claude or Codex reports for this account.
 const ModelMenu: FC = () => {
@@ -58,7 +104,7 @@ const ModelMenu: FC = () => {
 
   const { options, value } = useMemo(() => {
     if (!isCloud) {
-      const local: ModelOption[] = models.map((m) => ({
+      const local: Option[] = models.map((m) => ({
         id: localValue(m.id),
         name: m.name,
         description: m.installed ? "Runs on this PC" : "Not installed",
@@ -76,8 +122,8 @@ const ModelMenu: FC = () => {
       }
       return { options: local, value: modelState.current ? localValue(modelState.current) : undefined }
     }
-    if (!cloud?.ready) return { options: [] as ModelOption[], value: undefined }
-    const listed: ModelOption[] = cloudModels.map((m) => ({
+    if (!cloud?.ready) return { options: [] as Option[], value: undefined }
+    const listed: Option[] = cloudModels.map((m) => ({
       id: cloudValue(m.id),
       name: m.name,
       ...(m.description ? { description: m.description } : {}),
@@ -97,24 +143,24 @@ const ModelMenu: FC = () => {
     )
   }
   if (options.length === 0) return null
+  const current = options.find((o) => o.id === value)
 
   return (
-    <ModelSelector.Root
-      models={options}
-      {...(value ? { value } : {})}
-      onValueChange={(next) => void actions.chooseModel(next)}
-    >
-      <ModelSelector.Trigger variant="ghost" size="sm" aria-label="Model" className="max-w-56" />
-      <ModelSelector.Content align="start" side="top">
-        <ModelSelector.List>
-          <ModelSelector.Group heading={isCloud ? `${MODE_LABELS[active] ?? active} models` : "On this PC"}>
-            {options.map((model) => (
-              <ModelSelector.Item key={model.id} model={model} />
-            ))}
-          </ModelSelector.Group>
-        </ModelSelector.List>
-      </ModelSelector.Content>
-    </ModelSelector.Root>
+    <ChoiceMenu
+      label={`Model: ${current?.name ?? "none chosen"}`}
+      heading={isCloud ? `${MODE_LABELS[active] ?? active} models` : "On this PC"}
+      value={value}
+      options={options}
+      onChoose={(next) => void actions.chooseModel(next)}
+      trigger={
+        <>
+          <span className="shrink-0 [&_svg]:size-3.5" aria-hidden>
+            {current?.icon ?? <CpuIcon />}
+          </span>
+          <span className="truncate">{current?.name ?? "Model"}</span>
+        </>
+      }
+    />
   )
 }
 
@@ -122,48 +168,28 @@ const ModelMenu: FC = () => {
 // reports effort levels; switching model keeps the effort when the new model offers it.
 const EffortMenu: FC = () => {
   const { cloud, cloudModels, actions } = useJarvis()
-  const [open, setOpen] = useState(false)
   const model = cloudModels.find((m) => m.id === cloud?.model)
   if (!cloud?.ready || !model || model.efforts.length === 0) return null
   const selected = pickEffort(model, cloud.effort)
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        aria-label={`Effort: ${selected ? effortName(selected) : "default"}`}
-        className="text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring/50 flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs whitespace-nowrap outline-none focus-visible:ring-1"
-      >
-        <GaugeIcon className="size-3.5" aria-hidden />
-        <span>{selected ? effortName(selected) : "Effort"}</span>
-        <ChevronDownIcon className="size-3.5 opacity-50" aria-hidden />
-      </PopoverTrigger>
-      <PopoverContent align="start" side="top" sideOffset={6} className="w-64 rounded-xl p-1.5">
-        <div role="menu" aria-label="Effort" className="flex flex-col gap-0.5">
-          <p className="text-muted-foreground px-2.5 pt-1 pb-1.5 text-xs font-medium">How hard {model.name} thinks</p>
-          {model.efforts.map((effort) => (
-            <button
-              key={effort.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={effort.id === selected}
-              onClick={() => {
-                setOpen(false)
-                void actions.chooseCloudModel(model.id, effort.id)
-              }}
-              className={cn(
-                "hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent flex items-start gap-2 rounded-lg px-2.5 py-1.5 text-start text-sm outline-none",
-                effort.id === selected && "bg-accent/60",
-              )}
-            >
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="font-medium">{effortName(effort.id)}</span>
-                {effort.description && <span className="text-muted-foreground text-xs leading-snug">{effort.description}</span>}
-              </span>
-              {effort.id === selected && <CheckIcon className="mt-0.5 size-4 shrink-0" aria-hidden />}
-            </button>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
+    <ChoiceMenu
+      label={`Effort: ${selected ? effortName(selected) : "default"}`}
+      heading={`How hard ${model.name} thinks`}
+      value={selected}
+      options={model.efforts.map((effort) => ({
+        id: effort.id,
+        name: effortName(effort.id),
+        ...(effort.description ? { description: effort.description } : {}),
+        icon: <GaugeIcon />,
+      }))}
+      onChoose={(next) => void actions.chooseCloudModel(model.id, next)}
+      trigger={
+        <>
+          <GaugeIcon className="size-3.5 shrink-0" aria-hidden />
+          <span>{selected ? effortName(selected) : "Effort"}</span>
+        </>
+      }
+    />
   )
 }

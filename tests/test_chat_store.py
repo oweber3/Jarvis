@@ -163,6 +163,131 @@ class TestMessages:
         assert store.get_chat(chat.id).title == ""
 
 
+class TestPages:
+    """A long chat is read a page at a time: the newest messages first, then earlier ones, or the stretch
+    around a message a search found."""
+
+    @staticmethod
+    def chat_of(store, count):
+        chat = store.create_chat()
+        ids = [store.append_message(chat.id, "user", f"m{i}", ts=float(i)).id for i in range(count)]
+        return chat, ids
+
+    def test_the_newest_page_comes_back_oldest_first_and_says_more_is_earlier(self, store):
+        chat, _ = self.chat_of(store, 10)
+        page = store.messages_page(chat.id, limit=4)
+        assert [m.content for m in page.messages] == ["m6", "m7", "m8", "m9"]
+        assert (page.has_earlier, page.has_later) == (True, False)
+
+    def test_a_page_before_a_message_ends_just_before_it(self, store):
+        chat, ids = self.chat_of(store, 10)
+        page = store.messages_page(chat.id, limit=4, before=ids[6])
+        assert [m.content for m in page.messages] == ["m2", "m3", "m4", "m5"]
+        assert (page.has_earlier, page.has_later) == (True, True)
+
+    def test_the_first_page_says_nothing_is_earlier(self, store):
+        chat, ids = self.chat_of(store, 10)
+        page = store.messages_page(chat.id, limit=4, before=ids[3])
+        assert [m.content for m in page.messages] == ["m0", "m1", "m2"]
+        assert page.has_earlier is False
+
+    def test_a_page_around_a_message_holds_it_with_its_neighbours(self, store):
+        chat, ids = self.chat_of(store, 20)
+        page = store.messages_page(chat.id, limit=6, around=ids[10])
+        assert [m.content for m in page.messages] == ["m7", "m8", "m9", "m10", "m11", "m12"]
+        assert (page.has_earlier, page.has_later) == (True, True)
+
+    def test_a_page_around_a_message_near_an_end_is_filled_from_the_other_side(self, store):
+        chat, ids = self.chat_of(store, 20)
+        newest = store.messages_page(chat.id, limit=6, around=ids[18])
+        assert [m.content for m in newest.messages] == ["m14", "m15", "m16", "m17", "m18", "m19"]
+        assert newest.has_later is False
+        oldest = store.messages_page(chat.id, limit=6, around=ids[1])
+        assert [m.content for m in oldest.messages] == ["m0", "m1", "m2", "m3", "m4", "m5"]
+        assert oldest.has_earlier is False
+
+    def test_a_short_chat_is_one_page(self, store):
+        chat, _ = self.chat_of(store, 3)
+        page = store.messages_page(chat.id, limit=50)
+        assert [m.content for m in page.messages] == ["m0", "m1", "m2"]
+        assert (page.has_earlier, page.has_later) == (False, False)
+
+    def test_pages_never_mix_chats(self, store):
+        chat, ids = self.chat_of(store, 5)
+        other = store.create_chat()
+        store.append_message(other.id, "user", "elsewhere", ts=99.0)
+        page = store.messages_page(chat.id, limit=50, around=ids[2])
+        assert "elsewhere" not in [m.content for m in page.messages]
+        assert page.has_later is False
+
+
+class TestTakingMessagesBack:
+    def test_a_message_and_everything_after_it_can_be_removed(self, store):
+        chat = store.create_chat()
+        ids = [store.append_message(chat.id, "user", f"m{i}", ts=float(i)).id for i in range(5)]
+        other = store.create_chat()
+        store.append_message(other.id, "user", "elsewhere", ts=9.0)
+        assert store.delete_messages_from(chat.id, ids[2]) == 3
+        assert [m.content for m in store.messages(chat.id)] == ["m0", "m1"]
+        assert [m.content for m in store.messages(other.id)] == ["elsewhere"]
+
+    def test_new_messages_after_a_removal_are_newer_than_any_removed(self, store):
+        chat = store.create_chat()
+        removed = store.append_message(chat.id, "user", "gone", ts=1.0)
+        store.delete_messages_from(chat.id, removed.id)
+        assert store.append_message(chat.id, "user", "new", ts=2.0).id > removed.id
+
+    def test_taking_back_the_first_message_takes_the_title_it_gave_the_chat(self, store):
+        chat = store.create_chat()
+        first = store.append_message(chat.id, "user", "Plan the trip to Lisbon", ts=1.0)
+        store.append_message(chat.id, "assistant", "Sure.", ts=2.0)
+        store.delete_messages_from(chat.id, first.id)
+        assert store.get_chat(chat.id).title == ""
+        store.append_message(chat.id, "user", "Plan the trip to Porto", ts=3.0)
+        assert store.get_chat(chat.id).title == "Plan the trip to Porto"
+
+    def test_a_title_the_owner_chose_stays(self, store):
+        chat = store.create_chat()
+        first = store.append_message(chat.id, "user", "Plan the trip to Lisbon", ts=1.0)
+        store.rename_chat(chat.id, "Holidays")
+        store.delete_messages_from(chat.id, first.id)
+        assert store.get_chat(chat.id).title == "Holidays"
+
+    def test_taking_back_later_messages_keeps_the_title(self, store):
+        chat = store.create_chat()
+        store.append_message(chat.id, "user", "Plan the trip to Lisbon", ts=1.0)
+        second = store.append_message(chat.id, "user", "and the flights", ts=2.0)
+        store.delete_messages_from(chat.id, second.id)
+        assert store.get_chat(chat.id).title == "Plan the trip to Lisbon"
+
+    def test_a_removal_that_cannot_be_saved_removes_nothing(self, store):
+        chat = store.create_chat()
+        ids = [store.append_message(chat.id, "user", f"m{i}", ts=float(i)).id for i in range(3)]
+        real = store.conn
+
+        class CommitFails:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def execute(self, *args):
+                return self._conn.execute(*args)
+
+            def commit(self):
+                raise sqlite3.OperationalError("disk I/O error")
+
+            def rollback(self):
+                self._conn.rollback()
+
+        store.conn = CommitFails(real)
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                store.delete_messages_from(chat.id, ids[0])
+        finally:
+            store.conn = real
+        assert [m.id for m in store.messages(chat.id)] == ids
+        assert store.get_chat(chat.id).title == "m0"
+
+
 class TestState:
     def test_the_open_chat_is_remembered_across_restarts(self, tmp_path):
         path = str(tmp_path / "jarvis.db")

@@ -1,7 +1,8 @@
 import { ThreadListPrimitive, useAuiState } from "@assistant-ui/react"
-import { ChevronDownIcon, ChevronRightIcon, FolderPlusIcon, PencilIcon, PinIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react"
+import { ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderPlusIcon, PencilIcon, PinIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type FC, type ReactNode } from "react"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
+import { JarvisMark } from "@/components/JarvisMark"
 import { ThreadListItem, ThreadListNew } from "@/components/thread-list.aui"
 import { TooltipIconButton } from "@/components/tooltip-icon-button"
 import { Input } from "@/components/ui/input"
@@ -37,8 +38,9 @@ function writeCollapsed(ids: Set<string>) {
   }
 }
 
-// `canClearAll` is off in the phone app: deleting everything is a desktop action.
-export const ProjectsSidebar: FC<{ canClearAll?: boolean }> = ({ canClearAll = true }) => {
+// `canClearAll` is off in the phone app: deleting everything is a desktop action. In the phone's drawer
+// (`inDrawer`) the drawer has its own heading and there is no keyboard, so the mark and the key hints go.
+export const ProjectsSidebar: FC<{ canClearAll?: boolean; inDrawer?: boolean }> = ({ canClearAll = true, inDrawer = false }) => {
   const { library, actions } = useJarvis()
   const threadIds = useAuiState((s) => s.threads.threadIds)
   const [query, setQuery] = useState("")
@@ -62,9 +64,22 @@ export const ProjectsSidebar: FC<{ canClearAll?: boolean }> = ({ canClearAll = t
   const unfiled = useMemo(() => library.chats.filter((c) => c.project_id === null), [library.chats])
 
   return (
-    <nav aria-label="Chats and projects" className="flex h-full min-h-0 flex-col gap-2 p-2">
+    <nav aria-label="Chats and projects" className="flex h-full min-h-0 flex-col gap-2 p-2.5">
+      {!inDrawer && (
+        <div className="flex h-9 items-center gap-2 px-1.5">
+          <JarvisMark className="size-6" />
+          <span className="text-[15px] font-semibold tracking-tight">Jarvis</span>
+        </div>
+      )}
       <ThreadListPrimitive.Root className="flex flex-col gap-1">
-        <ThreadListNew />
+        <ThreadListNew
+          className="border-primary/25 bg-primary/10 hover:bg-primary/15 data-active:bg-primary/10 h-9 border font-medium"
+          aria-keyshortcuts="Control+N"
+        >
+          <PlusIcon className="size-4 shrink-0" aria-hidden />
+          <span className="whitespace-nowrap">New chat</span>
+          {!inDrawer && <kbd className="text-muted-foreground ms-auto font-sans text-[11px] font-normal">Ctrl N</kbd>}
+        </ThreadListNew>
       </ThreadListPrimitive.Root>
 
       <div className="relative px-0.5">
@@ -84,7 +99,8 @@ export const ProjectsSidebar: FC<{ canClearAll?: boolean }> = ({ canClearAll = t
           aria-label="Search chats"
           placeholder="Search chats and messages"
           title="Search chats and messages (Ctrl+K)"
-          className="h-8 ps-8 text-sm"
+          aria-keyshortcuts="Control+K"
+          className="bg-background/60 h-9 rounded-lg ps-8 text-sm"
         />
       </div>
 
@@ -119,7 +135,10 @@ export const ProjectsSidebar: FC<{ canClearAll?: boolean }> = ({ canClearAll = t
             {(unfiled.some((c) => !c.pinned) || library.projects.length === 0) && (
               <section aria-label="Chats without a project" className="flex flex-col gap-0.5">
                 {library.projects.length > 0 && (
-                  <h3 className="text-muted-foreground px-2.5 pt-3 pb-1 text-xs font-medium">No project</h3>
+                  <h3 className="text-muted-foreground flex h-8 items-center gap-1.5 px-2 pt-2 text-sm font-medium">
+                    <FolderIcon className="size-4 shrink-0" aria-hidden />
+                    No project
+                  </h3>
                 )}
                 <AgeGroups chats={unfiled} indexById={indexById} />
               </section>
@@ -196,7 +215,7 @@ const DeleteEverything: FC = () => {
 
 // A group's small heading: "Pinned", "Today", "Yesterday" ...
 const GroupHeading: FC<{ children: string; icon?: ReactNode }> = ({ children, icon }) => (
-  <h4 className="text-muted-foreground flex items-center gap-1.5 px-2.5 pt-2 pb-0.5 text-[11px] font-medium">
+  <h4 className="text-muted-foreground flex items-center gap-1.5 px-2.5 pt-3 pb-1 text-[11px] font-semibold tracking-wide uppercase">
     {icon}
     {children}
   </h4>
@@ -236,7 +255,7 @@ const SearchResults: FC<{ rows: SearchRow[]; query: string; searching: boolean }
           <button
             type="button"
             onClick={() => {
-              void actions.openChat(chat.id)
+              void actions.openChat(chat.id, messageId ?? undefined)
               scrollTarget.set(messageId)
             }}
             className="hover:bg-muted focus-visible:bg-muted flex w-full flex-col items-start gap-0.5 rounded-md px-2.5 py-1.5 text-start outline-none"

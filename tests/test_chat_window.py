@@ -700,9 +700,18 @@ class TestChatWindowInputKeys:
 class TestChatWindowTranscriptScroll:
     """New messages keep the latest content visible (auto-scroll to bottom)."""
 
+    @staticmethod
+    def _settle(condition, timeout=5.0):
+        """Process Qt events until ``condition`` holds: laying out a long transcript takes longer on a busy PC."""
+        import time
+        from PyQt6.QtTest import QTest
+
+        deadline = time.monotonic() + timeout
+        while not condition() and time.monotonic() < deadline:
+            QTest.qWait(10)
+
     def test_append_scrolls_to_bottom_after_many_lines(self, qapp, monkeypatch):
         from desktop_app.chat_window import ChatWindow
-        from PyQt6.QtTest import QTest
 
         monkeypatch.setattr(
             "desktop_app.chat_window.get_hot_window_messages", lambda: []
@@ -714,16 +723,15 @@ class TestChatWindowTranscriptScroll:
         # lines. Each append must bring the cursor (the view) back to the end.
         for _ in range(80):
             win._append_assistant("line of transcript content " * 4)
-        QTest.qWait(100)
-
         scroll_bar = win.transcript_widget.verticalScrollBar()
+        self._settle(lambda: 0 < scroll_bar.maximum() == scroll_bar.value())
+
         assert scroll_bar.maximum() > 0
         assert scroll_bar.value() == scroll_bar.maximum()
 
     @pytest.mark.parametrize("kind", ["user", "assistant", "system"])
     def test_new_message_scrolls_to_bottom_from_scrolled_up_position(self, qapp, monkeypatch, kind):
         from desktop_app.chat_window import ChatWindow
-        from PyQt6.QtTest import QTest
 
         monkeypatch.setattr("desktop_app.chat_window.get_hot_window_messages", lambda: [])
 
@@ -731,14 +739,14 @@ class TestChatWindowTranscriptScroll:
         win.show()
         for index in range(80):
             win._append_assistant(f"older message {index} " * 4)
-        QTest.qWait(100)
-
         scroll_bar = win.transcript_widget.verticalScrollBar()
+        self._settle(lambda: 0 < scroll_bar.maximum() == scroll_bar.value())
+
         scroll_bar.setValue(scroll_bar.minimum())
         assert scroll_bar.value() < scroll_bar.maximum()
 
         getattr(win, f"_append_{kind}")("newest message")
-        QTest.qWait(100)
+        self._settle(lambda: scroll_bar.value() == scroll_bar.maximum())
 
         assert scroll_bar.value() == scroll_bar.maximum()
 

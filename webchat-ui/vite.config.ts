@@ -38,6 +38,6 @@ export default defineConfig(({ mode }) => {
       ...(phone ? { rollupOptions: { input: path.resolve(root, "phone.html") } } : {}),
     },
     server: { proxy: { "/api": { target: jarvis, changeOrigin: false } } },
-    test: { environment: "node" },
+    test: { environment: "node", setupFiles: ["src/test/setup.ts"] },
   }
 })

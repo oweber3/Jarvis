@@ -162,7 +162,8 @@ class TestStaticApp:
 
     def test_paths_outside_the_app_are_not_served(self, server):
         for path in ["/../secret.txt", "/%2e%2e/secret.txt", "/assets/../../secret.txt", "/assets/%2e%2e/index.html",
-                     "/static/../server.py", "/nope.txt", "/assets/"]:
+                     "/static/../server.py", "/nope.txt", "/assets/", "/assets/%5C%5Cevil.example%5Cshare%5Cx.js",
+                     "/assets//evil.example/share/x.js", "/assets/C:%5CWindows%5Cwin.ini"]:
             status, _, _ = Client(server).request("GET", path)
             assert status == 404, path
 
@@ -209,6 +210,20 @@ class TestAuthentication:
 
 
 @pytest.mark.unit
+class TestStaticFilesTravelLight:
+    def test_built_assets_are_kept_and_compressed_and_the_page_is_asked_for_every_time(self, server, static_dir):
+        import gzip
+        script = "console.log('a fairly long line of the phone bundle');\n" * 200
+        (static_dir / "assets" / "big.js").write_bytes(script.encode())
+        status, body, headers = Client(server).request("GET", "/assets/big.js", headers={"Accept-Encoding": "gzip"})
+        assert status == 200 and headers["Content-Encoding"] == "gzip"
+        assert gzip.decompress(body).decode() == script
+        assert headers["Cache-Control"] == "public, max-age=31536000, immutable"
+        assert Client(server).request("GET", "/")[2]["Cache-Control"] == "no-cache"
+        assert Client(server).request("GET", "/manifest.webmanifest")[2]["Cache-Control"] == "no-cache"
+
+
+@pytest.mark.unit
 class TestChatThroughTheSharedHub:
     def test_a_request_is_answered_in_the_open_chat(self, server, store, chat_backend):
         client = paired_client(server, store)
@@ -226,6 +241,17 @@ class TestChatThroughTheSharedHub:
         assert [m.content for m in stored] == ["hello", "Done."]
         _, library, _ = client.request("GET", "/api/library")
         assert library["active_chat_id"] == chat_store.get_active_chat_id()
+
+    def test_a_phone_can_ask_a_sent_message_again_as_a_phone(self, server, store, chat_backend, chat_store):
+        client = paired_client(server, store)
+        client.request("POST", "/api/chat", {"text": "hello"})
+        chat_id = chat_store.get_active_chat_id()
+        first, newest = chat_store.messages(chat_id)[0].id, chat_store.messages(chat_id)[-1].id
+        status, _, _ = client.request("POST", f"/api/chats/{chat_id}/rewind",
+                                      {"message_id": first, "text": "hi", "newest_id": newest})
+        assert status == 202
+        assert [m.content for m in chat_store.messages(chat_id)] == ["hi", "Done."]
+        assert chat_backend.origins == ["phone", "phone"]
 
     def test_busy_is_a_conflict(self, server, store, chat_backend):
         chat_backend.mode = "busy"
@@ -262,6 +288,9 @@ class TestChatThroughTheSharedHub:
 
     def test_a_poll_with_nothing_new_waits_then_returns(self, server, store):
         client = paired_client(server, store)
+        # The server starts the hub and then watches its own signals, so the hub's first two passes can come either
+        # side of a first poll; one pass now settles it, as a running hub does within its first interval.
+        server.hub.sync()
         _, first, _ = poll(client)
         status, again, _ = poll(client, rev=first["rev"], after=2 ** 40)
         assert status == 200 and again["rev"] == first["rev"]
@@ -711,3 +740,38 @@ class TestReviewFindings:
         thread.join(timeout=5)
         assert result["body"]["status"] == "stopped"
         assert chat_backend.submitted == []
+
+
+@pytest.mark.unit
+class TestOutsideClients:
+    def test_an_outside_client_is_answered_before_its_request_is_read(
+            self, chat_backend, chat_store, backend, store, static_dir):
+        # A client trickling its request line (slowloris over an accidental port forward) must not hold a
+        # thread until the 60-second read timeout: it is refused before a byte is parsed.
+        server = make_server(chat_backend, chat_store, backend, store, static_dir, client_filter=lambda a: False)
+        try:
+            started = time.monotonic()
+            sock = socket.create_connection(("127.0.0.1", server.port), timeout=5)
+            try:
+                sock.sendall(b"GET / HT")   # never finished
+                data = sock.recv(200)
+            finally:
+                sock.close()
+            assert data.split(b" ", 2)[1] == b"403"
+            assert time.monotonic() - started < 3
+        finally:
+            server.stop()
+
+
+@pytest.mark.unit
+def test_the_port_is_bound_for_exclusive_use_where_windows_offers_it(chat_backend, chat_store, backend, store,
+                                                                     static_dir, monkeypatch):
+    # On Windows another program of the same user could bind the same port more specifically and take the
+    # phone's connections (and their device tokens) unless the server asks for exclusive use. Linux has no
+    # such option, so a harmless stand-in shows that it is asked for.
+    monkeypatch.setattr(socket, "SO_EXCLUSIVEADDRUSE", socket.SO_KEEPALIVE, raising=False)
+    server = make_server(chat_backend, chat_store, backend, store, static_dir)
+    try:
+        assert server._httpd.socket.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+    finally:
+        server.stop()

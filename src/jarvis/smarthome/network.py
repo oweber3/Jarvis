@@ -47,8 +47,8 @@ def _allowed(address: ipaddress._BaseAddress) -> bool:
     return any(address.version == net.version and address in net for net in ALLOWED_NETWORKS)
 
 
-def _resolve(host: str) -> List[str]:
-    """Every address ``host`` resolves to, within ``RESOLVE_TIMEOUT_SEC``; [] when none or too slow.
+def _resolve(host: str, timeout: float) -> List[str]:
+    """Every address ``host`` resolves to, within ``timeout`` seconds; [] when none or too slow.
 
     The lookup runs on its own daemon thread so a slow resolver cannot hold the caller, and the process-wide
     socket timeout is never touched (connectors resolve concurrently). A link-local address keeps its scope."""
@@ -65,16 +65,17 @@ def _resolve(host: str) -> List[str]:
             done.set()
 
     threading.Thread(target=lookup, name="smarthome-resolve", daemon=True).start()
-    return list(found) if done.wait(RESOLVE_TIMEOUT_SEC) else []
+    return list(found) if done.wait(timeout) else []
 
 
 def validate_endpoint(value, *, default_port: int, schemes: Sequence[str] = ("http", "https"),
-                      resolve: bool = True) -> Endpoint:
+                      resolve: bool = True, resolve_timeout: Optional[float] = None) -> Endpoint:
     """The endpoint to connect to for ``value`` (a URL, or a bare host for a broker), or
     ``SmartHomeAddressError`` (``SmartHomeNotFound`` for a hostname that does not resolve now).
 
     With ``resolve`` false only the syntax and a literal address are checked (``ip`` is empty for a
-    hostname): connectors resolve inside their retry loops."""
+    hostname): connectors resolve inside their retry loops. A lookup waits at most ``resolve_timeout``
+    (``RESOLVE_TIMEOUT_SEC`` unless given)."""
     if not isinstance(value, str) or not value.strip():
         raise SmartHomeAddressError("No address is set.")
     text = value.strip()
@@ -109,7 +110,7 @@ def validate_endpoint(value, *, default_port: int, schemes: Sequence[str] = ("ht
     elif not resolve:
         return Endpoint(parts.scheme, host, "", port)
     else:
-        candidates = _resolve(host)
+        candidates = _resolve(host, RESOLVE_TIMEOUT_SEC if resolve_timeout is None else resolve_timeout)
         if not candidates:
             raise SmartHomeNotFound("The address could not be found on this network yet.")
     for candidate in candidates:

@@ -249,3 +249,56 @@ def test_the_long_poll_delivers_steps_with_the_reply(served, backend, log):
             break
     assistant = [m for m in body["messages"] if m["role"] == "assistant"][0]
     assert [s["label"] for s in assistant["steps"]] == ["Opened Word"]
+
+
+class TestStepsWhileWorking:
+    """While a typed request is answered, the poll carries the steps taken for it so far, so the page can show what
+    Jarvis is doing before the reply lands (``webchat.spec.md``, Tool steps, While Jarvis works)."""
+
+    def test_the_steps_of_a_request_in_flight_reach_the_page_with_their_label_and_status_only(self, hub, backend, log):
+        backend.mode = "hold"
+        hub.submit("open word and search the web")
+        log.record("openApp", "done", "Opened Word", "Word")
+        log.record("webSearch", "waiting")
+        live = hub.snapshot(0)["live_steps"]
+        assert live == [{"tool": "openApp", "status": "done", "label": "Opened Word"},
+                        {"tool": "webSearch", "status": "waiting", "label": "Web search"}]
+
+    def test_no_steps_are_shown_while_no_typed_request_runs(self, hub, log):
+        log.record("openApp", "done", "Opened Word")
+        assert hub.snapshot(0)["live_steps"] == []
+
+    def test_steps_taken_before_the_request_are_not_its_own(self, hub, backend, log):
+        log.record("systemVolume", "done", "Set the volume to 30%")
+        hub.sync()
+        backend.speak("volume to thirty", "Done.")
+        hub.sync()
+        backend.mode = "hold"
+        hub.submit("what's the time?")
+        assert hub.snapshot(0)["live_steps"] == []
+
+    def test_a_new_step_wakes_a_waiting_poll(self, hub, backend, log):
+        backend.mode = "hold"
+        hub.submit("search the web")
+        rev = hub.snapshot(0)["rev"]
+        log.record("webSearch", "done", "Searched the web")
+        hub.sync()
+        assert hub.snapshot(0)["rev"] != rev
+
+    def test_a_new_step_does_not_send_every_page_for_the_chat_list(self, hub, backend, log):
+        backend.mode = "hold"
+        hub.submit("search the web")
+        hub.sync()
+        library_rev = hub.snapshot(0)["library_rev"]
+        for label in ("Searched the web", "Opened Word", "Read the page"):
+            log.record("webSearch", "done", label)
+            hub.sync()
+        assert hub.snapshot(0)["library_rev"] == library_rev
+
+    def test_once_the_reply_lands_its_steps_are_stored_with_it_and_no_longer_live(self, hub, backend, store, log):
+        backend.mode = "hold"
+        hub.submit("search the web")
+        log.record("webSearch", "done", "Searched the web", "3 results")
+        backend.release()
+        assert hub.snapshot(0)["live_steps"] == []
+        assert labels(replies(store)[-1]) == [("Searched the web", "done", "3 results")]

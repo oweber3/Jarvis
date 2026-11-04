@@ -16,12 +16,16 @@ from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from time import monotonic as _monotonic
+
 from ..debug import debug_log
 from . import rrule
 
 MAX_TEXT_CHARS = 8_000_000
 MAX_EVENTS = 20_000
 MAX_INSTANCES = 2_000
+# The work one read may do across all events; a file costlier to expand fails as ``CalendarTooComplex``.
+READ_BUDGET_SEC = 5.0
 _TEXT_CHARS = 300
 
 # Windows zone names Outlook writes in TZID, mapped to IANA names (the common ones; others use the
@@ -50,6 +54,10 @@ WINDOWS_ZONES = {
 
 class CalendarFormatError(ValueError):
     """The text is not an iCalendar file."""
+
+
+class CalendarTooComplex(ValueError):
+    """Expanding the calendar over the window would take longer than ``READ_BUDGET_SEC``."""
 
 
 @dataclass
@@ -226,6 +234,7 @@ class VTimezone(tzinfo):
         self._name = name
         self._rules = rules
         self._cache: Dict[int, List[Tuple[datetime, timedelta, bool]]] = {}
+        self._before_cache: Dict[int, Tuple[timedelta, bool]] = {}
         earliest = min(rules, key=lambda r: r[0])
         self._before = earliest[1]
         standard = [r for r in rules if not r[5]]
@@ -271,7 +280,13 @@ class VTimezone(tzinfo):
         return self._cache[year]
 
     def _last_before(self, year: int) -> Tuple[timedelta, bool]:
-        """The offset in force at the start of ``year``: the latest change before it, of any rule."""
+        """The offset in force at the start of ``year``: the latest change before it, of any rule. Worked out
+        once per year: Outlook's zones start in 1601, so each answer walks four centuries of rules."""
+        if year not in self._before_cache:
+            self._before_cache[year] = self._find_last_before(year)
+        return self._before_cache[year]
+
+    def _find_last_before(self, year: int) -> Tuple[timedelta, bool]:
         latest: Optional[Tuple[datetime, timedelta, bool]] = None
         limit = datetime(max(year, 1), 1, 1)
         for onset, frm, to, rule, rdates, daylight in self._rules:
@@ -414,7 +429,9 @@ def _text(event: Component, name: str) -> str:
 def occurrences(calendar: Calendar, window_start: datetime, window_end: datetime) -> List[Occurrence]:
     """Events overlapping ``[window_start, window_end)``, sorted by start, at most ``MAX_INSTANCES``.
 
-    ``window_start`` and ``window_end`` are aware datetimes."""
+    ``window_start`` and ``window_end`` are aware datetimes. Raises ``CalendarTooComplex`` once the read has
+    spent ``READ_BUDGET_SEC`` (checked between events, each of which is bounded on its own)."""
+    deadline = _monotonic() + READ_BUDGET_SEC
     masters: List[Component] = []
     overrides: Dict[str, Dict[str, Component]] = {}
     for event in calendar.events:
@@ -432,6 +449,9 @@ def occurrences(calendar: Calendar, window_start: datetime, window_end: datetime
     found: List[Occurrence] = []
 
     def add(event: Component, moved: Dict[str, Dict[str, Component]], single_only: bool = False) -> None:
+        if _monotonic() > deadline:
+            debug_log("calendar too costly to expand within the read budget", "agenda")
+            raise CalendarTooComplex("the calendar takes too long to read")
         try:
             found.extend(_event_occurrences(event, calendar, moved, window_start, window_end, single_only=single_only))
         except (ValueError, TypeError, OverflowError) as exc:

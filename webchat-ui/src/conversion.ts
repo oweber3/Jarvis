@@ -1,6 +1,7 @@
 import type { ThreadMessageLike } from "@assistant-ui/react"
 import type { AttachmentMarker, Chat, ChatMessage, Notice } from "@/api"
 import { chipType, markerLabel } from "@/attachments"
+import type { LiveStep } from "@/steps"
 type ThreadMessageLikePart = Exclude<ThreadMessageLike["content"], string>[number]
 
 // Turns what the server stores into messages the thread renders. Pure functions, covered by tests.
@@ -8,7 +9,15 @@ type ThreadMessageLikePart = Exclude<ThreadMessageLike["content"], string>[numbe
 // A message being sent: shown at once with a thinking placeholder. ``afterId`` is the newest stored message
 // when it was sent, so a reply stored since then can be told from older turns. ``acceptedAt`` is how many
 // polls had been made when the server accepted it (0 until then): only a later poll can know about it.
-export type Pending = { text: string; accepted: boolean; afterId: number; acceptedAt: number; attachments?: AttachmentMarker[] }
+// ``stopped`` is set once the owner pressed Stop: the words stay, Jarvis is no longer shown working on them.
+export type Pending = {
+  text: string
+  accepted: boolean
+  afterId: number
+  acceptedAt: number
+  attachments?: AttachmentMarker[]
+  stopped?: boolean
+}
 
 // The chips under a message that carried attachments: kind and size, which is all the server keeps.
 function attachmentChips(markers: readonly AttachmentMarker[] | undefined, prefix: string) {
@@ -39,8 +48,16 @@ function stepParts(message: ChatMessage): ThreadMessageLikePart[] {
   }))
 }
 
+// What the thread renders for each stored message and notice is built once per object and then reused, so a poll
+// that brings one new turn (or only a change of Jarvis's state) leaves every other turn's objects as they were and
+// React redraws only what changed. The stored message objects themselves are kept across polls (``mergeMessages``).
+const threadMessageCache = new WeakMap<ChatMessage, ThreadMessageLike>()
+const noticeCache = new WeakMap<Notice, ThreadMessageLike[]>()
+
 export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
-  return {
+  const known = threadMessageCache.get(message)
+  if (known) return known
+  const built: ThreadMessageLike = {
     id: `m${message.id}`,
     role: message.role,
     content: [...stepParts(message), { type: "text", text: message.text }],
@@ -52,11 +69,19 @@ export function toThreadMessage(message: ChatMessage): ThreadMessageLike {
       custom: { source: message.source },
     },
   }
+  threadMessageCache.set(message, built)
+  return built
 }
+
+/** The thread's own conversion step: the page hands it messages that are already in the thread's shape. One
+ * function for the page's lifetime, so the runtime keeps its cache of converted messages between renders. */
+export const convertThreadMessage = (message: ThreadMessageLike): ThreadMessageLike => message
 
 // A local line (busy, stopped, could not answer): shown, never stored. A failed request is shown
 // first as the message the owner sent.
 export function noticeMessages(notice: Notice): ThreadMessageLike[] {
+  const known = noticeCache.get(notice)
+  if (known) return known
   const out: ThreadMessageLike[] = []
   const createdAt = new Date(notice.ts * 1000)
   if (notice.request) {
@@ -75,13 +100,27 @@ export function noticeMessages(notice: Notice): ThreadMessageLike[] {
     status: { type: "complete", reason: "stop" },
     metadata: { custom: { notice: true, kind: notice.kind } },
   })
+  noticeCache.set(notice, out)
   return out
+}
+
+// The steps of the request in flight, drawn in its thinking placeholder as finished calls.
+function liveParts(steps: readonly LiveStep[]): ThreadMessageLikePart[] {
+  return steps.map((step, index) => ({
+    type: "tool-call" as const,
+    toolCallId: `live-s${index}`,
+    toolName: step.tool,
+    args: { label: step.label, status: step.status },
+    result: step.status,
+    ...(step.status === "failed" || step.status === "declined" ? { isError: true } : {}),
+  }))
 }
 
 export function buildThreadMessages(
   messages: readonly ChatMessage[],
   notices: readonly Notice[],
   pending: Pending | null,
+  liveSteps: readonly LiveStep[] = [],
   now: () => Date = () => new Date(),
 ): ThreadMessageLike[] {
   // Notices sit where they happened: after every message that is not newer than them.
@@ -102,13 +141,15 @@ export function buildThreadMessages(
       createdAt,
       ...attachmentChips(pending.attachments, "pending"),
     })
-    out.push({
-      id: "pending-reply",
-      role: "assistant",
-      content: [],
-      createdAt,
-      status: { type: "running" },
-    })
+    if (!pending.stopped) {
+      out.push({
+        id: "pending-reply",
+        role: "assistant",
+        content: liveParts(liveSteps),
+        createdAt,
+        status: { type: "running" },
+      })
+    }
   }
   return out
 }

@@ -89,6 +89,14 @@ def test_status_colours_are_readable_on_the_page(theme, status):
 
 
 @pytest.mark.parametrize("theme", PALETTES)
+@pytest.mark.parametrize("token", ["accent_indigo", "success", "warning", "text_muted", "accent_primary"])
+def test_the_colours_of_code_in_a_reply_are_readable_on_its_card(theme, token):
+    """Code blocks sit on the card surface; their keywords, strings, numbers, comments and called names use these."""
+    palette = PALETTES[theme]
+    assert contrast(palette[token], palette["bg_card"]) >= 4.5, (theme, token)
+
+
+@pytest.mark.parametrize("theme", PALETTES)
 def test_the_send_button_and_the_owners_bubble_are_readable(theme):
     palette = PALETTES[theme]
     ink = web_chat_theme.INK_ON_ACCENT[theme]

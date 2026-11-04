@@ -15,7 +15,7 @@ import urllib.request
 from typing import Callable, Optional
 
 from PyQt6.QtCore import QObject, QTimer, QUrl, Qt, pyqtSignal
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QLabel, QMainWindow, QPushButton, QStackedWidget, QVBoxLayout, QWidget
 
 from desktop_app.themes import apply_theme, eyebrow, line_icon
@@ -168,6 +168,11 @@ class WebChatWindow(QMainWindow):
         self._retry_timer = QTimer(self)
         self._retry_timer.setSingleShot(True)
         self._retry_timer.timeout.connect(self._load)
+        # As in the desktop chat: the platform's close keys (Ctrl+W, Cmd+W) hide the window; the tray keeps it.
+        self._close_shortcut = QShortcut(self)
+        self._close_shortcut.setKeys(QKeySequence.StandardKey.Close)
+        self._close_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._close_shortcut.activated.connect(self.close)
         self.set_daemon_status(daemon_status)
 
     # -- construction --------------------------------------------------------------

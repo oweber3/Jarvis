@@ -77,6 +77,10 @@ export type PhoneSnapshot = {
 export type Snapshot = {
   rev: number
   library_rev: number
+  /** Bumped when stored messages of the open chat are taken back (a rewind), so every page reloads it. */
+  history_rev?: number
+  /** The steps taken so far for the typed request in flight: tool, status and label. */
+  live_steps?: Pick<ToolStep, "tool" | "status" | "label">[]
   ready: boolean
   state: string
   busy: boolean
@@ -173,11 +177,24 @@ async function answer<T>(response: Response): Promise<T> {
   return data as T
 }
 
+// What a chat's page holds (``GET /api/chats/<id>``): oldest first, with whether the chat goes on either side.
+export type ChatPage = { chat: Chat; messages: ChatMessage[]; has_earlier?: boolean; has_later?: boolean }
+
+function pageQuery(page: { limit: number; before?: number; around?: number } | undefined): string {
+  if (!page) return ""
+  const parts = [`limit=${page.limit}`]
+  if (page.before !== undefined) parts.push(`before=${page.before}`)
+  if (page.around !== undefined) parts.push(`around=${page.around}`)
+  return `?${parts.join("&")}`
+}
+
 export const api = {
   library: () => request<Library>("GET", "/api/library"),
   models: () => request<ModelsResponse>("GET", "/api/models"),
   suggestions: () => request<unknown>("GET", "/api/suggestions"),
-  chat: (id: string) => request<{ chat: Chat; messages: ChatMessage[] }>("GET", `/api/chats/${id}`),
+  /** A chat's messages: all of them, or a page (the newest ``limit``, those ``before`` a message, or ``around`` one). */
+  chat: (id: string, page?: { limit: number; before?: number; around?: number }) =>
+    request<ChatPage>("GET", `/api/chats/${id}${pageQuery(page)}`),
   poll: (rev: number, after: number, signal: AbortSignal) =>
     request<Snapshot>("GET", `/api/poll?rev=${rev}&after=${after}`, undefined, signal),
   createChat: (projectId: string | null) =>
@@ -197,6 +214,15 @@ export const api = {
     request<{ query_id: number; status: string }>("POST", "/api/chat", {
       text,
       ...(attachments.length ? { attachments } : {}),
+      ...(speak ? { speak: true } : {}),
+    }),
+  /** Ask a stored message of the open chat again, as it was or edited; it and every later message are replaced.
+   * ``newestId`` is the newest stored message the page shows: the server changes nothing if the chat's is another. */
+  rewind: (chatId: string, messageId: number, newestId: number, text?: string, speak = false) =>
+    request<{ query_id: number; status: string }>("POST", `/api/chats/${chatId}/rewind`, {
+      message_id: messageId,
+      newest_id: newestId,
+      ...(text !== undefined ? { text } : {}),
       ...(speak ? { speak: true } : {}),
     }),
   attachmentSupport: () => request<AttachmentSupport>("GET", "/api/attachments/support"),
@@ -266,6 +292,17 @@ export function describeError(error: unknown): string {
       return "Screen awareness is off. Turn it on in Settings to let me look at your screen."
     case "screenshot_unavailable":
       return "I couldn't capture the screen just now."
+    case "not_open":
+      return "That chat isn't the open one any more."
+    case "changed":
+      return "This chat changed since the page last showed it, so nothing was taken back. Have a look and try again."
+    case "out_of_step":
+      return "That message can't be asked again just now. Try again, or send it as a new message."
+    case "not_taken_back":
+      return "Jarvis couldn't take those messages back, so nothing changed. Try again in a moment."
+    case "not_user":
+    case "unknown":
+      return "That message is no longer in this chat."
     default:
       return "That didn't work."
   }

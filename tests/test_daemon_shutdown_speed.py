@@ -81,3 +81,22 @@ def test_the_engine_stop_bound_outlasts_the_mcp_runtimes_own_worst_case(daemon):
     from jarvis.tools.external import mcp_runtime
 
     assert daemon._engine_stop_timeout_sec() > mcp_runtime.SHUTDOWN_WORST_CASE_SEC
+
+
+def test_a_shutdown_step_that_raises_never_skips_the_steps_after_it(daemon):
+    # The diary pass, the engine stop (MCP and bridge children) and db.close() come after the phone server,
+    # scheduler, web chat, gestures, dictation and voice: one of those failing must not skip them.
+    done = []
+
+    def broken():
+        raise RuntimeError("store already closed")
+
+    daemon._stop_in_order([("phone", broken), ("diary", lambda: done.append("diary")),
+                           ("engines", lambda: done.append("engines")), ("database", lambda: done.append("database"))])
+    assert done == ["diary", "engines", "database"]
+
+
+def test_shutdown_steps_run_in_their_order(daemon):
+    done = []
+    daemon._stop_in_order([(name, lambda n=name: done.append(n)) for name in ("a", "b", "c")])
+    assert done == ["a", "b", "c"]

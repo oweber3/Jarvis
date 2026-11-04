@@ -74,7 +74,8 @@ class FakeCamera:
 # the tracker's fastest rate.
 GRAB_FRAMES = int(window_snap.GRAB_HOLD_SEC * 200) + 8
 LET_GO_FRAMES = int(window_snap.LET_GO_HOLD_SEC * 200) + 8
-SETTLE_FRAMES = int(0.1 * 200) + 8
+# A new gesture counts once it has lasted the debounce time; the hand stays still until then.
+SETTLE_FRAMES = int(window_snap.WindowSnapSettings().debounce * 200) + 8
 
 
 class ScriptedHands:
@@ -432,7 +433,7 @@ def test_a_phone_cannot_start_the_camera_through_an_approved_confirmation(mock_c
     monkeypatch.setitem(registry.BUILTIN_TOOLS, "uninstaller", FakeTool("uninstaller", tier=SafetyTier.CONFIRM_DIALOG))
     shown, finished = [], threading.Event()
     set_dialog_callback(lambda request, resolve: shown.append(resolve) or object())
-    set_result_handler(lambda reply, success: finished.set(), ORIGIN_CHAT)
+    set_result_handler(lambda reply, success, *_: finished.set(), ORIGIN_CHAT)
     store.load({"desk": {"steps": [{"tool": "uninstaller", "args": {"action": "remove", "target": "Game"}},
                                    {"tool": "gestureControl", "args": {"action": "start"}}]}})
     try:

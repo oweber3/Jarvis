@@ -176,6 +176,16 @@ def _stop_side_by_side(steps: dict, timeout_sec: float) -> None:
             debug_log(f"shutdown step '{name}' still running after {timeout_sec}s; continuing", "jarvis")
 
 
+def _stop_in_order(steps) -> None:
+    """Run shutdown steps one after another; a step that raises is logged and never skips the rest, so the
+    diary pass, the engine stop (MCP, bridge and TTS children) and ``db.close()`` always run."""
+    for name, step in steps:
+        try:
+            step()
+        except Exception as exc:
+            debug_log(f"shutdown step '{name}' failed: {type(exc).__name__}", "jarvis")
+
+
 # How long after the microphone check begins the voice waits for it: just above the check's own 5 s timeout.
 MICROPHONE_CHECK_WINDOW_SEC = 6.0
 # Longest the voice waits in all, for a device listing that never reaches the check.
@@ -769,18 +779,20 @@ def remove_chat_result_listener(callback) -> None:
             _chat_result_listeners.remove(callback)
 
 
-def deliver_chat_confirmed_result(reply: str, success: bool) -> None:
+def deliver_chat_confirmed_result(reply: str, success: bool, private_sources: Iterable[str] = ()) -> None:
     """Report the outcome of a confirmed action that text chat requested.
 
     The redacted outcome joins the shared conversation (so follow-up questions
-    see it) and is forwarded to the chat UI. It is never spoken.
+    see it) and is forwarded to the chat UI. It is never spoken. An outcome that
+    quoted ``private_sources`` is stored as a private turn (out of the diary).
     """
     from .utils.redact import redact
     safe_reply = redact(reply)
+    private = frozenset(private_sources)
     dm = _global_dialogue_memory
     if dm is not None:
         try:
-            dm.add_message("assistant", safe_reply)
+            dm.add_message("assistant", safe_reply, diary=not private, private_sources=private)
         except Exception as exc:
             debug_log(f"recording confirmed chat result failed: {exc}", "chat")
     with _chat_result_listeners_lock:
@@ -1007,6 +1019,103 @@ def regenerate_chat_reply(
         return
     debug_log("chat rewind applied, regenerating the reply", "chat")
     _start_text_query_worker(text, dm, cfg, db, callbacks=callbacks, use_ipc=use_ipc, origin="chat")
+
+
+def rewind_chat_conversation(
+    history: list,
+    keep: int,
+    text: str,
+    *,
+    on_rewind=None,
+    on_start=None,
+    on_token=None,
+    on_tool_call=None,
+    on_complete=None,
+    on_busy=None,
+    origin: str = "chat",
+) -> None:
+    """Take the conversation back to just before a stored message of the web chat's open chat and ask ``text``
+    (the message as it was, or edited) as a fresh query, under one hold of the query lock (``webchat.spec.md``,
+    Edit, regenerate and Rewind).
+
+    ``history`` is the open chat's stored turns, oldest first, as ``{"role", "content"}`` dicts (a private turn
+    carries ``"diary": False`` and its ``private_sources``); the first ``keep`` of them stay and the rest are taken
+    back. The memory mirrors the chat, so the point is found by position: the memory's turns must be the chat's
+    newest turns (memory may hold them redacted once more, as a chat opened again does). When memory holds fewer
+    turns than are taken back, it is replaced by the chat's turns before the point, counted as summarised. The
+    turns taken back never get a diary pass of their own.
+
+    ``on_rewind(cursor)`` reports first: the mirror cursor for ``DialogueMemory.messages_after`` once the rewind
+    applied, or ``None`` when memory and chat disagree or the daemon is not running, which changes nothing. Given
+    a cursor, it answers whether to go on: when it returns False or raises (the chat could not take its messages
+    back), the conversation is put back as it was and nothing is asked; otherwise the usual ``start`` /
+    ``complete`` follow. A query already running answers ``busy``."""
+    callbacks = {"on_start": on_start, "on_token": on_token, "on_tool_call": on_tool_call,
+                 "on_complete": on_complete, "on_busy": on_busy}
+    dm, cfg, db = _global_dialogue_memory, _global_cfg, _global_db
+
+    def report(cursor) -> bool:
+        if on_rewind is None:
+            return True
+        try:
+            return on_rewind(cursor) is not False
+        except Exception as exc:
+            debug_log(f"chat rewind callback failed: {type(exc).__name__}", "chat")
+            return False
+
+    if (not text or not text.strip() or dm is None or cfg is None or db is None or is_stop_requested()
+            or not 0 <= keep <= len(history)):
+        report(None)
+        return
+    if not _chat_query_lock.acquire(blocking=False):
+        _notify_chat("busy", None, callbacks=callbacks, use_ipc=False)
+        debug_log("chat rewind rejected: a query is in flight", "chat")
+        return
+    try:
+        taken = _rewind_memory(dm, history, keep)
+    except Exception as exc:
+        debug_log(f"chat rewind failed: {type(exc).__name__}", "chat")
+        taken = None
+    if taken is None:
+        report(None)
+        debug_log("chat rewind refused: the conversation and the chat disagree", "chat")
+        _chat_query_lock.release()
+        return
+    if not report(taken.cursor):
+        try:
+            dm.put_back(taken)
+            debug_log("chat rewind undone: the chat could not take its messages back", "chat")
+        finally:
+            _chat_query_lock.release()
+        return
+    debug_log(f"chat rewind applied ({len(history) - keep} turns taken back), asking again", "chat")
+    _start_text_query_worker(text, dm, cfg, db, callbacks=callbacks, use_ipc=False, origin=origin)
+
+
+def _rewind_memory(dm, history: list, keep: int):
+    """Take ``dm`` back to before ``history[keep]`` (``DialogueMemory.take_back``); the caller holds the query lock.
+    A turn memory holds may be the chat's redacted once more. When memory holds nothing from before the point it
+    gets the chat's turns before it, as opening the chat does. None when memory's turns are not the chat's newest
+    ones."""
+    from .utils.redact import redact
+    from .webchat.hub import RESTORE_TURNS
+
+    # Only the chat's newest turns can line up with memory's, so only as many as it holds are redacted. Meanwhile
+    # memory can only lose its oldest turns (a diary pass) or gain a newest one (an announcement, which then does
+    # not line up anyway).
+    newest = len(history) - len(dm.all_messages())
+    chat_turns = []
+    for index, stored in enumerate(history):
+        content = str(stored.get("content", "")).strip()
+        chat_turns.append((stored.get("role"), (content, redact(content).strip()) if index >= newest else (content,)))
+    restored = []
+    for m in history[max(0, keep - RESTORE_TURNS):keep]:
+        turn = {"role": m["role"], "content": redact(str(m["content"]))}
+        if m.get("diary") is False:
+            turn["diary"] = False
+            turn["private_sources"] = [str(s) for s in (m.get("private_sources") or ())]
+        restored.append(turn)
+    return dm.take_back(chat_turns, keep, restored)
 
 
 def _start_text_query_worker(text: str, dm, cfg, db, *, callbacks: dict, use_ipc: bool, origin: str,
@@ -1979,68 +2088,73 @@ def main(smoke_test: bool = False) -> None:
         print("🔄 Daemon shutting down - saving memory...", flush=True)
         debug_log("daemon finally block starting - performing cleanup", "jarvis")
 
-        # No new phone requests once shutdown has begun, and no new desktop dialogs.
-        uninstall_desktop_confirmations()
-        remote_runtime.stop()
-        scheduler_runtime.stop()
-        web_chat_runtime.stop()
-        # Let go of a held window and the camera first.
-        window_snap_service.stop_service()
+        def _stop_dictation() -> None:
+            if dictation is not None:
+                debug_log("stopping dictation engine...", "jarvis")
+                dictation.stop()
+                debug_log("dictation engine stopped", "jarvis")
 
-        # Clean shutdown - stop dictation first
-        if dictation is not None:
-            debug_log("stopping dictation engine...", "jarvis")
-            dictation.stop()
-            debug_log("dictation engine stopped", "jarvis")
+        def _stop_voice() -> None:
+            global _global_voice_listener
+            _global_voice_listener = None
+            window_snap_service.set_talk_handler(None)
+            if voice_thread is not None:
+                debug_log("stopping voice thread...", "jarvis")
+                voice_thread.stop()
+                try:
+                    voice_thread.join(timeout=2.0)
+                except Exception:
+                    pass
+                debug_log("voice thread stopped", "jarvis")
 
-        _global_voice_listener = None
-        window_snap_service.set_talk_handler(None)
-        if voice_thread is not None:
-            debug_log("stopping voice thread...", "jarvis")
-            voice_thread.stop()
-            try:
-                voice_thread.join(timeout=2.0)
-            except Exception:
-                pass
-            debug_log("voice thread stopped", "jarvis")
-        close_state_channel()
+        def _final_diary_update() -> None:
+            debug_log("performing final diary update (force=True)...", "jarvis")
+            print("📝 Updating diary before shutdown...", flush=True)
+            # Check dialogue memory status
+            if _global_dialogue_memory is None:
+                print("⚠️ Dialogue memory is None - nothing to save", flush=True)
+            else:
+                # Display-only count; actual save uses the atomic snapshot path.
+                pending = _global_dialogue_memory.get_pending_chunks()
+                print(f"💬 Found {len(pending)} pending conversation chunks", flush=True)
+            # Use callbacks if they were set by desktop app (for live UI updates in bundled mode)
+            # Use IPC (stdout events) if callbacks not set (subprocess mode)
+            use_callbacks = any(_diary_update_callbacks.values())
+            use_ipc = not use_callbacks  # Subprocess mode - emit events to stdout
+            _check_and_update_diary(db, cfg, verbose=True, force=True, timeout_sec=SHUTDOWN_DIARY_TIMEOUT_SEC,
+                                    total_timeout_sec=SHUTDOWN_DIARY_TIMEOUT_SEC, use_callbacks=use_callbacks,
+                                    use_ipc=use_ipc)
+            print("✅ Diary update complete", flush=True)
+            debug_log("diary update complete", "jarvis")
 
-        # A chat worker that started just before the stop request is still
-        # inside run_reply_engine, holding the database connection the
-        # diary pass below is about to use and the one db.close() will
-        # shut. Wait for it, bounded: quitting a moment late beats a
-        # closed-handle raise or a diary pass racing its writes.
-        wait_for_chat_worker(timeout_sec=5.0)
-
-        # Final diary update before shutdown
-        debug_log("performing final diary update (force=True)...", "jarvis")
-        print("📝 Updating diary before shutdown...", flush=True)
-
-        # Check dialogue memory status
-        if _global_dialogue_memory is None:
-            print("⚠️ Dialogue memory is None - nothing to save", flush=True)
-        else:
-            # Display-only count; actual save uses the atomic snapshot path.
-            pending = _global_dialogue_memory.get_pending_chunks()
-            print(f"💬 Found {len(pending)} pending conversation chunks", flush=True)
-
-        # Use callbacks if they were set by desktop app (for live UI updates in bundled mode)
-        # Use IPC (stdout events) if callbacks not set (subprocess mode)
-        use_callbacks = any(_diary_update_callbacks.values())
-        use_ipc = not use_callbacks  # Subprocess mode - emit events to stdout
-        _check_and_update_diary(db, cfg, verbose=True, force=True, timeout_sec=SHUTDOWN_DIARY_TIMEOUT_SEC,
-                                total_timeout_sec=SHUTDOWN_DIARY_TIMEOUT_SEC, use_callbacks=use_callbacks, use_ipc=use_ipc)
-        print("✅ Diary update complete", flush=True)
-        debug_log("diary update complete", "jarvis")
-
-        # TTS, the persistent MCP sessions (so subprocess-launched children such as
-        # chrome-devtools-mcp's Chrome close cleanly) and the reply bridge stop side by side.
-        _stop_engines_side_by_side(tts)
-        activity_runtime.stop()
-        documents_runtime.stop()
-        smarthome_service.set_home(None)
-        extensions.stop()
-        db.close()
+        _stop_in_order([
+            # No new phone requests once shutdown has begun, and no new desktop dialogs.
+            ("desktop-confirmations", uninstall_desktop_confirmations),
+            ("phone-access", remote_runtime.stop),
+            ("scheduler", scheduler_runtime.stop),
+            ("web-chat", web_chat_runtime.stop),
+            # Let go of a held window and the camera first.
+            ("gestures", window_snap_service.stop_service),
+            # Clean shutdown - stop dictation first
+            ("dictation", _stop_dictation),
+            ("voice", _stop_voice),
+            ("state-channel", close_state_channel),
+            # A chat worker that started just before the stop request is still
+            # inside run_reply_engine, holding the database connection the
+            # diary pass below is about to use and the one db.close() will
+            # shut. Wait for it, bounded: quitting a moment late beats a
+            # closed-handle raise or a diary pass racing its writes.
+            ("chat-worker", lambda: wait_for_chat_worker(timeout_sec=5.0)),
+            ("diary", _final_diary_update),
+            # TTS, the persistent MCP sessions (so subprocess-launched children such as
+            # chrome-devtools-mcp's Chrome close cleanly) and the reply bridge stop side by side.
+            ("engines", lambda: _stop_engines_side_by_side(tts)),
+            ("activity-log", activity_runtime.stop),
+            ("documents", documents_runtime.stop),
+            ("smart-home", lambda: smarthome_service.set_home(None)),
+            ("extensions", extensions.stop),
+            ("database", db.close),
+        ])
 
         # Drop the warm-profile graph listener so the module registry does
         # not retain a closure pointing at this run's DialogueMemory after
