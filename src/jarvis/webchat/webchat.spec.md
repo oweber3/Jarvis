@@ -209,7 +209,7 @@ The desktop chat's Rewind (`desktop_app/chat_window.spec.md`) in the web chat: a
 
 - **Edit** is on each of the owner's messages, typed or spoken. It opens the message in a box in its place (Enter or **Send** sends, Esc or **Cancel** leaves it as it was) with a line that says what sending does: Jarvis answers the new wording in place of its last answer, or forgets the N messages after this one. A message that was never stored (one whose request failed or was stopped, shown with its notice) is sent as edited as a new message.
 - **Ask again** is on the latest reply when the owner's message before it is stored and carried no attachment (attachments belong to the one message that carried them, **Attachments**). It asks that message again as it was.
-- **Copy** is on every message. The actions stay in the page, so the keyboard reaches them; they are drawn on the latest reply and on any message the pointer is over or that holds focus, and always on a touch screen. None of them works while a request runs or while Jarvis cannot be reached.
+- **Copy** is on every message, the owner's and Jarvis's. The actions stay in the page, so the keyboard reaches them; they are drawn on the latest reply and on any message the pointer is over or that holds focus, and always on a touch screen. Edit and Ask again are not offered while a request runs or while Jarvis cannot be reached.
 
 **On the server.** `POST /api/chats/<id>/rewind` is refused unless the chat is the open one, the message is in it and is the owner's, Jarvis is ready and no typed request is in flight. The hub passes the chat's stored turns and the point to `jarvis.daemon.rewind_chat_conversation`, which, under one hold of the query lock, so no voice or typed request can slip in between:
 
