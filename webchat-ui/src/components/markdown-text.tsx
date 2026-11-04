@@ -19,7 +19,7 @@ import { TooltipIconButton } from "@/components/tooltip-icon-button"
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard"
 import { highlight, type TokenKind } from "@/highlight"
 import { cn } from "@/lib/utils"
-import { rawCode } from "@/rawCode"
+import { codePieces, holdsCode, protectCode, restoreCode } from "@/rawCode"
 
 // A reply's Markdown, drawn as React elements (never as HTML). Written for Jarvis on markdown-to-jsx, in place of
 // assistant-ui's react-markdown component, to keep the page small: the classes are those of assistant-ui's
@@ -51,10 +51,11 @@ const heading = (Tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6", className: string
     return <Tag className={cn(className, extra)} {...props} />
   }
 
-const Link: FC<Props<"a">> = ({ className, href, children, ...props }) =>
+const Link: FC<Props<"a">> = ({ className, href, title, children, ...props }) =>
   href ? (
     <a
       {...props}
+      title={restoreCode(title)}
       href={href}
       target="_blank"
       rel="noreferrer noopener"
@@ -75,10 +76,10 @@ const Image: FC<Props<"img">> = ({ src, alt }) =>
       className="aui-md-image text-primary inline-flex items-center gap-1 underline underline-offset-2"
     >
       <ImageIcon className="size-3.5 shrink-0" aria-hidden />
-      {alt || "Image"}
+      {restoreCode(alt) || "Image"}
     </a>
   ) : alt ? (
-    <span>{alt}</span>
+    <span>{restoreCode(alt)}</span>
   ) : null
 
 // The library gives each footnote an id from its name, for links to it; a reply's links never point inside the page.
@@ -179,11 +180,40 @@ const TaskBox: FC<Props<"input">> = ({ checked }) => (
   />
 )
 
+/** Drawn by the page rather than the library: code as written (``rawCode``: a token is inline code, and anywhere
+ * else its span as written), and a GitHub alert ("> [!NOTE]") as a quote under its label (the library would draw
+ * the label with its HTML rule, which is off). */
+const renderRule: MarkdownToJSX.Options["renderRule"] = (next, node, renderChildren, state) => {
+  if (node.type === RuleType.text && holdsCode(node.text))
+    return (
+      <Fragment key={state.key}>
+        {codePieces(node.text).map((piece, index) =>
+          typeof piece === "string" ? piece : <InlineCode key={index}>{piece.code}</InlineCode>,
+        )}
+      </Fragment>
+    )
+  if ((node.type === RuleType.codeBlock || node.type === RuleType.codeInline) && holdsCode(node.text))
+    node.text = restoreCode(node.text)
+  else if (node.type === RuleType.refLink && holdsCode(node.fallbackChildren))
+    node.fallbackChildren = restoreCode(node.fallbackChildren)
+  else if (node.type === RuleType.blockQuote && node.alert)
+    return (
+      <Quote key={state.key}>
+        <span className="aui-md-alert text-foreground/80 mb-1 block text-xs font-semibold tracking-wide uppercase">
+          {node.alert}
+        </span>
+        {renderChildren(node.children, state)}
+      </Quote>
+    )
+  return next()
+}
+
 const OPTIONS: MarkdownToJSX.Options = {
   forceBlock: true,
   // HTML in a reply is shown as the text it is.
   disableParsingRawHTML: true,
-  sanitizer: safeAddress,
+  sanitizer: (value, tag) => safeAddress(restoreCode(value), tag),
+  renderRule,
   wrapper: Fragment,
   overrides: {
     h1: heading("h1", "aui-md-h1 mt-5 mb-2 scroll-m-20 text-xl font-semibold first:mt-0 last:mb-0"),
@@ -219,30 +249,8 @@ const OPTIONS: MarkdownToJSX.Options = {
   },
 }
 
-/** The options for drawing ``text``: its code as written (see ``rawCode``), and a GitHub alert ("> [!NOTE]") as a
- * quote under its label (the library would draw the label with its HTML rule, which is off). */
-function optionsFor(text: string): MarkdownToJSX.Options {
-  const raw = rawCode(text)
-  return {
-    ...OPTIONS,
-    renderRule(next, node, renderChildren, state) {
-      if (node.type === RuleType.codeInline) node.text = raw.inline(node.text)
-      else if (node.type === RuleType.codeBlock && !("attrs" in node)) node.text = raw.block(node.text)
-      else if (node.type === RuleType.blockQuote && node.alert)
-        return (
-          <Quote key={state.key}>
-            <span className="aui-md-alert text-foreground/80 mb-1 block text-xs font-semibold tracking-wide uppercase">
-              {node.alert}
-            </span>
-            {renderChildren(node.children, state)}
-          </Quote>
-        )
-      return next()
-    },
-  }
-}
 
-const Drawn: FC<{ text: string }> = ({ text }) => useMemo(() => compiler(text, optionsFor(text)), [text])
+const Drawn: FC<{ text: string }> = ({ text }) => useMemo(() => compiler(protectCode(text), OPTIONS), [text])
 
 /** Markdown text, drawn once per text: a reply that has not changed is not parsed again. One that cannot be drawn
  * shows its words as plain text. */

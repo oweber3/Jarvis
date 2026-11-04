@@ -7,6 +7,8 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 // How a reply's Markdown is drawn. A reply is model output, so it is drawn as text and elements, never as HTML, and
 // nothing in it can make the page fetch anything.
 
+const codes = (page: HTMLElement, selector = "code") => [...page.querySelectorAll(selector)].map((c) => c.textContent)
+
 function draw(text: string): HTMLElement {
   const { container } = render(
     <TooltipProvider>
@@ -130,6 +132,37 @@ describe("a reply's Markdown", () => {
     const page = draw("- copy `\\\\nas\\backup`\n- see [`a\\*b`](https://example.org)\n\n| Command | Means |\n|---|---|\n| `x \\| y` | either |\n")
     expect([...page.querySelectorAll("li code")].map((c) => c.textContent)).toEqual(["\\\\nas\\backup", "a\\*b"])
     expect(page.querySelector("td code")!.textContent).toBe("x | y")
+  })
+
+  it("keeps a backslash at the end of inline code, as a Windows folder has", () => {
+    const page = draw("Open `C:\\Users\\me\\` and then `D:\\` here.")
+    expect(codes(page)).toEqual(["C:\\Users\\me\\", "D:\\"])
+    expect(page.textContent).toBe("Open C:\\Users\\me\\ and then D:\\ here.")
+  })
+
+  it("draws each inline code from its own place, whatever else in the reply holds the same code", () => {
+    // Each time the same code sits somewhere else first, differing only by a backslash.
+    expect(codes(draw("Example:\n\n    echo `a\\*b`\n\nThen run `a*b` here."), "p code")).toEqual(["a*b"])
+    const footnoted = draw("Claim.[^1]\n\n[^1]: Uses `x\\*y`.\n\nAnd then `x*y` in the body.")
+    expect(codes(footnoted, "p code")).toEqual(["x*y"])
+    expect(codes(footnoted, "footer code")).toEqual(["x\\*y"])
+    expect(codes(draw("![see `a\\*b`](https://x.org/i.png) then `a*b`"))).toEqual(["a*b"])
+    const unlinked = draw("[`a\\*b`][nope] and `a*b`")
+    expect(codes(unlinked)).toEqual(["a*b"])
+    expect(unlinked.textContent).toContain("[`a\\*b`][nope]")
+    expect(codes(draw("Go to https://x.org/`p\\_q` and type `p_q`")).at(-1)).toBe("p_q")
+    expect(codes(draw("---\nUse `a\\\\b` here\n---\nThen `a\\b` there"))).toEqual(["a\\b"])
+  })
+
+  it("an escaped pipe in a table row's code is the pipe, whether or not the row starts with one", () => {
+    const page = draw("| A | B |\n|---|---|\nx | `a \\| b`\n| `c \\| d` | y |\n")
+    expect(codes(page, "td code")).toEqual(["a | b", "c | d"])
+  })
+
+  it("a backslash before a backtick outside code still makes it a backtick", () => {
+    const page = draw("Use \\`not code\\` here")
+    expect(page.querySelector("code")).toBeNull()
+    expect(page.textContent).toBe("Use `not code` here")
   })
 
   it("takes inline code from the reply's text, not from a code block that looks the same", () => {
