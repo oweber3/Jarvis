@@ -102,3 +102,22 @@ def test_the_device_list_writes_always_confirm_choices(window, ha):
     page.table.cellWidget(lamp, 6).setChecked(True)
     window._on_save()
     assert saved(window)["smarthome_confirm_devices"] == ["ha:light.lamp"]
+
+
+@pytest.mark.unit
+def test_a_device_list_that_crashes_shows_a_message_instead(window, monkeypatch):
+    page = window.smart_home_page
+
+    def crash(*_a, **_k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("jarvis.smarthome.setup.read_devices", crash)
+    page.load.click()
+    assert page.load.isEnabled() and "could not" in page.devices_status.text().casefold()
+
+
+@pytest.mark.unit
+def test_an_address_changed_while_smart_home_is_off_still_needs_a_test(window, ha):
+    window._widgets["smarthome_ha_url"].setText(ha.url)
+    window._on_save()
+    assert window.warnings and "smarthome_ha_url" not in saved(window)

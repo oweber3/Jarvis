@@ -84,3 +84,19 @@ def test_device_choices_are_written_only_when_set():
     setup.apply_device_choices(config, [], ["ha:lock.front", "ha:lock.front"])
     assert config == {"smarthome_confirm_devices": ["ha:lock.front"]}
     assert setup.read_devices(SmartHome())[0] == []
+
+
+@pytest.mark.unit
+def test_a_connector_that_fails_to_start_is_still_stopped_and_reported():
+    class Hub:
+        status, stopped = "starting", False
+
+        def start(self):
+            raise RuntimeError("boom")
+
+        def stop(self):
+            self.stopped = True
+
+    hub = Hub()
+    rows, problems = setup.read_devices(SmartHome(connectors={"ha": hub}), wait=0.1, sleep=lambda s: None)
+    assert rows == [] and problems and hub.stopped

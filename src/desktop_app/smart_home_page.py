@@ -131,8 +131,7 @@ class SmartHomePage(QWidget):
 
     def save_problem(self) -> Optional[str]:
         """Why the window must not save yet, or None."""
-        if self._get("smarthome_enabled") is not True:
-            return None
+        # Whether or not the feature is on: turning it on later must not skip the test.
         return self.gate.problem(self._ha_key(self._get), self._mqtt_key(self._get))
 
     def apply(self, config: Dict[str, Any]) -> None:
@@ -194,7 +193,12 @@ class SmartHomePage(QWidget):
         self.devices_status.setText("Connecting...")
 
         def job():
-            return setup.read_devices(service.build(cfg, warn=lambda _message: None))
+            # Always the (rows, problems) pair: a crash here must never reach the Qt slot as something else.
+            try:
+                return setup.read_devices(service.build(cfg, warn=lambda _message: None))
+            except Exception as exc:  # noqa: BLE001 - reported on the page
+                debug_log(f"settings: device list failed ({type(exc).__name__})", "settings")
+                return [], ["The device list could not be read. Check the settings above and try again."]
 
         self._run(job, self.show_devices)
 

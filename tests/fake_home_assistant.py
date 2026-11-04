@@ -45,6 +45,7 @@ class FakeHomeAssistant:
         self.reject_with: Optional[str] = None
         self.no_result_for_calls = False
         self.answer_pings = True
+        self.admin = True
         self.stall_after_auth = False
         self.handshake_headers: List[Dict[str, str]] = []
         self._lock = threading.Lock()
@@ -192,6 +193,9 @@ class FakeHomeAssistant:
         elif kind == "config/area_registry/list":
             areas = {a for e in ents for a in (e["area"], e["device_area"]) if a}
             self._result(client, mid, [{"area_id": _area_id(a), "name": a, "aliases": []} for a in sorted(areas)])
+        elif kind == "homeassistant/expose_entity/list" and not self.admin:
+            client.send({"id": mid, "type": "result", "success": False,
+                         "error": {"code": "unauthorized", "message": "Unauthorized"}})
         elif kind == "homeassistant/expose_entity/list":
             self._result(client, mid, {"exposed_entities": {
                 e["entity_id"]: {"conversation": e["exposed"], "cloud.alexa": False} for e in ents}})

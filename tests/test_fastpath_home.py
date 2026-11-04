@@ -9,14 +9,20 @@ from jarvis.fastpath.matcher import FastTarget, match
 
 TOOLS = {'getTime', 'appControl', 'windowControl', 'systemVolume', 'mediaControl', 'tvControl', 'homeControl'}
 
+def target(names, device_id, kind, display, capabilities=None):
+    from jarvis.smarthome.model import capabilities_for
+    from jarvis.tools.builtin.home_control import capability_key
+    return FastTarget(names, device_id, capability_key(capabilities or capabilities_for(kind)), display)
+
+
 DEVICES = (
-    FastTarget(('Bedroom Lamp', 'Reading light'), 'ha:light.bedroom_lamp', 'light', 'Bedroom Lamp'),
-    FastTarget(('Kettle',), 'ha:switch.kettle', 'switch', 'Kettle'),
-    FastTarget(('Lounge Blinds',), 'ha:cover.blinds', 'cover', 'Lounge Blinds'),
-    FastTarget(('Garage Door',), 'ha:cover.garage', 'cover', 'Garage Door'),
-    FastTarget(('Front Door',), 'ha:lock.front', 'lock', 'Front Door'),
-    FastTarget(('Desk Light',), 'ha:light.desk_a', 'light', 'Desk Light'),
-    FastTarget(('Desk Light Strip',), 'ha:light.desk_b', 'light', 'Desk Light Strip'),
+    target(('Bedroom Lamp', 'Reading light'), 'ha:light.bedroom_lamp', 'light', 'Bedroom Lamp'),
+    target(('Kettle',), 'ha:switch.kettle', 'switch', 'Kettle'),
+    target(('Lounge Blinds',), 'ha:cover.blinds', 'cover', 'Lounge Blinds'),
+    target(('Garage Door',), 'ha:cover.garage', 'cover', 'Garage Door'),
+    target(('Front Door',), 'ha:lock.front', 'lock', 'Front Door'),
+    target(('Desk Light',), 'ha:light.desk_a', 'light', 'Desk Light'),
+    target(('Desk Light Strip',), 'ha:light.desk_b', 'light', 'Desk Light Strip'),
 )
 AREAS = (FastTarget(('Kitchen',), 'Kitchen', 'area', 'Kitchen'), FastTarget(('Living Room',), 'Living Room',
                                                                               'area', 'Living Room'))
@@ -70,6 +76,13 @@ class TestMatching:
     def test_actions_a_device_kind_cannot_do_fall_through(self):
         assert route('turn on the front door') is None
 
+    def test_the_devices_own_capabilities_decide_not_its_kind(self):
+        from jarvis.smarthome.model import Capability
+        plain = (target(('Porch Light',), 'ha:light.porch', 'light', 'Porch Light', {Capability.ON_OFF}),)
+        assert route('turn on the porch light', devices=plain) is not None
+        assert route('dim the porch light', devices=plain) is None
+        assert route('set the porch light to 50 percent', devices=plain) is None
+
     def test_without_the_tool_nothing_matches(self):
         assert route('turn on the bedroom lamp', tools=TOOLS - {'homeControl'}) is None
 
@@ -105,9 +118,9 @@ def live_home():
     service.set_home(None)
 
 
-def offered(text):
+def offered(text, windows=False):
     from jarvis.fastpath.dispatcher import match_command
-    cfg = SimpleNamespace(fast_commands_enabled=True, fast_commands_locales=['en'], windows_tools_enabled=False,
+    cfg = SimpleNamespace(fast_commands_enabled=True, fast_commands_locales=['en'], windows_tools_enabled=windows,
                           smarthome_confirm_devices=[])
     return match_command(text, cfg)
 
@@ -122,3 +135,65 @@ class TestDispatcher:
     def test_confirm_voice_actions_fall_through_to_the_model(self, live_home):
         assert offered('open the garage door') is None
         assert offered('turn off the attic lights') is None   # 11 devices at once
+
+
+@pytest.fixture
+def app_and_tv_tools(live_home):
+    """An application catalogue holding Office, and a TV, next to the live home devices."""
+    from jarvis.smarthome import service
+    from jarvis.smarthome.model import Device, capabilities_for
+    from jarvis.tools.base import Tool
+    from jarvis.tools.registry import BUILTIN_TOOLS
+
+    class FakeApps(Tool):
+        name = 'appControl'
+        description = 'apps'
+        inputSchema = {'type': 'object'}
+
+        def run(self, args, context):
+            raise AssertionError('not run')
+
+        def fast_targets(self, cfg):
+            return (FastTarget(('Office',), 'office', 'office.exe', 'Office'),)
+
+    class FakeTv(FakeApps):
+        name = 'tvControl'
+
+        def fast_targets(self, cfg):
+            return ()
+
+    service.get_home().registry.upsert(Device("ha:cover.office_blind", "Office Blind", "cover", "ha",
+                                              capabilities=capabilities_for("cover"), device_class="blind"))
+    service.get_home().registry.upsert(Device("ha:light.tv_backlight", "TV Backlight", "light", "ha",
+                                              capabilities=capabilities_for("light")))
+    saved = {name: BUILTIN_TOOLS.get(name) for name in ('appControl', 'tvControl')}
+    BUILTIN_TOOLS['appControl'], BUILTIN_TOOLS['tvControl'] = FakeApps(), FakeTv()
+    yield
+    for name, tool in saved.items():
+        if tool is None:
+            BUILTIN_TOOLS.pop(name, None)
+        else:
+            BUILTIN_TOOLS[name] = tool
+
+
+@pytest.mark.unit
+class TestNeighbours:
+    def test_the_tv_keeps_its_own_phrases_beside_a_tv_named_device(self, app_and_tv_tools):
+        result = offered('turn off the tv', windows=True)
+        assert result is not None and result.tool_name == 'tvControl'
+
+    def test_a_name_both_an_app_and_a_device_could_mean_goes_to_the_model(self, app_and_tv_tools):
+        assert offered('open office', windows=True) is None
+
+    def test_home_routes_work_without_the_windows_tools(self, app_and_tv_tools):
+        assert offered('open the office blind', windows=False).tool_name == 'homeControl'
+
+
+@pytest.mark.unit
+def test_a_failed_home_route_says_the_short_message_never_the_fenced_data(live_home):
+    from jarvis.fastpath.dispatcher import dispatch
+    cfg = SimpleNamespace(fast_commands_enabled=True, fast_commands_locales=['en'], windows_tools_enabled=False,
+                          smarthome_confirm_devices=[], db_path=':memory:')
+    result = offered('turn on the bedroom lamp')
+    spoken = dispatch(result, None, cfg, 'turn on the bedroom lamp')
+    assert spoken and 'UNTRUSTED' not in spoken and '{' not in spoken

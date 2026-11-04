@@ -108,16 +108,19 @@ def read_devices(home: Optional[SmartHome], *, wait: float = DEVICE_WAIT_SEC,
         return [], ["No Home Assistant or MQTT connection is set up."]
     hidden = set(home.registry.hidden)
     home.registry.set_hidden(())
-    home.start()
+    problems: List[str] = []
+    rows: List[DeviceRow] = []
     try:
+        home.start(warn=lambda message: problems.append(message.strip().lstrip("⚠️").strip()))
         deadline = time.monotonic() + wait
         while time.monotonic() < deadline and not all(
-                getattr(c, "connected", False) or getattr(c, "status", "") in ("auth", "refused")
+                getattr(c, "connected", False)
+                or getattr(c, "status", "") in ("auth", "refused", "missing_library")
                 for c in home.connectors.values()):
             sleep(0.1)
         sleep(1.0)
-        problems = [f"{'Home Assistant' if source == 'ha' else 'MQTT'} is not connected ({status})."
-                    for source, status in home.status().items() if status != "connected"]
+        problems += [f"{'Home Assistant' if source == 'ha' else 'MQTT'} is not connected ({status})."
+                     for source, status in home.status().items() if status != "connected"]
         rows = [DeviceRow(d.id, d.name, d.area, d.kind, d.source, d.state) for d in home.registry.devices()]
     finally:
         home.stop()

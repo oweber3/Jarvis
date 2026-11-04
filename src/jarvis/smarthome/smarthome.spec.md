@@ -22,6 +22,7 @@ Four layers, each knowing nothing of the layers above it:
 - **Secrets in Credential Manager only.** The Home Assistant long-lived access token and the MQTT password are stored with `jarvis.credentials` (`smarthome.ha_token`, `smarthome.mqtt_password`). They never appear in `config.json`, logs, tool results, issue reports or the web chat.
 - **The user decides what Jarvis sees.** From Home Assistant, Jarvis uses only entities the user has exposed to voice assistants in Home Assistant (Settings > Voice assistants > Expose). From MQTT, every discovered device is visible unless listed in `smarthome_mqtt_hidden`. Hidden or unexposed devices are never listed, named or controlled.
 - **No telemetry.** Jarvis sends commands and reads states. It never uploads device lists or history anywhere.
+- **Home turns are private.** Every `homeControl` call marks the turn private (the `activity_log.spec.md` mechanism, as calendar, email and document search do): device names, rooms and states stay out of the diary, the graph and the console log.
 - **Bounded.** Every request has a timeout (5 seconds for a command, 10 for the initial device list). At most 2,000 devices are kept. Names are trimmed to 100 characters. Reconnects back off from 2 seconds to 5 minutes.
 
 ## Device model
@@ -54,18 +55,22 @@ States come from the hub's live updates (Home Assistant `state_changed` events, 
 
 ### Home Assistant
 
-- Settings: `smarthome_ha_url` (for example `http://192.168.1.50:8123`) and the token in Credential Manager.
+- Settings: `smarthome_ha_url` (for example `http://192.168.1.50:8123`) and the token in Credential Manager. The token must belong to an administrator: Home Assistant lists exposed entities only to administrators, and Jarvis says so when the token is not one.
 - One WebSocket connection to `/api/websocket` (`websocket-client`, imported lazily). After `auth`, it reads `get_states`, the entity, device and area registries and the exposed-entity list, then subscribes to `state_changed`. Commands are `call_service` messages (`light.turn_on`, `cover.open_cover`, ...).
-- The connection runs on one daemon thread. Commands from the tool wait on a reply for at most 5 seconds. The reader thread never runs tools.
+- The connection runs on one daemon thread. Commands from the tool wait on a reply for at most 5 seconds. The reader thread never runs tools. Reading the device list after connecting is bounded to 10 seconds in all. After 60 seconds of silence Jarvis sends a ping; two unanswered pings drop the connection and the reconnect loop takes over.
+- Jarvis also subscribes to `entity_registry_updated` and reads the device list again when it fires (exposing or un-exposing an entity changes its registry options), so a change in Home Assistant's Expose page reaches Jarvis without a reconnect. Before each command it checks the exposed-entity list again: an entity no longer exposed is removed and the command is refused.
+- Hostnames are resolved by the connector on each connection attempt, so a name that does not resolve yet (Home Assistant still starting at sign-in) is retried with the reconnect backoff and reported as "could not be found yet", not refused. Starting Jarvis only checks the address's syntax and refuses a literal public address. The socket is opened to the resolved address (TLS checked against the name the user typed), never through a proxy.
 - Redirects are refused. HTTPS with a self-signed certificate is accepted only if `smarthome_ha_verify_tls` is false, which the Settings page explains.
-- Honest failures: wrong token ("Home Assistant refused the access token, create a new one"), unreachable server, device not exposed, Home Assistant rejected the command (its message is passed on, trimmed).
+- Honest failures: wrong token ("Home Assistant refused the access token, create a new one"), a token that is not an administrator's, unreachable server, address not found yet, device not exposed, Home Assistant rejected the command (its message is passed on, trimmed and fenced as untrusted data).
 
 ### MQTT
 
 - Settings: `smarthome_mqtt_host`, `smarthome_mqtt_port` (default 1883), `smarthome_mqtt_username`, the password in Credential Manager, `smarthome_mqtt_tls` (default false) and `smarthome_mqtt_discovery_prefix` (default `homeassistant`).
-- `paho-mqtt`, imported lazily, on its own network thread. Jarvis subscribes to `<prefix>/+/+/config` and `<prefix>/+/+/+/config`, builds devices from the discovery payloads it understands (light, switch, fan, cover, climate, lock, sensor, binary_sensor, button, scene), and subscribes to each device's state topic.
+- `paho-mqtt`, imported lazily, on its own network thread. The broker's name is resolved on a background thread that retries a name that does not resolve yet; the client then connects to that address (a socket override, never a proxy), and paho's own reconnects reuse it. With TLS on and no port set, the port is 8883. A connection test counts announced devices only (it never subscribes to state topics) and ends within 5 seconds whatever the broker sends. Jarvis subscribes to `<prefix>/+/+/config` and `<prefix>/+/+/+/config`, builds devices from the discovery payloads it understands (light, switch, fan, cover, climate, lock, sensor, binary_sensor, button, scene), and subscribes to each device's state topic.
 - A command is published to the device's command topic in the format its discovery payload declares (JSON schema or plain payloads). Jarvis publishes nothing else and never retains a command.
 - Discovery payloads are untrusted: unknown fields are ignored, sizes are capped at 16 KB, and topic names are validated before use (no wildcards in publish topics).
+- A device without a `unique_id` is identified by its discovery topic, node id included, so two nodes announcing the same object id stay two devices.
+- If `websocket-client` or `paho-mqtt` is missing, that connector does not start, the console says which package to install, and the other connector starts anyway. No connector can stop Jarvis starting.
 - When both connectors expose the same physical device (an MQTT device already added to Home Assistant), the Home Assistant copy wins and the MQTT copy is hidden, matched by the shared `unique_id`.
 
 ## homeControl
@@ -89,14 +94,17 @@ One tool with an `action` enum.
   - `SAFE`: everything in `list` and `status`; lights, switches, fans and scenes; covers other than garage doors and gates; `lock`; `arm`; climate within 10 to 30 °C (50 to 86 °F).
   - `CONFIRM_VOICE`: `unlock`; `disarm`; opening a cover whose device class is `garage`, `gate` or `door`; climate outside that range; `script` and `button` (their effect is unknown to Jarvis); any command that would change more than 10 devices at once.
   - The user can raise any device to always confirm with `smarthome_confirm_devices` (a list of device ids). Nothing can be lowered below these tiers.
-- In Codex or Claude reply modes the tool is offered only if `smarthome_share_with_cloud` is true (default false), because device names, rooms and states describe the user's home. When false the tool is in the bridge's excluded set for that mode.
+- In Codex or Claude reply modes the tool is offered only if `smarthome_share_with_cloud` is true (default false), because device names, rooms and states describe the user's home. When false the tool is in the bridge's excluded set for that mode, and its desktop referents are left out of the request's `other_referents` even while `<mode>_share_desktop_referents` is on.
 - Every successful action records the devices as desktop referents (`memory/desktop_referents.spec.md`), so "turn them off" or "a bit dimmer" after a lights command reaches the same devices. Only device ids are recorded.
 - `step_note` words a call as "Turned off 3 lights" or "Set the bedroom temperature", never with addresses.
-- Device names and states are untrusted text from the hub: they are fenced as data in results and never treated as instructions.
+- Device names and states are untrusted text from the hub: they are fenced as data in results and never treated as instructions. So are the hub's reasons for rejecting a command.
+- A failure carries a short plain `error_message` in Jarvis's own words (what the fast path says); the fenced device data is only in the text for the model. A command that changed some devices but not all is reported as not done ("Changed 2 of 3 devices; ..."), with each device's outcome.
+- A `CONFIRM_VOICE` request names a count ("1 smart home device") as its target, never a device name, because targets go through the central file-path checks; the names are in the consequence.
+- The tool's arguments name devices and rooms, so the fast path logs only their keys (`log_arguments` is false).
 
 ## Fast path
 
-Locale phrases in `fastpath/phrases/<language>.json` (family `home`) route whole utterances such as "turn on {home_target}", "turn off the {area} lights", "set {home_target} to {percent} percent", "dim {home_target}". `home_target` resolves against the in-memory device names, aliases and areas with the name resolution above. An unknown or ambiguous target, or any `CONFIRM_VOICE` action, falls through to the model path. The family exists only while `homeControl` is registered.
+Locale phrases in `fastpath/phrases/<language>.json` (family `home`) route whole utterances such as "turn on {home_target}", "turn off the {area} lights", "set {home_target} to {percent} percent", "dim {home_target}". `home_target` resolves against the in-memory device names, aliases and areas with the name resolution above, and the device's own capabilities must allow the action. An unknown or ambiguous target, or any `CONFIRM_VOICE` action, falls through to the model path. Home rules are matched together with application names, after the fixed phrases (TV, volume, time): a TV phrase is never shadowed by a device whose name holds "TV", and an utterance that could mean an application or a device ("open office" with an Office Blind) falls through to the model. The family exists only while `homeControl` is registered.
 
 ## Settings page
 
@@ -108,7 +116,7 @@ A **Smart Home** page in Settings:
 - **Devices**: the current device list (name, room, kind, source, state) with a "hide" option for MQTT devices and an "always confirm" option for any device.
 - A share-with-cloud switch with a plain explanation.
 
-Nothing is saved unless its test passes, matching the calendar and email sign-ins.
+Nothing is saved unless its test passes, matching the calendar and email sign-ins. Changed connection settings need a passing test whether or not the feature is on, so turning it on later never skips one.
 
 ## Command line
 

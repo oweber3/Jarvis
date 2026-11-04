@@ -19,7 +19,13 @@ _TAG = "smarthome"
 
 
 class SmartHomeError(Exception):
-    """A command did not happen; the message says why, without addresses or secrets."""
+    """A command did not happen. ``summary`` is Jarvis's own words, without addresses or secrets; ``detail``
+    is the hub's reason when it gave one (untrusted text)."""
+
+    def __init__(self, summary: str, detail: str = ""):
+        super().__init__(f"{summary} {detail}".strip() if detail else summary)
+        self.summary = summary
+        self.detail = detail
 
 
 class SmartHome:
@@ -55,10 +61,12 @@ class SmartHome:
         connector = self.connectors.get(device.source)
         if connector is None:
             raise SmartHomeError("That device's hub is not connected.")
-        from .home_assistant import HomeAssistantError
+        from .home_assistant import HomeAssistantCommandRejected, HomeAssistantError
         from .mqtt import MqttError
         try:
             return connector.send(device, command)
+        except HomeAssistantCommandRejected as exc:
+            raise SmartHomeError(exc.summary, exc.detail) from None
         except (HomeAssistantError, MqttError) as exc:
             raise SmartHomeError(str(exc)) from None
 

@@ -118,18 +118,22 @@ def _tv_app(value: str, ctx: _Context):
 
 
 def _home_target(value: str, ctx: _Context):
-    """One smart home device by the exact-then-unique rule of ``smarthome.model``; its kind must be able to
-    do the rule's action. Several candidates, none, or a kind that cannot do it reject the rule."""
-    from ..smarthome.model import capabilities_for, pick, supports, Device
+    """One smart home device by the exact-then-unique rule of ``smarthome.model``; the device's own capabilities
+    (``window_target``) must allow the rule's action. Several candidates, none, or a device that cannot do it
+    reject the rule."""
+    from ..smarthome.model import Capability, Device, pick, supports
     name = _strip_articles(value, ctx.data)
     chosen, _candidates = pick(name, [((*t.names, t.open_target), t) for t in ctx.home_devices])
     if len(chosen) != 1:
         return None
     target = chosen[0]
-    kind = target.window_target
+    try:
+        capabilities = frozenset(Capability(c) for c in target.window_target.split(',') if c)
+    except ValueError:
+        return None
     prop = next((p for p in ('brightness', 'level') if p in ctx.args or p in ctx.rule.get('slot_args', {}).values()),
                 '')
-    probe = Device(target.open_target, target.display, kind, '', capabilities=capabilities_for(kind))
+    probe = Device(target.open_target, target.display, '', '', capabilities=capabilities)
     if not supports(probe, ctx.args.get('action', ''), prop):
         return None
     return {'target': target.open_target}, target.display
@@ -441,7 +445,8 @@ def match(text: str, language: str | None = 'en', *, targets: tuple[FastTarget, 
     ``targets`` are application names; ``workspaces`` are configured workspace names and aliases
     (``open_target`` is the canonical workspace name); ``tv_apps`` are the apps the TV reported;
     ``routines`` are the names and aliases of the user's routines (``open_target`` is the canonical name);
-    ``home_devices`` are smart home devices (``open_target`` the device id, ``window_target`` its kind) and
+    ``home_devices`` are smart home devices (``open_target`` the device id, ``window_target`` its capabilities,
+    comma-separated) and
     ``home_areas`` their rooms."""
     lang = (language or 'en').casefold().replace('_', '-').split('-')[0]
     locale = _locale(lang)

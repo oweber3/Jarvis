@@ -42,18 +42,28 @@ _VERBS = {"turn_on": "Turned on", "turn_off": "Turned off", "toggle": "Toggled",
           "disarm": "Disarmed", "activate": "Activated"}
 
 
+def capability_key(capabilities) -> str:
+    """A device's own capabilities as fast-path target text (``FastTarget.window_target``)."""
+    return ",".join(sorted(c.value for c in capabilities))
+
+
 @dataclass
 class HomeResult(ToolExecutionResult):
     """A result that also carries what changed, for the step note (kinds and areas only)."""
     changed: Tuple[Tuple[str, str], ...] = ()   # (kind, area) per device changed
 
 
-def _fail(message: str) -> ToolExecutionResult:
-    return ToolExecutionResult(success=False, reply_text=message, error_message=message)
+def _fail(message: str, details: str = "") -> ToolExecutionResult:
+    """``message`` is Jarvis's own short, plain sentence (what the fast path says); ``details`` holds fenced
+    device data for the model."""
+    return ToolExecutionResult(success=False, reply_text=f"{message}\n{details}" if details else message,
+                               error_message=message)
 
 
-def _fact(dev: Device) -> Dict[str, Any]:
+def _fact(dev: Device, problem: str = "") -> Dict[str, Any]:
     fact: Dict[str, Any] = {"name": dev.name, "kind": dev.kind, "state": dev.state}
+    if problem:
+        fact["hub_said"] = problem
     if dev.area:
         fact["area"] = dev.area
     if dev.device_class:
@@ -66,6 +76,10 @@ def _fact(dev: Device) -> Dict[str, Any]:
         if key in attributes and key not in fact:
             fact[key] = attributes[key]
     return fact
+
+
+def _problem_facts(failed: Sequence[Tuple[Device, str, str]]) -> str:
+    return fence_json([_fact(dev, detail) for dev, _summary, detail in failed][:MAX_LISTED], "home")
 
 
 def _facts(devices: Sequence[Device]) -> str:
@@ -120,6 +134,10 @@ def _names(devices: Sequence[Device], limit: int = 3) -> str:
 class HomeControlTool(Tool):
     # Device names and states come from the hub, outside Jarvis.
     returns_outside_content = True
+    # Arguments name devices and rooms: the fast path logs only their keys.
+    log_arguments = False
+    # A failed fast route says the short error message, never the fenced device data.
+    fast_reply_from_error = True
 
     @property
     def name(self) -> str:
@@ -193,8 +211,10 @@ class HomeControlTool(Tool):
         reason = self._risk(action, args, devices, cfg)
         if reason:
             request.tier = SafetyTier.CONFIRM_VOICE
-            request.target = _names(devices)
-            request.consequence = reason
+            # A label, never a device name: names are the hub's text and the target goes through the
+            # central file-path checks.
+            request.target = f"{len(devices)} smart home device{'' if len(devices) == 1 else 's'}"
+            request.consequence = f"{reason} ({_names(devices)})"
             debug_log(f"homeControl {action} needs confirmation ({len(devices)} devices)", _TAG)
         return request
 
@@ -230,6 +250,10 @@ class HomeControlTool(Tool):
         home = service.get_home()
         if home is None:
             return _fail(_NOT_RUNNING)
+        # Device names, rooms and states describe the user's home: the turn stays out of the diary and the
+        # console log, like calendar and email turns (memory/activity_log.spec.md mechanism).
+        from ...memory.activity_log import mark_turn_private
+        mark_turn_private()
         if action not in ACTIONS:
             return _fail(f"Unknown action '{action}'. Use one of: {', '.join(ACTIONS)}.")
         if action == "list":
@@ -246,13 +270,13 @@ class HomeControlTool(Tool):
             return ToolExecutionResult(True, f"Current states:\n{_facts(found)}")
         if not resolution.devices:
             if resolution.candidates:
-                return _fail("Several devices match, so nothing was changed. Ask which one, or name the room. "
+                return _fail("Several devices match, so nothing was changed. Ask which one, or name the room.",
                              f"Matching devices:\n{_facts(resolution.candidates)}")
             return _fail("No device Jarvis can see matches that, so nothing was changed. Devices must be exposed to "
                          "voice assistants in Home Assistant.")
         if not devices:
-            return _fail(f"None of these devices can do {action.replace('_', ' ')}, so nothing was changed:\n"
-                         f"{_facts(resolution.devices)}")
+            return _fail(f"None of these devices can do {action.replace('_', ' ')}, so nothing was changed.",
+                         _facts(resolution.devices))
         command, problem = self._command(action, args, devices)
         if problem:
             return _fail(problem)
@@ -289,12 +313,12 @@ class HomeControlTool(Tool):
     def _execute(self, home, action, devices, commands, context) -> ToolExecutionResult:
         done: List[Device] = []
         unconfirmed: List[Tuple[Device, str]] = []
-        failed: List[Tuple[Device, str]] = []
+        failed: List[Tuple[Device, str, str]] = []   # device, Jarvis's summary, the hub's own words
         for dev in devices:
             try:
                 outcome = home.send(dev, commands[dev.id])
             except service.SmartHomeError as exc:
-                failed.append((dev, str(exc)))
+                failed.append((dev, exc.summary, exc.detail))
                 continue
             if outcome.confirmed:
                 done.append(dev)
@@ -312,16 +336,24 @@ class HomeControlTool(Tool):
             lines.append(f"Done and confirmed by the hub for {len(done)} devices:\n{_facts(refreshed)}")
         for dev, note in unconfirmed:
             lines.append(f"{note}\n{_facts([dev])}")
-        for dev, reason in failed:
-            lines.append(f"Not changed: {reason}\n{_facts([dev])}")
+        for summary in dict.fromkeys(summary for _dev, summary, _detail in failed):
+            lines.append(f"Not changed: {summary}\n"
+                         f"{_problem_facts([f for f in failed if f[1] == summary])}")
+        text = "\n".join(lines)
         if not done:
             # Nothing the hub confirmed is reported as done, so a fast-path reply never claims it.
             context.user_print("⚠️ The smart home command was not confirmed" if unconfirmed
                                else "⚠️ The smart home command failed")
             reason = unconfirmed[0][1] if unconfirmed else failed[0][1]
-            return ToolExecutionResult(False, "\n".join(lines), error_message=reason)
+            return ToolExecutionResult(False, text, error_message=reason)
+        changed = tuple((d.kind, d.area) for d in done)
+        if failed or unconfirmed:
+            context.user_print(f"⚠️ Changed {len(done)} of {len(devices)} smart home devices")
+            message = (f"Changed {len(done)} of {len(devices)} devices; the others did not change or did not "
+                       "confirm it.")
+            return HomeResult(False, text, error_message=message, changed=changed)
         context.user_print(f"🏠 {_VERBS.get(action, 'Changed')} {len(acted)} devices")
-        return HomeResult(True, "\n".join(lines), changed=tuple((d.kind, d.area) for d in done))
+        return HomeResult(True, text, changed=changed)
 
     @staticmethod
     def _remember(devices: Sequence[Device], action: str) -> None:
@@ -366,6 +398,7 @@ class HomeControlTool(Tool):
         home = service.get_home()
         if home is None:
             return (), ()
-        devices = tuple(FastTarget((d.name, *d.aliases), d.id, d.kind, d.name) for d in home.registry.devices())
+        devices = tuple(FastTarget((d.name, *d.aliases), d.id, capability_key(d.capabilities), d.name)
+                        for d in home.registry.devices())
         areas = tuple(FastTarget((area,), area, "area", area) for area in home.registry.areas())
         return devices, areas

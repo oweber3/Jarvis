@@ -67,7 +67,12 @@ def build_desktop_context(cfg: Any, settings: BridgeSettings, origin: str,
             desktop["foreground_window"] = foreground
     if settings.share_desktop_referents:
         windows = dr.records_for_request(dr.live_referents(cfg))
-        others = dr.others_for_request(dr.live_others(cfg))
+        # A record from an opt-in personal source (a smart home device) goes only where that source's own
+        # sharing switch lets its tool go.
+        from .tools import CLOUD_GATED_TOOLS
+        others = dr.others_for_request([
+            other for other in dr.live_others(cfg)
+            if other.tool not in CLOUD_GATED_TOOLS or CLOUD_GATED_TOOLS[other.tool].shared(cfg)])
         if windows:
             desktop["desktop_referents"] = windows
         if others:

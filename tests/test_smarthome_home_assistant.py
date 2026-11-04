@@ -246,3 +246,11 @@ class TestRobustness:
             assert wait_for(lambda: conn.connected)
         finally:
             conn.stop()
+
+
+@pytest.mark.unit
+def test_a_token_of_a_user_who_is_not_an_administrator_says_so(fake):
+    fake.admin = False
+    with pytest.raises(ha.HomeAssistantAuthError) as error:
+        ha.test_connection(fake.url, "good-token")
+    assert "administrator" in str(error.value)

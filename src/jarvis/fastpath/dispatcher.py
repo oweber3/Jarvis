@@ -38,19 +38,23 @@ def match_command(text, cfg, language=None, addressed=True, ambient=False):
             return result if safety.tier == SafetyTier.SAFE else None
         tv_apps = BUILTIN_TOOLS['tvControl'].fast_targets(cfg) if 'tvControl' in available else ()
         routines = BUILTIN_TOOLS['routineControl'].fast_targets(cfg) if 'routineControl' in available else ()
-        home_devices, home_areas = (BUILTIN_TOOLS['homeControl'].fast_targets(cfg) if 'homeControl' in available
-                                    else ((), ()))
-        homes = {'home_devices': home_devices, 'home_areas': home_areas}
-        result = match(redact(text), lang, tv_apps=tv_apps, routines=routines, available_tools=available, **homes)
-        # A routine may share its name with an application ("start chrome"): with every target offered, the
-        # single-match rule makes such an utterance fall through to the model.
-        if ((result is None or result.tool_name == 'routineControl') and cfg.windows_tools_enabled
-                and available & {'appControl', 'workspaceControl'}):
-            targets = BUILTIN_TOOLS['appControl'].fast_targets(cfg) if 'appControl' in available else ()
+        # Fixed phrases, TV apps and routines first; smart home names join the application names in the second
+        # pass, so a name both could mean ("open office": an app, or the Office Blind) matches twice and falls
+        # through to the model, and a TV phrase is never shadowed by a device whose name holds "TV".
+        result = match(redact(text), lang, tv_apps=tv_apps, routines=routines,
+                       available_tools=available - {'homeControl'})
+        apps = bool(cfg.windows_tools_enabled and available & {'appControl', 'workspaceControl'})
+        if (result is None or result.tool_name == 'routineControl') and (apps or 'homeControl' in available):
+            targets = BUILTIN_TOOLS['appControl'].fast_targets(cfg) if apps and 'appControl' in available else ()
             workspaces = (BUILTIN_TOOLS['workspaceControl'].fast_targets(cfg)
-                          if 'workspaceControl' in available else ())
+                          if apps and 'workspaceControl' in available else ())
+            home_devices, home_areas = (BUILTIN_TOOLS['homeControl'].fast_targets(cfg) if 'homeControl' in available
+                                        else ((), ()))
+            # A routine may share its name with an application ("start chrome"): with every target offered,
+            # the single-match rule makes such an utterance fall through to the model.
             result = match(redact(text), lang, targets=targets, workspaces=workspaces, tv_apps=tv_apps,
-                           routines=routines, available_tools=available, **homes)
+                           routines=routines, home_devices=home_devices, home_areas=home_areas,
+                           available_tools=available)
         if result is not None and result.needs_wake_word and not addressed:
             debug_log(f'Fast route {result.command_id} needs the wake word; using LLM_ROUTE.', 'routing')
             return None
@@ -91,6 +95,10 @@ def dispatch(result: FastMatch, db, cfg, text, language=None, *, executor=None, 
         debug_log(f'FAST_ROUTE {result.command_id} raised {type(exc).__name__}; reporting failure.', 'routing')
         return UNEXPECTED_FAILURE
     if not outcome.success:
+        # A tool whose failure text carries data for the model (fenced device lists) says its short error
+        # message instead.
+        if getattr(BUILTIN_TOOLS.get(result.tool_name), 'fast_reply_from_error', False) and outcome.error_message:
+            return redact(outcome.error_message)
         return redact(outcome.reply_text or outcome.error_message or 'Action failed.')
     if result.silent:
         return ''  # done without a word

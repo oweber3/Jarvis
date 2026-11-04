@@ -46,7 +46,7 @@ In Home Assistant, open **Settings > Voice assistants > Expose** and expose the 
 
 ## 4. Connect Jarvis
 
-1. In Home Assistant, click your name (bottom left), open **Security**, and under **Long-lived access tokens** choose **Create token**. Copy it.
+1. In Home Assistant, signed in as an **administrator** (the account you created first is one), click your name (bottom left), open **Security**, and under **Long-lived access tokens** choose **Create token**. Copy it. Home Assistant only tells administrators which devices are exposed, so a token from a non-administrator account does not work.
 2. In Jarvis, open **Settings > Smart Home**, turn it on, enter the Home Assistant address and paste the token.
 3. Press **Test connection**. Jarvis shows how many devices it can see.
 

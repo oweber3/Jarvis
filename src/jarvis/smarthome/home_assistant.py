@@ -66,11 +66,14 @@ class HomeAssistantCommandRejected(HomeAssistantError):
         super().__init__(f"{summary} {detail}".strip() if detail else summary)
         self.summary = summary
         self.detail = detail
+        self.code = ""
 
 
 AUTH_MESSAGE = "Home Assistant refused the access token, create a new one."
 UNREACHABLE_MESSAGE = "Home Assistant did not answer. Check that it is running and the address is right."
 _REDIRECT_MESSAGE = "Home Assistant redirected the connection elsewhere; Jarvis does not follow redirects."
+ADMIN_MESSAGE = ("Home Assistant only tells an administrator which devices are exposed to voice assistants. Create "
+                 "the access token while signed in as an administrator.")
 NOT_FOUND_MESSAGE = ("Home Assistant's address could not be found on the network yet (it may still be starting). "
                      "Jarvis keeps trying.")
 NOT_CONNECTED_MESSAGE = "Jarvis is not connected to Home Assistant right now."
@@ -312,7 +315,9 @@ def _close(ws, sock=None) -> None:
 def _rejected(error: Any) -> HomeAssistantCommandRejected:
     message = error.get("message") if isinstance(error, dict) else ""
     text = " ".join(str(message or "no reason given").split())[:MAX_ERROR_CHARS]
-    return HomeAssistantCommandRejected("Home Assistant rejected the command.", detail=text)
+    rejected = HomeAssistantCommandRejected("Home Assistant rejected the command.", detail=text)
+    rejected.code = str(error.get("code") or "") if isinstance(error, dict) else ""
+    return rejected
 
 
 def _sync_requester(ws, ids, deadline: float) -> Callable[..., Any]:
@@ -342,7 +347,13 @@ def _sync_requester(ws, ids, deadline: float) -> Callable[..., Any]:
 
 
 def _exposed_ids(request) -> Dict[str, Any]:
-    return (request("homeassistant/expose_entity/list") or {}).get("exposed_entities") or {}
+    """Home Assistant answers this only for an administrator's token."""
+    try:
+        return (request("homeassistant/expose_entity/list") or {}).get("exposed_entities") or {}
+    except HomeAssistantCommandRejected as exc:
+        if exc.code == "unauthorized":
+            raise HomeAssistantAuthError(ADMIN_MESSAGE) from None
+        raise
 
 
 def _load(request) -> List[Device]:
