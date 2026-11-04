@@ -8,7 +8,15 @@ type ThreadMessageLikePart = Exclude<ThreadMessageLike["content"], string>[numbe
 // A message being sent: shown at once with a thinking placeholder. ``afterId`` is the newest stored message
 // when it was sent, so a reply stored since then can be told from older turns. ``acceptedAt`` is how many
 // polls had been made when the server accepted it (0 until then): only a later poll can know about it.
-export type Pending = { text: string; accepted: boolean; afterId: number; acceptedAt: number; attachments?: AttachmentMarker[] }
+// ``stopped`` is set once the owner pressed Stop: the words stay, Jarvis is no longer shown working on them.
+export type Pending = {
+  text: string
+  accepted: boolean
+  afterId: number
+  acceptedAt: number
+  attachments?: AttachmentMarker[]
+  stopped?: boolean
+}
 
 // The chips under a message that carried attachments: kind and size, which is all the server keeps.
 function attachmentChips(markers: readonly AttachmentMarker[] | undefined, prefix: string) {
@@ -119,13 +127,15 @@ export function buildThreadMessages(
       createdAt,
       ...attachmentChips(pending.attachments, "pending"),
     })
-    out.push({
-      id: "pending-reply",
-      role: "assistant",
-      content: [],
-      createdAt,
-      status: { type: "running" },
-    })
+    if (!pending.stopped) {
+      out.push({
+        id: "pending-reply",
+        role: "assistant",
+        content: [],
+        createdAt,
+        status: { type: "running" },
+      })
+    }
   }
   return out
 }

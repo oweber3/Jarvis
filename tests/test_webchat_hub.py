@@ -126,12 +126,13 @@ class TestTypedMessages:
         backend.mode = "unavailable"
         assert hub.submit("hello").status == "unavailable"
 
-    def test_stopping_a_request_in_flight_leaves_a_stopped_notice(self, hub, backend, store):
+    def test_stopping_a_request_in_flight_leaves_a_stopped_notice_with_the_owners_words(self, hub, backend, store):
         backend.mode = "hold"
         hub.submit("slow one")
         hub.cancel()
         assert backend.cancelled == 1
-        assert [n["kind"] for n in hub.snapshot(0)["notices"]] == ["stopped"]
+        notices = hub.snapshot(0)["notices"]
+        assert [(n["kind"], n["request"]) for n in notices] == [("stopped", "slow one")]
         assert store.messages(open_id(store)) == []
 
     def test_a_notice_goes_once_a_newer_turn_is_stored(self, backend, store):

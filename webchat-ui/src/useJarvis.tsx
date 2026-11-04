@@ -133,6 +133,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
   const [reachable, setReachable] = useState(true)
   const [loadingChat, setLoadingChat] = useState(true)
   const [history, setHistory] = useState<HistoryWindow>({ hasEarlier: false, hasLater: false })
+  const [stopping, setStopping] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
   const chatRef = useRef<Chat | null>(null)
@@ -152,6 +153,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
         pending: setPending,
         reachable: setReachable,
         window: setHistory,
+        stopping: setStopping,
       }),
   )
 
@@ -312,8 +314,18 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
     } catch (error) {
       sync.sendFailed()
       forget()
-      if (!toldByNotice(error)) fail(error)
+      if (toldByNotice(error)) giveBack(text, attached.length > 0)
+      else fail(error)
     }
+  }
+
+  // A message Jarvis could not take (busy, not ready) goes back into the message box, unless the owner has started
+  // another one; its attachments were used up by the attempt.
+  const giveBack = (text: string, hadAttachments: boolean) => {
+    const composer = runtimeRef.current?.thread.composer
+    if (!composer || composer.getState().text.trim()) return
+    composer.setText(text)
+    if (hadAttachments) setToast("The message wasn't sent, so its words are back in the message box. Attach the files again.")
   }
 
   // ``text`` is the new wording (undefined asks the stored words again); ``shown`` is what the thread shows meanwhile.
@@ -339,10 +351,12 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
     [messages, shownNotices, pending],
   )
 
+  const runtimeRef = useRef<ReturnType<typeof useExternalStoreRuntime> | null>(null)
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
     messages: threadMessages,
     convertMessage: convertThreadMessage,
-    isRunning: pending !== null || meta.busy_query,
+    // Stop gives the message box back at once, as the desktop chat does; the server's notice follows.
+    isRunning: !stopping && ((pending !== null && !pending.stopped) || meta.busy_query),
     isLoading: loadingChat,
     isDisabled: !meta.ready || !reachable,
     hasEarlier: history.hasEarlier,
@@ -363,6 +377,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
       if (stored !== null && original?.role === "user") await askAgain(stored, undefined, original.text)
     },
     onCancel: async () => {
+      sync.stopRequested()
       try {
         await api.stop()
       } catch (error) {
@@ -395,6 +410,8 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
       },
     },
   })
+
+  runtimeRef.current = runtime
 
   const view = useMemo<JarvisView>(
     () => ({

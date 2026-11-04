@@ -42,6 +42,8 @@ export type SyncView = {
   pending: (pending: Pending | null) => void
   reachable: (reachable: boolean) => void
   window: (window: HistoryWindow) => void
+  /** Whether Stop was pressed for a request the server still reports as running. */
+  stopping?: (stopping: boolean) => void
 }
 
 const BACKOFF_START_MS = 1000
@@ -66,6 +68,8 @@ export class ChatSync {
   private hasLater = false
   private earlier: Promise<void> | null = null
   private sending: Pending | null = null
+  // Stop was pressed and the server has not yet said the request ended.
+  private stopping = false
 
   constructor(
     private readonly api: SyncApi,
@@ -149,6 +153,10 @@ export class ChatSync {
     } else {
       if (snap.chat) this.view.chat(snap.chat)
       if (!this.hasLater) this.showMessages(mergeMessages(this.shown, snap.messages))
+    }
+    if (this.stopping && !snap.busy_query) {
+      this.stopping = false
+      this.view.stopping?.(false)
     }
     // The reply is stored before the query reads done, so the thinking placeholder can go.
     if (pendingDone(this.sending, snap.busy_query, this.shown, poll)) this.setPending(null)
@@ -269,6 +277,14 @@ export class ChatSync {
   async rewindFailed(): Promise<void> {
     this.setPending(null)
     if (this.active !== null) await this.loadChat(this.active)
+  }
+
+  /** Stop was pressed: the words stay in the thread until the server's notice takes their place, and the page no
+   * longer shows Jarvis working on them. */
+  stopRequested(): void {
+    if (this.sending) this.setPending({ ...this.sending, stopped: true })
+    this.stopping = true
+    this.view.stopping?.(true)
   }
 
   sendAccepted(): void {

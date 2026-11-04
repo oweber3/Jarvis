@@ -518,7 +518,7 @@ class ChatHub:
             with self._cond:
                 record = dict(self._pending.get(query_id) or {})
             if reply is None and record.get("cancel"):
-                self._finish(query_id, "stopped")
+                self._finish(query_id, "stopped", request=record.get("display"))
             elif isinstance(reply, str):
                 self._finish(query_id, "done", reply=reply)
             elif not record.get("started"):
