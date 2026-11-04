@@ -12,11 +12,44 @@ export const AGE_GROUP_ORDER: readonly { group: AgeGroup; label: string }[] = [
 
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
 
+// Building an Intl formatter costs far more than using one, and every message's time is formatted on each
+// redraw, so each formatter is built once per locale and options.
+const dateFormats = new Map<string, Intl.DateTimeFormat>()
+const relativeFormats = new Map<string, Intl.RelativeTimeFormat>()
+
+function dateFormat(locale: string | undefined, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = `${locale ?? ""}|${JSON.stringify(options)}`
+  let format = dateFormats.get(key)
+  if (!format) {
+    format = new Intl.DateTimeFormat(locale, options)
+    dateFormats.set(key, format)
+  }
+  return format
+}
+
+function relativeFormat(locale: string | undefined): Intl.RelativeTimeFormat {
+  const key = locale ?? ""
+  let format = relativeFormats.get(key)
+  if (!format) {
+    format = new Intl.RelativeTimeFormat(locale, { numeric: "auto" })
+    relativeFormats.set(key, format)
+  }
+  return format
+}
+
 // Whole local calendar days from ``ts`` to ``now`` (negative for the future).
 function daysBetween(ts: number, now: Date): number {
   const a = startOfDay(new Date(ts * 1000))
   const b = startOfDay(now)
   return Math.round((b.getTime() - a.getTime()) / 86_400_000)
+}
+
+/** Builds the formatters ahead of need (the first relative one loads the browser's locale data, which is slow), so a
+ * page can do it while it waits for its first answer rather than while it draws a chat. */
+export function prepareFormats(locale?: string): void {
+  relativeFormat(locale)
+  dateFormat(locale, { hour: "numeric", minute: "2-digit" })
+  dateFormat(locale, { dateStyle: "full", timeStyle: "short" })
 }
 
 export function dayKey(ts: number): string {
@@ -32,10 +65,10 @@ export function startsNewDay(previousTs: number | undefined, ts: number): boolea
 export function dayDividerLabel(ts: number, now: Date = new Date(), locale?: string): string {
   const days = daysBetween(ts, now)
   if (days === 0 || days === 1) {
-    return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(-days, "day")
+    return relativeFormat(locale).format(-days, "day")
   }
   const sameYear = new Date(ts * 1000).getFullYear() === now.getFullYear()
-  return new Intl.DateTimeFormat(locale, {
+  return dateFormat(locale, {
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -44,11 +77,11 @@ export function dayDividerLabel(ts: number, now: Date = new Date(), locale?: str
 }
 
 export function messageTime(ts: number, locale?: string): string {
-  return new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" }).format(new Date(ts * 1000))
+  return dateFormat(locale, { hour: "numeric", minute: "2-digit" }).format(new Date(ts * 1000))
 }
 
 export function fullDateTime(ts: number, locale?: string): string {
-  return new Intl.DateTimeFormat(locale, { dateStyle: "full", timeStyle: "short" }).format(new Date(ts * 1000))
+  return dateFormat(locale, { dateStyle: "full", timeStyle: "short" }).format(new Date(ts * 1000))
 }
 
 export function ageGroup(ts: number, now: Date = new Date()): AgeGroup {

@@ -10,6 +10,7 @@ import {
 } from "@/components/attachment.aui";
 import { MarkdownText } from "@/components/markdown-text";
 import { DayDivider, MessageTime } from "@/components/MessageTime";
+import { GrowingTextarea } from "@/components/GrowingTextarea";
 import { JarvisMark } from "@/components/JarvisMark";
 import { ToolStepGroup, ToolStepRow } from "@/components/ToolSteps";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
@@ -44,8 +45,10 @@ import {
 } from "lucide-react";
 import {
   createContext,
+  memo,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   type ComponentType,
   type FC,
@@ -285,12 +288,15 @@ const dayOf = (date: Date | undefined) => (date ? date.getTime() / 1000 : undefi
 
 // A divider above the first message of each day. A pending message, which has no stored time yet, counts as now.
 const DayStart: FC = () => {
-  const label = useAuiState((s) => {
+  // The selector runs on every change of the thread, so it only says whether a day starts here; the words are
+  // worked out once per day.
+  const startsAt = useAuiState((s) => {
     const own = dayOf(s.message.createdAt);
     if (own === undefined) return null;
     const previous = dayOf(s.thread.messages[s.message.index - 1]?.createdAt);
-    return startsNewDay(previous, own) ? dayDividerLabel(own) : null;
+    return startsNewDay(previous, own) ? own : null;
   });
+  const label = useMemo(() => (startsAt === null ? null : dayDividerLabel(startsAt)), [startsAt]);
   return label ? <DayDivider label={label} /> : null;
 };
 
@@ -508,11 +514,12 @@ const EditComposer: FC = () => {
       className="flex flex-col px-2"
     >
       <ComposerPrimitive.Root className="aui-edit-composer-root border-ring/40 focus-within:border-ring ms-auto flex w-full max-w-[85%] cursor-text flex-col gap-1 rounded-(--composer-radius) border bg-(--composer-bg) transition-[border-color]">
-        <ComposerPrimitive.Input
-          className="aui-edit-composer-input text-foreground min-h-14 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-none"
-          aria-label="Edit message"
-          autoFocus
-        />
+        <ComposerPrimitive.Input asChild autoFocus>
+          <GrowingTextarea
+            className="aui-edit-composer-input text-foreground max-h-80 min-h-14 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-none"
+            aria-label="Edit message"
+          />
+        </ComposerPrimitive.Input>
         <p className="text-muted-foreground px-4 text-xs">{note}</p>
         <div className="aui-edit-composer-footer mx-2.5 mb-2.5 flex items-center gap-1.5 self-end">
           <ComposerPrimitive.Cancel asChild>
@@ -564,19 +571,7 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
         className="border-border focus-within:border-ring/60 bg-card flex w-full cursor-text flex-col gap-2 rounded-(--composer-radius) border p-(--composer-padding) transition-[border-color,box-shadow] duration-150"
       >
         <ComposerAttachments />
-        <ComposerPrimitive.Input
-          id="message-box"
-          placeholder="Message Jarvis…"
-          className="aui-composer-input caret-primary placeholder:text-muted-foreground max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none focus-visible:outline-none"
-          rows={1}
-          autoFocus={autoFocus}
-          enterKeyHint="send"
-          aria-label="Message input"
-          // Enter must not slip past what disables the Send button, or the message and its attachments are lost.
-          onKeyDown={(event) => {
-            if (gate.blocked && event.key === "Enter" && !event.shiftKey) event.preventDefault();
-          }}
-        />
+        <MessageInput autoFocus={autoFocus} blocked={gate.blocked} />
         <AttachmentNotice gate={gate} />
         <ComposerAction blocked={gate.blocked} />
       </div>
@@ -587,6 +582,30 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
     </ComposerPrimitive.Root>
   );
 };
+
+// The text box grows with what is typed by measuring itself on each redraw, so it redraws only when what it shows
+// changes, never because something elsewhere on the page did.
+const MessageInput: FC<{ autoFocus: boolean; blocked: boolean }> = memo(function MessageInput({ autoFocus, blocked }) {
+  return (
+    <ComposerPrimitive.Input
+      asChild
+      autoFocus={autoFocus}
+      // Enter must not slip past what disables the Send button, or the message and its attachments are lost.
+      onKeyDown={(event) => {
+        if (blocked && event.key === "Enter" && !event.shiftKey) event.preventDefault();
+      }}
+    >
+      <GrowingTextarea
+        id="message-box"
+        placeholder="Message Jarvis…"
+        className="aui-composer-input caret-primary placeholder:text-muted-foreground max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none focus-visible:outline-none"
+        rows={1}
+        enterKeyHint="send"
+        aria-label="Message input"
+      />
+    </ComposerPrimitive.Input>
+  );
+});
 
 const ComposerAction: FC<{ blocked: boolean }> = ({ blocked }) => {
   const { ComposerLeading, ComposerTrailing, ComposerScreenshotButton = ComposerScreenshot } = useContext(ThreadComponentsContext);
