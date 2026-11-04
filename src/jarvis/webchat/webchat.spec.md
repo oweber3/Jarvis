@@ -195,6 +195,10 @@ Browsers keep some combinations for themselves: in an ordinary browser tab Ctrl+
 
 **Light and dark.** A switch in the header changes between the dark HUD look (the default) and a light variant of the same palette. The choice is remembered in the browser's storage when it allows, and applied before the first paint. Text, accents and status colours meet WCAG AA (4.5:1) on every surface in both palettes, which `tests/test_webchat_theme.py` checks.
 
+**When something goes wrong.** While Jarvis cannot be reached the page says so above the chat, keeps trying (the back-off above) and offers **Retry now**, which tries at once. A refusal or failure of something the owner did is said in a message at the foot of the page that goes by itself after 8 seconds or with **Dismiss**. A part of the page that breaks is replaced by "The chat page hit a problem" and **Reload the page**, never a blank page; nothing is reported anywhere.
+
+**Accessibility.** Every control has a name a screen reader reads, and the message actions stay in the page for the keyboard (**Edit, Ask again and Rewind**). A skip link, the first thing Tab reaches, goes to the message box. A reply that lands, or a notice, is read out politely (`components/ReplyAnnouncer.tsx`): the history a chat opens with and earlier pages are not. The presence line and the thinking indicator are status regions. In Windows high contrast the owner's bubbles, the message box, the step badges and code blocks keep an outline, and the message actions are always drawn.
+
 **No outside calls.** The page calls only its own origin. `tests/test_webchat_bundle.py` fails if the build or the copied source names an outside address, a hosted service (assistant-ui Cloud included) or any analytics, beacon, socket or event-stream use.
 
 Desktop confirmations still appear as the desktop dialog, as in the Qt chat, whether the daemon is bundled in the desktop app or runs as its subprocess (`desktop_app.spec.md`, Action Confirmation Dialog). A daemon the desktop app did not start has no dialog and refuses those actions. The reply reads "Please confirm on your desktop" and the outcome arrives as a normal assistant message.

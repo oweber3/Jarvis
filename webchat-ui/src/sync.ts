@@ -72,6 +72,8 @@ export class ChatSync {
   private hasLater = false
   private earlier: Promise<void> | null = null
   private sending: Pending | null = null
+  // Ends the wait between tries while Jarvis cannot be reached (``retryNow``).
+  private wakeUp: (() => void) | null = null
   // Stop was pressed and the server has not yet said the request ended.
   private stopping = false
 
@@ -112,7 +114,8 @@ export class ChatSync {
       } catch {
         if (signal.aborted) return
         this.view.reachable(false)
-        await this.sleep(backoff)
+        await Promise.race([this.sleep(backoff), new Promise<void>((resolve) => (this.wakeUp = resolve))])
+        this.wakeUp = null
         backoff = Math.min(backoff * 2, BACKOFF_MAX_MS)
       }
     }
@@ -197,6 +200,11 @@ export class ChatSync {
   // loaded yet (it is loaded on its own) or the window stops short of the newest message.
   private newerThan(): number {
     return this.active === null || this.hasLater ? NOTHING_NEWER : lastMessageId(this.shown)
+  }
+
+  /** While Jarvis cannot be reached, try again now instead of waiting out the back-off. */
+  retryNow(): void {
+    this.wakeUp?.()
   }
 
   // -- what the owner does -----------------------------------------------------------------

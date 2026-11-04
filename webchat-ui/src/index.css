@@ -135,3 +135,19 @@
     opacity: 1;
   }
 }
+
+/*
+ * Windows high contrast (forced colours): fills and gradients are dropped, so shapes that rely on them get an outline
+ * of the system's text colour, and the message actions are always drawn.
+ */
+@media (forced-colors: active) {
+  .aui-user-message-content,
+  .aui-composer-root [data-slot="aui_composer-shell"],
+  [data-slot="aui_tool-step"] > span:first-child,
+  [data-slot="aui_code-block"] {
+    border: 1px solid CanvasText;
+  }
+  .aui-message-actions {
+    opacity: 1;
+  }
+}

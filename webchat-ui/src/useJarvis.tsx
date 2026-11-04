@@ -45,6 +45,8 @@ export type JarvisActions = {
   /** A model and effort of the active Claude or Codex mode; an omitted effort keeps the current one when offered. */
   chooseCloudModel: (model: string, effort?: string) => Promise<void>
   clearHistory: () => Promise<void>
+  /** While Jarvis cannot be reached: try again now. */
+  retryNow: () => void
   dismissToast: () => void
   /**
    * A request made outside the composer (the phone's spoken one): show it at once as a thinking bubble,
@@ -296,6 +298,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
           await refreshLibrary()
         })()
       },
+      retryNow: () => sync.retryNow(),
       dismissToast: () => setToast(null),
       beginSend: (text) => sync.beginSend(text),
       sendAccepted: () => sync.sendAccepted(),

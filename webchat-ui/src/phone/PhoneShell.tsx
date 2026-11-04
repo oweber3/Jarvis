@@ -1,5 +1,6 @@
 import { MenuIcon } from "lucide-react"
 import { useEffect, useState, type FC } from "react"
+import { ReplyAnnouncer } from "@/components/ReplyAnnouncer"
 import { StartScreen } from "@/components/StartScreen"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Thread } from "@/components/thread.aui"
@@ -72,6 +73,7 @@ export const PhoneShell: FC = () => {
           <main className="min-h-0 flex-1">
             <Thread components={THREAD_COMPONENTS} autoFocus={false} />
           </main>
+          <ReplyAnnouncer />
         </div>
         <ChatsDrawer open={drawerOpen} onOpenChange={setDrawerOpen} />
         <VoiceModeDialog />

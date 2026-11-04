@@ -210,7 +210,7 @@ The phone mode lays the page out as a phone chat app, chat first. What it change
 - **Touch and safe areas.** Controls are at least 44 px and text fields use 16 px text (so iOS does not zoom into them). The page, the drawer, the sheets and voice mode use the device's safe-area insets and the visual viewport's height, so the message box stays above the keyboard; while the keyboard is up the bottom inset is dropped, since the keyboard covers it. Reduced motion stills the animations.
 - **Left out.** The PC-microphone button, the Screenshot button, "Delete everything" and the keyboard-shortcut help: the first two act on the PC, the third is a desktop action and the fourth is for hardware keyboards.
 
-The page polls with the long-poll endpoint and backs off (1 s, doubling to 15 s) while the PC is unreachable. It uses no service worker, no web socket and no event stream.
+The page polls with the long-poll endpoint and backs off (1 s, doubling to 15 s) while the PC is unreachable. It uses no service worker, no web socket and no event stream. A screen reader hears replies as they land and a broken part of the page offers a reload, as in the web chat (`webchat/webchat.spec.md`, Accessibility, When something goes wrong).
 
 ## Desktop dialog
 

@@ -13,16 +13,22 @@ import { StartScreen } from "@/components/StartScreen"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { chatTitle } from "@/conversion"
 import { chatValue, currentValue, describeValue } from "@/models"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { ReplyAnnouncer } from "@/components/ReplyAnnouncer"
 import { ThemeSwitch } from "@/components/ThemeSwitch"
 import { JarvisProvider, useJarvis } from "@/useJarvis"
 
 export const App: FC = () => (
-  <TooltipProvider>
-    <JarvisProvider>
-      <Shell />
-    </JarvisProvider>
-  </TooltipProvider>
+  <ErrorBoundary>
+    <TooltipProvider>
+      <JarvisProvider>
+        <Shell />
+      </JarvisProvider>
+    </TooltipProvider>
+  </ErrorBoundary>
 )
+
+const TOAST_MS = 8000
 
 const Shell: FC = () => {
   const { reachable, ready, toast, chat, actions } = useJarvis()
@@ -103,8 +109,26 @@ const Shell: FC = () => {
     if (narrow) setSidebarOpen(false)
   }, [openId, narrow])
 
+  // A message for the owner goes by itself after a while; Dismiss takes it at once.
+  useEffect(() => {
+    if (!toast) return
+    const timer = window.setTimeout(actions.dismissToast, TOAST_MS)
+    return () => window.clearTimeout(timer)
+  }, [toast, actions])
+
   return (
     <div className="bg-background text-foreground relative flex h-dvh w-full overflow-hidden">
+      <a
+        href="#message-box"
+        onClick={(event) => {
+          event.preventDefault()
+          document.querySelector<HTMLTextAreaElement>('[aria-label="Message input"]')?.focus()
+        }}
+        className="bg-popover text-popover-foreground focus-visible:ring-ring sr-only z-50 rounded-md px-3 py-2 text-sm focus:not-sr-only focus:absolute focus:start-3 focus:top-3 focus-visible:ring-2"
+      >
+        Skip to the message box
+      </a>
+      <ReplyAnnouncer />
       {overlay && (
         <div
           data-testid="sidebar-backdrop"
@@ -228,10 +252,27 @@ const ShortcutsDialog: FC<{ open: boolean; onOpenChange: (open: boolean) => void
 )
 
 const StatusBanner: FC<{ reachable: boolean; ready: boolean }> = ({ reachable, ready }) => {
+  const { actions } = useJarvis()
   if (reachable && ready) return null
   return (
-    <div role="status" className="bg-warning/10 text-warning border-warning/30 border-b px-4 py-2 text-center text-sm">
-      {reachable ? "Jarvis is starting. Messages can be sent once it is ready." : "Can't reach Jarvis. Is it running?"}
+    <div
+      role="status"
+      className="bg-warning/10 text-warning border-warning/30 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b px-4 py-2 text-center text-sm"
+    >
+      <span>
+        {reachable
+          ? "Jarvis is starting. Messages can be sent once it is ready."
+          : "Can't reach Jarvis. Is it running? The page keeps trying."}
+      </span>
+      {!reachable && (
+        <button
+          type="button"
+          onClick={actions.retryNow}
+          className="focus-visible:ring-ring/50 rounded-md px-2 py-0.5 font-medium underline underline-offset-2 outline-none focus-visible:ring-2"
+        >
+          Retry now
+        </button>
+      )}
     </div>
   )
 }

@@ -381,3 +381,31 @@ describe("a long chat", () => {
     t.stop()
   })
 })
+
+describe("while Jarvis cannot be reached", () => {
+  it("asks again at once when the owner says so, instead of waiting out the back-off", async () => {
+    const t = setup()
+    const waits: Array<() => void> = []
+    const sync = new ChatSync(t.api, {
+      library: () => undefined,
+      chat: () => undefined,
+      messages: () => undefined,
+      notices: () => undefined,
+      meta: () => undefined,
+      loading: () => undefined,
+      pending: () => undefined,
+      reachable: () => undefined,
+      window: () => undefined,
+    }, () => new Promise<void>((resolve) => waits.push(resolve)))
+    const abort = new AbortController()
+    void sync.run(abort.signal)
+    await settle()
+    t.polls[0]!.reply.reject(new Error("offline"))
+    await settle()
+    expect(t.polls).toHaveLength(1) // waiting out the back-off
+    sync.retryNow()
+    await settle()
+    expect(t.polls).toHaveLength(2)
+    abort.abort()
+  })
+})
