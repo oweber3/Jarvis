@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import socket
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -38,7 +40,7 @@ class SourceResult:
     # True when the events come from the last saved copy because a fresh fetch failed.
     offline_copy: bool = False
     fetched_at: Optional[float] = None
-    # Empty, or one of: no_address, unreachable, http_error, not_a_calendar, too_large,
+    # Empty, or one of: no_address, unreachable, http_error, not_a_calendar, too_large, too_complex,
     # outlook_not_installed, outlook_new_only, outlook_timeout, outlook_failed.
     error: str = ""
 
@@ -64,20 +66,32 @@ class FetchError(Exception):
 
 
 def fetch_text(url: str, timeout_sec: float = FETCH_TIMEOUT_SEC) -> str:
-    """GET ``url`` with a size cap. Raises ``FetchError`` (``unreachable``, ``http_error``, ``too_large``)."""
+    """GET ``url`` with a size cap, all within ``timeout_sec`` (requests' own timeout bounds each read, so a
+    host sending a byte at a time is cut off here). Raises ``FetchError`` (``unreachable``, ``http_error``,
+    ``too_large``)."""
     import requests
+    deadline = time.monotonic() + timeout_sec
     try:
         with requests.get(normalise_address(url), timeout=timeout_sec, stream=True,
                           headers={"Accept": "text/calendar, */*;q=0.5"}) as response:
             if response.status_code >= 400:
                 raise FetchError("http_error")
+            # A read waits for a whole chunk, so the deadline is kept by shutting the socket down.
+            watchdog = threading.Timer(max(0.0, deadline - time.monotonic()), _shut_down, args=(response,))
+            watchdog.daemon = True
+            watchdog.start()
             chunks = []
             size = 0
-            for chunk in response.iter_content(65536):
-                size += len(chunk)
-                if size > MAX_DOWNLOAD_BYTES:
-                    raise FetchError("too_large")
-                chunks.append(chunk)
+            try:
+                for chunk in response.iter_content(65536):
+                    size += len(chunk)
+                    if size > MAX_DOWNLOAD_BYTES:
+                        raise FetchError("too_large")
+                    chunks.append(chunk)
+            finally:
+                watchdog.cancel()
+            if time.monotonic() > deadline:
+                raise FetchError("unreachable")
             data = b"".join(chunks)
             # iCalendar is UTF-8 unless the server names a charset (requests would assume Latin-1).
             charset = _declared_charset(response.headers.get("Content-Type", ""))
@@ -93,6 +107,16 @@ def fetch_text(url: str, timeout_sec: float = FETCH_TIMEOUT_SEC) -> str:
     except Exception as exc:  # noqa: BLE001 - every network failure means the same to the user
         debug_log(f"calendar fetch failed ({type(exc).__name__})", "agenda")
         raise FetchError("unreachable") from exc
+
+
+def _shut_down(response) -> None:
+    """Unblock a read on ``response``'s socket from the watchdog thread."""
+    sock = getattr(getattr(getattr(response, "raw", None), "connection", None), "sock", None)
+    try:
+        if sock is not None:
+            sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
 
 
 def _declared_charset(content_type: str) -> str:
@@ -187,7 +211,10 @@ class IcsSource:
 
     def _result(self, saved: Tuple[float, ics.Calendar], start: datetime, end: datetime, *,
                 offline: bool) -> SourceResult:
-        found = ics.occurrences(saved[1], start, end)
+        try:
+            found = ics.occurrences(saved[1], start, end)
+        except ics.CalendarTooComplex:
+            return SourceResult(self.name, self.kind, False, error="too_complex")
         for occ in found:
             occ.calendar = self.name
         return SourceResult(self.name, self.kind, True, found, offline_copy=offline, fetched_at=saved[0])

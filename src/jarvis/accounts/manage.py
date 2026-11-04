@@ -25,6 +25,7 @@ CALENDAR_ERRORS = {
     "http_error": "the address was refused (it may have been reset; copy the current secret address)",
     "not_a_calendar": "the address did not return a calendar (use the secret address in iCal format)",
     "too_large": "the calendar file is too large",
+    "too_complex": "the calendar file takes too long to read",
     "not_signed_in": "the sign-in has expired or was removed (sign in again)",
     "server_error": "the calendar service returned an error",
     "outlook_not_installed": "classic Outlook is not installed",
