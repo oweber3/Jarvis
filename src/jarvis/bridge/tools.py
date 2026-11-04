@@ -53,6 +53,8 @@ CLOUD_GATED_TOOLS: Dict[str, CloudGatedSource] = {
                                  shared=_switch("calendar_share_with_cloud")),
     "email": CloudGatedSource(set_up=_has_accounts("email_enabled", "email_accounts"),
                               shared=_switch("email_share_with_cloud")),
+    # Device names, rooms and states describe the user's home (smarthome/smarthome.spec.md).
+    "homeControl": CloudGatedSource(set_up=_switch("smarthome_enabled"), shared=_switch("smarthome_share_with_cloud")),
 }
 _DESCRIPTION_CHARS = 600
 _REQUEST_ID = {"type": "string", "description": "The request ID from the turn input."}

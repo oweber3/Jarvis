@@ -42,10 +42,12 @@ from .config import load_settings
 from .memory.db import Database
 from .memory.conversation import DialogueMemory, update_diary_from_dialogue_memory
 from .output.tts import create_tts_engine
+from .smarthome import service as smarthome_service
 from .tools.registry import (start_mcp_discovery, configure_windows_tools, configure_reply_mode_tool,
                              configure_activity_log_tool, configure_tv_tool, configure_screen_tool,
                              configure_gesture_tool, configure_document_search_tool,
-                             configure_apple_music_tool, configure_calendar_tool, configure_email_tool)
+                             configure_apple_music_tool, configure_calendar_tool, configure_email_tool,
+                             configure_home_tool)
 from .assistant_state import AssistantState, set_state
 from .extensions import load_extensions
 from .gestures import window_snap_service
@@ -1460,6 +1462,7 @@ def main(smoke_test: bool = False) -> None:
     configure_document_search_tool(cfg)
     configure_screen_tool(cfg)
     configure_tv_tool(cfg)
+    configure_home_tool(cfg)
     configure_apple_music_tool(cfg)
     configure_gesture_tool(cfg)
     configure_calendar_tool(cfg)
@@ -1748,6 +1751,7 @@ def main(smoke_test: bool = False) -> None:
         reply_modes.stop()
         activity_runtime.stop()
         documents_runtime.stop()
+        smarthome_service.set_home(None)
         window_snap_service.stop_service()
         extensions.stop()
         db.close()
@@ -1905,6 +1909,7 @@ def main(smoke_test: bool = False) -> None:
         reply_modes.stop()
         activity_runtime.stop()
         documents_runtime.stop()
+        smarthome_service.set_home(None)
         extensions.stop()
         db.close()
 
