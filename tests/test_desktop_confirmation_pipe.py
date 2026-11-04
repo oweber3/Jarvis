@@ -541,7 +541,9 @@ CHILD = textwrap.dedent(
     print("REPLY " + str(bool(result.reply_text)), flush=True)
     line = sys.stdin.readline()
     daemon.handle_ipc_stdin_line(line.strip())
-    print("RAN" if ran.wait(3) else "NOT RAN", flush=True)
+    # One write on a line of its own: the tool's thread may still be printing its result.
+    sys.stdout.write("\\nOUTCOME " + ("RAN" if ran.wait(3) else "NOT RAN") + "\\n")
+    sys.stdout.flush()
     """
 )
 
@@ -571,10 +573,10 @@ def test_a_daemon_subprocess_gets_its_answer_over_the_pipes(approved, expected, 
             out.append(line)
             if relay.handle_line(line):
                 dialogs.shown[-1].resolve(approved)
-            if line in ("RAN", "NOT RAN"):
+            if line.startswith("OUTCOME "):
                 break
         assert "REPLY True" in out
-        assert out[-1] == expected
+        assert out[-1] == f"OUTCOME {expected}"
     finally:
         proc.kill()
         proc.wait(10)
