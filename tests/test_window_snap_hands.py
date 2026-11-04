@@ -3,7 +3,7 @@ pointer, two open hands zoom, and crossed wrists turn the mode off. Synthetic ha
 import pytest
 
 from tests.synthetic_hands import FakeDesktop, FakeWindow, hand
-from tests.test_window_snap import FPS, GRAB, SETTLE, Rig
+from tests.test_window_snap import FPS, GRAB, LET_GO, SETTLE, Rig
 
 
 class EventRig(Rig):
@@ -281,7 +281,7 @@ def test_ending_a_zoom_with_fists_grabs_nothing_until_a_finger_is_raised():
     rig.desk.windows.append(FakeWindow((0, 0, 1920, 1080)))
     rig.hold(1.0, hand(0.6, 0.5, gesture="fist", score=0.95))
     assert rig.desk.of("grab") == []
-    rig.show(hand(0.6, 0.5, score=0.95), frames=SETTLE)
+    rig.show(hand(0.6, 0.5, score=0.95), frames=LET_GO)
     rig.show(hand(0.605, 0.505, gesture="fist", score=0.95), frames=GRAB)
     assert rig.desk.of("grab")
 

@@ -22,6 +22,9 @@ from .hand_tracking import Hand, HandFrame, Landmark
 Rectangle = Tuple[int, int, int, int]
 
 HAND_LOST_SEC = 0.25
+# While a fist holds (a window or nothing) the hand counts as lost only after this long: the detector misses fists
+# more often than any other gesture, and a lost hand leaves the held window where it is.
+HOLD_LOST_SEC = 0.4
 # A slow camera (dim light) delivers frames further apart: the hand counts as lost only after this many of its
 # frame intervals without it, when that is longer than HAND_LOST_SEC.
 LOST_FRAME_INTERVALS = 1.5
@@ -35,6 +38,14 @@ MAX_HAND_JUMP = 0.25
 SCROLL_EXIT_SEC = 0.5
 # A fist grabs only once it has lasted this long: a moving pointing hand is misread as a fist for a few frames.
 GRAB_HOLD_SEC = 0.3
+# A held window is let go only once the hand has been letting go this long: a moving fist is misread as raising a
+# finger for a few frames.
+LET_GO_HOLD_SEC = 0.2
+# A change of gesture needs its time's worth of evidence (see ``WindowSnap._build``). A frame showing the gesture in
+# force takes RETURN_DRAIN times its time off the change being built up, and a frame showing a third gesture
+# SWITCH_DRAIN times.
+RETURN_DRAIN = 2.0
+SWITCH_DRAIN = 1.0
 # The comfort box is centred again only on a hand that has been out of view at least this long: a fast-moving
 # hand drops out of detection for a moment and comes back where it is.
 RECENTRE_AFTER_SEC = 1.0
@@ -74,6 +85,7 @@ CROSS_LEAN_DEG = 20.0
 CROSS_DROPOUT_SEC = 0.2
 CLICKS = ("click", "double_click", "right_click")
 TALK, SWITCH_OFF = "talk", "switch off"
+LET_GO = "let go"  # the intent of every shape that lets go of a held window
 
 ONE, TWO, FIST, OPEN, OTHER = "one finger", "two fingers", "fist", "open hand", "other"
 _SHAPES: Dict[FrozenSet[str], str] = {
@@ -224,19 +236,24 @@ class FingerReader:
     def __init__(self, settings: "WindowSnapSettings"):
         self._s = settings
         self._raised: Dict[str, bool] = {}
+        self._lets_go = False
 
     def reset(self) -> None:
         """Forget every finger, as for a hand seen for the first time."""
         self._raised.clear()
+        self._lets_go = False
 
     def read(self, hand: Hand) -> str:
         """Update each finger from this frame and return the gesture they make."""
+        straight = set()
         for finger in FINGERS:
             curl = finger_curl(hand, finger)
             if curl > self._s.finger_up:
                 self._raised[finger] = True
+                straight.add(finger)
             elif curl < self._s.finger_down:
                 self._raised[finger] = False
+        self._lets_go = "INDEX" in straight or len(straight) >= LET_GO_FINGERS
         shape = shape_of(self.raised)
         if shape == FIST and len(self._raised) < len(FINGERS):
             return OTHER
@@ -248,9 +265,11 @@ class FingerReader:
 
     @property
     def lets_go(self) -> bool:
-        """Whether the hand reads as letting go of a held window: the index raised, or an open hand whose index
-        lags behind (at least ``LET_GO_FINGERS`` fingers raised)."""
-        return bool(self._raised.get("INDEX")) or len(self.raised) >= LET_GO_FINGERS
+        """Whether the last frame shows a hand letting go of a held window: the index above ``finger_up``, or an
+        open hand whose index lags behind (at least ``LET_GO_FINGERS`` fingers above it). It goes by that frame
+        alone, not by the fingers' remembered states, so one misread frame never leaves a finger counting as
+        raised while the fist's own finger reads between the thresholds."""
+        return self._lets_go
 
 
 def read_shape(hand: Hand, settings: Optional["WindowSnapSettings"] = None) -> str:
@@ -352,8 +371,8 @@ class WindowSnap:
         self._slow_camera = False
         self._fingers = FingerReader(settings)
         self._gesture: Optional[str] = None
-        self._candidate: Optional[str] = None
-        self._candidate_since = 0.0
+        self._candidate: Optional[str] = None  # the change of gesture being built up
+        self._evidence = 0.0  # seconds of evidence for it
         self._ref: Tuple[float, float] = (0.0, 0.0)
         self._cursor: Tuple[float, float] = (0.0, 0.0)
         self._shown: Optional[Tuple[int, int]] = None
@@ -497,11 +516,13 @@ class WindowSnap:
                       else "gesture snapping: camera back to its usual rate", "gestures")
 
     def lost_after(self) -> float:
-        """Seconds without the driving hand after which it counts as lost: ``HAND_LOST_SEC``, or one and a half
-        measured frame intervals when the camera is slower than that allows."""
+        """Seconds without the driving hand after which it counts as lost: ``HAND_LOST_SEC`` (``HOLD_LOST_SEC``
+        while a fist holds), or one and a half measured frame intervals when the camera is slower than that
+        allows."""
+        least = HOLD_LOST_SEC if self._state in (_HOLDING, _HOLDING_NOTHING) else HAND_LOST_SEC
         if self._frame_interval is None:
-            return HAND_LOST_SEC
-        return max(HAND_LOST_SEC, LOST_FRAME_INTERVALS * self._frame_interval)
+            return least
+        return max(least, LOST_FRAME_INTERVALS * self._frame_interval)
 
     def _check_lost(self, now: float) -> None:
         if self._last_hand is None or now - self._last_hand < self.lost_after():
@@ -553,32 +574,59 @@ class WindowSnap:
 
     # -- the state machine -----------------------------------------------------------------------
 
+    def _intent(self, shape: str) -> str:
+        """What a reading asks for. While a fist holds (a window or nothing) every shape that lets go is one
+        intent and every other shape keeps holding, so a hand opening through several shapes builds up one change
+        instead of restarting at each."""
+        if self._state in (_HOLDING, _HOLDING_NOTHING):
+            return LET_GO if self._fingers.lets_go else FIST
+        return shape
+
+    def _needed(self, intent: str) -> float:
+        """Seconds of evidence a change needs before it counts."""
+        if self._state == _SCROLLING:
+            return max(self._s.debounce, SCROLL_EXIT_SEC)
+        if intent == FIST and self._state in (_IDLE, _AIMING):
+            return max(self._s.debounce, GRAB_HOLD_SEC)
+        if intent == LET_GO:
+            return max(self._s.debounce, LET_GO_HOLD_SEC)
+        return self._s.debounce
+
+    def _build(self, intent: str, dt: float) -> None:
+        """Evidence for a change: it grows by the time between frames while the hand shows the change (from its
+        second frame on), and a frame showing yet another change takes ``SWITCH_DRAIN`` times its time off it;
+        once it is used up, that other change starts building instead."""
+        if intent == self._candidate:
+            self._evidence += dt
+        elif self._candidate is None:
+            self._candidate, self._evidence = intent, 0.0
+        else:
+            self._evidence -= SWITCH_DRAIN * dt
+            if self._evidence <= 0:
+                self._candidate, self._evidence = intent, 0.0
+
     def _step(self, p: Tuple[float, float], shape: str, t: float, scale: float) -> None:
         dt = 0.0 if self._last_t is None else max(t - self._last_t, 0.0)
         self._last_t = t
-        if shape == self._gesture:
-            if self._candidate is not None:
-                # A change that did not last: carry on from where the pointer stood, fading to the palm.
-                self._candidate = None
-                self._hold_place(p)
-        else:
-            if shape != self._candidate:
-                self._candidate, self._candidate_since = shape, t
-            if self._state == _SCROLLING:
-                needed = max(self._s.debounce, SCROLL_EXIT_SEC)
-            elif shape == FIST and self._state in (_IDLE, _AIMING):
-                needed = max(self._s.debounce, GRAB_HOLD_SEC)
-            else:
-                needed = self._s.debounce
-            if t - self._candidate_since >= needed:
+        intent = self._intent(shape)
+        in_force = FIST if self._state in (_HOLDING, _HOLDING_NOTHING) else self._gesture
+        if intent != in_force:
+            self._build(intent, dt)
+            if self._candidate == intent and self._evidence >= self._needed(intent):
                 self._candidate = None
                 self._confirm(shape, p, t)
-            # Until the new gesture counts the pointer (and a held window) stays still; a scroll carries on, its
-            # speed set by where the hand is, so misreads do not stop it.
-            if self._state == _SCROLLING:
-                self._scroll(p, dt, scale)
-            self._ref = p
+            self._changing(p, dt, scale)
             return
+        if self._candidate is not None:
+            # A frame of the gesture in force wears down a change being built up, without restarting it, so a
+            # misread frame or two in the middle of a change only delays it.
+            self._evidence -= RETURN_DRAIN * dt
+            if self._evidence > 0:
+                self._changing(p, dt, scale)
+                return
+            # A change that did not last: carry on from where the pointer stood, fading to the palm.
+            self._candidate = None
+            self._hold_place(p)
         state = self._state
         if state == _AIMING and self._gesture == OTHER:
             self._ref = p  # another combination holds the pointer still
@@ -592,17 +640,21 @@ class WindowSnap:
         else:
             self._ref = p
 
+    def _changing(self, p: Tuple[float, float], dt: float, scale: float) -> None:
+        """While the hand changes gesture the pointer (and a held window) stays still; a scroll carries on, its
+        speed set by where the hand is, so misreads do not stop it."""
+        if self._state == _SCROLLING:
+            self._scroll(p, dt, scale)
+        self._ref = p
+
     def _confirm(self, shape: str, p: Tuple[float, float], t: float) -> None:
-        """A new gesture has lasted the debounce time: act on it."""
+        """A new gesture has lasted long enough: act on it. While holding, it is a shape that lets go."""
         previous, self._gesture = self._gesture, shape
         paused = self._state == _IDLE
         # An open hand may ask to listen, unless it is letting go of a held window.
         self._talk_armed = shape == OPEN and self._state != _HOLDING
         self._open_since = t
         if self._state in (_HOLDING, _HOLDING_NOTHING):
-            if not self._fingers.lets_go:
-                self._hold_place(p)
-                return  # still a fist, perhaps with another finger loosening: keep holding
             self._drop()
             self._state = _AIMING
         if shape == OTHER:

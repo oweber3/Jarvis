@@ -1,6 +1,6 @@
 # Hand landmarks from HaGRID
 
-`hagrid_landmarks.jsonl.gz` holds MediaPipe Hand Landmarker landmarks of 4,812 hands from 2,392 people, each labelled with the gesture the person was asked to make. It holds no images. Gesture snapping's benchmark (`scripts/gesture_benchmark.py`) and its tests (`tests/hand_benchmark.py`, `tests/test_gesture_benchmark.py`) read it.
+`hagrid_landmarks.jsonl.gz` holds MediaPipe Hand Landmarker landmarks of 4,812 hands from 2,392 people, each labelled with the gesture the person was asked to make. It holds no images. Gesture snapping's benchmark (`scripts/gesture_benchmark.py`) and its tests read it: `tests/test_gesture_benchmark.py` (single frames, through `tests/hand_benchmark.py`) and `tests/test_gesture_sequences.py` (people's own hands replayed over time, through `tests/hand_sequences.py`).
 
 ## Source and attribution
 

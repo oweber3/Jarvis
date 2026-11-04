@@ -70,19 +70,22 @@ class FakeCamera:
         self.closed = True
 
 
-# A fist held past the grab hold even at the tracker's fastest rate.
+# A fist held past the grab hold, a raised finger past the let-go hold and two fingers past the debounce, even at
+# the tracker's fastest rate.
 GRAB_FRAMES = int(window_snap.GRAB_HOLD_SEC * 200) + 8
+LET_GO_FRAMES = int(window_snap.LET_GO_HOLD_SEC * 200) + 8
+SETTLE_FRAMES = int(0.1 * 200) + 8
 
 
 class ScriptedHands:
     """The detector: plays a scripted session of hands (aim, grab, move, snap, scroll, lose the hand)."""
 
     def __init__(self):
-        self.script = ([hand(0.5, 0.5)] * 8 + [hand(0.5 + i * 0.01, 0.5) for i in range(8)]
+        self.script = ([hand(0.5, 0.5)] * SETTLE_FRAMES + [hand(0.5 + i * 0.01, 0.5) for i in range(8)]
                        + [hand(0.58, 0.5, gesture="fist")] * GRAB_FRAMES
                        + [hand(0.58 + i * 0.02, 0.45, gesture="fist") for i in range(8)]
-                       + [hand(0.74, 0.45)] * 8
-                       + [hand(0.74, 0.45, gesture="two")] * 8 + [hand(0.74, 0.25, gesture="two")] * 20
+                       + [hand(0.74, 0.45)] * LET_GO_FRAMES
+                       + [hand(0.74, 0.45, gesture="two")] * SETTLE_FRAMES + [hand(0.74, 0.25, gesture="two")] * 20
                        + [None] * 12)
         self.done = threading.Event()
 

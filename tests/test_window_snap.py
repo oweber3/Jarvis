@@ -7,11 +7,15 @@ import pytest
 
 import math
 
-from jarvis.gestures.window_snap import GRAB_HOLD_SEC, RECENTRE_AFTER_SEC, WindowSnap, WindowSnapSettings, finger_curl
+from jarvis.gestures.window_snap import (
+    GRAB_HOLD_SEC, HAND_LOST_SEC, HOLD_LOST_SEC, LET_GO_HOLD_SEC, RECENTRE_AFTER_SEC, WindowSnap,
+    WindowSnapSettings, finger_curl,
+)
 from tests.synthetic_hands import FakeDesktop, FakeWindow, frame, hand
 
 FPS = 30.0
 SETTLE = 5  # frames for a gesture to outlast the 100 ms debounce
+LET_GO = math.ceil(LET_GO_HOLD_SEC * FPS) + 2  # frames for an opening hand to let go of what a fist holds
 GRAB = math.ceil(GRAB_HOLD_SEC * FPS) + 2  # frames for a fist to outlast the grab hold
 
 
@@ -56,8 +60,8 @@ class Rig:
         self.t = end
 
     def start(self, x=0.5, y=0.5):
-        """Raise one finger until it counts."""
-        self.show(hand(x, y), frames=SETTLE)
+        """Raise one finger until it counts (also when it lets go of a fist)."""
+        self.show(hand(x, y), frames=LET_GO)
 
     def glide(self, start, end, *, gesture="one", frames=10):
         for i in range(1, frames + 1):
@@ -73,7 +77,7 @@ class Rig:
         self.show(hand(x + 0.01, y + 0.01, gesture="two"), frames=SETTLE)
 
     def raise_finger(self, x, y):
-        self.show(hand(x - 0.005, y - 0.005), frames=SETTLE)
+        self.show(hand(x - 0.005, y - 0.005), frames=LET_GO)
 
 
 def window(rect=(100, 100, 900, 700), **kw):
@@ -342,7 +346,7 @@ def test_two_fingers_or_an_open_hand_also_snap_the_window(gesture):
     rig.grab_at(0.5, 0.5)
     rig.glide((0.51, 0.53), (0.61, 0.53), gesture="fist")
     held_at = rig.desk.at
-    rig.show(hand(0.6, 0.5, gesture=gesture), frames=SETTLE)
+    rig.show(hand(0.6, 0.5, gesture=gesture), frames=LET_GO)
     assert rig.desk.of("drop") == [("drop", win, *held_at)]
 
 
@@ -355,6 +359,18 @@ def test_a_loosening_little_finger_keeps_holding():
     assert rig.snap.state == "holding" and rig.desk.of("drop") == []
 
 
+def test_a_misread_raised_finger_does_not_stick_while_the_fist_holds():
+    # One frame reads the index as raised; the fist's own index then reads between the thresholds, where a
+    # finger keeps its last state. Letting go goes by what each frame shows, so the misread does not linger.
+    win = window((600, 300, 1200, 800))
+    rig = Rig(FakeDesktop(windows=[win]))
+    rig.start()
+    rig.grab_at(0.5, 0.5)
+    rig.show(hand(0.51, 0.53), frames=1)
+    rig.show(hand(0.51, 0.53, gesture="fist", curls={"index": 1.0}), frames=30)
+    assert rig.snap.state == "holding" and rig.desk.of("drop") == []
+
+
 def test_opening_the_hand_with_the_index_lagging_behind_lets_go():
     win = window((600, 300, 1200, 800))
     rig = Rig(FakeDesktop(windows=[win]))
@@ -362,7 +378,7 @@ def test_opening_the_hand_with_the_index_lagging_behind_lets_go():
     rig.grab_at(0.5, 0.5)
     held_at = rig.desk.at
     # Middle, ring and little fingers up; the index still between the thresholds.
-    rig.show(hand(0.51, 0.53, gesture="open", curls={"index": 1.05}), frames=SETTLE)
+    rig.show(hand(0.51, 0.53, gesture="open", curls={"index": 1.05}), frames=LET_GO)
     assert rig.desk.of("drop") == [("drop", win, *held_at)]
 
 
@@ -491,7 +507,7 @@ def test_misreads_while_held_away_from_neutral_keep_it_scrolling():
     hold(rig, 0.355, 0.3)
     before = rig.desk.scrolled()
     hold(rig, 0.355, 0.4, gesture="fist")
-    hold(rig, 0.355, 0.1)
+    hold(rig, 0.355, 0.3)
     assert rig.snap.state == "scrolling" and rig.desk.scrolled() > before + 120
 
 
@@ -537,7 +553,7 @@ def test_losing_the_hand_while_holding_leaves_the_window_where_it_is():
     rig.grab_at(0.5, 0.5)
     rig.glide((0.51, 0.53), (0.61, 0.53), gesture="fist")
     moved = win.rect
-    rig.show(frames=10)
+    rig.show(frames=math.ceil(HOLD_LOST_SEC * FPS) + 1)
     rig.start(0.4, 0.4)
     assert win.rect == moved and rig.desk.of("drop") == []
     assert rig.snap.state == "aiming"
@@ -559,6 +575,18 @@ def test_a_momentary_tracking_dropout_keeps_holding():
     rig.show(frames=2)
     rig.show(hand(0.51, 0.53, gesture="fist"))
     assert rig.snap.state == "holding"
+
+
+def test_a_fist_the_detector_misses_for_longer_than_a_free_hand_may_be_missed_keeps_holding():
+    # Fists are the pose the detector misses most; a held window waits HOLD_LOST_SEC before the hand counts as lost.
+    rig = Rig(FakeDesktop(windows=[window((0, 0, 1920, 1080))]))
+    rig.start()
+    rig.grab_at(0.5, 0.5)
+    rig.wait(HAND_LOST_SEC + 0.05)
+    rig.show(hand(0.51, 0.53, gesture="fist"))
+    assert rig.snap.state == "holding" and rig.desk.of("drop") == []
+    rig.wait(HOLD_LOST_SEC + 0.05)
+    assert rig.snap.state == "paused" and rig.desk.of("drop") == []
 
 
 def test_slow_detection_does_not_let_go():

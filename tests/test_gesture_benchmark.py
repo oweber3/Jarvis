@@ -6,11 +6,14 @@ import gzip
 import json
 from collections import Counter
 
+import pytest
+
 from jarvis.gestures.window_snap import FIST, FingerReader, WindowSnapSettings, read_shape
 from tests.hand_benchmark import EXPECTED, FIXTURE, GESTURE_LABELS, benchmark, load_benchmark, series
 from tests.synthetic_hands import hand as synthetic_hand
 
 SETTINGS = WindowSnapSettings()
+pytestmark = pytest.mark.unit
 
 
 # --- the fixture -----------------------------------------------------------------------------------
