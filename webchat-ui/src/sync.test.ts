@@ -430,3 +430,31 @@ describe("a request made outside the message box", () => {
     t.stop()
   })
 })
+
+describe("messages taken back on another page", () => {
+  it("are dropped from this page too, also when the first reload fails", async () => {
+    const t = setup()
+    t.start()
+    await settle()
+    t.polls[0]!.reply.resolve(snapshot({ rev: 1, history_rev: 0 }))
+    await settle()
+    t.answerChat("A", run(1, 4))
+    await settle()
+    expect(t.shown.messages.map((m) => m.id)).toEqual([1, 2, 3, 4])
+
+    // Another page asked message 3 again: 3 and 4 are gone from the chat, and the page must reload it.
+    t.polls[1]!.reply.resolve(snapshot({ rev: 2, history_rev: 1 }))
+    await settle()
+    t.chats.get("A")![1]!.reject(new Error("offline"))
+    await settle()
+
+    // The next snapshot brings the new exchange; the page reloads rather than adding it below 3 and 4.
+    t.polls.at(-1)!.reply.resolve(snapshot({ rev: 3, history_rev: 1, messages: [message(5, "user"), message(6, "assistant")] }))
+    await settle()
+    expect(t.chats.get("A")).toHaveLength(3)
+    t.answerChat("A", [...run(1, 2), message(5, "user"), message(6, "assistant")], 2)
+    await settle()
+    expect(t.shown.messages.map((m) => m.id)).toEqual([1, 2, 5, 6])
+    t.stop()
+  })
+})

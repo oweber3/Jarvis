@@ -157,10 +157,11 @@ export class ChatSync {
             },
           )
         : null
-    // Messages were taken back (a rewind, here or on another page): what is shown may hold them.
+    // Messages were taken back (a rewind, here or on another page): what is shown may hold them. The change is
+    // recorded once the chat has been reloaded, so a reload that fails is tried again on the next snapshot.
     const rewound = snap.history_rev !== undefined && this.historyRev !== null && snap.history_rev !== this.historyRev
-    if (snap.history_rev !== undefined) this.historyRev = snap.history_rev
-    if (this.chatChangedSince(poll)) {
+    const switched = this.chatChangedSince(poll)
+    if (switched) {
       // The owner switched chats after this poll was sent: it may still name the chat they left.
       this.refetch = true
     } else if (rewound && snap.active_chat_id !== null && snap.active_chat_id === this.active) {
@@ -178,6 +179,7 @@ export class ChatSync {
       if (snap.chat) this.view.chat(snap.chat)
       if (!this.hasLater) this.showMessages(mergeMessages(this.shown, snap.messages))
     }
+    if (snap.history_rev !== undefined && !switched) this.historyRev = snap.history_rev
     if (library) {
       await library
       if (libraryFailure) throw (libraryFailure as { error: unknown }).error
