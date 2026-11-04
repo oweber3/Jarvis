@@ -449,3 +449,49 @@ def _ignore(call):
         call()
     except Exception:
         pass
+
+
+def test_a_server_still_starting_neither_delays_shutdown_nor_outlives_it(tmp_path, runtime_cleanup):
+    """A server stuck in its handshake (a first-run download) holds no lock other callers or shutdown need:
+    shutdown keeps its bound and ends that half-started server too."""
+    from jarvis.tools.external import mcp_runtime
+    from jarvis.tools.external.mcp_runtime import get_runtime, shutdown_runtime
+
+    runtime = get_runtime()
+    silent = tmp_path / "silent"
+    silent.mkdir()
+    _in_background(lambda: runtime.list_tools("silent", _server_cfg(silent, _SILENT_SERVER), timeout=60))
+    assert _wait_for(lambda: _spawned_pids(silent), timeout=30)
+    pids = _spawned_pids(silent)
+
+    started = time.monotonic()
+    shutdown_runtime()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < mcp_runtime.SHUTDOWN_WORST_CASE_SEC, f"shutdown waited on a starting server ({elapsed:.1f}s)"
+    assert _wait_for(lambda: not any(_alive(p) for p in pids), timeout=10)
+
+
+def test_a_server_still_starting_does_not_hold_up_calls_to_another(tmp_path, runtime_cleanup):
+    from jarvis.tools.external.mcp_runtime import get_runtime
+
+    runtime = get_runtime()
+    silent, fake = tmp_path / "silent", tmp_path / "fake"
+    silent.mkdir()
+    fake.mkdir()
+    _in_background(lambda: runtime.list_tools("silent", _server_cfg(silent, _SILENT_SERVER), timeout=60))
+    assert _wait_for(lambda: _spawned_pids(silent), timeout=30)
+    started = time.monotonic()
+    result = runtime.invoke("fake", _server_cfg(fake, _FAKE_SERVER), "echo", {"text": "hi"}, timeout=60)
+    assert result is not None
+    assert time.monotonic() - started < 20   # not the silent server's 30-second handshake window
+
+
+def test_no_server_is_started_on_a_runtime_that_has_shut_down(tmp_path, runtime_cleanup):
+    from jarvis.tools.external.mcp_runtime import get_runtime
+
+    runtime = get_runtime()
+    runtime.shutdown()
+    with pytest.raises(RuntimeError):
+        runtime.invoke("fake", _server_cfg(tmp_path, _FAKE_SERVER), "echo", {"text": "hi"}, timeout=10)
+    assert _spawned_pids(tmp_path) == []

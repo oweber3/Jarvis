@@ -206,6 +206,12 @@ class _PersistentMCPRuntime:
         self._thread: Optional[threading.Thread] = None
         self._workers: Dict[str, "_ServerWorker"] = {}
         self._workers_lock = threading.Lock()
+        # One lock per server serialises replacing that server's worker (two processes of one server never
+        # run together) without holding ``_workers_lock`` across a start, so other servers and shutdown
+        # never wait on a slow handshake. ``_starting`` holds workers still in their handshake, which
+        # shutdown stops too.
+        self._server_locks: Dict[str, threading.Lock] = {}
+        self._starting: Dict[str, "_ServerWorker"] = {}
         self.closed = False
         self._start_loop()
 
@@ -317,34 +323,65 @@ class _PersistentMCPRuntime:
         Reuses an existing worker iff it is still alive and its cached
         config equals the requested one. A dead worker or a config
         change triggers shutdown of the old worker and creation of a
-        fresh one. Callers hold no lock during ``worker.start()`` so
-        startup work happens without blocking other servers.
+        fresh one. Only that server's own lock is held while the old
+        worker stops and the new one starts, so other servers and
+        shutdown never wait on its handshake. A runtime that has shut
+        down starts nothing (``RuntimeError``).
         """
         with self._workers_lock:
+            self._refuse_if_closed()
             existing = self._workers.get(server_name)
             if existing is not None and existing.alive and existing.config == server_cfg:
                 return existing
-            if existing is not None:
-                # Config changed or worker dead: replace it, but only once
-                # the old session has fully stopped, so two processes of
-                # one server never run (or act) at the same time.
-                try:
-                    existing.shutdown()
-                except Exception as e:  # noqa: BLE001
-                    debug_log(
-                        f"MCP worker '{server_name}' replacement shutdown error: {e}",
-                        "mcp",
+            server_lock = self._server_locks.setdefault(server_name, threading.Lock())
+        with server_lock:
+            with self._workers_lock:
+                self._refuse_if_closed()
+                existing = self._workers.get(server_name)
+                if existing is not None and existing.alive and existing.config == server_cfg:
+                    return existing  # another caller replaced it while this one waited
+                if existing is not None:
+                    del self._workers[server_name]
+                loop = self._loop
+                if loop is None:
+                    raise RuntimeError(
+                        "Persistent MCP runtime event loop is not available"
                     )
-                existing.wait_stopped()
-            loop = self._loop
-            if loop is None:
-                raise RuntimeError(
-                    "Persistent MCP runtime event loop is not available"
-                )
-            worker = _ServerWorker(loop, server_name, server_cfg)
-            worker.start()
-            self._workers[server_name] = worker
+                worker = _ServerWorker(loop, server_name, server_cfg)
+                self._starting[server_name] = worker
+            try:
+                if existing is not None:
+                    # Config changed or worker dead: replace it, but only once
+                    # the old session has fully stopped, so two processes of
+                    # one server never run (or act) at the same time.
+                    try:
+                        existing.shutdown()
+                    except Exception as e:  # noqa: BLE001
+                        debug_log(
+                            f"MCP worker '{server_name}' replacement shutdown error: {e}",
+                            "mcp",
+                        )
+                    existing.wait_stopped()
+                if not worker.alive:
+                    raise RuntimeError("Persistent MCP runtime is shut down")
+                worker.start()
+            finally:
+                with self._workers_lock:
+                    self._starting.pop(server_name, None)
+                    closed = self.closed
+                    if not closed and worker.alive:
+                        self._workers[server_name] = worker
+            if closed:
+                # Shutdown began during the handshake and has stopped this worker; make sure its
+                # process is gone before reporting the runtime closed.
+                worker.shutdown()
+                worker.wait_stopped()
+                raise RuntimeError("Persistent MCP runtime is shut down")
             return worker
+
+    def _refuse_if_closed(self) -> None:
+        if self.closed:
+            raise RuntimeError("Persistent MCP runtime is shut down")
 
     def _drop_worker(self, server_name: str, dead: "_ServerWorker") -> None:
         """Evict and shut down ``dead`` if it is still the cached worker.
@@ -372,9 +409,9 @@ class _PersistentMCPRuntime:
     def shutdown(self) -> None:
         if self.closed:
             return
-        self.closed = True
         with self._workers_lock:
-            workers = list(self._workers.values())
+            self.closed = True
+            workers = list(self._workers.values()) + list(self._starting.values())
             self._workers.clear()
         # Every worker stops at the same time: each is asked to exit cleanly
         # (its task cancelled if the graceful path stalls, e.g. a hung
@@ -485,6 +522,9 @@ class _ServerWorker:
 
     async def _run(self) -> None:
         try:
+            if not self.alive:
+                # Shut down (runtime shutdown) before its task first ran: never spawn the server.
+                raise RuntimeError(f"MCP server '{self._server_name}' was stopped before it started")
             client = MCPClient({self._server_name: self.config})
             connection = client._connect_stdio(self.config)
             # Resolve ClientSession through ``mcp_client`` so tests that
