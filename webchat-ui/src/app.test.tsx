@@ -53,6 +53,32 @@ describe("the page", () => {
     expect(editing.value).toBe("Question 1")
   })
 
+  it("the up arrow edits nothing while the page shows an earlier stretch of the chat", async () => {
+    const fake = new FakeJarvis({ chats: [{ id: "c1", title: "Long", messages: 400 }] })
+    mount(fake)
+    await screen.findByText("Answer 199")
+    // Reading far enough back, the page lets go of the newest messages.
+    for (let i = 0; i < 10 && !screen.queryByRole("button", { name: "Back to the latest" }); i++) {
+      await act(async () => fireEvent.click(await screen.findByRole("button", { name: "Load earlier messages" })))
+      await screen.findAllByRole("button", { name: /^Load earlier messages$|^Back to the latest$/ })
+    }
+    expect(screen.getByRole("button", { name: "Back to the latest" })).toBeTruthy()
+
+    const uncaught: unknown[] = []
+    const onError = (event: ErrorEvent) => {
+      uncaught.push(event.error)
+      event.preventDefault()
+    }
+    window.addEventListener("error", onError)
+    messageBox().focus()
+    const key = new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true })
+    await act(async () => messageBox().dispatchEvent(key))
+    window.removeEventListener("error", onError)
+    expect(screen.queryByRole("textbox", { name: "Edit message" })).toBeNull()
+    expect(uncaught).toEqual([])
+    expect(key.defaultPrevented).toBe(false)
+  }, 60_000)
+
   it("Ctrl+B hides and shows the chat list", async () => {
     const fake = new FakeJarvis({ chats: [{ id: "c1", title: "Chat", messages: 2 }] })
     mount(fake)

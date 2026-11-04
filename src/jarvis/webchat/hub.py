@@ -455,14 +455,17 @@ class ChatHub:
             extra["origin"] = origin
         return self._send(query_id, lambda **callbacks: self._backend.submit(text, **callbacks, **extra))
 
-    def rewind(self, chat_id: str, message_id: int, text: Optional[str] = None, *, origin: str = "chat",
-               source: str = "typed", on_finish: Optional[Callable[[int, str, Optional[str]], None]] = None
-               ) -> SubmitResult:
+    def rewind(self, chat_id: str, message_id: int, text: Optional[str] = None, *, newest_id: int,
+               origin: str = "chat", source: str = "typed",
+               on_finish: Optional[Callable[[int, str, Optional[str]], None]] = None) -> SubmitResult:
         """Ask a stored message of the open chat again, as it was or as ``text`` (edit and regenerate). It and every
         message after it leave the chat and the conversation, under the daemon's query lock, before the request
-        runs; the new turns then land as a typed request's do. Besides a request's outcomes the status can be
-        ``unknown`` (no such chat or message), ``not_open``, ``not_user`` (a reply, not the owner's message) or
-        ``out_of_step`` (the conversation does not hold the chat's newest turns, so nothing is changed)."""
+        runs; the new turns then land as a typed request's do. ``newest_id`` is the newest stored message the page
+        asking holds, so it has shown the owner everything that would go. Besides a request's outcomes the status
+        can be ``unknown`` (no such chat or message), ``not_open``, ``not_user`` (a reply, not the owner's
+        message), ``changed`` (the chat's newest message is not ``newest_id``: it gained or lost messages the page
+        has not shown) or ``out_of_step`` (the conversation does not hold the chat's newest turns); neither of the
+        last two changes anything."""
         with self._sync_lock:
             self.sync()
             if self._store.get_chat(chat_id) is None:
@@ -475,6 +478,8 @@ class ChatHub:
                 return SubmitResult("unknown", 0)
             if stored[index].role != "user":
                 return SubmitResult("not_user", 0)
+            if stored[-1].id != newest_id:
+                return SubmitResult("changed", 0)
             if not self._backend.is_ready():
                 return SubmitResult("unavailable", 0)
             if self._typed_in_flight():

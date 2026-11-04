@@ -216,10 +216,12 @@ export const api = {
       ...(attachments.length ? { attachments } : {}),
       ...(speak ? { speak: true } : {}),
     }),
-  /** Ask a stored message of the open chat again, as it was or edited; it and every later message are replaced. */
-  rewind: (chatId: string, messageId: number, text?: string, speak = false) =>
+  /** Ask a stored message of the open chat again, as it was or edited; it and every later message are replaced.
+   * ``newestId`` is the newest stored message the page shows: the server changes nothing if the chat's is another. */
+  rewind: (chatId: string, messageId: number, newestId: number, text?: string, speak = false) =>
     request<{ query_id: number; status: string }>("POST", `/api/chats/${chatId}/rewind`, {
       message_id: messageId,
+      newest_id: newestId,
       ...(text !== undefined ? { text } : {}),
       ...(speak ? { speak: true } : {}),
     }),
@@ -292,6 +294,8 @@ export function describeError(error: unknown): string {
       return "I couldn't capture the screen just now."
     case "not_open":
       return "That chat isn't the open one any more."
+    case "changed":
+      return "This chat changed since the page last showed it, so nothing was taken back. Have a look and try again."
     case "out_of_step":
       return "That message can't be asked again just now. Send it as a new message instead."
     case "not_user":

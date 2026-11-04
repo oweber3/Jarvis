@@ -451,15 +451,19 @@ const SpokenActionBar: FC = () => {
 // the pointer is over or that holds focus, and always on a touch screen (index.css, .aui-message-actions).
 
 const isStored = (id: string) => /^m\d+$/.test(id);
-// The owner's own message: one stored in the chat, or one that was not answered (shown with its notice).
+// The owner's own message: one stored in the chat, or one that was not answered (shown with its notice). Neither
+// Edit nor Ask again is offered while the page shows an earlier stretch of the chat (the runtime then has no
+// edit or reload: useJarvis.tsx).
 const canEdit = (s: AssistantState) =>
+  s.thread.capabilities.edit &&
   !s.thread.isRunning &&
   !s.thread.isDisabled &&
   s.message.role === "user" &&
   (isStored(s.message.id) || s.message.id.endsWith("-request"));
 // The latest reply, to a stored message of the owner's that carried nothing attached (attachments are not kept).
 const canAskAgain = (s: AssistantState) => {
-  if (s.thread.isRunning || s.thread.isDisabled || !s.message.isLast || s.message.role !== "assistant") return false;
+  if (!s.thread.capabilities.reload || s.thread.isRunning || s.thread.isDisabled) return false;
+  if (!s.message.isLast || s.message.role !== "assistant") return false;
   if (!isStored(s.message.id)) return false;
   const asked = s.thread.messages[s.message.index - 1];
   return !!asked && asked.role === "user" && isStored(asked.id) && (asked.attachments?.length ?? 0) === 0;
@@ -503,7 +507,8 @@ const AskAgainAction: FC<{ className?: string }> = ({ className }) => (
 const EditComposer: FC = () => {
   const note = useAuiState((s) => {
     if (!isStored(s.message.id)) return "Sends the new wording as a new message.";
-    const after = s.thread.messages.length - 1 - s.message.index;
+    // The stored messages that follow it (a notice line is not one).
+    const after = s.thread.messages.slice(s.message.index + 1).filter((m) => isStored(m.id)).length;
     const kept = (s.message.attachments?.length ?? 0) > 0 ? " Its attachments are not sent again." : "";
     if (after <= 1) return `Jarvis answers the new wording in place of its last answer.${kept}`;
     return `Jarvis forgets the ${after} messages after this one and answers the new wording.${kept}`;

@@ -310,19 +310,22 @@ class ChatApi:
         return 202, {"query_id": result.query_id, "status": result.status}
 
     # How a refused rewind answers, beside a request's own refusals.
-    _REWIND_STATUS = {"unknown": 404, "not_open": 409, "not_user": 400, "out_of_step": 409, "busy": 409}
+    _REWIND_STATUS = {"unknown": 404, "not_open": 409, "not_user": 400, "changed": 409, "out_of_step": 409,
+                      "busy": 409}
 
     def _rewind(self, chat_id, call):
         body = call.body
-        message_id = body.get("message_id")
+        message_id, newest_id = body.get("message_id"), body.get("newest_id")
         if not isinstance(message_id, int) or isinstance(message_id, bool):
             raise Refused(400, "bad_message")
+        if not isinstance(newest_id, int) or isinstance(newest_id, bool):
+            raise Refused(400, "bad_newest")
         text = body.get("text")
         if text is not None and (not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS):
             raise Refused(400, "bad_text")
         speak = body.get("speak") is True and self.voice is not None
         tracker = self.voice.track(call.context) if speak else None
-        result = self.hub.rewind(chat_id, message_id, text, origin=self.origin,
+        result = self.hub.rewind(chat_id, message_id, text, newest_id=newest_id, origin=self.origin,
                                  on_finish=tracker.finished if tracker is not None else None)
         if tracker is not None and result.query_id:
             tracker.accepted(result.query_id)

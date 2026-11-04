@@ -22,7 +22,7 @@ export class FakeJarvis {
   replyText = "Done."
   readonly requests: { method: string; path: string; body: unknown }[] = []
   readonly sent: string[] = []
-  readonly rewinds: { chat: string; message_id: number; text: string | undefined }[] = []
+  readonly rewinds: { chat: string; message_id: number; text: string | undefined; newest_id: number | undefined }[] = []
   readonly modelChoices: { kind: string; value: string; effort?: string }[] = []
   localModels = [
     { id: "gemma", name: "Gemma 4 12B", installed: true },
@@ -183,7 +183,8 @@ export class FakeJarvis {
         this.open(chat.id)
         return json(200, { chat })
       }
-      if (method === "POST" && action === "/rewind") return this.rewind(chat, body as { message_id: number; text?: string }, json, refuse)
+      if (method === "POST" && action === "/rewind")
+        return this.rewind(chat, body as { message_id: number; text?: string; newest_id?: number }, json, refuse)
       if (method === "PATCH") return json(200, { ok: true })
     }
     return refuse(404, "not_found")
@@ -244,17 +245,19 @@ export class FakeJarvis {
 
   private rewind(
     chat: Chat,
-    body: { message_id: number; text?: string },
+    body: { message_id: number; text?: string; newest_id?: number },
     json: (s: number, p: unknown) => Response,
     refuse: (s: number, e: string) => Response,
   ) {
-    this.rewinds.push({ chat: chat.id, message_id: body.message_id, text: body.text })
+    this.rewinds.push({ chat: chat.id, message_id: body.message_id, text: body.text, newest_id: body.newest_id })
+    if (typeof body.newest_id !== "number") return refuse(400, "bad_newest")
     if (chat.id !== this.active) return refuse(409, "not_open")
-    if (this.busyQuery || this.busyVoice || this.next === "busy") return refuse(409, "busy")
     const all = this.messages.get(chat.id) ?? []
     const at = all.findIndex((m) => m.id === body.message_id)
     if (at < 0) return refuse(404, "unknown")
     if (all[at]!.role !== "user") return refuse(400, "not_user")
+    if (all.at(-1)?.id !== body.newest_id) return refuse(409, "changed")
+    if (this.busyQuery || this.busyVoice || this.next === "busy") return refuse(409, "busy")
     const text = body.text ?? all[at]!.text
     this.messages.set(chat.id, all.slice(0, at))
     this.historyRev++

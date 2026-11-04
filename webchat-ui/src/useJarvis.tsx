@@ -22,7 +22,7 @@ import {
   type Snapshot,
 } from "@/api"
 import { JarvisAttachmentAdapter } from "@/attachmentAdapter"
-import { buildThreadMessages, chatTitle, convertThreadMessage, type Pending } from "@/conversion"
+import { buildThreadMessages, chatTitle, convertThreadMessage, lastMessageId, type Pending } from "@/conversion"
 import type { LiveStep } from "@/steps"
 import { ChatSync, type HistoryWindow } from "@/sync"
 
@@ -341,16 +341,30 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
   const askAgain = async (messageId: number, text: string | undefined, shown: string) => {
     const chatId = sync.activeId
     if (chatId === null) return
+    // Everything from the message on goes, so the page says what it has shown; read before the thread changes.
+    const newestId = lastMessageId(sync.messages)
     sync.beginRewind(messageId, shown)
     try {
       const speak = hooksRef.current?.speakReplies?.() ?? false
-      const sent = await api.rewind(chatId, messageId, text, speak)
+      const sent = await api.rewind(chatId, messageId, newestId, text, speak)
       sync.sendAccepted()
       hooksRef.current?.onSent?.(sent.query_id, speak)
     } catch (error) {
       await sync.rewindFailed().catch(() => undefined)
       fail(error)
     }
+  }
+
+  const onEdit = async (message: AppendMessage) => {
+    const stored = storedMessageId(message.sourceId)
+    if (stored === null) return sendNew(message)
+    const text = textOf(message)
+    if (text) await askAgain(stored, text, text)
+  }
+  const onReload = async (parentId: string | null) => {
+    const stored = storedMessageId(parentId)
+    const original = sync.messages.find((m) => m.id === stored)
+    if (stored !== null && original?.role === "user") await askAgain(stored, undefined, original.text)
   }
 
   // Notices belong to the newest moment of the chat, so a window that stops short of it shows none.
@@ -372,19 +386,11 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
     onLoadEarlier: () => sync.loadEarlier(),
     onNew: (message) => sendNew(message),
     // Edit: a stored message is asked again with the new words (it and what followed are replaced). A message that
-    // was never stored (it failed or was stopped) is simply sent again as edited.
-    onEdit: async (message) => {
-      const stored = storedMessageId(message.sourceId)
-      if (stored === null) return sendNew(message)
-      const text = textOf(message)
-      if (text) await askAgain(stored, text, text)
-    },
+    // was never stored (it failed or was stopped) is simply sent again as edited. Neither Edit nor Ask again is
+    // offered while the page shows an earlier stretch of the chat: what would go is not all on the page.
+    onEdit: history.hasLater ? undefined : onEdit,
     // Regenerate: the owner's message before a reply is asked again as it was.
-    onReload: async (parentId) => {
-      const stored = storedMessageId(parentId)
-      const original = sync.messages.find((m) => m.id === stored)
-      if (stored !== null && original?.role === "user") await askAgain(stored, undefined, original.text)
-    },
+    onReload: history.hasLater ? undefined : onReload,
     onCancel: async () => {
       sync.stopRequested()
       try {

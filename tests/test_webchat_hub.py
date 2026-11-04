@@ -176,7 +176,7 @@ class TestRewind:
     def test_an_edited_message_replaces_itself_and_what_followed_it(self, hub, backend, store):
         chat, ids = self.two_exchanges(hub, store)
         backend.reply_text = "A fresh answer."
-        result = hub.rewind(chat, ids[2], "second question, reworded")
+        result = hub.rewind(chat, ids[2], "second question, reworded", newest_id=ids[-1])
         assert result.status == "accepted"
         assert transcript(store, chat) == [("user", "first question", "typed"), ("assistant", "Done.", "typed"),
                                            ("user", "second question, reworded", "typed"),
@@ -187,53 +187,66 @@ class TestRewind:
     def test_regenerating_asks_the_same_words_again(self, hub, backend, store):
         chat, ids = self.two_exchanges(hub, store)
         backend.reply_text = "Another answer."
-        assert hub.rewind(chat, ids[2]).status == "accepted"
+        assert hub.rewind(chat, ids[2], newest_id=ids[-1]).status == "accepted"
         assert backend.submitted[-1] == "second question"
         assert [m.content for m in store.messages(chat)][-1] == "Another answer."
         assert len(store.messages(chat)) == 4
 
     def test_the_whole_chat_can_be_asked_again_from_its_first_message(self, hub, backend, store):
         chat, ids = self.two_exchanges(hub, store)
-        assert hub.rewind(chat, ids[0], "a new start").status == "accepted"
+        assert hub.rewind(chat, ids[0], "a new start", newest_id=ids[-1]).status == "accepted"
         assert [m.content for m in store.messages(chat)] == ["a new start", "Done."]
 
     def test_only_the_open_chat_can_be_rewound(self, hub, store):
         chat, ids = self.two_exchanges(hub, store)
         hub.new_chat()
-        assert hub.rewind(chat, ids[2]).status == "not_open"
+        assert hub.rewind(chat, ids[2], newest_id=ids[-1]).status == "not_open"
         assert len(store.messages(chat)) == 4
 
     def test_only_the_owners_own_messages_are_asked_again(self, hub, store):
         chat, ids = self.two_exchanges(hub, store)
-        assert hub.rewind(chat, ids[3]).status == "not_user"
-        assert hub.rewind(chat, 10_000).status == "unknown"
-        assert hub.rewind("nope", ids[2]).status == "unknown"
+        assert hub.rewind(chat, ids[3], newest_id=ids[-1]).status == "not_user"
+        assert hub.rewind(chat, 10_000, newest_id=ids[-1]).status == "unknown"
+        assert hub.rewind("nope", ids[2], newest_id=ids[-1]).status == "unknown"
         assert len(store.messages(chat)) == 4
 
     def test_nothing_changes_while_a_request_runs(self, hub, backend, store):
         chat, ids = self.two_exchanges(hub, store)
         backend.mode = "hold"
         hub.submit("slow one")
-        assert hub.rewind(chat, ids[2]).status == "busy"
+        assert hub.rewind(chat, ids[2], newest_id=ids[-1]).status == "busy"
         backend.release()
         assert [m.content for m in store.messages(chat)][:4] == ["first question", "Done.", "second question", "Done."]
 
     def test_a_conversation_out_of_step_with_the_chat_changes_nothing(self, hub, backend, store):
         chat, ids = self.two_exchanges(hub, store)
         backend.memory.drop_last_turns(1)  # the conversation lost a turn the chat still shows
-        assert hub.rewind(chat, ids[2]).status == "out_of_step"
+        assert hub.rewind(chat, ids[2], newest_id=ids[-1]).status == "out_of_step"
         assert len(store.messages(chat)) == 4
         assert hub.snapshot(0)["busy_query"] is False
+
+    def test_nothing_is_taken_back_when_the_chat_holds_more_than_the_page_showed(self, hub, backend, store):
+        chat, ids = self.two_exchanges(hub, store)
+        # The page last saw the first exchange; the second arrived since (by voice, or from another page).
+        assert hub.rewind(chat, ids[0], "a new start", newest_id=ids[1]).status == "changed"
+        assert [m.id for m in store.messages(chat)] == ids
+        assert len(backend.memory.all_messages()) == 4
+        assert hub.snapshot(0)["busy_query"] is False
+
+    def test_nothing_is_taken_back_when_the_page_shows_messages_the_chat_no_longer_has(self, hub, store):
+        chat, ids = self.two_exchanges(hub, store)
+        assert hub.rewind(chat, ids[2], newest_id=ids[-1] + 7).status == "changed"
+        assert [m.id for m in store.messages(chat)] == ids
 
     def test_every_page_is_told_the_chat_lost_messages(self, hub, store):
         chat, ids = self.two_exchanges(hub, store)
         before = hub.snapshot(0)["history_rev"]
-        hub.rewind(chat, ids[2], "again")
+        hub.rewind(chat, ids[2], "again", newest_id=ids[-1])
         assert hub.snapshot(0)["history_rev"] > before
 
     def test_a_phone_asks_again_as_a_phone(self, hub, backend, store):
         chat, ids = self.two_exchanges(hub, store)
-        hub.rewind(chat, ids[2], origin="phone")
+        hub.rewind(chat, ids[2], origin="phone", newest_id=ids[-1])
         assert backend.origins[-1] == "phone"
 
 

@@ -245,8 +245,9 @@ class TestChatThroughTheSharedHub:
         client = paired_client(server, store)
         client.request("POST", "/api/chat", {"text": "hello"})
         chat_id = chat_store.get_active_chat_id()
-        first = chat_store.messages(chat_id)[0].id
-        status, _, _ = client.request("POST", f"/api/chats/{chat_id}/rewind", {"message_id": first, "text": "hi"})
+        first, newest = chat_store.messages(chat_id)[0].id, chat_store.messages(chat_id)[-1].id
+        status, _, _ = client.request("POST", f"/api/chats/{chat_id}/rewind",
+                                      {"message_id": first, "text": "hi", "newest_id": newest})
         assert status == 202
         assert [m.content for m in chat_store.messages(chat_id)] == ["hi", "Done."]
         assert chat_backend.origins == ["phone", "phone"]

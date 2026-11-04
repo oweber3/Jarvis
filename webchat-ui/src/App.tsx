@@ -79,9 +79,12 @@ const Shell: FC = () => {
         setHelpOpen(true)
       }
     }
-    // The up arrow in an empty message box: the owner's last stored message opens for editing.
+    // The up arrow in an empty message box: the owner's last stored message opens for editing, while editing is
+    // offered (not while the page shows an earlier stretch of the chat).
     const editLastMessage = (): boolean => {
-      const messages = aui.thread().getState().messages
+      const thread = aui.thread().getState()
+      if (!thread.capabilities.edit) return false
+      const messages = thread.messages
       for (let i = messages.length - 1; i >= 0; i--) {
         const message = messages[i]!
         if (message.role === "user" && /^m\d+$/.test(message.id)) {
