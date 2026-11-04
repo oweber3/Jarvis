@@ -300,7 +300,7 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
       },
       retryNow: () => sync.retryNow(),
       dismissToast: () => setToast(null),
-      beginSend: (text) => sync.beginSend(text),
+      beginSend: (text) => void sync.beginSendAtLatest(text).catch(() => sync.beginSend(text)),
       sendAccepted: () => sync.sendAccepted(),
       sendFailed: () => sync.sendFailed(),
       showToast: setToast,

@@ -299,6 +299,13 @@ export class ChatSync {
     })
   }
 
+  /** A request made outside the message box (the phone's spoken one), shown as being sent below the newest messages:
+   * a window that let go of them comes back first. */
+  async beginSendAtLatest(text: string): Promise<void> {
+    if (this.hasLater) await this.jumpToLatest()
+    this.beginSend(text)
+  }
+
   /** A stored message asked again: it and what followed leave the thread at once and it shows as being sent. */
   beginRewind(messageId: number, text: string): void {
     this.showMessages(this.shown.filter((m) => m.id < messageId))

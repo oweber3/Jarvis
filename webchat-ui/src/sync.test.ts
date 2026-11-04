@@ -409,3 +409,24 @@ describe("while Jarvis cannot be reached", () => {
     abort.abort()
   })
 })
+
+describe("a request made outside the message box", () => {
+  it("brings back the newest messages first when the window had let go of them", async () => {
+    const t = setup()
+    await openedWith(t, run(951, 50), { has_earlier: true })
+    const opening = t.sync.openChat("A", 42)
+    await settle()
+    t.answerChat("A", run(17, 50), 1, { has_earlier: true, has_later: true })
+    await opening
+    expect(t.sync.detached).toBe(true)
+
+    const sending = t.sync.beginSendAtLatest("what time is it")
+    await settle()
+    expect(t.api.chat).toHaveBeenLastCalledWith("A", { limit: PAGE_MESSAGES })
+    t.answerChat("A", run(951, 50), 2, { has_earlier: true })
+    await sending
+    expect(t.sync.detached).toBe(false)
+    expect(t.shown.pending).toMatchObject({ text: "what time is it", afterId: 1000 })
+    t.stop()
+  })
+})
