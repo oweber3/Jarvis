@@ -84,6 +84,14 @@ class _HTTPServer(ThreadingHTTPServer):
     allow_reuse_address = False
     tls: Optional[ReloadingContext] = None
 
+    def server_bind(self) -> None:
+        # Windows lets another socket of the same user bind a port that is already bound, and take its
+        # connections, unless the first one asked for exclusive use.
+        exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+        if exclusive is not None:
+            self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        super().server_bind()
+
     def get_request(self):
         sock, address = super().get_request()
         if self.tls is not None:

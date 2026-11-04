@@ -733,3 +733,17 @@ class TestOutsideClients:
             assert time.monotonic() - started < 3
         finally:
             server.stop()
+
+
+@pytest.mark.unit
+def test_the_port_is_bound_for_exclusive_use_where_windows_offers_it(chat_backend, chat_store, backend, store,
+                                                                     static_dir, monkeypatch):
+    # On Windows another program of the same user could bind the same port more specifically and take the
+    # phone's connections (and their device tokens) unless the server asks for exclusive use. Linux has no
+    # such option, so a harmless stand-in shows that it is asked for.
+    monkeypatch.setattr(socket, "SO_EXCLUSIVEADDRUSE", socket.SO_KEEPALIVE, raising=False)
+    server = make_server(chat_backend, chat_store, backend, store, static_dir)
+    try:
+        assert server._httpd.socket.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+    finally:
+        server.stop()
