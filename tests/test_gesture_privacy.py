@@ -72,6 +72,8 @@ class FakeCamera:
 
 # A fist held past the grab hold even at the tracker's fastest rate.
 GRAB_FRAMES = int(window_snap.GRAB_HOLD_SEC * 200) + 8
+# A new gesture counts once it has lasted the debounce time; the hand stays still until then.
+SETTLE_FRAMES = int(window_snap.WindowSnapSettings().debounce * 200) + 8
 
 
 class ScriptedHands:
@@ -81,8 +83,8 @@ class ScriptedHands:
         self.script = ([hand(0.5, 0.5)] * 8 + [hand(0.5 + i * 0.01, 0.5) for i in range(8)]
                        + [hand(0.58, 0.5, gesture="fist")] * GRAB_FRAMES
                        + [hand(0.58 + i * 0.02, 0.45, gesture="fist") for i in range(8)]
-                       + [hand(0.74, 0.45)] * 8
-                       + [hand(0.74, 0.45, gesture="two")] * 8 + [hand(0.74, 0.25, gesture="two")] * 20
+                       + [hand(0.74, 0.45)] * SETTLE_FRAMES
+                       + [hand(0.74, 0.45, gesture="two")] * SETTLE_FRAMES + [hand(0.74, 0.25, gesture="two")] * 20
                        + [None] * 12)
         self.done = threading.Event()
 
