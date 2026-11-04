@@ -176,6 +176,10 @@ class Registry:
         self._hidden = frozenset(str(h) for h in hidden)
         self._listeners: list = []
 
+    @property
+    def hidden(self) -> frozenset:
+        return self._hidden
+
     def set_hidden(self, hidden: Iterable[str]) -> None:
         with self._lock:
             self._hidden = frozenset(str(h) for h in hidden)
