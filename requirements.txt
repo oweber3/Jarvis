@@ -68,3 +68,7 @@ pyinstaller>=6.13.0
 
 # OS credential store for API keys (Windows Credential Manager)
 keyring==25.7.0
+
+# Smart home: the Home Assistant WebSocket API and MQTT discovery (both imported only when connecting)
+websocket-client==1.9.2
+paho-mqtt==2.1.0

@@ -301,7 +301,8 @@ class HomeControlTool(Tool):
             else:
                 unconfirmed.append((dev, outcome.note))
         acted = done + [d for d, _note in unconfirmed]
-        debug_log(f"homeControl {action}: {len(done)} confirmed, {len(unconfirmed)} unconfirmed, "
+        kinds = ",".join(sorted({d.kind for d in devices}))
+        debug_log(f"homeControl {action} ({kinds}): {len(done)} confirmed, {len(unconfirmed)} unconfirmed, "
                   f"{len(failed)} failed", _TAG)
         if acted:
             self._remember(acted, action)

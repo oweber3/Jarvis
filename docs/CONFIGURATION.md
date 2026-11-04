@@ -290,6 +290,34 @@ A workspace is a named desk set-up that Jarvis opens in one go: "open my study w
 
 Spec: `src/jarvis/devices/roku.spec.md`.
 
+### Smart Home
+
+`homeControl` controls lights, plugs, fans, blinds, thermostats, locks, alarms, sensors, scenes and home-made devices through your own **Home Assistant** and/or an **MQTT broker**. Off by default; set it up in **Settings → Smart Home**, which tests each connection before saving. The step-by-step guide is [`SMART_HOME_SETUP.md`](SMART_HOME_SETUP.md).
+
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| `smarthome_enabled` | `false` | Turns the feature on. While off, nothing connects and the tool does not exist |
+| `smarthome_ha_url` | `""` | Home Assistant's address, such as `http://192.168.1.50:8123` |
+| `smarthome_ha_verify_tls` | `true` | Check an `https://` server's certificate. Turn off only for a self-signed certificate |
+| `smarthome_mqtt_host` | `""` | MQTT broker address, for devices using Home Assistant MQTT discovery |
+| `smarthome_mqtt_port` | `1883` | Broker port |
+| `smarthome_mqtt_username` | `""` | Broker user name |
+| `smarthome_mqtt_tls` | `false` | Encrypt the broker connection |
+| `smarthome_mqtt_discovery_prefix` | `"homeassistant"` | Topic prefix devices announce themselves under |
+| `smarthome_mqtt_hidden` | `[]` | MQTT device ids (`mqtt:<unique_id>`) Jarvis never lists or controls |
+| `smarthome_confirm_devices` | `[]` | Device ids that always ask before any change |
+| `smarthome_share_with_cloud` | `false` | Offer the tool to the Codex and Claude reply modes (sends device names, rooms and states to them) |
+
+- The Home Assistant access token and MQTT password are stored in Windows Credential Manager (`smarthome.ha_token`, `smarthome.mqtt_password`), never in `config.json`.
+- Addresses must be on your home network or this PC (loopback, `10.x`, `172.16` to `172.31`, `192.168.x`, link-local). A hostname such as `homeassistant.local` is accepted only if every address it resolves to is on that list. Redirects and proxies are never followed.
+- From Home Assistant, only entities exposed to voice assistants (Settings → Voice assistants → Expose) are used. Media players stay with `tvControl` and `mediaControl`.
+- When a device reaches Jarvis through both hubs, the Home Assistant copy is used.
+- Always confirmed: unlock, disarm, opening a garage door, gate or door, scripts, buttons, thermostat settings outside 10 to 30 °C (50 to 86 °F) and any change to more than 10 devices.
+- Fast phrases (English): "turn on/off {device}", "turn off the {room} lights", "set {device} to 40 percent", "dim {device}", "open/close {device}". Unknown or ambiguous names go to the model.
+- `python -m jarvis.smarthome test` checks both connections; `python -m jarvis.smarthome devices` lists what Jarvis sees.
+
+Spec: `src/jarvis/smarthome/smarthome.spec.md`.
+
 ### Apple Music
 
 `playMusic` plays a song, album, artist or one of your own playlists in the Apple Music app for Windows (from the Microsoft Store): "play Bohemian Rhapsody", "put on some Taylor Swift", "play my Road Trip playlist". It is off by default: turn on **Allow Apple Music** in Settings → Extras → Apple Music (`apple_music_enabled`) and restart Jarvis.
