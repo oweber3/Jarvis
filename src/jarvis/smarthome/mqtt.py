@@ -83,7 +83,7 @@ class MqttNotFound(MqttUnreachable):
 
 AUTH_MESSAGE = "The MQTT broker refused the user name or password."
 UNREACHABLE_MESSAGE = "The MQTT broker did not answer. Check that it is running and the address is right."
-NOT_FOUND_MESSAGE = "The MQTT broker's address could not be found on the network yet. Jarvis keeps trying."
+NOT_FOUND_MESSAGE = "The MQTT broker's address could not be found on the network yet (it may still be starting)."
 
 
 def valid_topic(topic: Any) -> bool:
@@ -550,7 +550,8 @@ class MqttConnector:
             return
         component = match.group("component")
         # The node id is part of the topic's identity: two nodes may both announce "relay".
-        object_id = "_".join(part for part in (match.group("node"), match.group("object")) if part)
+        # "." cannot appear in either part, so "a_b/c" and "a/b_c" stay two devices.
+        object_id = ".".join(part for part in (match.group("node"), match.group("object")) if part)
         key = f"{component}/{object_id}"
         if not raw:
             self._forget(f"mqtt:{component}_{object_id}", key)

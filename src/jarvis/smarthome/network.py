@@ -107,7 +107,7 @@ def validate_endpoint(value, *, default_port: int, schemes: Sequence[str] = ("ht
     else:
         candidates = _resolve(host)
         if not candidates:
-            raise SmartHomeNotFound("The address could not be found on this network yet. Jarvis keeps trying.")
+            raise SmartHomeNotFound("The address could not be found on this network yet.")
     for candidate in candidates:
         try:
             address = ipaddress.ip_address(candidate.split("%", 1)[0])

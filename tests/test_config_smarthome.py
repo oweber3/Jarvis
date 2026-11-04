@@ -55,7 +55,9 @@ class TestSmartHomeSettings:
 
 
 @pytest.mark.unit
-def test_tls_without_a_port_uses_the_tls_port(tmp_path, monkeypatch):
-    assert load(tmp_path, monkeypatch, {"smarthome_mqtt_tls": True}).smarthome_mqtt_port == 8883
+def test_tls_without_a_port_uses_the_port_settings_shows(tmp_path, monkeypatch):
+    # Settings tests and saves the port it shows; the daemon must connect to that same port.
+    shown = get_default_config()["smarthome_mqtt_port"]
+    assert load(tmp_path, monkeypatch, {"smarthome_mqtt_tls": True}).smarthome_mqtt_port == shown
     assert load(tmp_path, monkeypatch, {"smarthome_mqtt_tls": True,
                                         "smarthome_mqtt_port": 1883}).smarthome_mqtt_port == 1883

@@ -195,7 +195,11 @@ class SmartHomePage(QWidget):
         def job():
             # Always the (rows, problems) pair: a crash here must never reach the Qt slot as something else.
             try:
-                return setup.read_devices(service.build(cfg, warn=lambda _message: None))
+                refused: list = []
+                home = service.build(cfg, warn=refused.append)
+                if home is None and refused:
+                    return [], refused
+                return setup.read_devices(home)
             except Exception as exc:  # noqa: BLE001 - reported on the page
                 debug_log(f"settings: device list failed ({type(exc).__name__})", "settings")
                 return [], ["The device list could not be read. Check the settings above and try again."]
@@ -203,7 +207,10 @@ class SmartHomePage(QWidget):
         self._run(job, self.show_devices)
 
     def show_devices(self, outcome) -> None:
-        rows, problems = outcome
+        if isinstance(outcome, tuple) and len(outcome) == 2:
+            rows, problems = outcome
+        else:
+            rows, problems = [], ["The device list could not be read. Check the settings above and try again."]
         self.load.setEnabled(True)
         self.devices_status.setText(" ".join(problems) or f"{len(rows)} devices.")
         set_role(self.devices_status, "status-warning" if problems else "status-muted")

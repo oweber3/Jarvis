@@ -276,5 +276,12 @@ class TestRobustness:
         for node in ("porch", "shed"):
             broker.publish(f"{PREFIX}/switch/{node}/relay/config", {"name": f"{node} relay",
                                                                     "command_topic": f"{node}/set"})
-        assert wait_for(lambda: {"mqtt:switch_porch_relay", "mqtt:switch_shed_relay"}
+        assert wait_for(lambda: {"mqtt:switch_porch.relay", "mqtt:switch_shed.relay"}
                         <= {d.id for d in registry.devices()})
+
+    def test_node_and_object_ids_that_join_alike_stay_two_devices(self, connector, broker):
+        _conn, registry = connector
+        for node, obj in (("a_b", "c"), ("a", "b_c")):
+            broker.publish(f"{PREFIX}/switch/{node}/{obj}/config", {"name": f"{node} {obj}",
+                                                                    "command_topic": f"{node}/{obj}/set"})
+        assert wait_for(lambda: len([d for d in registry.devices() if d.name in ("a_b c", "a b_c")]) == 2)

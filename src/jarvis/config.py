@@ -1674,9 +1674,7 @@ def load_settings() -> Settings:
         smarthome_ha_url=_text(merged.get("smarthome_ha_url"), "").strip(),
         smarthome_ha_verify_tls=merged.get("smarthome_ha_verify_tls", True) is not False,
         smarthome_mqtt_host=_text(merged.get("smarthome_mqtt_host"), "").strip(),
-        # Without a port set, a TLS broker is on the MQTT-over-TLS port.
-        smarthome_mqtt_port=_port(cfg_json.get("smarthome_mqtt_port"),
-                                  8883 if merged.get("smarthome_mqtt_tls") is True else defaults["smarthome_mqtt_port"]),
+        smarthome_mqtt_port=_port(cfg_json.get("smarthome_mqtt_port"), defaults["smarthome_mqtt_port"]),
         smarthome_mqtt_username=_text(merged.get("smarthome_mqtt_username"), "").strip(),
         smarthome_mqtt_tls=merged.get("smarthome_mqtt_tls") is True,
         smarthome_mqtt_discovery_prefix=(_text(merged.get("smarthome_mqtt_discovery_prefix"), "").strip().strip("/")

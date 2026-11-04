@@ -74,9 +74,9 @@ UNREACHABLE_MESSAGE = "Home Assistant did not answer. Check that it is running a
 _REDIRECT_MESSAGE = "Home Assistant redirected the connection elsewhere; Jarvis does not follow redirects."
 ADMIN_MESSAGE = ("Home Assistant only tells an administrator which devices are exposed to voice assistants. Create "
                  "the access token while signed in as an administrator.")
-NOT_FOUND_MESSAGE = ("Home Assistant's address could not be found on the network yet (it may still be starting). "
-                     "Jarvis keeps trying.")
+NOT_FOUND_MESSAGE = "Home Assistant's address could not be found on the network yet (it may still be starting)."
 NOT_CONNECTED_MESSAGE = "Jarvis is not connected to Home Assistant right now."
+EXPOSED_FRESH_SEC = 2.0
 
 
 # -- building devices -------------------------------------------------------------------------------
@@ -413,6 +413,8 @@ class HomeAssistantConnector:
         self._sleep = sleep or self._stop.wait
         self._reload_lock = threading.Lock()
         self._reload_wanted = threading.Event()
+        self._exposed_lock = threading.Lock()
+        self._exposed_cache: Tuple[float, Dict[str, Any]] = (float("-inf"), {})
         self.connected = False
         # starting | connected | auth | unreachable | not_found | refused | missing_library | stopped
         self.status = "starting"
@@ -570,6 +572,10 @@ class HomeAssistantConnector:
                 debug_log(f"Home Assistant reload failed ({type(exc).__name__})", _TAG)
             finally:
                 self._reload_lock.release()
+            # An event that came in after the last check found the lock still held and left the work to
+            # this thread: pick it up rather than lose it.
+            if self._reload_wanted.is_set() and not self._stop.is_set():
+                self._schedule_reload()
 
         threading.Thread(target=reload, name="smarthome-ha-reload", daemon=True).start()
 
@@ -610,6 +616,17 @@ class HomeAssistantConnector:
             raise _rejected(reply.get("error"))
         return reply.get("result")
 
+    def _exposed_now(self) -> Dict[str, Any]:
+        """The exposed-entity list, read at most once every ``EXPOSED_FRESH_SEC``: one command to ten lights
+        checks exposure once, while an entity un-exposed in Home Assistant is refused within seconds."""
+        with self._exposed_lock:
+            read_at, exposed = self._exposed_cache
+            if time.monotonic() - read_at < EXPOSED_FRESH_SEC:
+                return exposed
+            exposed = _exposed_ids(self._request)
+            self._exposed_cache = (time.monotonic(), exposed)
+            return exposed
+
     def send(self, device: Device, command: Command) -> Outcome:
         """Run one command on a device that is still exposed; returns once Home Assistant confirms it."""
         if not self.connected:
@@ -619,7 +636,7 @@ class HomeAssistantConnector:
         except ValueError:
             raise HomeAssistantCommandRejected("That device cannot do that.") from None
         entity_id = device.id.split(":", 1)[1]
-        settings = _exposed_ids(self._request).get(entity_id)
+        settings = self._exposed_now().get(entity_id)
         if not isinstance(settings, dict) or settings.get("conversation") is not True:
             self._registry.remove(device.id)
             debug_log(f"Home Assistant command refused: entity no longer exposed ({device.kind})", _TAG)
