@@ -237,6 +237,29 @@ class TestTakingMessagesBack:
         store.delete_messages_from(chat.id, removed.id)
         assert store.append_message(chat.id, "user", "new", ts=2.0).id > removed.id
 
+    def test_taking_back_the_first_message_takes_the_title_it_gave_the_chat(self, store):
+        chat = store.create_chat()
+        first = store.append_message(chat.id, "user", "Plan the trip to Lisbon", ts=1.0)
+        store.append_message(chat.id, "assistant", "Sure.", ts=2.0)
+        store.delete_messages_from(chat.id, first.id)
+        assert store.get_chat(chat.id).title == ""
+        store.append_message(chat.id, "user", "Plan the trip to Porto", ts=3.0)
+        assert store.get_chat(chat.id).title == "Plan the trip to Porto"
+
+    def test_a_title_the_owner_chose_stays(self, store):
+        chat = store.create_chat()
+        first = store.append_message(chat.id, "user", "Plan the trip to Lisbon", ts=1.0)
+        store.rename_chat(chat.id, "Holidays")
+        store.delete_messages_from(chat.id, first.id)
+        assert store.get_chat(chat.id).title == "Holidays"
+
+    def test_taking_back_later_messages_keeps_the_title(self, store):
+        chat = store.create_chat()
+        store.append_message(chat.id, "user", "Plan the trip to Lisbon", ts=1.0)
+        second = store.append_message(chat.id, "user", "and the flights", ts=2.0)
+        store.delete_messages_from(chat.id, second.id)
+        assert store.get_chat(chat.id).title == "Plan the trip to Lisbon"
+
     def test_a_removal_that_cannot_be_saved_removes_nothing(self, store):
         chat = store.create_chat()
         ids = [store.append_message(chat.id, "user", f"m{i}", ts=float(i)).id for i in range(3)]

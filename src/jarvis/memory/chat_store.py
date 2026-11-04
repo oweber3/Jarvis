@@ -378,11 +378,19 @@ class ChatStore:
 
     def delete_messages_from(self, chat_id: str, message_id: int) -> int:
         """Remove the message ``message_id`` of a chat and every later one (a Rewind takes them back). Removed rows
-        are overwritten (``secure_delete``). All or nothing: on an error nothing is removed. Returns how many went."""
+        are overwritten (``secure_delete``). When the chat's first message of the owner's goes, the title it gave
+        the chat goes with it (a title the owner chose stays), so the next one titles the chat. All or nothing:
+        on an error nothing is removed. Returns how many went."""
         with self._lock:
             try:
+                first = self.conn.execute(
+                    "SELECT id, content FROM chat_messages WHERE chat_id = ? AND role = 'user' ORDER BY id LIMIT 1",
+                    (chat_id,)).fetchone()
                 cur = self.conn.execute("DELETE FROM chat_messages WHERE chat_id = ? AND id >= ?",
                                         (chat_id, message_id))
+                if first is not None and first[0] >= message_id:
+                    self.conn.execute("UPDATE chats SET title = '' WHERE id = ? AND title = ?",
+                                      (chat_id, _title_from(first[1])))
                 self.conn.commit()
             except sqlite3.Error:
                 self.conn.rollback()

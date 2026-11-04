@@ -197,6 +197,13 @@ class TestRewind:
         assert hub.rewind(chat, ids[0], "a new start", newest_id=ids[-1]).status == "accepted"
         assert [m.content for m in store.messages(chat)] == ["a new start", "Done."]
 
+    def test_a_chat_titled_by_its_first_message_is_titled_by_the_new_one(self, hub, store):
+        hub.new_chat()
+        chat, ids = self.two_exchanges(hub, store)
+        assert store.get_chat(chat).title == "first question"
+        assert hub.rewind(chat, ids[0], "a new start", newest_id=ids[-1]).status == "accepted"
+        assert store.get_chat(chat).title == "a new start"
+
     def test_only_the_open_chat_can_be_rewound(self, hub, store):
         chat, ids = self.two_exchanges(hub, store)
         hub.new_chat()
