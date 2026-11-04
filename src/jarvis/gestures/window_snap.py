@@ -55,6 +55,9 @@ MIN_WHEEL_STEP = 30
 SCROLL_DEAD_ZONE = 0.03
 _DERIVATIVE_CUTOFF_HZ = 1.0
 FINGERS = ("INDEX", "MIDDLE", "RING", "PINKY")
+# A held window is let go when the index is raised, or when this many fingers are (an opening hand whose index
+# lags behind the others).
+LET_GO_FINGERS = 3
 # An open hand held up this long asks to listen.
 TALK_HOLD_SEC = 1.0
 # Two-hand zoom: one notch for every ZOOM_STEP times the palms move apart (or together), sent once the distance is
@@ -96,7 +99,7 @@ class WindowSnapSettings:
 
     hand: str = "any"
     comfort_box: float = 0.5
-    finger_up: float = 1.1
+    finger_up: float = 1.2
     finger_down: float = 0.95
     debounce: float = 0.1
     scroll_speed: float = 15.0
@@ -158,13 +161,11 @@ def palm_centre(hand: Hand) -> Tuple[float, float]:
 
 
 def describe_hand(hand: Hand, settings: Optional["WindowSnapSettings"] = None) -> str:
-    """Each finger's curl and the gesture they make on their own (a finger between the thresholds counts as
-    down), for the diagnostic readout and preview."""
-    s = settings or WindowSnapSettings()
-    curls = {f: finger_curl(hand, f) for f in FINGERS}
-    raised = frozenset(f for f, c in curls.items() if c > s.finger_up)
+    """Each finger's curl and the gesture they make on their own (as on the first frame the hand is seen), for
+    the diagnostic readout and preview."""
     names = {"INDEX": "index", "MIDDLE": "middle", "RING": "ring", "PINKY": "little"}
-    return " ".join(f"{names[f]} {curls[f]:.2f}" for f in FINGERS) + f" · {shape_of(raised)}"
+    return (" ".join(f"{names[f]} {finger_curl(hand, f):.2f}" for f in FINGERS)
+            + f" · {read_shape(hand, settings)}")
 
 
 def _pixels(hand: Hand, landmark: int, width: int, height: int) -> Tuple[float, float]:
@@ -212,10 +213,49 @@ def describe_two_hands(a: Hand, b: Hand, width: int = 640, height: int = 480) ->
     return f"wrists {gap:.2f} palm lengths apart, lean {angle(left)} / {angle(right)}{crossed}"
 
 
+class FingerReader:
+    """Reads one hand's fingers frame after frame, with hysteresis: above ``finger_up`` a finger is raised,
+    below ``finger_down`` folded, and between the two it keeps its last state.
+
+    A finger first seen between the thresholds is unknown until it is clearly raised or folded. It counts as
+    folded for every gesture but a fist: a fist needs every finger known to be folded, so a loosely curled hand
+    coming into view is not taken for one."""
+
+    def __init__(self, settings: "WindowSnapSettings"):
+        self._s = settings
+        self._raised: Dict[str, bool] = {}
+
+    def reset(self) -> None:
+        """Forget every finger, as for a hand seen for the first time."""
+        self._raised.clear()
+
+    def read(self, hand: Hand) -> str:
+        """Update each finger from this frame and return the gesture they make."""
+        for finger in FINGERS:
+            curl = finger_curl(hand, finger)
+            if curl > self._s.finger_up:
+                self._raised[finger] = True
+            elif curl < self._s.finger_down:
+                self._raised[finger] = False
+        shape = shape_of(self.raised)
+        if shape == FIST and len(self._raised) < len(FINGERS):
+            return OTHER
+        return shape
+
+    @property
+    def raised(self) -> FrozenSet[str]:
+        return frozenset(f for f in FINGERS if self._raised.get(f))
+
+    @property
+    def lets_go(self) -> bool:
+        """Whether the hand reads as letting go of a held window: the index raised, or an open hand whose index
+        lags behind (at least ``LET_GO_FINGERS`` fingers raised)."""
+        return bool(self._raised.get("INDEX")) or len(self.raised) >= LET_GO_FINGERS
+
+
 def read_shape(hand: Hand, settings: Optional["WindowSnapSettings"] = None) -> str:
     """The gesture one hand makes on its own, as on the first frame it is seen."""
-    s = settings or WindowSnapSettings()
-    return shape_of(frozenset(f for f in FINGERS if finger_curl(hand, f) > s.finger_up))
+    return FingerReader(settings or WindowSnapSettings()).read(hand)
 
 
 def shape_of(raised: FrozenSet[str]) -> str:
@@ -310,7 +350,7 @@ class WindowSnap:
         self._last_arrival: Optional[float] = None
         self._frame_interval: Optional[float] = None  # smoothed gap between delivered frames
         self._slow_camera = False
-        self._raised: Dict[str, bool] = {}
+        self._fingers = FingerReader(settings)
         self._gesture: Optional[str] = None
         self._candidate: Optional[str] = None
         self._candidate_since = 0.0
@@ -326,7 +366,7 @@ class WindowSnap:
         self._failing: set = set()
         self._talk_armed = False  # an open hand that may ask to listen once held long enough
         self._open_since = 0.0
-        self._second_raised: Dict[str, bool] = {}
+        self._second_fingers = FingerReader(settings)
         self._both_open_since: Optional[float] = None
         self._zoom_ref: Optional[float] = None  # palm distance (pixels) when the zoom started; None when not zooming
         self._zoom_sent = 0
@@ -438,16 +478,8 @@ class WindowSnap:
         return chosen
 
     def _shape(self, hand: Hand) -> str:
-        """Each finger up or down with hysteresis (between the thresholds it keeps its state), then the shape."""
-        for finger in FINGERS:
-            curl = finger_curl(hand, finger)
-            if curl > self._s.finger_up:
-                self._raised[finger] = True
-            elif curl < self._s.finger_down:
-                self._raised[finger] = False
-            else:
-                self._raised.setdefault(finger, False)
-        return shape_of(frozenset(f for f in FINGERS if self._raised[f]))
+        """Each finger up or down with hysteresis (see ``FingerReader``), then the shape."""
+        return self._fingers.read(hand)
 
     def _measure_interval(self, arrived: float) -> None:
         """Follow how far apart frames showing the hand arrive, so a slow camera's gaps are not taken for a lost
@@ -484,12 +516,12 @@ class WindowSnap:
         self._state = _IDLE
         self._gesture = self._candidate = None
         self._shown = None
-        self._raised.clear()
+        self._fingers.reset()
         self._last_palm = None
         self._fx.reset()
         self._fy.reset()
         self._talk_armed = False
-        self._second_raised.clear()
+        self._second_fingers.reset()
         self._both_open_since = self._cross_since = None
         self._cross_fired = False
         if self._zoom_ref is not None:
@@ -568,7 +600,7 @@ class WindowSnap:
         self._talk_armed = shape == OPEN and self._state != _HOLDING
         self._open_since = t
         if self._state in (_HOLDING, _HOLDING_NOTHING):
-            if not self._raised.get("INDEX"):
+            if not self._fingers.lets_go:
                 self._hold_place(p)
                 return  # still a fist, perhaps with another finger loosening: keep holding
             self._drop()
@@ -661,21 +693,13 @@ class WindowSnap:
 
     def _second_open(self, hand: Hand) -> bool:
         """Whether the second hand is open, with the same thresholds and hysteresis as the driving hand."""
-        for finger in FINGERS:
-            curl = finger_curl(hand, finger)
-            if curl > self._s.finger_up:
-                self._second_raised[finger] = True
-            elif curl < self._s.finger_down:
-                self._second_raised[finger] = False
-            else:
-                self._second_raised.setdefault(finger, False)
-        return all(self._second_raised[f] for f in FINGERS)
+        return self._second_fingers.read(hand) == OPEN
 
     def _two_hands(self, chosen: Hand, shape: str, second: Optional[Hand], frame: HandFrame) -> bool:
         """Crossed wrists and two-hand zoom. Returns whether one is under way, so the one-hand gestures wait."""
         t = frame.time
         if second is None:
-            self._second_raised.clear()
+            self._second_fingers.reset()
         if second is not None and wrists_crossed(chosen, second, frame.width, frame.height):
             self._cross_last = t
             if self._cross_since is None:

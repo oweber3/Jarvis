@@ -293,6 +293,16 @@ def test_a_fist_raised_straight_after_a_pause_grabs_the_window_under_the_pointer
     assert rig.desk.of("grab") == [("grab", win)] and rig.snap.state == "holding"
 
 
+def test_a_loosely_curled_hand_coming_into_view_grabs_nothing_until_it_closes():
+    win = window((600, 300, 1200, 800))
+    rig = Rig(FakeDesktop(windows=[win]))
+    loose = {"index": 1.0, "middle": 1.05, "ring": 0.9, "pinky": 1.0}  # between the thresholds
+    rig.show(hand(0.5, 0.5, gesture="fist", curls=loose), frames=GRAB * 2)
+    assert rig.desk.of("grab") == []
+    rig.show(hand(0.5, 0.5, gesture="fist"), frames=GRAB)  # the fingers fold clearly
+    assert rig.desk.of("grab") == [("grab", win)]
+
+
 def test_a_fist_misread_for_less_than_the_grab_hold_grabs_nothing():
     rig = Rig(FakeDesktop(windows=[window()]))
     rig.start()
@@ -343,6 +353,17 @@ def test_a_loosening_little_finger_keeps_holding():
     rig.grab_at(0.5, 0.5)
     rig.show(hand(0.51, 0.53, gesture="fist", curls={"pinky": 1.3}), frames=SETTLE)
     assert rig.snap.state == "holding" and rig.desk.of("drop") == []
+
+
+def test_opening_the_hand_with_the_index_lagging_behind_lets_go():
+    win = window((600, 300, 1200, 800))
+    rig = Rig(FakeDesktop(windows=[win]))
+    rig.start()
+    rig.grab_at(0.5, 0.5)
+    held_at = rig.desk.at
+    # Middle, ring and little fingers up; the index still between the thresholds.
+    rig.show(hand(0.51, 0.53, gesture="open", curls={"index": 1.05}), frames=SETTLE)
+    assert rig.desk.of("drop") == [("drop", win, *held_at)]
 
 
 def test_a_maximised_window_is_restored_and_stays_under_the_pointer():

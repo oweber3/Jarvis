@@ -481,7 +481,7 @@ class Settings:
     gesture_snap_camera: int = 0
     gesture_snap_hand: str = "any"
     gesture_snap_comfort_box: float = 0.5
-    gesture_snap_finger_up: float = 1.1
+    gesture_snap_finger_up: float = 1.2
     gesture_snap_finger_down: float = 0.95
     gesture_snap_debounce_ms: int = 100
     gesture_snap_scroll_speed: float = 15.0
@@ -1104,7 +1104,7 @@ def get_default_config() -> Dict[str, Any]:
         "gesture_snap_camera": 0,
         "gesture_snap_hand": "any",
         "gesture_snap_comfort_box": 0.5,
-        "gesture_snap_finger_up": 1.1,
+        "gesture_snap_finger_up": 1.2,
         "gesture_snap_finger_down": 0.95,
         "gesture_snap_debounce_ms": 100,
         "gesture_snap_scroll_speed": 15.0,

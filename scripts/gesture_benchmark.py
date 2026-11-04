@@ -300,11 +300,35 @@ def report(args) -> None:
     relaxed = [s for s in samples if s.label == "no_gesture"]
     if relaxed:
         shares = Counter(_readings(relaxed))
-        print(f"   💤 Relaxed second hands (no gesture asked, n={len(relaxed)}): "
+        print(f"   💤 Relaxed second hands coming into view (no gesture asked, n={len(relaxed)}): "
               + ", ".join(f"{shape} {shares[shape] / len(relaxed) * 100:.0f}%" for shape in SHAPES))
+    _in_context(gestures)
     recognised = [s for s in gestures if s.recogniser is not None]
     if recognised and args.recogniser:
         _recogniser_report(recognised)
+
+
+def _in_context(samples: Sequence[Sample]) -> None:
+    """Readings after the frame before showed a clear gesture, as while aiming or holding a window."""
+    from jarvis.gestures.window_snap import FingerReader, WindowSnapSettings
+    from tests.synthetic_hands import hand as synthetic_hand
+
+    settings = WindowSnapSettings()
+
+    def after(gesture: str, hand):
+        reader = FingerReader(settings)
+        reader.read(synthetic_hand(gesture=gesture))
+        return reader, reader.read(hand)
+
+    fists = [s.hand for s in samples if s.label == "fist"]
+    opened = [s.hand for s in samples if s.label != "fist"]
+    closing = sum(1 for h in fists if after("one", h)[1] == "fist") / len(fists)
+    held = sum(1 for h in fists if after("fist", h)[0].lets_go) / len(fists)
+    released = sum(1 for h in opened if after("fist", h)[0].lets_go) / len(opened)
+    print("   🔁 In context (the frame before showed a clear gesture):")
+    print(f"      ☝️  → ✊ a pointing hand closing reads as a fist: {closing * 100:.1f}%")
+    print(f"      ✊ → ✊ a held fist reads as letting go: {held * 100:.1f}%")
+    print(f"      ✊ → 🖐️ an opened hand (one, peace, palm, stop) reads as letting go: {released * 100:.1f}%")
 
 
 _RECOGNISER = {"Closed_Fist": "fist", "Pointing_Up": "one finger", "Victory": "two fingers",
