@@ -133,9 +133,26 @@ class MockConfig:
             self.embedding_model = self.ollama_embed_model
 
 
+@pytest.fixture(scope="session")
+def _sandbox_root(tmp_path_factory):
+    return tmp_path_factory.mktemp("jarvis_test_sandboxes")
+
+
+@pytest.fixture
+def _test_sandbox(_sandbox_root):
+    """A fresh empty directory for this test's isolation files.
+
+    ``tmp_path_factory.mktemp`` scans every directory already made in the session to pick the next
+    number, so calling it from an autouse fixture makes each test slower than the last. ``mkdtemp``
+    in one session directory costs the same for the first test and the ten-thousandth.
+    """
+    import tempfile
+    return Path(tempfile.mkdtemp(dir=_sandbox_root))
+
+
 @pytest.fixture(autouse=True)
-def _isolate_user_config_path(tmp_path_factory, monkeypatch):
-    """Redirect ``default_config_path`` to a per-session tempfile so a test
+def _isolate_user_config_path(_test_sandbox, monkeypatch):
+    """Redirect ``default_config_path`` to a per-test sandbox so a test
     that calls ``load_settings`` (or any other code path that resolves the
     user's config) cannot read or overwrite ``~/.config/jarvis/config.json``.
 
@@ -144,7 +161,7 @@ def _isolate_user_config_path(tmp_path_factory, monkeypatch):
     trigger a write) directly. This fixture is a belt-and-braces guard so
     a half-mocked test cannot reach the real config file.
     """
-    sandbox = tmp_path_factory.mktemp("jarvis_config_sandbox")
+    sandbox = _test_sandbox
     monkeypatch.setattr(
         "jarvis.config.default_config_path", lambda: sandbox / "config.json"
     )
@@ -303,13 +320,13 @@ def _isolate_file_search(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_orb_state_file(tmp_path, monkeypatch):
+def _isolate_orb_state_file(_test_sandbox, monkeypatch):
     """Keep tests from writing the state file a running Jarvis's orb reads."""
     try:
         import desktop_app.face_widget as face_widget
     except Exception:
         return
-    monkeypatch.setattr(face_widget, "_get_jarvis_state_file", lambda: str(tmp_path / "jarvis_state"))
+    monkeypatch.setattr(face_widget, "_get_jarvis_state_file", lambda: str(_test_sandbox / "jarvis_state"))
     monkeypatch.setattr(face_widget, "_jarvis_state_instance", None)
 
 
