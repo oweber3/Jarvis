@@ -769,18 +769,20 @@ def remove_chat_result_listener(callback) -> None:
             _chat_result_listeners.remove(callback)
 
 
-def deliver_chat_confirmed_result(reply: str, success: bool) -> None:
+def deliver_chat_confirmed_result(reply: str, success: bool, private_sources: Iterable[str] = ()) -> None:
     """Report the outcome of a confirmed action that text chat requested.
 
     The redacted outcome joins the shared conversation (so follow-up questions
-    see it) and is forwarded to the chat UI. It is never spoken.
+    see it) and is forwarded to the chat UI. It is never spoken. An outcome that
+    quoted ``private_sources`` is stored as a private turn (out of the diary).
     """
     from .utils.redact import redact
     safe_reply = redact(reply)
+    private = frozenset(private_sources)
     dm = _global_dialogue_memory
     if dm is not None:
         try:
-            dm.add_message("assistant", safe_reply)
+            dm.add_message("assistant", safe_reply, diary=not private, private_sources=private)
         except Exception as exc:
             debug_log(f"recording confirmed chat result failed: {exc}", "chat")
     with _chat_result_listeners_lock:

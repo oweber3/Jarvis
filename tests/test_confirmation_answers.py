@@ -91,7 +91,7 @@ def held_tool():
 def results():
     box = SimpleNamespace(items=[], event=threading.Event())
 
-    def handler(reply, success):
+    def handler(reply, success, private_sources=frozenset()):
         box.items.append((reply, success))
         box.event.set()
 

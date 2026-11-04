@@ -19,7 +19,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set
 
 from ..debug import debug_log
 from ..utils.path_safety import is_network_or_device_path
@@ -891,7 +891,9 @@ class ConfirmationStore:
         """Run an approved action on its own worker thread and deliver the result."""
 
         def _worker() -> None:
+            from ..memory.activity_log import consume_turn_private
             from .request_scope import request_scope
+            consume_turn_private()
             try:
                 # The worker is in no request, so it carries where the request it approves came from.
                 with request_scope(action.execution_context.get("request_origin")):
@@ -901,9 +903,13 @@ class ConfirmationStore:
                 )
                 success = bool(result.success)
             except Exception as exc:
-                debug_log(f"Confirmed action failed: {exc}", "safety")
+                debug_log(f"Confirmed action failed: {type(exc).__name__}", "safety")
                 reply, success = "The confirmed action failed.", False
-            deliver_result(reply, success, origin=action.execution_context.get("origin", ORIGIN_VOICE))
+            # The action ran on this thread, so a private source it quoted (a briefing's calendar step) marked
+            # this thread: its outcome is a private turn, as the same reply from the engine would be.
+            private = consume_turn_private()
+            deliver_result(reply, success, origin=action.execution_context.get("origin", ORIGIN_VOICE),
+                           private_sources=private)
 
         threading.Thread(target=_worker, name="jarvis-confirmed-action", daemon=True).start()
 
@@ -964,15 +970,18 @@ def get_dialog_callback() -> Optional[DialogPresenter]:
 ORIGIN_VOICE = "voice"
 ORIGIN_CHAT = "chat"
 
-_result_handlers: Dict[str, Callable[[str, bool], None]] = {}
+_ResultHandler = Callable[[str, bool, FrozenSet[str]], None]
+_result_handlers: Dict[str, _ResultHandler] = {}
 _result_handler_lock = threading.Lock()
 
 
-def set_result_handler(handler: Optional[Callable[[str, bool], None]], origin: str = ORIGIN_VOICE) -> None:
+def set_result_handler(handler: Optional[_ResultHandler], origin: str = ORIGIN_VOICE) -> None:
     """Register where the outcome of a confirmed action from ``origin`` is reported.
 
-    ``handler(reply, success)`` runs on the worker thread that executed the
-    action, so it must hand off to any UI thread itself. ``None`` unregisters.
+    ``handler(reply, success, private_sources)`` runs on the worker thread that executed the
+    action, so it must hand off to any UI thread itself. ``private_sources`` are the private sources
+    the action's output quoted (empty when none did): such an outcome is a private turn. ``None``
+    unregisters.
     """
     with _result_handler_lock:
         if handler is None:
@@ -981,7 +990,13 @@ def set_result_handler(handler: Optional[Callable[[str, bool], None]], origin: s
             _result_handlers[origin] = handler
 
 
-def deliver_result(reply: str, success: bool, origin: str = ORIGIN_VOICE) -> None:
+def withheld_text(reply: str, private_sources: FrozenSet[str]) -> str:
+    """What the console shows for an outcome: never the text of one that quoted private data."""
+    return "🔒 Result withheld from the log (it quotes private data)." if private_sources else reply
+
+
+def deliver_result(reply: str, success: bool, origin: str = ORIGIN_VOICE,
+                   private_sources: FrozenSet[str] = frozenset()) -> None:
     """Report a confirmed action's outcome to its originating interface.
 
     Cancelled and expired requests never reach here. A chat origin without a
@@ -992,9 +1007,9 @@ def deliver_result(reply: str, success: bool, origin: str = ORIGIN_VOICE) -> Non
     if handler is None:
         debug_log(f"Confirmed action finished (no {origin} handler): success={success}", "safety")
         if origin == ORIGIN_VOICE:
-            print(f"  {'✅' if success else '❌'} {reply}", flush=True)
+            print(f"  {'✅' if success else '❌'} {withheld_text(reply, private_sources)}", flush=True)
         return
     try:
-        handler(reply, success)
+        handler(reply, success, frozenset(private_sources))
     except Exception as exc:
         debug_log(f"Delivering confirmed action result failed: {exc}", "safety")

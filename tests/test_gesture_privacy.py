@@ -429,7 +429,7 @@ def test_a_phone_cannot_start_the_camera_through_an_approved_confirmation(mock_c
     monkeypatch.setitem(registry.BUILTIN_TOOLS, "uninstaller", FakeTool("uninstaller", tier=SafetyTier.CONFIRM_DIALOG))
     shown, finished = [], threading.Event()
     set_dialog_callback(lambda request, resolve: shown.append(resolve) or object())
-    set_result_handler(lambda reply, success: finished.set(), ORIGIN_CHAT)
+    set_result_handler(lambda reply, success, *_: finished.set(), ORIGIN_CHAT)
     store.load({"desk": {"steps": [{"tool": "uninstaller", "args": {"action": "remove", "target": "Game"}},
                                    {"tool": "gestureControl", "args": {"action": "start"}}]}})
     try:
