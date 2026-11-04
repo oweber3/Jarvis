@@ -225,6 +225,12 @@ class TestRewind:
         backend.release()
         assert [m.content for m in store.messages(chat)][:4] == ["first question", "Done.", "second question", "Done."]
 
+    def test_a_rewind_refused_as_busy_is_told_by_its_answer_alone(self, hub, backend, store):
+        chat, ids = self.two_exchanges(hub, store)
+        backend.busy = True  # a voice request holds the daemon
+        assert hub.rewind(chat, ids[2], "again", newest_id=ids[-1]).status == "busy"
+        assert hub.snapshot(0)["notices"] == []
+
     def test_a_conversation_out_of_step_with_the_chat_changes_nothing(self, hub, backend, store):
         chat, ids = self.two_exchanges(hub, store)
         backend.memory.drop_last_turns(1)  # the conversation lost a turn the chat still shows

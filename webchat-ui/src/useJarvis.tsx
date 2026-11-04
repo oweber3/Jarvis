@@ -350,6 +350,8 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
       sync.sendAccepted()
       hooksRef.current?.onSent?.(sent.query_id, speak)
     } catch (error) {
+      // The owner's new wording goes back into its box once the chat shows the message again.
+      if (text !== undefined) editAgainRef.current = { id: `m${messageId}`, text }
       await sync.rewindFailed().catch(() => undefined)
       fail(error)
     }
@@ -427,6 +429,23 @@ export function JarvisProvider({ children, hooks }: { children: ReactNode; hooks
   })
 
   runtimeRef.current = runtime
+
+  // An edit Jarvis could not take reopens with its words, once the thread holds the message again.
+  const editAgainRef = useRef<{ id: string; text: string } | null>(null)
+  useEffect(() => {
+    const wanted = editAgainRef.current
+    if (!wanted || !threadMessages.some((m) => m.id === wanted.id)) return
+    editAgainRef.current = null
+    const thread = runtime.thread
+    if (!thread.getState().capabilities.edit) return
+    try {
+      const composer = thread.getMessageById(wanted.id).composer
+      composer.beginEdit()
+      composer.setText(wanted.text)
+    } catch {
+      // The message is no longer in the thread, or is being edited already.
+    }
+  }, [runtime, threadMessages])
   const working = !stopping && (pending !== null || meta.busy_query)
   const activity = useMemo(() => ({ state: meta.state, busy: meta.busy, working }), [meta.state, meta.busy, working])
 

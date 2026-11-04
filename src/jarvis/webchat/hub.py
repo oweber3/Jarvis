@@ -492,7 +492,9 @@ class ChatHub:
                 return SubmitResult("busy", 0)
             words = stored[index].content if text is None else text
             history = [self._turn_payload(m) for m in stored]
-            query_id = self._register(source, on_finish)
+            # Refused before anything changed, a rewind is told by its answer alone: the page puts the chat and
+            # the words back itself, so a notice would say it twice.
+            query_id = self._register(source, on_finish, told_by_answer=True)
 
             def on_rewind(cursor: Optional[float]) -> bool:
                 if cursor is None:
@@ -518,13 +520,14 @@ class ChatHub:
             return self._send(query_id, lambda **callbacks: self._backend.rewind(
                 history, index, words, on_rewind=on_rewind, origin=origin, **callbacks))
 
-    def _register(self, source: str, on_finish) -> int:
-        """Track a request from the moment it is accepted: typed turns are claimed for it from here on."""
+    def _register(self, source: str, on_finish, *, told_by_answer: bool = False) -> int:
+        """Track a request from the moment it is accepted: typed turns are claimed for it from here on.
+        ``told_by_answer``: a refusal while it is being submitted (busy, not ready) leaves no notice."""
         with self._cond:
             query_id = self._next_query_id
             self._next_query_id += 1
             self._pending[query_id] = {"display": None, "started": False, "cancel": False, "status": "pending",
-                                       "source": source, "on_finish": on_finish}
+                                       "source": source, "on_finish": on_finish, "told_by_answer": told_by_answer}
             self._bump_locked()
         return query_id
 
@@ -583,9 +586,10 @@ class ChatHub:
             record = self._pending.pop(query_id, None)
             if record is None:
                 return
-            if query_id in self._submitting:
+            submitting = query_id in self._submitting
+            if submitting:
                 self._outcomes[query_id] = status
-            if status in NOTICE_TEXT:
+            if status in NOTICE_TEXT and not (submitting and record.get("told_by_answer")):
                 self._notices.append({"id": self._next_notice_id, "kind": status, "text": NOTICE_TEXT[status],
                                       "request": request, "ts": self._clock()})
                 self._next_notice_id += 1

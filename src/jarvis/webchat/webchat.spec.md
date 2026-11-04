@@ -219,7 +219,7 @@ The desktop chat's Rewind (`desktop_app/chat_window.spec.md`) in the web chat: a
 
 Between steps 2 and 3 the hub removes the message and every later one from the store (`secure_delete`, all or nothing), mirrors from the cursor the rewind returned, forgets steps and notices of the replies taken back, and bumps `history_rev`. When the store cannot remove them, the daemon puts the conversation back as it was (`DialogueMemory.put_back`: a turn stored meanwhile stays after it, newer than the cursor), nothing is asked and the request is refused with `not_taken_back`. The new turns land as a typed request's do. A stored message holds the redacted text, so asking again sends what the model saw the first time.
 
-**On the page.** The message and what followed leave the thread at once and the words show as being sent; a refused rewind puts them back and says why, showing the chat as it now is (after `changed`, with what arrived since). Another page or the phone showing the chat reloads it when `history_rev` changes.
+**On the page.** The message and what followed leave the thread at once and the words show as being sent; a refused rewind puts them back and says why, once (a rewind refused before anything changed leaves no notice line: its answer tells the page), showing the chat as it now is (after `changed`, with what arrived since), and an edit's new wording goes back into its box. Another page or the phone showing the chat reloads it when `history_rev` changes.
 
 ## Tool steps
 

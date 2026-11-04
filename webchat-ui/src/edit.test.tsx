@@ -143,6 +143,22 @@ describe("asking a sent message again", () => {
     expect(screen.getByText(/forgets the 3 messages after this one/)).toBeTruthy()
   })
 
+  it("gives the edited words back in their box when Jarvis is too busy to ask them", async () => {
+    const fake = new FakeJarvis({ chats: [{ id: "c1", title: "Chat", messages: 4 }] })
+    mount(fake)
+    await screen.findByText("Answer 1")
+    fake.busyVoice = true
+
+    await act(async () => fireEvent.click(within(messageWith("Question 1")).getByRole("button", { name: "Edit" })))
+    await act(async () => fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), { target: { value: "Question one, reworded" } }))
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Send" })))
+
+    await waitFor(() => expect(fake.rewinds).toHaveLength(1))
+    const box = (await screen.findByRole("textbox", { name: "Edit message" })) as HTMLTextAreaElement
+    expect(box.value).toBe("Question one, reworded")
+    expect(screen.getByText("Answer 1")).toBeTruthy()
+  })
+
   it("sends an edited message that was never answered as a new message", async () => {
     const fake = new FakeJarvis({ chats: [{ id: "c1", title: "Chat", messages: 2 }] })
     mount(fake)
