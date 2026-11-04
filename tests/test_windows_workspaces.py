@@ -438,6 +438,46 @@ def test_a_missing_default_browser_falls_back_to_chrome(monkeypatch):
     assert workspaces.find_browser().process == 'chrome'
 
 
+def _fake_registry(monkeypatch, values):
+    """A winreg stand-in holding only ``values``: {key path under HKCU: ProgId}."""
+    import sys
+    import types
+
+    class Key:
+        def __init__(self, path):
+            self.path = path
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def open_key(_hive, path):
+        if path not in values:
+            raise OSError(path)
+        return Key(path)
+
+    fake = types.SimpleNamespace(HKEY_CURRENT_USER=1, HKEY_LOCAL_MACHINE=2, OpenKey=open_key,
+                                 QueryValueEx=lambda key, _name: (values[key.path], 1))
+    monkeypatch.setitem(sys.modules, 'winreg', fake)
+
+
+_HTTPS = r'Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https'
+
+
+def test_the_default_browser_set_in_current_windows_11_wins_over_the_older_record(monkeypatch):
+    # Windows 11 keeps the user's latest choice under UserChoiceLatest and can leave UserChoice on Edge.
+    _fake_registry(monkeypatch, {_HTTPS + r'\UserChoiceLatest\ProgId': 'ChromeHTML',
+                                 _HTTPS + r'\UserChoice': 'MSEdgeHTM'})
+    assert workspaces._default_browser_key() == 'chrome'
+
+
+def test_the_older_default_browser_record_is_used_when_it_is_the_only_one(monkeypatch):
+    _fake_registry(monkeypatch, {_HTTPS + r'\UserChoice': 'MSEdgeHTM'})
+    assert workspaces._default_browser_key() == 'edge'
+
+
 def test_concurrent_open_attempts_only_let_one_through(monkeypatch):
     desk = Desk(monkeypatch, appear=[[chrome_window(101)]])
     release, entered = threading.Event(), threading.Event()
