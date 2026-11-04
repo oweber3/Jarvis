@@ -6,7 +6,7 @@ from jarvis.smarthome.network import SmartHomeAddressError, validate_endpoint
 
 
 def resolver(*addresses):
-    return lambda host: list(addresses)
+    return lambda host, timeout: list(addresses)
 
 
 @pytest.mark.unit
@@ -81,7 +81,7 @@ class TestResolution:
         assert "could not be found" in str(error.value)
 
     def test_without_resolving_only_syntax_and_literal_addresses_are_checked(self, monkeypatch):
-        monkeypatch.setattr(network, "_resolve", lambda host: pytest.fail("resolved"))
+        monkeypatch.setattr(network, "_resolve", lambda host, timeout: pytest.fail("resolved"))
         assert validate_endpoint("http://homeassistant.local:8123", default_port=8123, resolve=False).ip == ""
         with pytest.raises(SmartHomeAddressError):
             validate_endpoint("http://8.8.8.8:8123", default_port=8123, resolve=False)

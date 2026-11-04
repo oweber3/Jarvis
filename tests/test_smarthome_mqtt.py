@@ -217,7 +217,7 @@ class TestConnection:
 class TestRobustness:
     def test_the_connection_goes_to_the_resolved_address_not_the_name(self, broker, monkeypatch):
         from jarvis.smarthome import network
-        monkeypatch.setattr(network, "_resolve", lambda host: ["127.0.0.1"])
+        monkeypatch.setattr(network, "_resolve", lambda host, timeout: ["127.0.0.1"])
         # A name no resolver knows: only the pinned socket override can reach the broker.
         assert mqtt.test_connection("jarvis-broker.invalid", broker.port) == 5
         registry = Registry()
@@ -231,7 +231,7 @@ class TestRobustness:
     def test_a_name_not_found_yet_is_retried_without_blocking_start(self, broker, monkeypatch):
         from jarvis.smarthome import network
         answers = iter([[], []])
-        monkeypatch.setattr(network, "_resolve", lambda host: next(answers, ["127.0.0.1"]))
+        monkeypatch.setattr(network, "_resolve", lambda host, timeout: next(answers, ["127.0.0.1"]))
         monkeypatch.setattr(mqtt, "BACKOFF_START_SEC", 0.05)
         registry = Registry()
         conn = mqtt.MqttConnector(registry, "broker.local", broker.port)
