@@ -38,8 +38,9 @@ function writeCollapsed(ids: Set<string>) {
   }
 }
 
-// `canClearAll` is off in the phone app: deleting everything is a desktop action.
-export const ProjectsSidebar: FC<{ canClearAll?: boolean }> = ({ canClearAll = true }) => {
+// `canClearAll` is off in the phone app: deleting everything is a desktop action. In the phone's drawer
+// (`inDrawer`) the drawer has its own heading and there is no keyboard, so the mark and the key hints go.
+export const ProjectsSidebar: FC<{ canClearAll?: boolean; inDrawer?: boolean }> = ({ canClearAll = true, inDrawer = false }) => {
   const { library, actions } = useJarvis()
   const threadIds = useAuiState((s) => s.threads.threadIds)
   const [query, setQuery] = useState("")
@@ -64,10 +65,12 @@ export const ProjectsSidebar: FC<{ canClearAll?: boolean }> = ({ canClearAll = t
 
   return (
     <nav aria-label="Chats and projects" className="flex h-full min-h-0 flex-col gap-2 p-2.5">
-      <div className="flex h-9 items-center gap-2 px-1.5">
-        <JarvisMark className="size-6" />
-        <span className="text-[15px] font-semibold tracking-tight">Jarvis</span>
-      </div>
+      {!inDrawer && (
+        <div className="flex h-9 items-center gap-2 px-1.5">
+          <JarvisMark className="size-6" />
+          <span className="text-[15px] font-semibold tracking-tight">Jarvis</span>
+        </div>
+      )}
       <ThreadListPrimitive.Root className="flex flex-col gap-1">
         <ThreadListNew
           className="border-primary/25 bg-primary/10 hover:bg-primary/15 data-active:bg-primary/10 h-9 border font-medium"
@@ -75,7 +78,7 @@ export const ProjectsSidebar: FC<{ canClearAll?: boolean }> = ({ canClearAll = t
         >
           <PlusIcon className="size-4 shrink-0" aria-hidden />
           <span className="whitespace-nowrap">New chat</span>
-          <kbd className="text-muted-foreground ms-auto font-sans text-[11px] font-normal">Ctrl N</kbd>
+          {!inDrawer && <kbd className="text-muted-foreground ms-auto font-sans text-[11px] font-normal">Ctrl N</kbd>}
         </ThreadListNew>
       </ThreadListPrimitive.Root>
 

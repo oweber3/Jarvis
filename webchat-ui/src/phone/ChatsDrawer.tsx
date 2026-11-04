@@ -46,7 +46,7 @@ export const ChatsDrawer: FC<{ open: boolean; onOpenChange: (open: boolean) => v
             </DialogPrimitive.Close>
           </div>
           <div className="min-h-0 flex-1">
-            <ProjectsSidebar canClearAll={false} />
+            <ProjectsSidebar canClearAll={false} inDrawer />
           </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
