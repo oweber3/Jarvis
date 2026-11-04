@@ -82,6 +82,8 @@ def _parse_day_or_time(text: str, *, end: bool) -> datetime:
 
 class CalendarTool(Tool):
     returns_outside_content = True
+    # Arguments are private (ranges and search words are the user's own): consoles and logs show only their names.
+    log_arguments = False
 
     @property
     def name(self) -> str:

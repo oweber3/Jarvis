@@ -954,6 +954,32 @@ def _build_enrichment_context_hint(cfg, recent_messages: list, referent_block: s
     return "\n\n".join(parts) if parts else None
 
 
+def _shows_arguments(tool_name: str) -> bool:
+    """Whether a tool's arguments may be shown: false for a tool whose arguments are the user's own words
+    (device names, search phrases, mail senders, reminder text: ``log_arguments`` on the tool)."""
+    return bool(getattr(BUILTIN_TOOLS.get(tool_name), "log_arguments", True))
+
+
+def _console_tool_call(tool_name: str, tool_args) -> str:
+    """The console line for a tool call: redacted arguments, or only their names for a private tool."""
+    if not _shows_arguments(tool_name):
+        return f"{tool_name} {json.dumps(sorted(tool_args) if isinstance(tool_args, dict) else [])}"
+    try:
+        preview = json.dumps(tool_args or {}, ensure_ascii=False)
+    except Exception:
+        preview = str(tool_args)
+    preview = redact(preview)
+    return f"{tool_name} {preview if len(preview) <= 160 else preview[:157] + '...'}"
+
+
+def _console_tool_error(tool_name: str, error: str) -> str:
+    """The console line for a failed tool call; a private tool's error text can quote its arguments."""
+    if not _shows_arguments(tool_name):
+        return f"{tool_name} error (details withheld from the log)"
+    text = redact(error)
+    return f"{tool_name} error: {text if len(text) <= 240 else text[:237] + '...'}"
+
+
 def _deliver_reply(reply, redacted, cfg, tts, dialogue_memory, quiet, *,
                    record_tools=None, error=False):
     """Shared reply output and dialogue recording for every engine route."""
@@ -2490,13 +2516,7 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
         if t_name:
             tool_name, tool_args, tool_call_id = t_name, t_args, t_call_id
             debug_log(f"🛠️ tool requested: {tool_name}", "planning")
-            try:
-                _args_preview = json.dumps(tool_args or {}, ensure_ascii=False)
-            except Exception:
-                _args_preview = str(tool_args)
-            if len(_args_preview) > 160:
-                _args_preview = _args_preview[:157] + "..."
-            print(f"    🛠️ Agent → {tool_name} {_args_preview}", flush=True)
+            print(f"    🛠️ Agent → {_console_tool_call(tool_name, tool_args)}", flush=True)
 
             if _tool_mode and _tool_phase:
                 _tool_phase_calls.append(tool_name)
@@ -2808,8 +2828,7 @@ def _run_reply_engine(db, cfg, tts, text, dialogue_memory, language, quiet, addr
                     pass
             else:
                 err = result.error_message or "(no result)"
-                _err_preview = err if len(err) <= 240 else err[:237] + "..."
-                print(f"    ❌ {tool_name} error: {_err_preview}", flush=True)
+                print(f"    ❌ {_console_tool_error(tool_name, err)}", flush=True)
                 if use_text_tools:
                     messages.append({
                         "role": "user",

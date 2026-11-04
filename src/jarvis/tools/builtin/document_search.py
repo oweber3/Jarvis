@@ -33,6 +33,8 @@ def _status_line(result: "runtime.SearchResult") -> str:
 class DocumentSearchTool(Tool):
     # Its results carry outside content (routines.spec.md, Prompt-injection boundary).
     returns_outside_content = True
+    # Arguments are private (search phrases are the user's own words): consoles and logs show only their names.
+    log_arguments = False
 
     @property
     def name(self) -> str:

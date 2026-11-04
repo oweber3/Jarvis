@@ -18,6 +18,8 @@ from ..types import ToolExecutionResult
 class ActivityLogTool(Tool):
     # Its results carry outside content (routines.spec.md, Prompt-injection boundary).
     returns_outside_content = True
+    # Arguments are private (the questions name the user's own apps and times): consoles and logs show only their names.
+    log_arguments = False
 
     @property
     def name(self) -> str:
